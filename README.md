@@ -19,3 +19,19 @@ During private pre-release.
 2. Compile `Enzyme` against the LLVM provided by Julia
   - `cmake -DLLVM_DIR=${JULIA_HOME}/usr/lib/cmake/llvm`
 3. Set environment variable: `ENZYME_PATH` to directory containing `LLVMEnzyme`
+
+#### Example:
+```
+git clone https://github.com/JuliaLang/julia
+mkdir -p builds/julia
+export JULIA_HOME=`pwd`/builds/julia
+make -C julia O=${JULIA_HOME} configure
+make -C builds/julia -j
+git clone https://github.com/wsmoses/Enzyme
+mkdir -p builds/enzyme
+pushd builds/enzyme
+cmake -DLLVM_DIR=${JULIA_HOME}/usr/lib/cmake/llvm ../../Enzyme
+make -j
+popd
+export ENZYME_PATH=`pwd`/builds/enzyme/Enzyme
+```
