@@ -1,0 +1,20 @@
+name = "Enzyme"
+uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+authors = ["William Moses <wsmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
+version = "0.1.0"
+
+[deps]
+BinaryProvider = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
+LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+MCAnalyzer = "a81df072-f4bb-11e8-03d3-cfaeda626d18"
+
+[compat]
+julia = "1.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+
+[targets]
+test = ["Test", "ReverseDiff"]
