@@ -2,6 +2,13 @@ using Enzyme
 using Test
 using ReverseDiff
 
+@testset "Internal tests" begin
+f(x) = 1.0 + x
+llvmf, mod = Enzyme.emit(typeof(f), (Float64,))
+
+
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`

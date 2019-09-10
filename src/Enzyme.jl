@@ -12,7 +12,7 @@ include("opt.jl")
 
 using .Opt: optimize!
 
-@generated function autodiff(f, args...)
+function emit(f, args)
     # Obtain the function and all it's dependencies in one handy module
     diffetypes = []
     autodifftypes = Type[f]
@@ -91,6 +91,12 @@ using .Opt: optimize!
             ret!(builder, val)
         #end
     end
+
+    llvmf, mod
+end
+
+@generated function autodiff(f, args...)
+    llvmf, mod = emit(f, args)
 
     # Run pipeline and Enzyme pass
     optimize!(mod)
