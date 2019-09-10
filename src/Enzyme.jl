@@ -99,6 +99,7 @@ end
 
     # Run pipeline and Enzyme pass
     optimize!(mod)
+    strip_debuginfo!(mod)
 
     _args = (:(args[$i]) for i in 1:length(args))
     call_function(llvmf, Float64, Tuple{args...}, Expr(:tuple, _args...))
