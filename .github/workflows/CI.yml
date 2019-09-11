@@ -18,7 +18,6 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
       - run: curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o fetch && \
-             echo ${PATH} && \
              mkdir -p ${HOME}/.local/bin && \
              mv fetch ${HOME}/.local/bin/
       - run: julia --project=. -e 'using Pkg; pkg"dev BinaryProvider"; pkg"build"'
