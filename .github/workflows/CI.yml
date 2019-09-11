@@ -18,7 +18,7 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
       - run: |
-          curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o fetch
+          curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.6/fetch_linux_amd64 -o fetch
           busybox chmod +x fetch
           sudo mv fetch /usr/bin/fetch
       - run: |
