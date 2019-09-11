@@ -17,9 +17,7 @@ jobs:
         uses: julia-actions/setup-julia@v0.2
         with:
           version: ${{ matrix.julia-version }}
-      - run: curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o fetch && \
-             mkdir -p ${HOME}/.local/bin && \
-             mv fetch ${HOME}/.local/bin/
+      - run: curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o /usr/bin/fetch
       - run: julia --project=. -e 'using Pkg; pkg"dev BinaryProvider"; pkg"build"'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
