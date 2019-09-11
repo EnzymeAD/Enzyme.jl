@@ -22,7 +22,7 @@ jobs:
           busybox chmod +x fetch
           sudo mv fetch /usr/bin/fetch
       - run: |
-          julia --project=. -e 'using Pkg; pkg"add BinaryProvider#master add LLVM#master"; pkg"build"'
+          julia --project=. -e 'using Pkg; pkg"add BinaryProvider#master LLVM#master"; pkg"build"'
       - run: |
           julia --project=. test/runtests.jl
         env:
