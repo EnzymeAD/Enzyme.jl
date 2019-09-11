@@ -9,7 +9,7 @@ function private_download(prefix, dl_info)
     file, hash = dl_info
     file = basename(file)
     cmd = `fetch --release-asset-checksum-algo=sha256 --repo https://github.com/wsmoses/Enzyme.jl --tag $TAG --release-asset $file --release-asset-checksum $hash $path`
-    run(pipeline(cmd, stderr=stderr, stdout=stdout))
+    run(cmd)
 end
 
 # Parse some basic command-line arguments
