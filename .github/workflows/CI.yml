@@ -19,7 +19,7 @@ jobs:
           version: ${{ matrix.julia-version }}
       - run: |
           curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o fetch
-          julia -e 'chmod("/usr/bin/fetch", 0o777)'
+          busybox chmod +x fetch
           sudo mv fetch /usr/bin/fetch
       - run: |
           julia --project=. -e 'using Pkg; pkg"add BinaryProvider#master add LLVM#master"; pkg"build"'
