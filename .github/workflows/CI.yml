@@ -17,7 +17,12 @@ jobs:
         uses: julia-actions/setup-julia@v0.2
         with:
           version: ${{ matrix.julia-version }}
-      - run: sudo curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o /usr/bin/fetch
-      - run: julia --project=. -e 'using Pkg; pkg"dev BinaryProvider"; pkg"build"'
+      - run: |
+          sudo curl https://github.com/gruntwork-io/fetch/releases/download/v0.3.7/fetch_linux_amd64 -o /usr/bin/fetch
+          sudo julia -e 'chmod("/usr/bin/fetch", 0o777)'
+      - run: |
+          julia --project=. -e 'using Pkg; pkg"add BinaryProvider#master add LLVM#master"; pkg"build"'
+      - run: |
+          julia --project=. test/runtests.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
