@@ -6,25 +6,11 @@ using LLVM.Interop
 
 import GPUCompiler: CompilerJob, FunctionSpec, codegen
 
+import Enzyme_jll
 import Libdl
-llvmver = LLVM.version().major
-if haskey(ENV, "ENZYME_PATH")
-    enzyme_path = ENV["ENZYME_PATH"]
-else
-    error("Please set the environment variable ENZYME_PATH")
-end
-const libenzyme = abspath(joinpath(enzyme_path, "LLVMEnzyme-$(llvmver).$(Libdl.dlext)"))
-
-if !isfile(libenzyme)
-    error("$(libenzyme) does not exist, Please specify a correct path in ENZYME_PATH, and restart Julia.")
-end
-
-if Libdl.dlopen_e(libenzyme) in (C_NULL, nothing)
-    error("$(libenzyme) cannot be opened, Please specify a correct path in ENZYME_PATH, and restart Julia.")
-end
 
 function __init__()
-    Libdl.dlopen(libenzyme, Libdl.RTLD_GLOBAL)
+    Libdl.dlopen(Enzyme_jll.libEnzyme_path, Libdl.RTLD_GLOBAL)
     LLVM.clopts("-enzyme_preopt=0")
 end
 
