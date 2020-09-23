@@ -35,7 +35,7 @@ end
 module Runtime
     # the runtime library
     signal_exception() = return
-    malloc(sz) =  return
+    malloc(sz) = Base.Libc.malloc(sz)
     report_oom(sz) = return
     report_exception(ex) = return
     report_exception_name(ex) = return
