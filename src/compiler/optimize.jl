@@ -1,5 +1,5 @@
 function enzyme!(pm)
-    ccall((:AddEnzymePass, libenzyme), Nothing, (LLVM.API.LLVMPassManagerRef,), LLVM.ref(pm))
+    ccall((:AddEnzymePass, Enzyme_jll.libEnzyme), Nothing, (LLVM.API.LLVMPassManagerRef,), LLVM.ref(pm))
 end
 
 function optimize!(mod::LLVM.Module, entry::LLVM.Function; run_enzyme=true)
