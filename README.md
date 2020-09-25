@@ -4,16 +4,14 @@ This is a package containing the Julia bindings for Enzyme. This is very much a 
 
 Enzyme is a plugin that performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
 
-Enzyme can be used by calling `__enzyme_autodiff` on a function to be differentiated as shown below:
-```c
-double foo(double);
+Enzyme.jl can be used by calling `autodiff` on a function to be differentiated as shown below:
 
-double grad_foo(double x) {
-    return __enzyme_autodiff(foo, x);
-}
+```julia
+using Enzyme
+
+f2(x) = x*x
+@test autodiff(f1, Active(1.0)) ≈ 1.0
 ```
-
-Running the Enzyme transformation pass then replaces the call to `__enzyme_autodiff` with the gradient of its first argument.
 
 Information on installing and using Enzyme can be found on our website: [https://enzyme.mit.edu](https://enzyme.mit.edu).
 
