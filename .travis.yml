@@ -1,0 +1,28 @@
+language: julia
+
+os:
+  - linux
+  - osx
+
+julia:
+  - 1.5
+  - nightly
+
+notifications:
+  email: false
+
+# jobs:
+#   include:
+#     - stage: "Documentation"
+#       julia: 1.5
+#       os: linux
+#       script:
+#         - julia --project=docs/ -e '
+#             using Pkg;
+#             Pkg.develop(PackageSpec(path=pwd()));
+#             Pkg.build();
+#             Pkg.instantiate();'
+#         - julia --project=docs/ docs/make.jl
+#       after_success: skip
+#   allow_failures:
+#     - julia: nightly
