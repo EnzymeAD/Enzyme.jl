@@ -10,7 +10,6 @@ import Enzyme_jll
 import Libdl
 
 function __init__()
-    Libdl.dlopen(Enzyme_jll.libEnzyme_path, Libdl.RTLD_GLOBAL)
     LLVM.clopts("-enzyme_preopt=0")
 end
 
