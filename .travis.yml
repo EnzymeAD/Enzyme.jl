@@ -11,6 +11,10 @@ julia:
 notifications:
   email: false
 
+cache:
+  directories:
+    - /home/travis/.julia/
+
 jobs:
   allow_failures:
     - julia: nightly
