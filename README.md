@@ -14,7 +14,7 @@ Enzyme.jl can be used by calling `autodiff` on a function to be differentiated a
 ```julia
 using Enzyme
 
-f2(x) = x*x
+f1(x) = x*x
 @test autodiff(f1, Active(1.0)) ≈ 1.0
 ```
 
