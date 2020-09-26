@@ -15,7 +15,7 @@ Enzyme.jl can be used by calling `autodiff` on a function to be differentiated a
 using Enzyme
 
 f1(x) = x*x
-@test autodiff(f1, Active(1.0)) ≈ 1.0
+@test autodiff(f1, Active(1.0)) ≈ 2.0
 ```
 
 More information on installing and using Enzyme can be found on our website: [https://enzyme.mit.edu](https://enzyme.mit.edu).
