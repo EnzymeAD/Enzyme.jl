@@ -11,7 +11,9 @@ julia:
 notifications:
   email: false
 
-# jobs:
+jobs:
+  allow_failures:
+    - julia: nightly
 #   include:
 #     - stage: "Documentation"
 #       julia: 1.5
@@ -24,5 +26,3 @@ notifications:
 #             Pkg.instantiate();'
 #         - julia --project=docs/ docs/make.jl
 #       after_success: skip
-#   allow_failures:
-#     - julia: nightly
