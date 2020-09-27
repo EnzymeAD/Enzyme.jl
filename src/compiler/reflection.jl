@@ -1,6 +1,6 @@
 function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(types); 
-                   optimize::Bool=true, run_enzyme::Bool=true, raw::Bool=false,
-                   debuginfo::Symbol=:default, dump_module::Bool=false)
+                   optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
+                   raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
     primal, adjoint, rt = fspec(func, types)
 
     target = Compiler.EnzymeTarget()
