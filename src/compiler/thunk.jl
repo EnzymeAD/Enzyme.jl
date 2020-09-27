@@ -2,10 +2,16 @@ struct Thunk{f, RT, TT}
     ptr::Ptr{Cvoid}
 end
 
+# work around https://github.com/JuliaLang/julia/issues/37778
+__normalize(::Type{Base.RefValue{T}}) where T = Ref{T}
+__normalize(::Type{Base.RefArray{T}}) where T = Ref{T}
+__normalize(T::DataType) = T
+
 @generated function (thunk::Thunk{f, RT, TT})(args...) where {f, RT, TT}
     _args = (:(args[$i]) for i in 1:length(args))
+    nargs = map(__normalize, args)
     quote
-        ccall(thunk.ptr, $RT, ($(args...),), $(_args...))
+        ccall(thunk.ptr, $RT, ($(nargs...),), $(_args...))
     end
 end
 
