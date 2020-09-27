@@ -2,20 +2,15 @@ function enzyme!(pm)
     # ccall((:AddEnzymePass, Enzyme_jll.libEnzyme), Nothing, (LLVM.API.LLVMPassManagerRef,), LLVM.ref(pm))
     # Let's not talk about this...
     ptr = Libdl.dlsym(Enzyme_jll.libEnzyme_handle, :AddEnzymePass)
-    ccall(ptr, Nothing, (LLVM.API.LLVMPassManagerRef,), LLVM.ref(pm))
+    ccall(ptr, Nothing, (LLVM.API.LLVMPassManagerRef,), pm)
 end
 
 function optimize!(mod::LLVM.Module, entry::LLVM.Function; run_enzyme=true)
-    triple = LLVM.triple(mod)
-    target = Target(triple)
-    tm = TargetMachine(target, triple)
-    LLVM.asm_verbosity!(tm, true)
-
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
     ModulePassManager() do pm
-        add_library_info!(pm, triple)
-        add_transform_info!(pm, tm)
+        add_library_info!(pm, triple(mod))
+        add_transform_info!(pm, tm[])
 
         propagate_julia_addrsp!(pm)
         scoped_no_alias_aa!(pm)
