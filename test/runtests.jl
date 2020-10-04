@@ -13,8 +13,12 @@ end
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk = Enzyme.Thunk(f, (Active{Float64},))
-    thunk = Enzyme.Thunk(f, (Const{Float64},))
+    thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
+    thunk_b = Enzyme.Compiler.thunk(f, Tuple{Const{Float64}})
+    @test thunk_a.ptr !== thunk_b.ptr
+
+    @test thunk_a(2.0) == 1.0
+    @test thunk_b(2.0) == 2.0
 end
 
 @testset "Simple tests" begin
@@ -61,7 +65,6 @@ end
 euroad′(x) = autodiff(euroad, Active(x))
 
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
-@show euroad′(0.5)
 @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
 test_scalar(euroad, 0.5)
 end
@@ -146,8 +149,8 @@ end
         end
         out
     end
-    besselj0(z) = besselj(0, z)
-    besselj1(z) = besselj(1, z)
+    # besselj0(z) = besselj(0, z)
+    # besselj1(z) = besselj(1, z)
     # autodiff(besselj, Const(0), Active(1.0))
     # autodiff(besselj, 0, Active(1.0))
     # @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
