@@ -1,6 +1,6 @@
 # <img src="https://enzyme.mit.edu/logo.svg" width="75" align=left> The Enzyme High-Performance Automatic Differentiator of LLVM
 
-This is a package containing the Julia bindings for Enzyme. This is very much a work in progress and bug reports/discussion is greatly appreciated!
+This is a package containing the Julia bindings for [Enzyme](https://github.com/wsmoses/enzyme). This is very much a work in progress and bug reports/discussion is greatly appreciated!
 
 Enzyme is a plugin that performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
 
