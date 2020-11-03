@@ -14,8 +14,6 @@ const jit = Ref{OrcJIT}()
 const tm  = Ref{TargetMachine}()
 
 function __init__()
-    LLVM.clopts("-enzyme_preopt=0")
-
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
         optlevel = LLVM.API.LLVMCodeGenLevelNone
@@ -69,7 +67,7 @@ GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme" 
+GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 include("compiler/optimize.jl")
 include("compiler/cassette.jl")
@@ -110,7 +108,7 @@ function wrapper!(mod, primalf, adjoint, rt, name = "enzyme_entry")
     for (i, T) in enumerate(tt)
         llvmT = llvmtype(params[i])
         push!(adjoint_tt, llvmT)
-        if T <: Duplicated 
+        if T <: Duplicated
             push!(adjoint_tt, llvmT)
         end
     end
@@ -128,15 +126,15 @@ function wrapper!(mod, primalf, adjoint, rt, name = "enzyme_entry")
     i = 1
     for T in tt
         if T <: Const
-            push!(params, MDString("diffe_const"))
+            push!(params, MDString("enzyme_const"))
         elseif T <: Active
-            push!(params, MDString("diffe_out"))
+            push!(params, MDString("enzyme_out"))
         elseif T <: Duplicated
-            push!(params, MDString("diffe_dup"))
+            push!(params, MDString("enzyme_dup"))
             push!(params, llvm_params[i])
             i += 1
         elseif T <: DuplicatedNoNeed
-            push!(params, MDString("diffe_dupnoneed"))
+            push!(params, MDString("enzyme_dupnoneed"))
             push!(params, llvm_params[i])
             i += 1
         else
