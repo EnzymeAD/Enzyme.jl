@@ -12,7 +12,7 @@ Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
 [compat]
 Cassette = "0.3"
-Enzyme_jll = "0.0.2"
+Enzyme_jll = "0.0.3"
 GPUCompiler = "0.7"
 LLVM = "3.2"
 julia = "1.5"
