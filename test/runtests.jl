@@ -50,6 +50,14 @@ end
     @test gradient(mul, 2.0, 3.0) == (3.0, 2.0)
 end
 
+@testset "Simple tests" begin
+    g(x) = real((x + im)*(1 - im*x))
+    @test autodiff(g, Active(2.0)) ≈ 2.0
+    @test autodiff(g, Active(3.0)) ≈ 2.0
+    test_scalar(g, 2.0)
+    test_scalar(g, 3.0)
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
@@ -103,7 +111,7 @@ end
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    @test fd ≈ autodiff(sin, Active(x)) 
+    @test fd ≈ autodiff(sin, Active(x))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
@@ -220,7 +228,7 @@ end
 
 end
 
-@testset "hmlstm" begin 
+@testset "hmlstm" begin
     sigm(x)  = @fastmath 1 / (1 + exp(-x))
     @fastmath function hmlstm_update_c_scalar(z, zb, c, f, i, g)
         if z == 1.0f0 # FLUSH
@@ -250,7 +258,7 @@ end
     ∇I = zeros(Float32, N, N)
     ∇G = zeros(Float32, N, N)
 
-    # autodiff(broadcast_hmlstm, 
-    #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb), 
+    # autodiff(broadcast_hmlstm,
+    #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end

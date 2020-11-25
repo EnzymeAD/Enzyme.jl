@@ -76,9 +76,21 @@ function optimize!(mod::LLVM.Module, entry::LLVM.Function; run_enzyme=true, seco
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
 
+        run!(pm, mod)
+    end
+
+    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    for inactivefn in ["jl_gc_queue_root"]
+        if haskey(functions(mod), inactivefn)
+            fn = functions(mod)[inactivefn]
+            push!(function_attributes(fn), inactive)
+        end
+    end
+
+    ModulePassManager() do pm
         if run_enzyme
             # Enzyme pass
-            barrier_noop!(pm)
+            # barrier_noop!(pm)
             enzyme!(pm)
         end
 
@@ -135,9 +147,8 @@ function optimize!(mod::LLVM.Module, entry::LLVM.Function; run_enzyme=true, seco
             instruction_combining!(pm)
             # CombineMulAddPass will run on second pass
         end
-    
+
         run!(pm, mod)
     end
-
     return entry
 end

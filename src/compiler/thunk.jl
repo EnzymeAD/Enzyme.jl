@@ -80,7 +80,7 @@ function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt)
     name = mangle(orc, "enzyme_entry")
     llvmf = wrapper!(mod, primalf, adjoint, rt, name)
 
-    LLVM.strip_debuginfo!(mod)    
+    LLVM.strip_debuginfo!(mod)
     # Run pipeline and Enzyme pass
     optimize!(mod, llvmf)
 
