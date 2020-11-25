@@ -152,7 +152,11 @@ function wrapper!(mod, primalf, adjoint, rt, name = "enzyme_entry")
 
         val = call!(builder, autodiff, params)
 
-        ret!(builder, val)
+        if rt == Nothing
+            ret!(builder)
+        else
+            ret!(builder, val)
+        end
     end
 
     return llvmf
