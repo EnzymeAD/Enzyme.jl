@@ -67,3 +67,41 @@ julia> Enzyme_jll.libEnzyme_path
 On your machine `${JULIA_PKG_DEVDIR}` most likely corresponds to `~/.julia/dev`.
 Now we can inspect `"${JULIA_PKG_DEVDIR}/Enzyme_jll/override/lib` and see that there is a copy of `LLVMEnzyme-9.so`,
 which we can replace with a symbolic link or a copy of a version of Enzyme.
+
+## Building Enzyme against Julia's LLVM.
+
+Depending on how you installed Julia the LLVM Julia is using will be different.
+
+1. Download from julialang.org (Recommended)
+2. Manual build on your machine
+3. Uses a pre-built Julia from your system vendor (Not recommended)
+
+To check what LLVM Julia is using use:
+```
+julia> Base.libllvm_version_string
+"9.0.1jl"
+```
+
+If the LLVM version ends in a `jl` you a likely using the private LLVM.
+
+In your source checkout of Enzyme:
+
+```bash
+mkdir build-jl
+cd build-jl
+```
+
+### Prebuilt binary from julialang.org
+
+```
+LLVM_MAJOR_VER=`julia -e "print(Base.libllvm_version.major)"`
+julia -e "using Pkg; pkg\"add LLVM_full_jll@${LLVM_MAJOR_VER}\""
+LLVM_DIR=`julia -e "using LLVM_full_jll; print(LLVM_full_jll.artifact_dir)"`
+echo "LLVM_DIR=$LLVM_DIR"
+cmake ../enzyme/ -G Ninja -DLLVM_DIR=${LLVM_DIR} -DLLVM_EXTERNAL_LIT=${LLVM_DIR}/tools/lit/lit.py
+```
+
+### Manual build of Julia
+```
+cmake ../enzyme/ -G Ninja -DLLVM_DIR=${PATH_TO_BUILDDIR_OF_JULIA}/usr/lib/cmake/llvm/
+```
