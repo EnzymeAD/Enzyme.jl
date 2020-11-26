@@ -33,3 +33,37 @@ year = {2020},
 note = {To appear in},
 }
 ```
+
+## Development of Enzyme and Enzyme.jl together
+
+Normally Enzyme.jl downloads and install Enzyme for the user automatically since Enzyme needs to be built against
+Julia bundeled LLVM. In case that you are making updates to Enzyme and want to test them against Enzyme.jl the instructions
+below should help you get started.
+
+Start Julia in your development copy of Enzyme.jl
+
+```bash
+~/s/Enzyme (master)> julia --project=.
+```
+
+Then create a development copy of Enzyme_jll and activate it within.
+
+```julia-repl
+julia> using Enzyme_jll
+julia> Enzyme_jll.dev_jll()
+[ Info: Enzyme_jll dev'ed out to ${JULIA_PKG_DEVDIR}/Enzyme_jll with pre-populated override directory
+(Enzyme) pkg> dev Enzyme_jll
+Path `${JULIA_PKG_DEVDIR}/Enzyme_jll` exists and looks like the correct package. Using existing path.
+```
+
+After restarting Julia:
+
+```julia-repl
+julia> Enzyme_jll.dev_jll()
+julia> Enzyme_jll.libEnzyme_path
+"${JULIA_PKG_DEVDIR}/Enzyme_jll/override/lib/LLVMEnzyme-9.so"
+```
+
+On your machine `${JULIA_PKG_DEVDIR}` most likely corresponds to `~/.julia/dev`.
+Now we can inspect `"${JULIA_PKG_DEVDIR}/Enzyme_jll/override/lib` and see that there is a copy of `LLVMEnzyme-9.so`,
+which we can replace with a symbolic link or a copy of a version of Enzyme.
