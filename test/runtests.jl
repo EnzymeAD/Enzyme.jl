@@ -52,8 +52,8 @@ end
 
 @testset "Simple tests" begin
     g(x) = real((x + im)*(1 - im*x))
-    @test autodiff(g, Active(2.0)) ≈ 4.0
-    @test autodiff(g, Active(3.0)) ≈ 6.0
+    @test autodiff(g, Active(2.0)) ≈ 2.0
+    @test autodiff(g, Active(3.0)) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
 end
