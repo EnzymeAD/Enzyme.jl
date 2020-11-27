@@ -44,12 +44,23 @@ end
 
 import .Compiler: EnzymeCtx
 # Ops that have intrinsics
-for op in (sin, cos, tan, exp, copysign)
+for op in (sin, cos, tan, exp)
     for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
         llvmf = "llvm.$(nameof(op)).$suffix"
         @eval begin
             @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
                 ccall($llvmf, llvmcall, $T, ($T,), x)
+            end
+        end
+    end
+end
+
+for op in (copysign,)
+    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
+        llvmf = "llvm.$(nameof(op)).$suffix"
+        @eval begin
+            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T, y::$T)
+                ccall($llvmf, llvmcall, $T, ($T, $T), x, y)
             end
         end
     end
