@@ -1,6 +1,7 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
+import ..Enzyme: API, TypeTree, typetree, TypeAnalysis, FnTypeInfo
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -57,7 +58,7 @@ struct EnzymeCompilerParams <: AbstractCompilerParams end
 
 ## job
 
-# TODO: We shouldn't blancket opt-out
+# TODO: We shouldn't blanket opt-out
 GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
 
 GPUCompiler.runtime_module(target::CompilerJob{EnzymeTarget}) = Runtime
@@ -90,76 +91,100 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 end
 
 
-"""
-    wrapper!(::LLVM.Module, ::LLVM.Function, ::FunctionSpec, ::Type)
-
-Generates a wrapper function that will call `__enzyme_autodiff` on the primal function,
-named `enzyme_entry`.
-"""
-function wrapper!(mod, primalf, adjoint, rt, name = "enzyme_entry")
-    # create a wrapper function that will call `__enzyme_autodiff`
+function enzyme!(mod, primalf, adjoint, rt, split)
     ctx     = context(mod)
     rettype = convert(LLVMType, rt, ctx)
+    dl      = string(LLVM.datalayout(mod))
 
     tt = [adjoint.tt.parameters...,]
-    params = parameters(primalf)
-    adjoint_tt = LLVMType[]
-    for (i, T) in enumerate(tt)
-        llvmT = llvmtype(params[i])
-        push!(adjoint_tt, llvmT)
-        if T <: Duplicated
-            push!(adjoint_tt, llvmT)
-        end
-    end
 
-    llvmf = LLVM.Function(mod, name, LLVM.FunctionType(rettype, adjoint_tt))
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0, ctx))
+    args_activity     = API.CDIFFE_TYPE[]
+    uncacheable_args  = Bool[]
+    args_typeInfo     = TypeTree[]
+    args_known_values = API.IntList[]
 
-    # Create the FunctionType and funtion declaration for the intrinsic
-    pt       = LLVM.PointerType(LLVM.Int8Type(ctx))
-    ftd      = LLVM.FunctionType(rettype, LLVMType[pt], vararg = true)
-    autodiff = LLVM.Function(mod, string("__enzyme_autodiff.", rt), ftd)
-
-    params = LLVM.Value[]
-    llvm_params = parameters(llvmf)
-    i = 1
     for T in tt
         if T <: Const
-            push!(params, MDString("enzyme_const"))
+            push!(args_activity, API.DFT_CONSTANT)
         elseif T <: Active
-            push!(params, MDString("enzyme_out"))
-        elseif T <: Duplicated
-            push!(params, MDString("enzyme_dup"))
-            push!(params, llvm_params[i])
-            i += 1
+            push!(args_activity, API.DFT_OUT_DIFF)
+        elseif  T <: Duplicated
+            push!(args_activity, API.DFT_DUP_ARG)
         elseif T <: DuplicatedNoNeed
-            push!(params, MDString("enzyme_dupnoneed"))
-            push!(params, llvm_params[i])
-            i += 1
-        else
+            push!(args_activity, API.DFT_DUP_NONEED)
+        else 
             @assert("illegal annotation type")
         end
-        push!(params, llvm_params[i])
-        i += 1
-    end
-
-    Builder(ctx) do builder
-        entry = BasicBlock(llvmf, "entry", ctx)
-        position!(builder, entry)
-
-        tc = bitcast!(builder, primalf,  pt)
-        pushfirst!(params, tc)
-
-        val = call!(builder, autodiff, params)
-
-        if rt == Nothing
-            ret!(builder)
+        typeTree = typetree(T, ctx, dl)
+        push!(args_typeInfo, typeTree)
+        if split
+            push!(uncacheable_args, true)
         else
-            ret!(builder, val)
+            push!(uncacheable_args, false)
         end
+        push!(args_known_values, API.IntList())
     end
 
-    return llvmf
+    # TODO ABI returned
+    # The return of createprimal and gradient has this ABI
+    #  It returns a struct containing the following values
+    #     If requested, the original return value of the function
+    #     If requested, the shadow return value of the function
+    #     For each active (non duplicated) argument
+    #       The adjoint of that argument
+
+    if rt <: Integer
+        retType = API.DFT_CONSTANT
+    elseif rt <: AbstractFloat
+        retType = API.DFT_OUT_DIFF
+    elseif rt == Nothing
+        retType = API.DFT_CONSTANT
+    else
+        error("What even is $rt")
+    end
+
+    TA = TypeAnalysis(triple(mod)) 
+    global_AA = API.EnzymeGetGlobalAA(mod)
+    retTT = typetree(rt, ctx, dl)
+
+    typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
+
+    if split
+        augmented = API.EnzymeCreateAugmentedPrimal(
+            primalf, retType, args_activity, TA, global_AA, #=returnUsed=# true,
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# false, #=postOpt=# false)
+
+        # 2. get new_primalf
+        augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
+
+        # TODOs:
+        # 1. Handle mutable or !pointerfree arguments by introducing caching
+        #     + specifically by setting uncacheable_args[i] = true
+        # 2. Forward tape from augmented primalf to adjoint (as last arg)
+        # 3. Make creation of augumented primalf vs joint forward and reverse optional
+
+        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+        data = Array{Int64, 1}(undef, 3)
+        existed = Array{UInt8, 1}(undef, 3)
+
+        API.EnzymeExtractReturnInfo(augmented, data, existed)
+
+        adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
+            primalf, retType, args_activity, TA, global_AA,
+            #=returnValue=#false, #=dretUsed=#false, #=topLevel=#false,
+            #=additionalArg=#tape, typeInfo,
+            uncacheable_args, augmented, #=atomicAdd=#false, #=postOpt=#false))
+    else
+        adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
+            primalf, retType, args_activity, TA, global_AA,
+            #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
+            #=additionalArg=#C_NULL, typeInfo,
+            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=#false, #=postOpt=#false))
+        augmented_primalf = nothing
+    end
+    
+    API.EnzymeFreeGlobalAA(global_AA)
+    return adjointf, augmented_primalf
 end
 
 include("compiler/thunk.jl")

@@ -24,6 +24,11 @@ end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
+import LLVM
+
+include("api.jl")
+include("typeanalysis.jl")
+include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
 

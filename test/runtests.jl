@@ -15,10 +15,24 @@ end
     f(x) = 1.0 + x
     thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
     thunk_b = Enzyme.Compiler.thunk(f, Tuple{Const{Float64}})
-    @test thunk_a.ptr !== thunk_b.ptr
+    @test thunk_a.adjoint !== thunk_b.adjoint
+    @test thunk_a.primal === C_NULL
 
     @test thunk_a(2.0) == 1.0
     @test thunk_b(2.0) == 2.0
+
+    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
+    @test thunk_split.primal !== C_NULL
+    @test thunk_split.primal !== thunk_split.adjoint
+    @test thunk_a.adjoint !== thunk_split.adjoint
+end
+
+@testset "Split Tape" begin
+    f(x) = x[1] * x[1]
+
+    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
+    @test thunk_split.primal !== C_NULL
+    @test thunk_split.primal !== thunk_split.adjoint
 end
 
 @testset "Simple tests" begin

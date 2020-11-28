@@ -1,5 +1,10 @@
-struct Thunk{f, RT, TT}
-    ptr::Ptr{Cvoid}
+abstract type EnzymeABI end
+struct ActiveReturn <: EnzymeABI end
+
+
+struct Thunk{f, RT, TT, Split}
+    primal::Ptr{Cvoid}
+    adjoint::Ptr{Cvoid}
 end
 
 # work around https://github.com/JuliaLang/julia/issues/37778
@@ -10,8 +15,14 @@ __normalize(T::DataType) = T
 @generated function (thunk::Thunk{f, RT, TT})(args...) where {f, RT, TT}
     _args = (:(args[$i]) for i in 1:length(args))
     nargs = map(__normalize, args)
-    quote
-        ccall(thunk.ptr, $RT, ($(nargs...),), $(_args...))
+    if RT <: AbstractFloat
+        quote
+            ccall(thunk.adjoint, $RT, ($(nargs...),$RT), $(_args...), one($RT))
+        end
+    else 
+        quote
+            ccall(thunk.adjoint, $RT, ($(nargs...),), $(_args...))
+        end
     end
 end
 
@@ -49,7 +60,7 @@ end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
-function thunk(f::F,tt::TT=Tuple{}) where {F<:Core.Function, TT<:Type}
+function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Function, TT<:Type, Split}
     primal, adjoint, rt = fspec(f, tt)
 
     # We need to use primal as the key, to lookup the right method
@@ -57,17 +68,37 @@ function thunk(f::F,tt::TT=Tuple{}) where {F<:Core.Function, TT<:Type}
     # This is counter-intuitive since we would expect the cache to be split
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
-    local_cache = get!(Dict{Int, Any}, cache, hash(adjoint))
+    local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, UInt64(Split)))
 
-    GPUCompiler.cached_compilation(local_cache, _thunk, _link, primal, adjoint=adjoint, rt=rt)::Thunk{F,rt,tt}
+    GPUCompiler.cached_compilation(local_cache, _thunk, _link, primal, adjoint=adjoint, rt=rt, split=Split)::Thunk{F,rt,tt,Split}
 end
 
-function _link(@nospecialize(primal::FunctionSpec), thunk; kwargs...)
-    return thunk
+function _link(@nospecialize(primal::FunctionSpec), (mod, adjoint_name, primal_name); adjoint, rt, split)
+    # Now invoke the JIT
+    orc = jit[]
+
+    jitted_mod = compile!(orc, mod, @cfunction(resolver, UInt64, (Cstring, Ptr{Cvoid})))
+
+    adjoint_addr = addressin(orc, jitted_mod, adjoint_name)
+    adjoint_ptr  = pointer(adjoint_addr)
+    if adjoint_ptr === C_NULL
+        throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, adjoint not found"))
+    end
+    if primal_name === nothing
+        primal_ptr = C_NULL
+    else
+        primal_addr = addressin(orc, jitted_mod, primal_name)
+        primal_ptr  = pointer(primal_addr)
+        if primal_ptr === C_NULL
+            throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, primal not found"))
+        end
+    end
+
+    return Thunk{typeof(adjoint.f), rt, adjoint.tt, split}(primal_ptr, adjoint_ptr)
 end
 
 # actual compilation
-function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt)
+function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt, split)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams()
     job    = Compiler.CompilerJob(target, primal, params)
@@ -75,24 +106,34 @@ function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt)
     # Codegen the primal function and all its dependency in one module
     mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
 
-    # Generate the wrapper, named `enzyme_entry`
-    orc = jit[]
-    name = mangle(orc, "enzyme_entry")
-    llvmf = wrapper!(mod, primalf, adjoint, rt, name)
+    # LLVM.strip_debuginfo!(mod)
+    # Run Julia pipeline
+    optimize!(mod)
 
-    LLVM.strip_debuginfo!(mod)
-    # Run pipeline and Enzyme pass
-    optimize!(mod, llvmf)
-
-    # Now invoke the JIT
-    jitted_mod = compile!(orc, mod, @cfunction(resolver, UInt64, (Cstring, Ptr{Cvoid})))
-    addr = addressin(orc, jitted_mod, name)
-    ptr  = pointer(addr)
-    if ptr === C_NULL
-        throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk"))
+    # Annotate
+    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    for inactivefn in ["jl_gc_queue_root"]
+        fn = functions(mod)[inactivefn]
+        push!(function_attributes(fn), inactive)
     end
 
-    return Thunk{typeof(adjoint.f), rt, adjoint.tt}(pointer(addr))
+    # Generate the adjoint
+    adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
+
+    linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
+    adjoint_name = name(adjointf)
+
+    if augmented_primalf !== nothing
+        linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
+        primal_name = name(augmented_primalf)
+    else
+        primal_name = nothing
+    end
+
+    # Run post optimization pipeline
+    post_optimze!(mod)
+
+    return (mod, adjoint_name, primal_name)
 end
 
 
