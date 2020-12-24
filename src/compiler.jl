@@ -99,7 +99,7 @@ named `enzyme_entry`.
 function wrapper!(mod, primalf, adjoint, rt, name = "enzyme_entry")
     # create a wrapper function that will call `__enzyme_autodiff`
     ctx     = context(mod)
-    rettype = convert(LLVMType, rt)
+    rettype = convert(LLVMType, rt, ctx)
 
     tt = [adjoint.tt.parameters...,]
     params = parameters(primalf)
