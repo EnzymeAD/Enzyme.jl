@@ -12,6 +12,7 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
 [compat]
+CEnum = "0.4"
 Cassette = "0.3"
 Enzyme_jll = "0.0.5"
 GPUCompiler = "0.8, 0.9"
