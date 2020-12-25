@@ -15,10 +15,24 @@ end
     f(x) = 1.0 + x
     thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
     thunk_b = Enzyme.Compiler.thunk(f, Tuple{Const{Float64}})
-    @test thunk_a.ptr !== thunk_b.ptr
+    @test thunk_a.adjoint !== thunk_b.adjoint
+    @test thunk_a.primal === C_NULL
 
     @test thunk_a(2.0) == 1.0
     @test thunk_b(2.0) == 2.0
+
+    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
+    @test thunk_split.primal !== C_NULL
+    @test thunk_split.primal !== thunk_split.adjoint
+    @test thunk_a.adjoint !== thunk_split.adjoint
+end
+
+@testset "Split Tape" begin
+    f(x) = x[1] * x[1]
+
+    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
+    @test thunk_split.primal !== C_NULL
+    @test thunk_split.primal !== thunk_split.adjoint
 end
 
 @testset "Simple tests" begin
@@ -48,6 +62,14 @@ end
     Zygote.@adjoint mul(a, b) = mul(a, b), Enzyme.pullback(mul, a, b)
 
     @test gradient(mul, 2.0, 3.0) == (3.0, 2.0)
+end
+
+@testset "Simple tests" begin
+    g(x) = real((x + im)*(1 - im*x))
+    @test autodiff(g, Active(2.0)) ≈ 2.0
+    @test autodiff(g, Active(3.0)) ≈ 2.0
+    test_scalar(g, 2.0)
+    test_scalar(g, 3.0)
 end
 
 @testset "Taylor series tests" begin
@@ -103,7 +125,7 @@ end
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    @test fd ≈ autodiff(sin, Active(x)) 
+    @test fd ≈ autodiff(sin, Active(x))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
@@ -220,7 +242,7 @@ end
 
 end
 
-@testset "hmlstm" begin 
+@testset "hmlstm" begin
     sigm(x)  = @fastmath 1 / (1 + exp(-x))
     @fastmath function hmlstm_update_c_scalar(z, zb, c, f, i, g)
         if z == 1.0f0 # FLUSH
@@ -250,7 +272,7 @@ end
     ∇I = zeros(Float32, N, N)
     ∇G = zeros(Float32, N, N)
 
-    # autodiff(broadcast_hmlstm, 
-    #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb), 
+    # autodiff(broadcast_hmlstm,
+    #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
