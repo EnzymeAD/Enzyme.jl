@@ -12,7 +12,7 @@ Enzyme.jl can be installed in the usual way Julia packages are installed
 Enzyme.jl can be used by calling `autodiff` on a function to be differentiated as shown below:
 
 ```julia
-using Enzyme
+using Enzyme, Test
 
 f1(x) = x*x
 @test autodiff(f1, Active(1.0)) ≈ 2.0
