@@ -71,11 +71,11 @@ for op in (copysign,)
     end
 end
 
-for op in (asin,)
+for op in (asin,tanh)
     for (T, llvm_t) in ((Float32, "float"), (Float64, "double"))
         decl = "declare double @$(nameof(op))($llvm_t)"
         func = """
-               %val = call $llvm_t @asin($llvm_t %0)
+               %val = call $llvm_t @$op($llvm_t %0)
                ret $llvm_t %val
                """
        @eval begin
