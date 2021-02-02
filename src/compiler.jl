@@ -94,6 +94,15 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 end
 
 
+function annotate!(mod)
+    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    for inactivefn in ["jl_gc_queue_root"]
+        fn = functions(mod)[inactivefn]
+        push!(function_attributes(fn), inactive)
+    end
+end
+
+
 function enzyme!(mod, primalf, adjoint, rt, split)
     ctx     = context(mod)
     rettype = convert(LLVMType, rt, ctx)

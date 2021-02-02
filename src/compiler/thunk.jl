@@ -109,12 +109,8 @@ function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt, split)
     # Run Julia pipeline
     optimize!(mod)
 
-    # Annotate
-    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
-    for inactivefn in ["jl_gc_queue_root"]
-        fn = functions(mod)[inactivefn]
-        push!(function_attributes(fn), inactive)
-    end
+    # annotate
+    annotate!(mod)
 
     # Generate the adjoint
     adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
