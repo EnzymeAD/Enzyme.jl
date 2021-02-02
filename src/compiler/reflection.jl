@@ -1,5 +1,5 @@
 function reflect(@nospecialize(func), @nospecialize(types);
-                 optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,)
+                 optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true, split::Bool=false)
     primal, adjoint, rt = fspec(func, types)
 
     target = Compiler.EnzymeTarget()
@@ -9,14 +9,24 @@ function reflect(@nospecialize(func), @nospecialize(types);
     # Codegen the primal function and all its dependency in one module
     mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
 
-    # Generate the wrapper, named `enzyme_entry`
-    llvmf = wrapper!(mod, primalf, adjoint, rt)
-
-    LLVM.strip_debuginfo!(mod)    
     # Run pipeline and Enzyme pass
     if optimize
-        optimize!(mod, llvmf, run_enzyme=run_enzyme)
+        optimize!(mod)
     end
+
+    if run_enzyme
+        annotate!(mod)
+        adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
+
+        if second_stage
+            post_optimze!(mod)
+        end
+        llvmf = adjointf
+    else
+        llvmf = primalf
+    end
+
+
     return llvmf, mod
 end
 

@@ -86,8 +86,20 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 
     # can't return array since that's complicated.
     rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
-    @assert rt<:Union{AbstractFloat, Nothing}
+    if !(rt<:Union{AbstractFloat, Nothing})
+        @error "Return type should be <:Union{Nothing, AbstractFloat}" rt adjoint primal
+        error("Internal Enzyme Error")
+    end
     return primal, adjoint, rt
+end
+
+
+function annotate!(mod)
+    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    for inactivefn in ["jl_gc_queue_root"]
+        fn = functions(mod)[inactivefn]
+        push!(function_attributes(fn), inactive)
+    end
 end
 
 
