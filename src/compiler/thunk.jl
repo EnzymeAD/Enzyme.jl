@@ -106,7 +106,6 @@ function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt, split)
     # Codegen the primal function and all its dependency in one module
     mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
 
-    # LLVM.strip_debuginfo!(mod)
     # Run Julia pipeline
     optimize!(mod)
 

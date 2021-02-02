@@ -12,7 +12,6 @@ function reflect(@nospecialize(func), @nospecialize(types);
     # Generate the wrapper, named `enzyme_entry`
     llvmf = wrapper!(mod, primalf, adjoint, rt)
 
-    LLVM.strip_debuginfo!(mod)    
     # Run pipeline and Enzyme pass
     if optimize
         optimize!(mod, llvmf, run_enzyme=run_enzyme)
