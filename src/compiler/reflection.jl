@@ -8,6 +8,7 @@ function reflect(@nospecialize(func), @nospecialize(types);
 
     # Codegen the primal function and all its dependency in one module
     mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
+    linkage!(primalf, LLVM.API.LLVMExternalLinkage)
 
     # Run pipeline and Enzyme pass
     if optimize
