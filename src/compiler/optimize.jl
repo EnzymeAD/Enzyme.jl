@@ -61,7 +61,7 @@ function optimize!(mod::LLVM.Module)
         gc_invariant_verifier!(pm, false)
         # TODO: DCE doesn't exist in llvm-c
 
-        late_lower_gc_frame!(pm)
+        # late_lower_gc_frame!(pm)
         # final_lower_gc!(pm)
 
         # FIXME: Currently crashes printing
@@ -75,7 +75,7 @@ end
 
 function jl_legalize!(mod)
     ModulePassManager() do pm
-        #late_lower_gc_frame!(pm)
+        late_lower_gc_frame!(pm)
         final_lower_gc!(pm)
         lower_ptls!(pm, #=dump_native=# false)
         run!(pm, mod)
