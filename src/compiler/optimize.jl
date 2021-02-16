@@ -59,16 +59,25 @@ function optimize!(mod::LLVM.Module)
         barrier_noop!(pm)
         lower_exc_handlers!(pm)
         gc_invariant_verifier!(pm, false)
-        late_lower_gc_frame!(pm)
-        final_lower_gc!(pm)
         # TODO: DCE doesn't exist in llvm-c
-        lower_ptls!(pm, #=dump_native=# false)
+
+        late_lower_gc_frame!(pm)
+        # final_lower_gc!(pm)
 
         # FIXME: Currently crashes printing
         # remove_julia_addrspaces!(pm)
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
 
+        run!(pm, mod)
+    end
+end
+
+function jl_legalize!(mod)
+    ModulePassManager() do pm
+        #late_lower_gc_frame!(pm)
+        final_lower_gc!(pm)
+        lower_ptls!(pm, #=dump_native=# false)
         run!(pm, mod)
     end
 end

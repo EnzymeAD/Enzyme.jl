@@ -100,14 +100,17 @@ end
 
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
-    for inactivefn in ["jl_gc_queue_root"]
-        fn = functions(mod)[inactivefn]
-        push!(function_attributes(fn), inactive)
+    for inactivefn in ["jl_gc_queue_root", "julia.push_gc_frame", "julia.ptls_states"]
+        if haskey(functions(mod), inactivefn)
+            fn = functions(mod)[inactivefn]
+            push!(function_attributes(fn), inactive)
+        end
     end
 end
 
 
 function enzyme!(mod, primalf, adjoint, rt, split)
+    @show mod
     ctx     = context(mod)
     rettype = convert(LLVMType, rt, ctx)
     dl      = string(LLVM.datalayout(mod))

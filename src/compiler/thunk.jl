@@ -137,6 +137,8 @@ function _thunk(job)
         primal_name = nothing
     end
 
+    jl_legalize!(mod)
+
     # Run post optimization pipeline
     post_optimze!(mod)
 

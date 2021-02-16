@@ -19,6 +19,7 @@ function reflect(@nospecialize(func), @nospecialize(types);
         annotate!(mod)
         adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
 
+        jl_legalize!(mod)
         if second_stage
             post_optimze!(mod)
         end
