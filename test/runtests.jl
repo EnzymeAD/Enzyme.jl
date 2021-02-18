@@ -122,6 +122,16 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 end
 
+@testset "Bithacks" begin
+    function fneg(x::Float64)
+        xptr = reinterpret(Int64, x)
+        y = Int64(-9223372036854775808)
+        out = y ⊻ xptr;
+        return reinterpret(Float64, out)
+    end
+    @test autodiff(fneg, Active(2.0)) ≈ -1.0
+end
+
 @testset "Compare against" begin
     x = 3.0
     fd = central_fdm(5, 1)(sin, x)
