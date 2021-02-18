@@ -76,6 +76,11 @@ GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 include("compiler/optimize.jl")
 include("compiler/cassette.jl")
 
+function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    @info "alloc_obj_rule" direction ret args numArgs val known_values
+    return UInt8(false)
+end
+
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
 """
@@ -100,7 +105,7 @@ end
 
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
-    for inactivefn in ["jl_gc_queue_root", "julia.push_gc_frame", "julia.ptls_states"]
+    for inactivefn in ["julia.ptls_states", "julia.write_barrier"]
         if haskey(functions(mod), inactivefn)
             fn = functions(mod)[inactivefn]
             push!(function_attributes(fn), inactive)
@@ -150,7 +155,7 @@ function enzyme!(mod, primalf, adjoint, rt, split)
     #     If requested, the original return value of the function
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
-    #       The adjoint of that argument
+    #       The adjoint of that argumentint
 
     if rt <: Integer
         retType = API.DFT_CONSTANT
@@ -162,7 +167,12 @@ function enzyme!(mod, primalf, adjoint, rt, split)
         error("What even is $rt")
     end
 
-    TA = TypeAnalysis(triple(mod)) 
+    rules = Dict{String, API.CustomRuleType}(
+        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+    )
+    TA = TypeAnalysis(triple(mod), rules) 
     global_AA = API.EnzymeGetGlobalAA(mod)
     retTT = typetree(rt, ctx, dl)
 

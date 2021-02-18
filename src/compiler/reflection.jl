@@ -18,10 +18,10 @@ function reflect(@nospecialize(func), @nospecialize(types);
     if run_enzyme
         annotate!(mod)
         adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
-
-        jl_legalize!(mod)
         if second_stage
-            post_optimze!(mod)
+            post_optimize!(mod)
+        else
+            legalize!(mod)
         end
         llvmf = adjointf
     else

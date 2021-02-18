@@ -137,10 +137,8 @@ function _thunk(job)
         primal_name = nothing
     end
 
-    jl_legalize!(mod)
-
-    # Run post optimization pipeline
-    post_optimze!(mod)
+    # Run post optimization pipeline & legalization
+    post_optimize!(mod)
 
     return (mod, adjoint_name, primal_name)
 end

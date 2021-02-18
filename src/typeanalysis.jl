@@ -18,6 +18,7 @@ function TypeAnalysis(triple, typerules::Dict{String, CustomRuleType}=Dict{Strin
     TypeAnalysis(ref)
 end
 
-# typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
-#                                CTypeTree * /*args*/, size_t /*numArgs*/,
-#                                LLVMValueRef)=T
+# typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
+#                                   CTypeTreeRef * /*args*/,
+#                                   struct IntList * /*knownValues*/,
+#                                   size_t /*numArgs*/, LLVMValueRef);

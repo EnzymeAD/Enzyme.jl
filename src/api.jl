@@ -117,9 +117,11 @@ function EnzymeCreateAugmentedPrimal(todiff, retType, constant_args, TA, global_
         typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, atomicAdd, postOpt)
 end
 
-# typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
-#                                CTypeTree * /*args*/, size_t /*numArgs*/,
-#                                LLVMValueRef);
+# typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
+#                                   CTypeTreeRef * /*args*/,
+#                                   struct IntList * /*knownValues*/,
+#                                   size_t /*numArgs*/, LLVMValueRef);
+
 const CustomRuleType = Ptr{Cvoid}
 
 function CreateTypeAnalysis(triple, rulenames, rules)
