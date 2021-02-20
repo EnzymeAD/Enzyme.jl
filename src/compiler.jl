@@ -167,7 +167,7 @@ function enzyme!(mod, primalf, adjoint, rt, split)
     #     If requested, the original return value of the function
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
-    #       The adjoint of that argumentint
+    #       The adjoint of that argument
 
     if rt <: Integer
         retType = API.DFT_CONSTANT
