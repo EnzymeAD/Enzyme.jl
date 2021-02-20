@@ -29,6 +29,13 @@ Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
 #     end
 # end
 
+function Base.string(tt::TypeTree)
+    cstr = API.EnzymeTypeTreeToString(tt)
+    jstr = Base.unsafe_string(cstr)
+    API.EnzymeTypeTreeToStringFree(cstr)
+    return jstr
+end
+
 function only!(tt::TypeTree, offset::Integer)
     API.EnzymeTypeTreeOnlyEq(tt, offset)
 end

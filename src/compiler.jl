@@ -1,7 +1,7 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, TypeAnalysis, FnTypeInfo
+import ..Enzyme: API, TypeTree, typetree, only!, shift!, TypeAnalysis, FnTypeInfo
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -47,7 +47,7 @@ end
 module Runtime
     # the runtime library
     signal_exception() = return
-    malloc(sz) = Base.Libc.malloc(sz)
+    malloc(sz) = BAse.llvmcall.malloc(sz) #Base.Libc.malloc(sz)
     report_oom(sz) = return
     report_exception(ex) = return
     report_exception_name(ex) = return
@@ -81,6 +81,16 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     return UInt8(false)
 end
 
+function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
+    only!(TT, -1)
+    API.EnzymeSetTypeTree(unsafe_load(args), TT)
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
+    shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
+    API.EnzymeSetTypeTree(ret, TT)
+    return UInt8(false)
+end
+
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
 """
@@ -90,11 +100,13 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 
     # primal function. Inferred here to get return type
     _tt = (tt.parameters...,)
-    overdub_tt = Tuple{typeof(Compiler.CTX), F, map(eltype, _tt)...}
-    primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
+    overdub_tt = Tuple{map(eltype, _tt)...}
+    #primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
+    primal = FunctionSpec(f, overdub_tt, #=kernel=# false, #=name=# nothing)
 
     # can't return array since that's complicated.
-    rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
+    #rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
+    rt = Core.Compiler.return_type(f, overdub_tt)
     if !(rt<:Union{AbstractFloat, Nothing})
         @error "Return type should be <:Union{Nothing, AbstractFloat}" rt adjoint primal
         error("Internal Enzyme Error")
@@ -105,7 +117,7 @@ end
 
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
-    for inactivefn in ["julia.ptls_states", "julia.write_barrier"]
+    for inactivefn in ["julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64"]
         if haskey(functions(mod), inactivefn)
             fn = functions(mod)[inactivefn]
             push!(function_attributes(fn), inactive)
@@ -169,6 +181,9 @@ function enzyme!(mod, primalf, adjoint, rt, split)
 
     rules = Dict{String, API.CustomRuleType}(
         "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_int64" => @cfunction(i64_box_rule, 
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )

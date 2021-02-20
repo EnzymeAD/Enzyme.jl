@@ -6,10 +6,12 @@ version = "0.4.0"
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
 Cassette = "7057c7e9-c182-5462-911a-8362d720325c"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 CEnum = "0.4"
