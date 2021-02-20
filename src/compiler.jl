@@ -47,7 +47,7 @@ end
 module Runtime
     # the runtime library
     signal_exception() = return
-    malloc(sz) = BAse.llvmcall.malloc(sz) #Base.Libc.malloc(sz)
+    malloc(sz) = ccall("extern malloc", llvmcall, Core.LLVMPtr{Int8, 0}, (Int64,), sz)
     report_oom(sz) = return
     report_exception(ex) = return
     report_exception_name(ex) = return
