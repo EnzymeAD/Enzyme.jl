@@ -120,6 +120,7 @@ function _thunk(job)
     check_ir(job, mod)
     # Run Julia pipeline
     optimize!(mod)
+    #post_optimize!(mod)
 
     # annotate
     annotate!(mod)

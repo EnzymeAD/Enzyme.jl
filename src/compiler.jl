@@ -164,7 +164,7 @@ GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 include("compiler/optimize.jl")
-include("compiler/cassette.jl")
+# include("compiler/cassette.jl")
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     @info "alloc_obj_rule" direction ret args numArgs val known_values
