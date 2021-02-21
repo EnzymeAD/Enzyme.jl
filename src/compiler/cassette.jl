@@ -39,13 +39,13 @@ function transform(ctx, ref)
                     # this could run into troubles when the function is @pure f(x...) since then n_method_args==2, but this seems to work sofar.
                     Expr(:call, Expr(:nooverdub, GlobalRef(Core, :tuple)), (Core.SlotNumber(i) for i in 2:(n_method_args-1))...),
                     Expr(:call, Expr(:nooverdub, GlobalRef(Core, :_apply)), Core.SlotNumber(1), Core.SSAValue(i), Core.SlotNumber(n_method_args)),
-                    Expr(:return, Core.SSAValue(i+1))] : nothing)
+                    ReturnNode(Core.SSAValue(i+1))] : nothing)
         else
             Cassette.insert_statements!(CI.code, CI.codelocs,
                 (x, i) -> i == 1 ?  2 : nothing,
                 (x, i) -> i == 1 ? [
                     Expr(:call, Expr(:nooverdub, Core.SlotNumber(1)), (Core.SlotNumber(i) for i in 2:n_method_args)...)
-                    Expr(:return, Core.SSAValue(i))] : nothing)
+                    ReturnNode(Core.SSAValue(i))] : nothing)
         end
         CI.ssavaluetypes = length(CI.code)
         return CI

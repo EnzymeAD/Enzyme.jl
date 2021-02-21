@@ -73,14 +73,18 @@ end
 
 for op in (asin,tanh)
     for (T, llvm_t) in ((Float32, "float"), (Float64, "double"))
-        decl = "declare double @$(nameof(op))($llvm_t)"
-        func = """
-               %val = call $llvm_t @$op($llvm_t %0)
-               ret $llvm_t %val
+        mod = """
+                declare $llvm_t @$(nameof(op))($llvm_t)
+               
+                define $llvm_t @entry($llvm_t) #0 {
+                    %val = call $llvm_t @$op($llvm_t %0)
+                    ret $llvm_t %val
+                }
+                attributes #0 = { alwaysinline }
                """
        @eval begin
             @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
-                Base.llvmcall(($decl,$func), $T, Tuple{$T}, x)
+                Base.llvmcall(($mod, "entry"), $T, Tuple{$T}, x)
             end
         end
     end

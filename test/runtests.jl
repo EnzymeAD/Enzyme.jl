@@ -41,6 +41,7 @@ end
     @test autodiff(f1, Active(1.0)) ≈ 1.0
     @test autodiff(f2, Active(1.0)) ≈ 2.0
     @test autodiff(tanh, Active(1.0)) ≈ 0.41997434161402606939
+    @test_broken autodiff(tanh, Active(1.0f0)) ≈ 0.41997434161402606939
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
 end
