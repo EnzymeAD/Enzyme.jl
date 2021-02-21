@@ -1,7 +1,7 @@
 abstract type EnzymeABI end
 struct ActiveReturn <: EnzymeABI end
 
-
+include("validation.jl")
 struct Thunk{f, RT, TT, Split}
     primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
@@ -116,8 +116,8 @@ function _thunk(job)
     split = params.split
 
     # Codegen the primal function and all its dependency in one module
-    mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
-
+    mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #=validate=false =#)
+    check_ir(job, mod)
     # Run Julia pipeline
     optimize!(mod)
 

@@ -95,23 +95,6 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 @debug "Decoding arguments to jl_apply_generic failed" inst bb=LLVM.parent(inst)
                 push!(errors, (DYNAMIC_CALL, bt, nothing))
             end
-
-        # detect calls to undefined functions
-        elseif isdeclaration(dest) && intrinsic_id(dest) == 0 && !isintrinsic(job, fn)
-            # figure out if the function lives in the Julia runtime library
-            if libjulia[] == C_NULL
-                paths = filter(Libdl.dllist()) do path
-                    name = splitdir(path)[2]
-                    startswith(name, "libjulia")
-                end
-                libjulia[] = Libdl.dlopen(first(paths))
-            end
-
-            if Libdl.dlsym_e(libjulia[], fn) != C_NULL
-                push!(errors, (RUNTIME_FUNCTION, bt, LLVM.name(dest)))
-            else
-                push!(errors, (UNKNOWN_FUNCTION, bt, LLVM.name(dest)))
-            end
         end
 
     elseif isa(dest, InlineAsm)
@@ -119,28 +102,30 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
 
     elseif isa(dest, ConstantExpr)
         # Enzyme should be able to handle these
-    #     # detect calls to literal pointers
-    #     if occursin("inttoptr", string(dest))
-    #         # extract the literal pointer
-    #         ptr_arg = first(operands(dest))
-    #         GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
-    #         ptr_val = convert(Int, ptr_arg)
-    #         ptr = Ptr{Cvoid}(ptr_val)
+        # detect calls to literal pointers
+        @show dest
+        if occursin("inttoptr", string(dest))
+            # extract the literal pointer
+            ptr_arg = first(operands(dest))
+            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+            ptr_val = convert(Int, ptr_arg)
+            ptr = Ptr{Cvoid}(ptr_val)
 
-    #         # look it up in the Julia JIT cache
-    #         frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
-    #         if length(frames) >= 1
-    #             GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
-    #             if VERSION >= v"1.4.0-DEV.123"
-    #                 fn, file, line, linfo, fromC, inlined = last(frames)
-    #             else
-    #                 fn, file, line, linfo, fromC, inlined, ip = last(frames)
-    #             end
-    #             push!(errors, (POINTER_FUNCTION, bt, fn))
-    #         else
-    #             push!(errors, (POINTER_FUNCTION, bt, nothing))
-    #         end
-    #     end
+            # look it up in the Julia JIT cache
+            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+            if length(frames) >= 1
+                GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
+                if VERSION >= v"1.4.0-DEV.123"
+                    fn, file, line, linfo, fromC, inlined = last(frames)
+                else
+                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
+                end
+                @show fn, file, line, linfo, fromC, inlined
+                push!(errors, (POINTER_FUNCTION, bt, fn))
+            else
+                push!(errors, (POINTER_FUNCTION, bt, nothing))
+            end
+        end
     end
 
     return errors

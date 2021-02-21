@@ -130,6 +130,13 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(fneg, Active(2.0)) ≈ -1.0
+    function expor(x::Float64)
+        xptr = reinterpret(Int64, x)
+        y = UInt64(4607182418800017408)
+        out = y | xptr;
+        return reinterpret(Float64, out)
+    end
+    @test autodiff(expor, Active(2.0)) ≈ 8.0
 end
 
 @testset "Compare against" begin
