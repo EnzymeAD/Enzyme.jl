@@ -5,6 +5,9 @@ using Enzyme_jll
 using Libdl
 using CEnum
 
+UP = Cint(1);
+DOWN = Cint(2)
+BOTH = Cint(3)
 struct EnzymeAAResultsRef
     a::Ptr{Cvoid}
     b::Ptr{Cvoid}
@@ -44,6 +47,7 @@ EnzymeFreeTypeTree(tt) = ccall((:EnzymeFreeTypeTree, libEnzyme), Cvoid, (CTypeTr
 EnzymeSetTypeTree(dst, src) = ccall((:EnzymeSetTypeTree, libEnzyme), UInt8, (CTypeTreeRef, CTypeTreeRef), dst, src)
 EnzymeMergeTypeTree(dst, src) = ccall((:EnzymeMergeTypeTree, libEnzyme), UInt8, (CTypeTreeRef, CTypeTreeRef), dst, src)
 EnzymeTypeTreeOnlyEq(dst, x) = ccall((:EnzymeTypeTreeOnlyEq, libEnzyme), Cvoid, (CTypeTreeRef, Int64), dst, x)
+EnzymeTypeTreeData0Eq(dst) = ccall((:EnzymeTypeTreeData0Eq, libEnzyme), Cvoid, (CTypeTreeRef,), dst)
 EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
     ccall((:EnzymeTypeTreeShiftIndiciesEq, libEnzyme), Cvoid, (CTypeTreeRef, Cstring, Int64, Int64, UInt64),
         dst, dl, offset, maxSize, addOffset)

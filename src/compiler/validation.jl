@@ -35,6 +35,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
 function check_ir!(job, errors, inst::LLVM.CallInst)
+    # @show "checking call " inst
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -103,7 +104,6 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
     elseif isa(dest, ConstantExpr)
         # Enzyme should be able to handle these
         # detect calls to literal pointers
-        @show dest
         if occursin("inttoptr", string(dest))
             # extract the literal pointer
             ptr_arg = first(operands(dest))
@@ -114,16 +114,27 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
             # look it up in the Julia JIT cache
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
             if length(frames) >= 1
-                GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
                 if VERSION >= v"1.4.0-DEV.123"
                     fn, file, line, linfo, fromC, inlined = last(frames)
                 else
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
                 end
-                @show fn, file, line, linfo, fromC, inlined
-                push!(errors, (POINTER_FUNCTION, bt, fn))
-            else
-                push!(errors, (POINTER_FUNCTION, bt, nothing))
+
+                # @show fn, file, line, linfo, fromC, inlined, frames, l
+                fn = string(fn)
+                # @show fn, fromC
+                # @show length(fn)
+                if length(fn) > 1 && fromC 
+                    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                    if lfn == C_NULL
+                        lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
+                    end
+                    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                end
+            #    push!(errors, (POINTER_FUNCTION, bt, fn))
+            #else
+            #    push!(errors, (POINTER_FUNCTION, bt, nothing))
             end
         end
     end

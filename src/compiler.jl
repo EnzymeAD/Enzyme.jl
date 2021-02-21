@@ -1,7 +1,7 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, only!, shift!, TypeAnalysis, FnTypeInfo
+import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!, TypeAnalysis, FnTypeInfo
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -88,6 +88,38 @@ function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTyp
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
     shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
     API.EnzymeSetTypeTree(ret, TT)
+    return UInt8(false)
+end
+
+function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    if (direction & API.UP) != 0
+        API.EnzymeMergeTypeTree(unsafe_load(args), ret)
+    end
+    if (direction & API.DOWN) != 0
+        API.EnzymeMergeTypeTree(ret, unsafe_load(args))
+    end
+    return UInt8(false)
+end
+
+function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ce = operands(inst)[1]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = Base.unsafe_pointer_to_objref(ptr)
+
+    ctx = LLVM.context(LLVM.Value(val))
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+
+    rest = typetree(typ, ctx, dl)
+    only!(rest, -1)
+    API.EnzymeMergeTypeTree(ret, rest)
+
+    for i = 1:numArgs
+        API.EnzymeMergeTypeTree(unsafe_load(args, i), TypeTree(API.DT_Integer, -1, ctx))
+    end
     return UInt8(false)
 end
 
@@ -185,7 +217,16 @@ function enzyme!(mod, primalf, adjoint, rt, split)
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_int64" => @cfunction(i64_box_rule, 
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_array_copy" => @cfunction(inout_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_1d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_2d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )
     TA = TypeAnalysis(triple(mod), rules) 
     global_AA = API.EnzymeGetGlobalAA(mod)

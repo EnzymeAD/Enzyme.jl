@@ -40,6 +40,10 @@ function only!(tt::TypeTree, offset::Integer)
     API.EnzymeTypeTreeOnlyEq(tt, offset)
 end
 
+function data0!(tt::TypeTree)
+    API.EnzymeTypeTreeData0Eq(tt)
+end
+
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
@@ -81,6 +85,10 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     offset = 0
 
     tt = typetree(T, ctx, dl)
+    if T <: Union{Float16, Float32, Float64, Integer}
+        data0!(tt)
+        only!(tt, -1)
+    end
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, offset)
 
