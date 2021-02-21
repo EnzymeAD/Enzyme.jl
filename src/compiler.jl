@@ -54,7 +54,11 @@ module Runtime
     report_exception_frame(idx, func, file, line) = return
 end
 
-struct EnzymeCompilerParams <: AbstractCompilerParams end
+struct EnzymeCompilerParams <: AbstractCompilerParams
+    adjoint::FunctionSpec
+    rt::DataType
+    split::Bool
+end
 
 ## job
 

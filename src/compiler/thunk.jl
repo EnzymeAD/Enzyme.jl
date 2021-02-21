@@ -70,10 +70,19 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
     # invalidations of the primal, which is managed by GPUCompiler.
     local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, UInt64(Split)))
 
-    GPUCompiler.cached_compilation(local_cache, _thunk, _link, primal, adjoint=adjoint, rt=rt, split=Split)::Thunk{F,rt,tt,Split}
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(adjoint, rt, Split)
+    job    = Compiler.CompilerJob(target, primal, params)
+
+    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,Split}
 end
 
-function _link(@nospecialize(primal::FunctionSpec), (mod, adjoint_name, primal_name); adjoint, rt, split)
+function _link(job, (mod, adjoint_name, primal_name))
+    params = job.params
+    adjoint = params.adjoint
+    split = params.split
+    rt = params.rt 
+
     # Now invoke the JIT
     orc = jit[]
 
@@ -98,10 +107,13 @@ function _link(@nospecialize(primal::FunctionSpec), (mod, adjoint_name, primal_n
 end
 
 # actual compilation
-function _thunk(@nospecialize(primal::FunctionSpec); adjoint, rt, split)
+function _thunk(job)
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams()
-    job    = Compiler.CompilerJob(target, primal, params)
+    params = job.params
+
+    adjoint = params.adjoint
+    rt = params.rt
+    split = params.split
 
     # Codegen the primal function and all its dependency in one module
     mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
