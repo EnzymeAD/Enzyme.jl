@@ -89,6 +89,7 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
         data0!(tt)
         only!(tt, -1)
     end
+    flush(stdout)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, offset)
 

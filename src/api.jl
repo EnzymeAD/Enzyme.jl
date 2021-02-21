@@ -136,6 +136,10 @@ function CreateTypeAnalysis(triple, rulenames, rules)
     ccall((:CreateTypeAnalysis, libEnzyme), EnzymeTypeAnalysisRef, (Cstring, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t), triple, rulenames, rules, length(rules))
 end
 
+const CustomShadowAlloc = Ptr{Cvoid}
+const CustomShadowFree = Ptr{Cvoid}
+EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall((:EnzymeRegisterAllocationHandler, libEnzyme), Cvoid, (Cstring, CustomShadowAlloc, CustomShadowFree), name, ahandle, fhandle)
+    
 function FreeTypeAnalysis(ta)
     ccall((:FreeTypeAnalysis, libEnzyme), Cvoid, (EnzymeAAResultsRef,), ta)
 end

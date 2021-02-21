@@ -14,6 +14,80 @@ import LLVM: Target, TargetMachine
 const jit = Ref{OrcJIT}()
 const tm  = Ref{TargetMachine}()
 
+function array_inner(::Type{<:Array{T}}) where T
+    return T
+end
+function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, numArgs::Csize_t, Args::Ptr{LLVM.API.LLVMValueRef})::LLVM.API.LLVMValueRef
+    inst = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+    ctx = LLVM.context(LLVM.Value(OrigCI))
+
+    ce = operands(inst)[1]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
+    @show typ
+
+    b = LLVM.Builder(B)
+
+    vals = Vector{LLVM.Value}()
+    for i = 1:numArgs
+        push!(vals, LLVM.Value(unsafe_load(Args, i)))
+    end
+
+    anti = LLVM.call!(b, LLVM.Value(LLVM.API.LLVMGetCalledValue(OrigCI)), vals)
+
+    prod = LLVM.Value(unsafe_load(Args, 2))
+    for i = 3:numArgs
+        prod = LLVM.mul!(b, prod, LLVM.Value(unsafe_load(Args, i)))
+    end
+
+    isunboxed = typ.isinlinealloc
+    elsz = sizeof(typ)
+
+    isunion = typ <: Union
+    
+    LLT_ALIGN(x, sz) = (((x) + (sz)-1) & ~((sz)-1))
+
+    if !isunboxed
+        elsz = sizeof(Ptr{Cvoid})
+        al = elsz;
+    else
+        al = 1 # check
+        elsz = LLT_ALIGN(elsz, al)
+    end
+
+    tot = prod
+    tot = LLVM.mul!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), elsz, false))
+
+    if elsz == 1 && !isunion
+        tot = LLVM.add!(b, t, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
+    end
+    if (isunion) 
+        # an extra byte for each isbits union array element, stored after a->maxsize
+        tot = LLVM.add!(b, tot, prod)
+    end
+
+    i1 = LLVM.IntType(8, ctx)
+    i8 = LLVM.IntType(8, ctx)
+    ptrty = LLVM.PointerType(i8, LLVM.addrspace(LLVM.llvmtype(anti)))
+    toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty)))
+
+    memtys = LLVM.LLVMType[ptrty, LLVM.llvmtype(tot)]
+    memset = LLVM.Function(mod, LLVM.Intrinsic("llvm.memset"), memtys)
+    memargs = LLVM.Value[toset, LLVM.ConstantInt(i8, 0, false), tot, LLVM.ConstantInt(i1, 0, false)]
+    LLVM.call!(b, memset, memargs)
+
+    ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
+    return ref
+end
+
+function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValueRef, Fn::LLVM.API.LLVMValueRef)::LLVM.API.LLVMValueRef
+    return C_NULL
+end
+
 function __init__()
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
@@ -31,6 +105,22 @@ function __init__()
     atexit() do
         dispose(jit[])
     end
+
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_1d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_2d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_3d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
 end
 
 # Define EnzymeTarget
