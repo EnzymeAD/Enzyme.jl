@@ -182,6 +182,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         barrier_noop!(pm)
         lower_exc_handlers!(pm)
         gc_invariant_verifier!(pm, false)
+
         # Needed **before** LateLowerGCFrame on LLVM < 12
         # due to bug in `CreateAlignmentAssumption`.
         remove_ni!(pm)
@@ -199,6 +200,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         # Clean up write barrier and ptls lowering
         cfgsimplification!(pm)
     else
+        barrier_noop!(pm)
         remove_ni!(pm)
     end
 end
@@ -207,6 +209,9 @@ function post_optimize!(mod::LLVM.Module)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm[])
         addOptimizationPasses!(pm)
+        run!(pm, mod)
+    end
+    LLVM.ModulePassManager() do pm
         addJuliaLegalizationPasses!(pm, true)
         addMachinePasses!(pm)
         run!(pm, mod)

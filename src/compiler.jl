@@ -28,7 +28,6 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     end
     ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
     typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
-    @show typ
 
     b = LLVM.Builder(B)
 
@@ -70,16 +69,16 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         tot = LLVM.add!(b, tot, prod)
     end
 
-    i1 = LLVM.IntType(8, ctx)
+    i1 = LLVM.IntType(1, ctx)
     i8 = LLVM.IntType(8, ctx)
-    ptrty = LLVM.PointerType(i8, LLVM.addrspace(LLVM.llvmtype(anti)))
-    toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty)))
+    ptrty = LLVM.PointerType(i8) #, LLVM.addrspace(LLVM.llvmtype(anti)))
+    toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(anti)))))
 
     memtys = LLVM.LLVMType[ptrty, LLVM.llvmtype(tot)]
     memset = LLVM.Function(mod, LLVM.Intrinsic("llvm.memset"), memtys)
     memargs = LLVM.Value[toset, LLVM.ConstantInt(i8, 0, false), tot, LLVM.ConstantInt(i1, 0, false)]
-    LLVM.call!(b, memset, memargs)
 
+    mcall = LLVM.call!(b, memset, memargs)
     ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
     return ref
 end
@@ -128,7 +127,7 @@ Base.@kwdef struct EnzymeTarget <: AbstractCompilerTarget
 end
 GPUCompiler.llvm_triple(::EnzymeTarget) = Sys.MACHINE
 
-# GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
+GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
 
 function GPUCompiler.llvm_machine(::EnzymeTarget)
     return tm[]
@@ -249,7 +248,6 @@ end
 
 
 function enzyme!(mod, primalf, adjoint, rt, split)
-    @show mod
     ctx     = context(mod)
     rettype = convert(LLVMType, rt, ctx)
     dl      = string(LLVM.datalayout(mod))
@@ -308,6 +306,9 @@ function enzyme!(mod, primalf, adjoint, rt, split)
         "jl_box_int64" => @cfunction(i64_box_rule, 
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_uint64" => @cfunction(i64_box_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule, 
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
@@ -315,6 +316,9 @@ function enzyme!(mod, primalf, adjoint, rt, split)
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_2d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_3d" => @cfunction(alloc_rule, 
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )

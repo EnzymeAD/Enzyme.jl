@@ -35,7 +35,6 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
 function check_ir!(job, errors, inst::LLVM.CallInst)
-    # @show "checking call " inst
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -113,6 +112,7 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
 
             # look it up in the Julia JIT cache
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+
             if length(frames) >= 1
                 if VERSION >= v"1.4.0-DEV.123"
                     fn, file, line, linfo, fromC, inlined = last(frames)
@@ -122,8 +122,24 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
 
                 # @show fn, file, line, linfo, fromC, inlined, frames, l
                 fn = string(fn)
-                # @show fn, fromC
-                # @show length(fn)
+                if ptr == cglobal(:jl_alloc_array_1d)
+                    fn = "jl_alloc_array_1d"
+                end
+                if ptr == cglobal(:jl_alloc_array_2d)
+                    fn = "jl_alloc_array_2d"
+                end
+                if ptr == cglobal(:jl_alloc_array_3d)
+                    fn = "jl_alloc_array_3d"
+                end
+                if ptr == cglobal(:jl_new_array)
+                    fn = "jl_new_array"
+                end
+                if ptr == cglobal(:jl_array_copy)
+                    fn = "jl_array_copy"
+                end
+                # ptr == reinterpret(UInt64, cglobal(:jl_alloc_array_1d))#
+                # @show fn, fromC, ptr, cglobal(:jl_alloc_array_2d), ptr == cglobal(:jl_alloc_array_2d)
+                # @show fn, fromC, ptr, reinterpret(UInt64, cglobal(:jl_alloc_array_1d)), reinterpret(UInt64, cglobal(:jl_alloc_array_2d)), reinterpret(UInt64, cglobal(:jl_alloc_array_3d))
                 if length(fn) > 1 && fromC 
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
@@ -131,6 +147,8 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
                     end
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                else
+                    @show inst, fn
                 end
             #    push!(errors, (POINTER_FUNCTION, bt, fn))
             #else

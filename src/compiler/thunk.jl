@@ -140,7 +140,6 @@ function _thunk(job)
 
     # Run post optimization pipeline & legalization
     post_optimize!(mod)
-
     return (mod, adjoint_name, primal_name)
 end
 
