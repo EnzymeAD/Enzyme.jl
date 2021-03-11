@@ -61,7 +61,7 @@ end
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
 function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Function, TT<:Type, Split}
-    primal, adjoint, rt = fspec(f, tt)
+    primal, adjoint = fspec(f, tt)
 
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
@@ -71,8 +71,10 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
     local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, UInt64(Split)))
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, rt, Split)
+    params = Compiler.EnzymeCompilerParams(adjoint, Split)
     job    = Compiler.CompilerJob(target, primal, params)
+
+    rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,Split}
 end
@@ -106,32 +108,53 @@ function _link(job, (mod, adjoint_name, primal_name))
     return Thunk{typeof(adjoint.f), rt, adjoint.tt, split}(primal_ptr, adjoint_ptr)
 end
 
-# actual compilation
-function _thunk(job)
-    target = Compiler.EnzymeTarget()
-    params = job.params
+function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
+                 libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
+                 strip::Bool=false, validate::Bool=true, only_entry::Bool=false)
+    @assert output === :llvm
+    split = job.params.split
+    adjoint = job.params.adjoint
 
-    adjoint = params.adjoint
-    rt = params.rt
-    split = params.split
+    mod, primalf = invoke(GPUCompiler.codegen, Tuple{Symbol, CompilerJob}, output, job; libraries, deferred_codegen, optimize, strip, validate, only_entry)
 
-    # Codegen the primal function and all its dependency in one module
-    mod, primalf = Compiler.codegen(:llvm, job, optimize=false, #= validate=false =#)
-
-    # Run Julia pipeline
+    # Run early pipeline
     optimize!(mod)
 
     # annotate
     annotate!(mod)
 
     # Generate the adjoint
-    adjointf, augmented_primalf = enzyme!(mod, primalf, adjoint, rt, split)
+    adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split)
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
-    adjoint_name = name(adjointf)
 
     if augmented_primalf !== nothing
         linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
+    end
+
+    if augmented_primalf === nothing
+        return mod, adjointf
+    else
+        return mod, (adjointf, augmented_primalf)
+    end
+end
+
+# actual compilation
+function _thunk(job)
+    params = job.params
+
+    mod, fns = codegen(:llvm, job, optimize=false)
+
+    if fns isa Tuple
+        adjointf, augmented_primalf = fns
+    else
+        adjointf = fns
+        augmented_primalf = nothing
+    end
+
+    adjoint_name = name(adjointf)
+
+    if augmented_primalf !== nothing
         primal_name = name(augmented_primalf)
     else
         primal_name = nothing
@@ -142,5 +165,4 @@ function _thunk(job)
 
     return (mod, adjoint_name, primal_name)
 end
-
 
