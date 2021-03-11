@@ -98,10 +98,10 @@ LLVM_MAJOR_VER=`julia -e "print(Base.libllvm_version.major)"`
 julia -e "using Pkg; pkg\"add LLVM_full_jll@${LLVM_MAJOR_VER}\""
 LLVM_DIR=`julia -e "using LLVM_full_jll; print(LLVM_full_jll.artifact_dir)"`
 echo "LLVM_DIR=$LLVM_DIR"
-cmake ../enzyme/ -G Ninja -DLLVM_DIR=${LLVM_DIR} -DLLVM_EXTERNAL_LIT=${LLVM_DIR}/tools/lit/lit.py
+cmake ../enzyme/ -G Ninja -DENZYME_EXTERNAL_SHARED_LIB=ON -DLLVM_DIR=${LLVM_DIR} -DLLVM_EXTERNAL_LIT=${LLVM_DIR}/tools/lit/lit.py
 ```
 
 ### Manual build of Julia
 ```
-cmake ../enzyme/ -G Ninja -DLLVM_DIR=${PATH_TO_BUILDDIR_OF_JULIA}/usr/lib/cmake/llvm/
+cmake ../enzyme/ -G Ninja -DENZYME_EXTERNAL_SHARED_LIB=ON -DLLVM_DIR=${PATH_TO_BUILDDIR_OF_JULIA}/usr/lib/cmake/llvm/
 ```
