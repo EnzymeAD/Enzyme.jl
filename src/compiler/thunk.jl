@@ -71,7 +71,7 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
     local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, UInt64(Split)))
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Split)
+    params = Compiler.EnzymeCompilerParams(adjoint, Split, true)
     job    = Compiler.CompilerJob(target, primal, params)
 
     rt = Core.Compiler.return_type(primal.f, primal.tt)
@@ -83,7 +83,9 @@ function _link(job, (mod, adjoint_name, primal_name))
     params = job.params
     adjoint = params.adjoint
     split = params.split
-    rt = params.rt 
+
+    primal = job.source 
+    rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     # Now invoke the JIT
     orc = jit[]
@@ -112,8 +114,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false)
     @assert output === :llvm
-    split = job.params.split
-    adjoint = job.params.adjoint
+    params  = job.params
+    split   = params.split
+    adjoint = params.adjoint
 
     mod, primalf = invoke(GPUCompiler.codegen, Tuple{Symbol, CompilerJob}, output, job; libraries, deferred_codegen, optimize, strip, validate, only_entry)
 
@@ -123,8 +126,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     # annotate
     annotate!(mod)
 
-    # Generate the adjoint
-    adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split)
+    if params.run_enzyme
+        # Generate the adjoint
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split)
+    else
+        adjointf = primalf
+        augmented_primalf = nothing
+    end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
 

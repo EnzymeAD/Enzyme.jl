@@ -56,8 +56,8 @@ end
 
 struct EnzymeCompilerParams <: AbstractCompilerParams
     adjoint::FunctionSpec
-    rt::DataType
     split::Bool
+    run_enzyme::Bool
 end
 
 ## job
@@ -85,16 +85,10 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 
     # primal function. Inferred here to get return type
     _tt = (tt.parameters...,)
-    overdub_tt = Tuple{typeof(Compiler.CTX), F, map(eltype, _tt)...}
-    primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
+    primal_tt = Tuple{map(eltype, _tt)...}
+    primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
 
-    # can't return array since that's complicated.
-    rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
-    if !(rt<:Union{AbstractFloat, Nothing})
-        @error "Return type should be <:Union{Nothing, AbstractFloat}" rt adjoint primal
-        error("Internal Enzyme Error")
-    end
-    return primal, adjoint, rt
+    return primal, adjoint
 end
 
 
@@ -107,7 +101,9 @@ function annotate!(mod)
 end
 
 
-function enzyme!(mod, primalf, adjoint, rt, split)
+function enzyme!(job, mod, primalf, adjoint, split)
+    primal = job.source
+    rt = Core.Compiler.return_type(primal.f, primal.tt)
     ctx     = context(mod)
     rettype = convert(LLVMType, rt, ctx)
     dl      = string(LLVM.datalayout(mod))
@@ -148,7 +144,6 @@ function enzyme!(mod, primalf, adjoint, rt, split)
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
     #       The adjoint of that argument
-
     if rt <: Integer
         retType = API.DFT_CONSTANT
     elseif rt <: AbstractFloat
