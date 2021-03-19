@@ -54,10 +54,14 @@ module Runtime
     report_exception_frame(idx, func, file, line) = return
 end
 
-struct EnzymeCompilerParams <: AbstractCompilerParams
+abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
+struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     adjoint::FunctionSpec
     split::Bool
     run_enzyme::Bool
+end
+
+struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
 end
 
 ## job
@@ -65,9 +69,9 @@ end
 # TODO: We shouldn't blanket opt-out
 GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
 
-GPUCompiler.runtime_module(target::CompilerJob{EnzymeTarget}) = Runtime
-GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
-GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
+GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
+# GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
+# GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
@@ -101,7 +105,7 @@ function annotate!(mod)
 end
 
 
-function enzyme!(job, mod, primalf, adjoint, split)
+function enzyme!(job, mod, primalf, adjoint, split, parallel)
     primal = job.source
     rt = Core.Compiler.return_type(primal.f, primal.tt)
     ctx     = context(mod)
@@ -163,7 +167,7 @@ function enzyme!(job, mod, primalf, adjoint, split)
     if split
         augmented = API.EnzymeCreateAugmentedPrimal(
             primalf, retType, args_activity, TA, global_AA, #=returnUsed=# true,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# false, #=postOpt=# false)
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# parallel, #=postOpt=# false)
 
         # 2. get new_primalf
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
@@ -184,13 +188,13 @@ function enzyme!(job, mod, primalf, adjoint, split)
             primalf, retType, args_activity, TA, global_AA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#false,
             #=additionalArg=#tape, typeInfo,
-            uncacheable_args, augmented, #=atomicAdd=#false, #=postOpt=#false))
+            uncacheable_args, augmented, #=atomicAdd=# parallel, #=postOpt=#false))
     else
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             primalf, retType, args_activity, TA, global_AA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
             #=additionalArg=#C_NULL, typeInfo,
-            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=#false, #=postOpt=#false))
+            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
         augmented_primalf = nothing
     end
     

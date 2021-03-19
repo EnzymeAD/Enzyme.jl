@@ -112,13 +112,26 @@ end
 
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
-                 strip::Bool=false, validate::Bool=true, only_entry::Bool=false)
-    @assert output === :llvm
+                 strip::Bool=false, validate::Bool=true, only_entry::Bool=false, current_job::Union{Nothing, CompilerJob} = nothing)
     params  = job.params
     split   = params.split
     adjoint = params.adjoint
+    primal  = job.source
 
-    mod, primalf = invoke(GPUCompiler.codegen, Tuple{Symbol, CompilerJob}, output, job; libraries, deferred_codegen, optimize, strip, validate, only_entry)
+    if current_job === nothing
+        primal_target = GPUCompiler.NativeCompilerTarget()
+        primal_params = Compiler.PrimalCompilerParams()
+        primal_job    = CompilerJob(primal_target, primal, primal_params)
+    else
+        primal_job = similar(current_job, job.source)
+    end
+    mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, current_job=current_job)
+
+    if current_job !== nothing && current_job.target isa GPUCompiler.PTXCompilerTarget
+        parallel = true
+    else
+        parallel = false
+    end
 
     # Run early pipeline
     optimize!(mod)
@@ -128,7 +141,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel)
     else
         adjointf = primalf
         augmented_primalf = nothing
