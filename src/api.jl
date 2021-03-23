@@ -5,11 +5,7 @@ using Enzyme_jll
 using Libdl
 using CEnum
 
-struct EnzymeAAResultsRef
-    a::Ptr{Cvoid}
-    b::Ptr{Cvoid}
-    c::Ptr{Cvoid}
-end
+const EnzymeLogicRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 
@@ -61,14 +57,6 @@ end
 )
 
 
-function EnzymeGetGlobalAA(mod)
-    ccall((:EnzymeGetGlobalAA, libEnzyme), EnzymeAAResultsRef, (LLVMModuleRef,), mod)
-end
-
-function EnzymeFreeGlobalAA(aa)
-    ccall((:EnzymeFreeGlobalAA, libEnzyme), Cvoid, (EnzymeAAResultsRef,), aa)
-end
-
 # Create the derivative function itself.
 #  \p todiff is the function to differentiate
 #  \p retType is the activity info of the return
@@ -84,14 +72,14 @@ end
 #  pass
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
-function EnzymeCreatePrimalAndGradient(todiff, retType, constant_args, TA, global_AA,
+function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
                                        returnValue, dretUsed, topLevel, additionalArg, typeInfo,
                                        uncacheable_args, augmented, atomicAdd, postOpt)
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
-        (LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, EnzymeTypeAnalysisRef,
-         EnzymeAAResultsRef, UInt8, UInt8, UInt8, LLVMTypeRef, CFnTypeInfo,
+        (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, UInt8, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8, UInt8),
-        todiff, retType, constant_args, length(constant_args), TA, global_AA, returnValue,
+        logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
         dretUsed, topLevel, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd, postOpt)
 end
@@ -107,13 +95,13 @@ end
 #  \p forceAnonymousTape forces the tape to be an i8* rather than the true tape structure
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
-function EnzymeCreateAugmentedPrimal(todiff, retType, constant_args, TA, global_AA, returnUsed,
+function EnzymeCreateAugmentedPrimal(logic, todiff, retType, constant_args, TA,  returnUsed,
                                      typeInfo, uncacheable_args, forceAnonymousTape, atomicAdd, postOpt)
     ccall((:EnzymeCreateAugmentedPrimal, libEnzyme), EnzymeAugmentedReturnPtr, 
-        (LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
-         EnzymeTypeAnalysisRef, EnzymeAAResultsRef, UInt8, 
+        (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
+         EnzymeTypeAnalysisRef, UInt8, 
          CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, UInt8, UInt8),
-        todiff, retType, constant_args, length(constant_args), TA, global_AA, returnUsed,
+        logic, todiff, retType, constant_args, length(constant_args), TA,  returnUsed,
         typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, atomicAdd, postOpt)
 end
 
@@ -127,8 +115,24 @@ function CreateTypeAnalysis(triple, rulenames, rules)
     ccall((:CreateTypeAnalysis, libEnzyme), EnzymeTypeAnalysisRef, (Cstring, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t), triple, rulenames, rules, length(rules))
 end
 
+function ClearTypeAnalysis(ta)
+    ccall((:ClearTypeAnalysis, libEnzyme), Cvoid, (EnzymeTypeAnalysisRef,), ta)
+end
+
 function FreeTypeAnalysis(ta)
-    ccall((:FreeTypeAnalysis, libEnzyme), Cvoid, (EnzymeAAResultsRef,), ta)
+    ccall((:FreeTypeAnalysis, libEnzyme), Cvoid, (EnzymeTypeAnalysisRef,), ta)
+end
+
+function CreateLogic()
+    ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, ())
+end
+
+function ClearLogic(logic)
+    ccall((:ClearEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
+end
+
+function FreeLogic(logic)
+    ccall((:FreeEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
 end
 
 function EnzymeExtractReturnInfo(ret, data, existed)

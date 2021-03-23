@@ -1,7 +1,7 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, TypeAnalysis, FnTypeInfo
+import ..Enzyme: API, TypeTree, typetree, TypeAnalysis, FnTypeInfo, Logic
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -160,14 +160,14 @@ function enzyme!(mod, primalf, adjoint, rt, split)
     end
 
     TA = TypeAnalysis(triple(mod)) 
-    global_AA = API.EnzymeGetGlobalAA(mod)
+    logic = Logic()
     retTT = typetree(rt, ctx, dl)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
     if split
         augmented = API.EnzymeCreateAugmentedPrimal(
-            primalf, retType, args_activity, TA, global_AA, #=returnUsed=# true,
+            logic, primalf, retType, args_activity, TA, #=returnUsed=# true,
             typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# false, #=postOpt=# false)
 
         # 2. get new_primalf
@@ -186,20 +186,19 @@ function enzyme!(mod, primalf, adjoint, rt, split)
         API.EnzymeExtractReturnInfo(augmented, data, existed)
 
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
-            primalf, retType, args_activity, TA, global_AA,
+            logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#false,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=#false, #=postOpt=#false))
     else
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
-            primalf, retType, args_activity, TA, global_AA,
+            logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=#false, #=postOpt=#false))
         augmented_primalf = nothing
     end
     
-    API.EnzymeFreeGlobalAA(global_AA)
     return adjointf, augmented_primalf
 end
 
