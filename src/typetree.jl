@@ -77,7 +77,7 @@ end
 function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
-    only!(tt, 0)
+    only!(tt, -1)
     return tt
 end
 
