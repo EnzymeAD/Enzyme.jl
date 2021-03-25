@@ -42,14 +42,14 @@ prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)..
 prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
-function autodiff(f::F, args...) where F
+@inline function autodiff(f::F, args...) where F
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     thunk = Compiler.Thunk{F, rt, tt′}(ptr)
-    thunk(Enzyme.prepare_cc(args′...)...)
+    thunk(args′...)
 end
 
 import .Compiler: EnzymeCtx

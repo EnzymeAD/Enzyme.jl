@@ -101,9 +101,18 @@ end
 
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
-    for inactivefn in ["jl_gc_queue_root"]
+    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception"]
         fn = functions(mod)[inactivefn]
         push!(function_attributes(fn), inactive)
+    end
+end
+
+function passbyref(T::DataType)
+    if T <: Array
+        return false 
+    else
+        # LLVM.Interop.isboxed(T)
+        return !isprimitivetype(T)
     end
 end
 
@@ -133,6 +142,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             push!(args_activity, API.DFT_DUP_NONEED)
         else 
             @assert("illegal annotation type")
+        end
+        T = eltype(T)
+        if passbyref(T) || T <: Array
+            T = Ptr{T}
         end
         typeTree = typetree(T, ctx, dl)
         push!(args_typeInfo, typeTree)
@@ -271,6 +284,7 @@ end
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
+    @assert length(argtypes) == length(argexprs)
 
     types = DataType[]
 
@@ -281,27 +295,44 @@ end
         T_args = LLVMType[]
         T_sret = LLVMType[]
         sret_types  = DataType[]
+        inputexprs = Union{Expr, Symbol}[]
+        argpreserve = Union{Symbol}[]
+        ccexprs = Union{Expr, Symbol}[]
 
-        for T in argtypes
+        function byref(expr, T)
+            val = gensym(:val)
+            push!(inputexprs, :($val = Ref($expr)))
+            push!(argpreserve, val)
+            :(Base.unsafe_convert($T, Base.cconvert($T, $val)))
+        end
+
+        for (T, expr) in zip(argtypes, argexprs)
+            T′ = eltype(T)
+            ccexpr = Expr(:., expr, QuoteNode(:val))
+            ispassbyref = passbyref(T′)
+            if ispassbyref
+                T′ = Ptr{T′}
+                ccexpr = byref(ccexpr, T′)
+            end 
+            llvmT = convert(LLVMType, T′, ctx, allow_boxed=true)
+
+            push!(types, T′)
+            push!(T_args, llvmT)
+            push!(ccexprs, ccexpr)
+
             if T <: Const
-                innerT = eltype(T)
-                push!(types, innerT)
-                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
-                push!(T_args, _T)
             elseif T <: Active
-                innerT = eltype(T)
-                push!(types,      innerT)
-                push!(sret_types, innerT)
-                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
-                push!(T_args, _T)
-                push!(T_sret, _T)
+                # XXX: Assuming FloatingPoint for now
+                push!(sret_types, T′)
+                push!(T_sret, llvmT)
             elseif T <: Duplicated || T <: DuplicatedNoNeed
-                innerT = eltype(T)
-                push!(types, innerT)
-                push!(types, innerT)
-                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
-                push!(T_args, _T)
-                push!(T_args, _T)
+                ccexpr =  Expr(:., expr, QuoteNode(:dval))
+                if ispassbyref 
+                    ccexpr = byref(ccexpr, T′)
+                end
+                push!(types, T′)
+                push!(T_args, llvmT)
+                push!(ccexprs, ccexpr)
             else
                 error("calling convention should be annotated, got $T")
             end
@@ -311,8 +342,9 @@ end
         if rettype <: AbstractFloat
             push!(types, rettype)
             push!(T_args, convert(LLVMType, rettype, ctx))
-            push!(argexprs, :(one($rettype)))
+            push!(ccexprs, :(one($rettype)))
         end
+        # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
         # create sret
         needs_sret = !isempty(T_sret)
@@ -355,21 +387,25 @@ end
             quote
                 Base.@_inline_meta
                 sret = Ref{$(Tuple{sret_types...})}()
-                GC.@preserve sret begin
+                $(inputexprs...)
+                GC.@preserve sret $(argpreserve...) begin
                     ptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
                     ptr = Base.unsafe_convert(Ptr{Cvoid}, ptr)
                     Base.llvmcall(($ir,$fn), Cvoid,
                         $(Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}),
-                        ptr, f, $(argexprs...))
+                        ptr, f, $(ccexprs...))
                 end
                 sret[]
             end
         else 
             quote
                 Base.@_inline_meta
-                Base.llvmcall(($ir,$fn), Cvoid,
-                    $(Tuple{Ptr{Cvoid}, types...}),
-                    f, $(argexprs...))
+                $(inputexprs...)
+                GC.@preserve $(argpreserve...) begin
+                    Base.llvmcall(($ir,$fn), Cvoid,
+                        $(Tuple{Ptr{Cvoid}, types...}),
+                        f, $(ccexprs...))
+                end
             end
         end
     end
