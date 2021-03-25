@@ -206,22 +206,22 @@ end
 
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
-                 strip::Bool=false, validate::Bool=true, only_entry::Bool=false, current_job::Union{Nothing, CompilerJob} = nothing)
+                 strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
     params  = job.params
     split   = params.split
     adjoint = params.adjoint
     primal  = job.source
 
-    if current_job === nothing
+    if parent_job === nothing
         primal_target = GPUCompiler.NativeCompilerTarget()
         primal_params = Compiler.PrimalCompilerParams()
         primal_job    = CompilerJob(primal_target, primal, primal_params)
     else
-        primal_job = similar(current_job, job.source)
+        primal_job = similar(parent_job, job.source)
     end
-    mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, current_job=current_job)
+    mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
 
-    if current_job !== nothing && current_job.target isa GPUCompiler.PTXCompilerTarget
+    if parent_job !== nothing && parent_job.target isa GPUCompiler.PTXCompilerTarget
         parallel = true
     else
         parallel = false
