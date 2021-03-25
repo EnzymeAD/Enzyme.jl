@@ -20,6 +20,13 @@ end
 Base.copy(tt::TypeTree) = TypeTree(API.EnzymeNewTypeTreeTR(tt))
 Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
 
+function Base.string(tt::TypeTree)
+    raw = API.EnzymeTypeTreeToString(tt)
+    str = Base.unsafe_string(raw)
+    API.EnzymeTypeTreeToStringFree(raw)
+    return str
+end
+
 # function Base.show(io::IO, ::MIME"text/plain", tt::TypeTree)
 #     print(io, "TypeTree: ")
 #     for data in tt.data

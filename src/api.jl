@@ -41,6 +41,10 @@ EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
     ccall((:EnzymeTypeTreeShiftIndiciesEq, libEnzyme), Cvoid, (CTypeTreeRef, Cstring, Int64, Int64, UInt64),
         dst, dl, offset, maxSize, addOffset)
 
+
+EnzymeTypeTreeToString(tt) = ccall((:EnzymeTypeTreeToString, libEnzyme), Cstring, (CTypeTreeRef,), tt)
+EnzymeTypeTreeToStringFree(str) = ccall((:EnzymeTypeTreeToStringFree, libEnzyme), Cvoid, (Cstring,), str)
+
 struct CFnTypeInfo
     arguments::Ptr{CTypeTreeRef}
     ret::CTypeTreeRef
