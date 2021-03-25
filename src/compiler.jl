@@ -286,20 +286,20 @@ end
             if T <: Const
                 innerT = eltype(T)
                 push!(types, innerT)
-                _T = convert(LLVMType, innerT, ctx)
+                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
                 push!(T_args, _T)
             elseif T <: Active
                 innerT = eltype(T)
                 push!(types,      innerT)
                 push!(sret_types, innerT)
-                _T = convert(LLVMType, innerT, ctx)
+                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
                 push!(T_args, _T)
                 push!(T_sret, _T)
             elseif T <: Duplicated || T <: DuplicatedNoNeed
                 innerT = eltype(T)
                 push!(types, innerT)
                 push!(types, innerT)
-                _T = convert(LLVMType, innerT, ctx)
+                _T = convert(LLVMType, innerT, ctx, allow_boxed=true)
                 push!(T_args, _T)
                 push!(T_args, _T)
             else

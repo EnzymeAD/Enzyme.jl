@@ -43,6 +43,10 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
+function typetree(::Type{Nothing}, ctx, dl)
+    TypeTree()
+end
+
 function typetree(::Type{T}, ctx, dl) where T <: Integer
     tt = TypeTree()
     for i in 1:sizeof(T)
@@ -63,7 +67,7 @@ function typetree(::Type{Float64}, ctx, dl)
     return TypeTree(API.DT_Double, 0, ctx)
 end
 
-function typetree(::Type{<:Ptr{T}}, ctx, dl) where T
+function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, 0)
