@@ -258,26 +258,119 @@ end
 # Thunk
 ## 
 
-struct Thunk{f, RT, TT, Split}
-    primal::Ptr{Cvoid}
+struct Thunk{f, RT, TT#=, Split=#}
+    # primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
 end
 
-# work around https://github.com/JuliaLang/julia/issues/37778
-__normalize(::Type{Base.RefValue{T}}) where T = Ref{T}
-__normalize(::Type{Base.RefArray{T}}) where T = Ref{T}
-__normalize(T::DataType) = T
+@inline (thunk::Thunk{F, RT, TT})(args...) where {F, RT, TT} =
+   enzyme_call(thunk.adjoint, TT, RT, args...)
 
-@generated function (thunk::Thunk{f, RT, TT})(args...) where {f, RT, TT}
-    _args = (:(args[$i]) for i in 1:length(args))
-    nargs = map(__normalize, args)
-    if RT <: AbstractFloat
-        quote
-            ccall(thunk.adjoint, $RT, ($(nargs...),$RT), $(_args...), one($RT))
+@generated function enzyme_call(f::Ptr{Cvoid}, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {T, RT, N}
+    argtt    = tt.parameters[1]
+    rettype  = rt.parameters[1]
+    argtypes = DataType[argtt.parameters...]
+    argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
+
+    types = DataType[]
+
+    LLVM.Interop.JuliaContext() do ctx
+        T_void = convert(LLVMType, Nothing, ctx)
+
+        # Create Enzyme calling convention
+        T_args = LLVMType[]
+        T_sret = LLVMType[]
+        sret_types  = DataType[]
+
+        for T in argtypes
+            if T <: Const
+                innerT = eltype(T)
+                push!(types, innerT)
+                _T = convert(LLVMType, innerT, ctx)
+                push!(T_args, _T)
+            elseif T <: Active
+                innerT = eltype(T)
+                push!(types,      innerT)
+                push!(sret_types, innerT)
+                _T = convert(LLVMType, innerT, ctx)
+                push!(T_args, _T)
+                push!(T_sret, _T)
+            elseif T <: Duplicated || T <: DuplicatedNoNeed
+                innerT = eltype(T)
+                push!(types, innerT)
+                push!(types, innerT)
+                _T = convert(LLVMType, innerT, ctx)
+                push!(T_args, _T)
+                push!(T_args, _T)
+            else
+                error("calling convention should be annotated, got $T")
+            end
         end
-    else 
-        quote
-            ccall(thunk.adjoint, $RT, ($(nargs...),), $(_args...))
+
+        # API.DFT_OUT_DIFF
+        if rettype <: AbstractFloat
+            push!(types, rettype)
+            push!(T_args, convert(LLVMType, rettype, ctx))
+            push!(argexprs, :(one($rettype)))
+        end
+
+        # create sret
+        needs_sret = !isempty(T_sret)
+
+        if needs_sret
+            ret = LLVM.StructType(T_sret)
+        else
+            ret = T_void
+        end
+
+        ft = LLVM.FunctionType(ret, T_args)
+
+        pushfirst!(T_args, convert(LLVMType, Int, ctx))
+        if needs_sret 
+            pushfirst!(T_args, convert(LLVMType, Int, ctx))
+        end
+
+        llvm_f, _ = LLVM.Interop.create_function(T_void, T_args)
+        mod = LLVM.parent(llvm_f)
+
+        params = [parameters(llvm_f)...]
+        target =  needs_sret ? 2 : 1
+        LLVM.Builder(ctx) do builder
+            entry = BasicBlock(llvm_f, "entry", ctx)
+            position!(builder, entry)
+
+            ptr = inttoptr!(builder, params[target], LLVM.PointerType(ft))
+            val = call!(builder, ptr, params[target+1:end])
+            if needs_sret 
+                sret = inttoptr!(builder, params[1], LLVM.PointerType(ret))
+                store!(builder, val, sret)
+            end
+            ret!(builder)
+        end
+
+        ir = string(mod)
+        fn = LLVM.name(llvm_f)
+
+        if needs_sret 
+            quote
+                Base.@_inline_meta
+                sret = Ref{$(Tuple{sret_types...})}()
+                GC.@preserve sret begin
+                    ptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
+                    ptr = Base.unsafe_convert(Ptr{Cvoid}, ptr)
+                    Base.llvmcall(($ir,$fn), Cvoid,
+                        $(Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}),
+                        ptr, f, $(argexprs...))
+                end
+                sret[]
+            end
+        else 
+            quote
+                Base.@_inline_meta
+                Base.llvmcall(($ir,$fn), Cvoid,
+                    $(Tuple{Ptr{Cvoid}, types...}),
+                    f, $(argexprs...))
+            end
         end
     end
 end
@@ -346,7 +439,8 @@ function _link(job, (mod, adjoint_name, primal_name))
         end
     end
 
-    return Thunk{typeof(adjoint.f), rt, adjoint.tt, split}(primal_ptr, adjoint_ptr)
+    @assert primal_name === nothing
+    return Thunk{typeof(adjoint.f), rt, adjoint.tt #=, split=#}(#=primal_ptr,=# adjoint_ptr)
 end
 
 # actual compilation
@@ -395,6 +489,61 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,Split}
+end
+
+import GPUCompiler: deferred_codegen_jobs
+
+mutable struct CallbackContext
+    job::Compiler.CompilerJob
+    stub::String
+    compiled::Bool
+end
+
+const outstanding = IdDict{CallbackContext, Nothing}()
+
+# Setup the lazy callback for creating a module
+function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
+    orc = OrcJIT(orc_ref)
+    cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
+
+    @assert !cc.compiled
+    job = cc.job
+
+    thunk = Compiler._link(job, Compiler._thunk(job))
+    cc.compiled = true
+    delete!(outstanding, cc)
+
+    # 4. Update the stub pointer to point to the recently compiled module
+    set_stub!(orc, cc.stub, thunk.adjoint)
+
+    # 5. Return the address of tie implementation, since we are going to call it now
+    ptr = thunk.adjoint
+    return UInt64(reinterpret(UInt, ptr))
+end
+
+@generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
+    primal, adjoint = fspec(f, tt)
+    target = EnzymeTarget()
+    params = EnzymeCompilerParams(adjoint, false, true)
+    job    = CompilerJob(target, primal, params)
+
+    cc = CallbackContext(job, String(gensym(:trampoline)), false)
+    outstanding[cc] = nothing
+
+    c_callback = @cfunction(callback, UInt64, (LLVM.API.LLVMOrcJITStackRef, Ptr{Cvoid}))
+
+    orc = Compiler.jit[]
+    initial_addr = callback!(orc, c_callback, pointer_from_objref(cc))
+    create_stub!(orc, cc.stub, initial_addr)
+    addr = address(orc, cc.stub)
+    id = Base.reinterpret(Int, pointer(addr))
+
+    deferred_codegen_jobs[id] = job
+    trampoline = reinterpret(Ptr{Cvoid}, id)
+
+    quote
+        ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $trampoline)
+    end
 end
 
 include("compiler/reflection.jl")
