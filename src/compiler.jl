@@ -101,9 +101,12 @@ end
 
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    fns = functions(mod)
     for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception"]
-        fn = functions(mod)[inactivefn]
-        push!(function_attributes(fn), inactive)
+        if haskey(fns, inactivefn)
+            fn = fns[inactivefn]
+            push!(function_attributes(fn), inactive)
+        end
     end
 end
 
