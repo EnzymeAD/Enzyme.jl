@@ -237,10 +237,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
 
-    if parent_job !== nothing && parent_job.target isa GPUCompiler.PTXCompilerTarget
-        parallel = true
-    else
-        parallel = false
+    
+    parallel = false
+    process_module = false
+    if parent_job !== nothing
+        if parent_job.target isa GPUCompiler.PTXCompilerTarget ||
+           parent_job.target isa GPUCompiler.GCNCompilerTarget
+            parallel = true
+        end
+        if parent_job.target isa GPUCompiler.GCNCompilerTarget
+           process_module = true
+        end
     end
 
     # Run early pipeline
@@ -258,14 +265,27 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
+    adjointf_name = name(adjointf)
 
     if augmented_primalf !== nothing
         linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
+        augmented_primalf_name = name(augmented_primalf)
     end
 
+    if parent_job !== nothing
+        post_optimze!(mod)
+    end
+
+    if process_module
+        GPUCompiler.process_module!(parent_job, mod)
+    end
+
+    adjointf = functions(mod)[adjointf_name]
+    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0, context(mod)))
     if augmented_primalf === nothing
         return mod, adjointf
     else
+        augmented_primalf = functions(mod)[augmented_primalf_name]
         return mod, (adjointf, augmented_primalf)
     end
 end

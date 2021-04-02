@@ -65,7 +65,6 @@ function optimize!(mod::LLVM.Module)
         lower_ptls!(pm, #=dump_native=# false)
 
         # FIXME: Currently crashes printing
-        # remove_julia_addrspaces!(pm)
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
 
@@ -78,6 +77,8 @@ function post_optimze!(mod)
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm[])
+
+        remove_julia_addrspaces!(pm)
 
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
