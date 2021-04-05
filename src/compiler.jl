@@ -237,6 +237,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
 
+    if primal_job.target isa GPUCompiler.NativeCompilerTarget
+        target_machine = tm[]
+    else
+        target_machine = GPUCompiler.llvm_machine(primal_job.target)
+    end
     
     parallel = false
     process_module = false
@@ -251,7 +256,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     # Run early pipeline
-    optimize!(mod)
+    optimize!(mod, target_machine)
 
     # annotate
     annotate!(mod)
@@ -273,7 +278,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     if parent_job !== nothing
-        post_optimze!(mod)
+        post_optimze!(mod, target_machine)
     end
 
     if process_module
@@ -524,7 +529,7 @@ function _thunk(job)
     end
 
     # Run post optimization pipeline
-    post_optimze!(mod)
+    post_optimze!(mod, tm[])
 
     return (mod, adjoint_name, primal_name)
 end

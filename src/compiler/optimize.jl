@@ -1,9 +1,9 @@
-function optimize!(mod::LLVM.Module)
+function optimize!(mod::LLVM.Module, tm)
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm[])
+        add_transform_info!(pm, tm)
 
         propagate_julia_addrsp!(pm)
         scoped_no_alias_aa!(pm)
@@ -72,11 +72,11 @@ function optimize!(mod::LLVM.Module)
     end
 end
 
-function post_optimze!(mod)
+function post_optimze!(mod, tm)
     # run second set of optimizations post enzyme
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm[])
+        add_transform_info!(pm, tm)
 
         remove_julia_addrspaces!(pm)
 

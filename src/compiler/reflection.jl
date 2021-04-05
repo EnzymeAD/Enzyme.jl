@@ -10,7 +10,7 @@ function reflect(@nospecialize(func), @nospecialize(types);
     mod, fns = Compiler.codegen(:llvm, job, optimize=optimize, #= validate=false =#)
 
     if second_stage
-        post_optimze!(mod)
+        post_optimze!(mod, tm[])
     end
 
     if fns isa Tuple

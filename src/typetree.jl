@@ -1,6 +1,5 @@
 # TODO:
 # - type tags?
-# - eltype of Ptr and Array is only `first Element`
 # - recursive types
 
 import LLVM: refcheck
@@ -67,11 +66,11 @@ function typetree(::Type{Float16}, ctx, dl)
 end
 
 function typetree(::Type{Float32}, ctx, dl)
-    return TypeTree(API.DT_Float, 0, ctx)
+    return TypeTree(API.DT_Float, -1, ctx)
 end
 
 function typetree(::Type{Float64}, ctx, dl)
-    return TypeTree(API.DT_Double, 0, ctx)
+    return TypeTree(API.DT_Double, -1, ctx)
 end
 
 function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
