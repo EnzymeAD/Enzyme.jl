@@ -32,7 +32,7 @@ function optimize!(mod::LLVM.Module, tm)
         instruction_combining!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
-        # SimpleLoopUnroll -- not for Enzyme
+        loop_unroll!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates!(pm) # SSA variant?
         instruction_combining!(pm)
@@ -104,7 +104,7 @@ function post_optimze!(mod, tm)
         instruction_combining!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
-        # SimpleLoopUnroll -- not for Enzyme
+        loop_unroll!(pm)
         scalar_repl_aggregates!(pm) # SSA variant?
         instruction_combining!(pm)
         gvn!(pm)
@@ -127,7 +127,7 @@ function post_optimze!(mod, tm)
 
         cfgsimplification!(pm)
         instruction_combining!(pm)
-        # CombineMulAddPass will run on second pass
+        combine_mul_add!(pm)
 
         run!(pm, mod)
     end
