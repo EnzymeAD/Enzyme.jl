@@ -11,13 +11,13 @@ function optimize!(mod::LLVM.Module, tm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         # TODO: DCE (doesn't exist in llvm-c)
-        scalar_repl_aggregates!(pm) # SSA variant?
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
         alloc_opt!(pm)
         instruction_combining!(pm)
         cfgsimplification!(pm)
-        scalar_repl_aggregates!(pm) # SSA variant?
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
         instruction_combining!(pm)
         jump_threading!(pm)
         instruction_combining!(pm)
@@ -34,13 +34,13 @@ function optimize!(mod::LLVM.Module, tm)
         loop_deletion!(pm)
         loop_unroll!(pm)
         alloc_opt!(pm)
-        scalar_repl_aggregates!(pm) # SSA variant?
-        instruction_combining!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
         gvn!(pm)
+        # This InstCombine needs to be after GVN
+        # Otherwise it will generate load chains in GPU code...
+        instruction_combining!(pm)
         mem_cpy_opt!(pm)
         sccp!(pm)
-        # TODO: Sinking Pass
-        # TODO: LLVM <7 InstructionSimplifier
         instruction_combining!(pm)
         jump_threading!(pm)
         dead_store_elimination!(pm)
