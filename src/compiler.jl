@@ -560,7 +560,7 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
 
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
-    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,Split}
+    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,#=Split=#}
 end
 
 import GPUCompiler: deferred_codegen_jobs
