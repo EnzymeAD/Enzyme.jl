@@ -287,7 +287,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     adjointf = functions(mod)[adjointf_name]
-    API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
+    # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
 
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
