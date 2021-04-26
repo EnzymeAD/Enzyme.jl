@@ -89,8 +89,9 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 
     # primal function. Inferred here to get return type
     _tt = (tt.parameters...,)
-    primal_tt = Tuple{map(eltype, _tt)...}
-    primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
+
+    overdub_tt = Tuple{typeof(Compiler.CTX), F, map(eltype, _tt)...}
+    primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
 
     return primal, adjoint
 end
