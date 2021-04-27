@@ -45,7 +45,17 @@ prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 @inline function autodiff(f::F, args...) where F
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    thunk = Compiler.Thunk{F, rt, tt′}(ptr)
+    thunk(args′...)
+end
+
+@inline function autodiff_no_cassette(f::F, args...) where F
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     thunk = Compiler.Thunk{F, rt, tt′}(ptr)

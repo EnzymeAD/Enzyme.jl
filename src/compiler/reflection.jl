@@ -1,6 +1,8 @@
 function reflect(@nospecialize(func), @nospecialize(types);
-                 optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true, split::Bool=false)
-    primal, adjoint = fspec(func, types)
+                 optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
+                 split::Bool=false, cassette::Bool=true)
+        
+    primal, adjoint = fspec(func, types, Val(cassette))
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, split, run_enzyme)
@@ -26,8 +28,9 @@ end
 
 function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(types); 
                           optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
-                          raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
-    llvmf, mod = reflect(func, types, optimize=optimize, run_enzyme=run_enzyme, second_stage=second_stage)
+                          raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false,
+                          cassette::Bool=true)
+    llvmf, mod = reflect(func, types; optimize,run_enzyme, second_stage, cassette)
 
     str = ccall(:jl_dump_function_ir, Ref{String},
                 (LLVM.API.LLVMValueRef, Bool, Bool, Ptr{UInt8}),
