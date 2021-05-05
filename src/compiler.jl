@@ -135,16 +135,25 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
 
     tt = [adjoint.tt.parameters...,]
 
+    argClassification = GPUCompiler.classify_arguments(job, primalf)
+    filter!(argClassification) do arg
+        arg.cc != GPUCompiler.GHOST
+    end
+
     args_activity     = API.CDIFFE_TYPE[]
     uncacheable_args  = Bool[]
     args_typeInfo     = TypeTree[]
     args_known_values = API.IntList[]
 
-    for T in tt
+    for (T, classification) in zip(tt, argClassification)
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
         elseif T <: Active
-            push!(args_activity, API.DFT_OUT_DIFF)
+            if classification.cc == GPUCompiler.BITS_REF
+                push!(args_activity, API.DFT_DUP_ARG)
+            else
+                push!(args_activity, API.DFT_OUT_DIFF)
+            end
         elseif  T <: Duplicated
             push!(args_activity, API.DFT_DUP_ARG)
         elseif T <: DuplicatedNoNeed
@@ -334,7 +343,8 @@ end
 
         # Create Enzyme calling convention
         T_args = LLVMType[]
-        T_sret = LLVMType[]
+        T_EnzymeSRet = LLVMType[]
+        T_JuliaSRet = LLVMType[]
         sret_types  = DataType[]
         inputexprs = Union{Expr, Symbol}[]
         argpreserve = Union{Symbol}[]
@@ -349,13 +359,17 @@ end
 
         for (T, expr) in zip(argtypes, argexprs)
             T′ = eltype(T)
+            if T′ == Nothing
+                continue
+            end
             ccexpr = Expr(:., expr, QuoteNode(:val))
             ispassbyref = passbyref(T′)
+            llvmT = convert(LLVMType, T′, ctx)
             if ispassbyref
+                llvmT = convert(LLVMType, Int, ctx)
                 T′ = Ptr{T′}
                 ccexpr = byref(ccexpr, T′)
             end 
-            llvmT = convert(LLVMType, T′, ctx, allow_boxed=true)
 
             push!(types, T′)
             push!(T_args, llvmT)
@@ -363,9 +377,19 @@ end
 
             if T <: Const
             elseif T <: Active
-                # XXX: Assuming FloatingPoint for now
-                push!(sret_types, T′)
-                push!(T_sret, llvmT)
+                et = eltype(T)
+                push!(sret_types, et)
+                # push!(T_JuliaSRet, llvmT)
+                push!(T_JuliaSRet, convert(LLVMType, et, ctx))
+                if ispassbyref
+                    #ccexpr = :(zero($et))
+                    #ccexpr = byref(ccexpr, T′)
+                    #push!(types, T′)
+                    #push!(T_args, llvmT)
+                    #push!(ccexprs, ccexpr)
+                else
+                    push!(T_EnzymeSRet, llvmT)
+                end
             elseif T <: Duplicated || T <: DuplicatedNoNeed
                 ccexpr =  Expr(:., expr, QuoteNode(:dval))
                 if ispassbyref 
@@ -387,36 +411,102 @@ end
         end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
-        # create sret
-        needs_sret = !isempty(T_sret)
-
-        if needs_sret
-            ret = LLVM.StructType(T_sret)
+        if !isempty(T_EnzymeSRet)
+            ret = LLVM.StructType(T_EnzymeSRet)
         else
             ret = T_void
         end
 
-        ft = LLVM.FunctionType(ret, T_args)
-
         pushfirst!(T_args, convert(LLVMType, Int, ctx))
-        if needs_sret 
+        if !isempty(sret_types)
             pushfirst!(T_args, convert(LLVMType, Int, ctx))
         end
 
         llvm_f, _ = LLVM.Interop.create_function(T_void, T_args)
         mod = LLVM.parent(llvm_f)
+        dl = datalayout(mod)
 
         params = [parameters(llvm_f)...]
-        target =  needs_sret ? 2 : 1
+        target =  !isempty(sret_types) ? 2 : 1
+
+        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+
+        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8, ctx), LLVM.IntType(64, ctx), LLVM.IntType(1, ctx)])
+        ms = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
         LLVM.Builder(ctx) do builder
             entry = BasicBlock(llvm_f, "entry", ctx)
             position!(builder, entry)
 
+            realparms = LLVM.Value[]
+            i = target+1
+
+            if !isempty(T_JuliaSRet) 
+                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet)))
+            end
+
+            activeNum = 0
+            for T in argtypes
+                T′ = eltype(T)
+                ispassbyref = passbyref(T′)
+                push!(realparms, params[i])
+                i+=1
+                if T <: Const
+                elseif T <: Active
+                    if ispassbyref
+                        #push!(realparms, params[i])
+                        #store!(builder, params[i], gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
+                        
+                        # llvmT = convert(LLVMType, T′, ctx, allow_boxed=true)
+                        # @show llvmT
+                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)])
+                        # ptr = load!(builder, ptr)
+                        # @show ptr
+                        cst = pointercast!(builder, ptr, ptr8)
+                        push!(realparms, ptr)
+
+                        cparms = LLVM.Value[cst, 
+                        LLVM.ConstantInt(LLVM.IntType(8, ctx), 0),
+                        LLVM.ConstantInt(LLVM.IntType(64, ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
+                        LLVM.ConstantInt(LLVM.IntType(1, ctx), 0)]
+                        call!(builder, ms, cparms)
+                        # i+=1
+                    end
+                    activeNum+=1
+                elseif T <: Duplicated || T <: DuplicatedNoNeed
+                    push!(realparms, params[i])
+                    i+=1
+                end
+            end
+
+            # Primal Return type
+            if i <= size(params, 1)
+                push!(realparms, params[i])
+            end
+
+
+            E_types = LLVM.LLVMType[]
+            for p in realparms
+                push!(E_types, LLVM.llvmtype(p))
+            end
+            ft = LLVM.FunctionType(ret, E_types)
+
             ptr = inttoptr!(builder, params[target], LLVM.PointerType(ft))
-            val = call!(builder, ptr, params[target+1:end])
-            if needs_sret 
-                sret = inttoptr!(builder, params[1], LLVM.PointerType(ret))
-                store!(builder, val, sret)
+            val = call!(builder, ptr, realparms)
+            if !isempty(T_JuliaSRet) 
+                activeNum = 0
+                returnNum = 0
+                for T in argtypes
+                    T′ = eltype(T)
+                    ispassbyref = passbyref(T′)
+                    if T <: Active
+                        if !ispassbyref
+                            eval = extract_value!(builder, val, returnNum)
+                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
+                            returnNum+=1
+                        end
+                        activeNum+=1
+                    end
+                end
             end
             ret!(builder)
         end
@@ -424,7 +514,7 @@ end
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
-        if needs_sret 
+        if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta
                 sret = Ref{$(Tuple{sret_types...})}()

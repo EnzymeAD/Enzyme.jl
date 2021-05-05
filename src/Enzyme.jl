@@ -9,7 +9,7 @@ abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
 end
-struct Active{T<:AbstractFloat} <: Annotation{T}
+struct Active{T} <: Annotation{T}
     val::T
 end
 Active(i::Integer) = Active(float(i))
