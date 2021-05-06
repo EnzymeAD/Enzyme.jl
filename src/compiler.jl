@@ -130,26 +130,35 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     primal = job.source
     rt = Core.Compiler.return_type(primal.f, primal.tt)
     ctx     = context(mod)
-    rettype = convert(LLVMType, rt, ctx)
     dl      = string(LLVM.datalayout(mod))
 
     tt = [adjoint.tt.parameters...,]
 
-    argClassification = GPUCompiler.classify_arguments(job, primalf)
-    filter!(argClassification) do arg
-        arg.cc != GPUCompiler.GHOST
-    end
+    # argClassification = GPUCompiler.classify_arguments(job, primalf)
+    # filter!(argClassification) do arg
+    #     arg.cc != GPUCompiler.GHOST
+    # end
 
     args_activity     = API.CDIFFE_TYPE[]
     uncacheable_args  = Bool[]
     args_typeInfo     = TypeTree[]
     args_known_values = API.IntList[]
 
-    for (T, classification) in zip(tt, argClassification)
+    ctx = LLVM.context(mod)
+
+    for T in tt
+        source_typ = eltype(T)
+        if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            @assert T <: Const
+            continue
+        end
+        isboxed = GPUCompiler.deserves_argbox(source_typ) || isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
+        
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
         elseif T <: Active
-            if classification.cc == GPUCompiler.BITS_REF
+
+            if isboxed
                 push!(args_activity, API.DFT_DUP_ARG)
             else
                 push!(args_activity, API.DFT_OUT_DIFF)
@@ -162,7 +171,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             @assert("illegal annotation type")
         end
         T = eltype(T)
-        if passbyref(T) || T <: Array
+        if isboxed 
             T = Ptr{T}
         end
         typeTree = typetree(T, ctx, dl)
@@ -186,7 +195,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         retType = API.DFT_CONSTANT
     elseif rt <: AbstractFloat
         retType = API.DFT_OUT_DIFF
-    elseif rt == Nothing
+    elseif rt == Nothing || Core.Compiler.isconstType(rt)
         retType = API.DFT_CONSTANT
     else
         error("What even is $rt")
@@ -194,7 +203,12 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
 
     TA = TypeAnalysis(triple(mod)) 
     logic = Logic()
-    retTT = typetree(rt, ctx, dl)
+
+    if rt == Nothing || Core.Compiler.isconstType(rt)
+        retTT = typetree(Nothing, ctx, dl)
+    else
+        retTT = typetree(rt, ctx, dl)
+    end
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -340,64 +354,75 @@ end
 
     LLVM.Interop.JuliaContext() do ctx
         T_void = convert(LLVMType, Nothing, ctx)
+        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+        T_jlvalue = LLVM.StructType(LLVMType[], ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
         # Create Enzyme calling convention
-        T_args = LLVMType[]
-        T_EnzymeSRet = LLVMType[]
-        T_JuliaSRet = LLVMType[]
-        sret_types  = DataType[]
+        T_wrapperargs = LLVMType[] # Arguments of the wrapper
+        T_EnzymeSRet = LLVMType[] # Struct returns of Active variables in the enzyme call
+                                  # Equal to all Active vars passed by value
+        T_JuliaSRet = LLVMType[]  # Struct return of all Active variables (includes all of T_EnzymeSRet)
+        sret_types  = DataType[]  # Julia types of all Active variables
         inputexprs = Union{Expr, Symbol}[]
-        argpreserve = Union{Symbol}[]
-        ccexprs = Union{Expr, Symbol}[]
 
-        function byref(expr, T)
-            val = gensym(:val)
-            push!(inputexprs, :($val = Ref($expr)))
-            push!(argpreserve, val)
-            :(Base.unsafe_convert($T, Base.cconvert($T, $val)))
-        end
+        argpreserve = Union{Symbol}[]   # By ref values we create and need to preserve
+        ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
 
-        for (T, expr) in zip(argtypes, argexprs)
-            T′ = eltype(T)
-            if T′ == Nothing
+        # function byref(expr, T)
+        #     val = gensym(:val)
+        #     push!(inputexprs, :($val = Ref($expr)))
+        #     push!(argpreserve, val)
+        #     :(Base.unsafe_convert($T, Base.cconvert($T, $val)))
+        # end
+
+        for (i, T) in enumerate(argtypes)
+            source_typ = eltype(T)
+            if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+                @assert T <: Const
                 continue
             end
-            ccexpr = Expr(:., expr, QuoteNode(:val))
-            ispassbyref = passbyref(T′)
-            llvmT = convert(LLVMType, T′, ctx)
-            if ispassbyref
-                llvmT = convert(LLVMType, Int, ctx)
-                T′ = Ptr{T′}
-                ccexpr = byref(ccexpr, T′)
-            end 
+            expr = argexprs[i]
 
-            push!(types, T′)
-            push!(T_args, llvmT)
-            push!(ccexprs, ccexpr)
+            isboxed = GPUCompiler.deserves_argbox(source_typ)
+            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ, ctx)
 
-            if T <: Const
-            elseif T <: Active
-                et = eltype(T)
-                push!(sret_types, et)
-                # push!(T_JuliaSRet, llvmT)
-                push!(T_JuliaSRet, convert(LLVMType, et, ctx))
-                if ispassbyref
-                    #ccexpr = :(zero($et))
-                    #ccexpr = byref(ccexpr, T′)
-                    #push!(types, T′)
-                    #push!(T_args, llvmT)
-                    #push!(ccexprs, ccexpr)
-                else
+            argexpr = Expr(:., expr, QuoteNode(:val))
+            if isboxed
+                push!(types, Any)
+            elseif isa(llvmT, LLVM.SequentialType) # et->isAggregateType
+                # push!(types, Core.LLVMPtr{source_typ, 0}) # XXX: AS?
+                push!(types, Base.RefValue{source_typ}) # XXX: AS?
+                argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
+                llvmT = T_prjlvalue # LLVM.PointerType(llvmT)
+            else
+                push!(types, source_typ)
+            end
+            push!(ccexprs, argexpr)
+            push!(T_wrapperargs, llvmT)
+            
+            T <: Const && continue
+
+            if T <: Active
+                # Use deserves_argbox??
+                llvmT = convert(LLVMType, source_typ, ctx)
+                push!(sret_types, source_typ)
+                push!(T_JuliaSRet, llvmT)
+                if !passbyref(source_typ) # XXX: Not consistent
                     push!(T_EnzymeSRet, llvmT)
                 end
             elseif T <: Duplicated || T <: DuplicatedNoNeed
-                ccexpr =  Expr(:., expr, QuoteNode(:dval))
-                if ispassbyref 
-                    ccexpr = byref(ccexpr, T′)
+                argexpr =  Expr(:., expr, QuoteNode(:dval))
+                if isboxed
+                    push!(types, Any)
+                elseif isa(llvmT, LLVM.SequentialType) # et->isAggregateType
+                    push!(types, Ptr{source_typ})
+                    argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
+                else
+                    push!(types, source_typ)
                 end
-                push!(types, T′)
-                push!(T_args, llvmT)
-                push!(ccexprs, ccexpr)
+                push!(ccexprs, argexpr)
+                push!(T_wrapperargs, llvmT)
             else
                 error("calling convention should be annotated, got $T")
             end
@@ -406,7 +431,7 @@ end
         # API.DFT_OUT_DIFF
         if rettype <: AbstractFloat
             push!(types, rettype)
-            push!(T_args, convert(LLVMType, rettype, ctx))
+            push!(T_wrapperargs, convert(LLVMType, rettype, ctx))
             push!(ccexprs, :(one($rettype)))
         end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
@@ -417,22 +442,23 @@ end
             ret = T_void
         end
 
-        pushfirst!(T_args, convert(LLVMType, Int, ctx))
+        # pointer to call
+        pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
+
+        # sret argument
         if !isempty(sret_types)
-            pushfirst!(T_args, convert(LLVMType, Int, ctx))
+            pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
         end
 
-        llvm_f, _ = LLVM.Interop.create_function(T_void, T_args)
+        llvm_f, _ = LLVM.Interop.create_function(T_void, T_wrapperargs)
         mod = LLVM.parent(llvm_f)
         dl = datalayout(mod)
 
         params = [parameters(llvm_f)...]
         target =  !isempty(sret_types) ? 2 : 1
 
-        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
-
         intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8, ctx), LLVM.IntType(64, ctx), LLVM.IntType(1, ctx)])
-        ms = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
+        memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
         LLVM.Builder(ctx) do builder
             entry = BasicBlock(llvm_f, "entry", ctx)
             position!(builder, entry)
@@ -445,9 +471,14 @@ end
             end
 
             activeNum = 0
+
             for T in argtypes
                 T′ = eltype(T)
                 ispassbyref = passbyref(T′)
+
+                if GPUCompiler.isghosttype(T′) || Core.Compiler.isconstType(T′)
+                    continue
+                end
                 push!(realparms, params[i])
                 i+=1
                 if T <: Const
@@ -468,7 +499,7 @@ end
                         LLVM.ConstantInt(LLVM.IntType(8, ctx), 0),
                         LLVM.ConstantInt(LLVM.IntType(64, ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
                         LLVM.ConstantInt(LLVM.IntType(1, ctx), 0)]
-                        call!(builder, ms, cparms)
+                        call!(builder, memsetIntr, cparms)
                         # i+=1
                     end
                     activeNum+=1
@@ -514,11 +545,15 @@ end
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
+        # @show (ir, fn)
+        # @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
+        # @show f, (ccexprs...)
+
         if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta
                 sret = Ref{$(Tuple{sret_types...})}()
-                $(inputexprs...)
+                # $(inputexprs...)
                 GC.@preserve sret $(argpreserve...) begin
                     ptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
                     ptr = Base.unsafe_convert(Ptr{Cvoid}, ptr)
@@ -531,7 +566,7 @@ end
         else 
             quote
                 Base.@_inline_meta
-                $(inputexprs...)
+                # $(inputexprs...)
                 GC.@preserve $(argpreserve...) begin
                     Base.llvmcall(($ir,$fn), Cvoid,
                         $(Tuple{Ptr{Cvoid}, types...}),

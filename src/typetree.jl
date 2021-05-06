@@ -100,8 +100,11 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     return tt
 end
 
-
 function typetree(@nospecialize(T), ctx, dl)
+    if T isa UnionAll || T isa Union || T == Union{}
+        return TypeTree()
+    end
+
     if fieldcount(T) == 0
         error("$T is unknown leaf")
     end
@@ -111,6 +114,10 @@ function typetree(@nospecialize(T), ctx, dl)
         offset  = fieldoffset(T, f)
         subT    = fieldtype(T, f)
         subtree = typetree(subT, ctx, dl)
+
+        if subT isa UnionAll || subT isa Union || subT == Union{}
+            continue
+        end
 
         # Allocated inline so adjust first path
         if subT.isinlinealloc

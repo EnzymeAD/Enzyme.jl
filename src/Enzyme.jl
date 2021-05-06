@@ -9,6 +9,8 @@ abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
 end
+# To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
+Const(::Type{T}) where T = Const{Type{T}}(T)
 struct Active{T} <: Annotation{T}
     val::T
 end

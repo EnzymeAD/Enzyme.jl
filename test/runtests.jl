@@ -173,14 +173,14 @@ end
         end
         out
     end
-    # besselj0(z) = besselj(0, z)
-    # besselj1(z) = besselj(1, z)
-    # autodiff(besselj, Const(0), Active(1.0))
-    # autodiff(besselj, 0, Active(1.0))
-    # @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-    #     test_scalar(besselj0, x)
-    #     test_scalar(besselj1, x)
-    # end
+    besselj0(z) = besselj(0, z)
+    besselj1(z) = besselj(1, z)
+    autodiff(besselj, Const(0), Active(1.0))
+    autodiff(besselj, 0, Active(1.0))
+    @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
+        test_scalar(besselj0, x)
+        test_scalar(besselj1, x)
+    end
 
 end
 
