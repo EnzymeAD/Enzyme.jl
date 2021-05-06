@@ -95,23 +95,6 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 @debug "Decoding arguments to jl_apply_generic failed" inst bb=LLVM.parent(inst)
                 push!(errors, (DYNAMIC_CALL, bt, nothing))
             end
-
-        # detect calls to undefined functions
-        elseif isdeclaration(dest) && intrinsic_id(dest) == 0 && !isintrinsic(job, fn)
-            # figure out if the function lives in the Julia runtime library
-            if libjulia[] == C_NULL
-                paths = filter(Libdl.dllist()) do path
-                    name = splitdir(path)[2]
-                    startswith(name, "libjulia")
-                end
-                libjulia[] = Libdl.dlopen(first(paths))
-            end
-
-            if Libdl.dlsym_e(libjulia[], fn) != C_NULL
-                push!(errors, (RUNTIME_FUNCTION, bt, LLVM.name(dest)))
-            else
-                push!(errors, (UNKNOWN_FUNCTION, bt, LLVM.name(dest)))
-            end
         end
 
     elseif isa(dest, InlineAsm)
@@ -119,28 +102,68 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
 
     elseif isa(dest, ConstantExpr)
         # Enzyme should be able to handle these
-    #     # detect calls to literal pointers
-    #     if occursin("inttoptr", string(dest))
-    #         # extract the literal pointer
-    #         ptr_arg = first(operands(dest))
-    #         GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
-    #         ptr_val = convert(Int, ptr_arg)
-    #         ptr = Ptr{Cvoid}(ptr_val)
+        # detect calls to literal pointers
+        if occursin("inttoptr", string(dest))
+            # extract the literal pointer
+            ptr_arg = first(operands(dest))
+            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+            ptr_val = convert(Int, ptr_arg)
+            ptr = Ptr{Cvoid}(ptr_val)
 
-    #         # look it up in the Julia JIT cache
-    #         frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
-    #         if length(frames) >= 1
-    #             GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
-    #             if VERSION >= v"1.4.0-DEV.123"
-    #                 fn, file, line, linfo, fromC, inlined = last(frames)
-    #             else
-    #                 fn, file, line, linfo, fromC, inlined, ip = last(frames)
-    #             end
-    #             push!(errors, (POINTER_FUNCTION, bt, fn))
-    #         else
-    #             push!(errors, (POINTER_FUNCTION, bt, nothing))
-    #         end
-    #     end
+            # look it up in the Julia JIT cache
+            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+
+            if length(frames) >= 1
+                if VERSION >= v"1.4.0-DEV.123"
+                    fn, file, line, linfo, fromC, inlined = last(frames)
+                else
+                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
+                end
+
+                # @show fn, file, line, linfo, fromC, inlined, frames, l
+                fn = string(fn)
+                if ptr == cglobal(:jl_alloc_array_1d)
+                    fn = "jl_alloc_array_1d"
+                end
+                if ptr == cglobal(:jl_alloc_array_2d)
+                    fn = "jl_alloc_array_2d"
+                end
+                if ptr == cglobal(:jl_alloc_array_3d)
+                    fn = "jl_alloc_array_3d"
+                end
+                if ptr == cglobal(:jl_new_array)
+                    fn = "jl_new_array"
+                end
+                if ptr == cglobal(:jl_array_copy)
+                    fn = "jl_array_copy"
+                end
+                if ptr == cglobal(:erf)
+                    fn = "erf"
+                end
+                # if ptr == cglobal(:erfi)
+                #     fn = "erfi"
+                # end
+                # if ptr == cglobal(:erfc)
+                #     fn = "erfc"
+                # end
+                # ptr == reinterpret(UInt64, cglobal(:jl_alloc_array_1d))#
+                # @show fn, fromC, ptr, cglobal(:jl_alloc_array_2d), ptr == cglobal(:jl_alloc_array_2d)
+                # @show fn, fromC, ptr, reinterpret(UInt64, cglobal(:jl_alloc_array_1d)), reinterpret(UInt64, cglobal(:jl_alloc_array_2d)), reinterpret(UInt64, cglobal(:jl_alloc_array_3d))
+                if length(fn) > 1 && fromC 
+                    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                    if lfn == C_NULL
+                        lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
+                    end
+                    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                else
+                    # @show inst, fn
+                end
+            #    push!(errors, (POINTER_FUNCTION, bt, fn))
+            #else
+            #    push!(errors, (POINTER_FUNCTION, bt, nothing))
+            end
+        end
     end
 
     return errors

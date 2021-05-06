@@ -7,7 +7,21 @@ Cassette.@context EnzymeCtx
 ###
 @inline Cassette.overdub(::EnzymeCtx, ::typeof(Core.kwfunc), f) = return Core.kwfunc(f)
 @inline Cassette.overdub(::EnzymeCtx, ::typeof(Core.apply_type), args...) = return Core.apply_type(args...)
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(Base.OverflowError), args...) = return Base.OverflowError(args...)
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(Base.DomainError), args...) = return Base.DomainError(args...)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(StaticArrays.Size), x::Type{<:AbstractArray{<:Any, N}}) where {N} = return StaticArrays.Size(x)
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Math.nan_dom_err), out, x)
+    isnan(out) & !isnan(x) ? error("NaN result for non-NaN input.") : out
+end
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.factorial_lookup), n, table, lim)
+    n < 0 && error("n must not be negative")
+    n > lim && error("n is to large")
+    n == 0 && return one(n)
+    @inbounds f = table[n]
+    return oftype(n, f)
+end
 
 function ir_element(x, code::Vector)
     while isa(x, Core.SSAValue)

@@ -89,12 +89,12 @@ for op in (copysign,)
 end
 
 for op in (asin,tanh)
-    for (T, llvm_t) in ((Float32, "float"), (Float64, "double"))
+    for (T, llvm_t, suffix) in ((Float32, "float", "f"), (Float64, "double", ""))
         mod = """
-                declare $llvm_t @$(nameof(op))($llvm_t)
+                declare $llvm_t @$(nameof(op))$suffix($llvm_t)
                
                 define $llvm_t @entry($llvm_t) #0 {
-                    %val = call $llvm_t @$op($llvm_t %0)
+                    %val = call $llvm_t @$op$suffix($llvm_t %0)
                     ret $llvm_t %val
                 }
                 attributes #0 = { alwaysinline }
@@ -146,5 +146,5 @@ end
 
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asin, Float32, (Float32,), x)
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asinf, Float32, (Float32,), x)
 end # module

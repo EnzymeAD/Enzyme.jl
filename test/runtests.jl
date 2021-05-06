@@ -27,6 +27,8 @@ end
     # @test thunk_a.adjoint !== thunk_split.adjoint
 end
 
+include("abi.jl")
+
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 
@@ -158,36 +160,35 @@ end
     @test fd ≈ first(autodiff(foo, Active(x)))
 end
 
-@testset "Bessel" begin
-    """
-        J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
-    """
-    function besselj(ν, z, atol=1e-8)
-        k = 0
-        s = (z/2)^ν / factorial(ν)
-        out = s
-        while abs(s) > atol
-            k += 1
-            s *= (-1) / k / (k+ν) * (z/2)^2
-            out += s
-        end
-        out
+"""
+    J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
+"""
+function besselj(ν, z, atol=1e-8)
+    k = 0
+    s = (z/2)^ν / factorial(ν)
+    out = s
+    while abs(s) > atol
+        k += 1
+        s *= (-1) / k / (k+ν) * (z/2)^2
+        out += s
     end
-    besselj0(z) = besselj(0, z)
-    besselj1(z) = besselj(1, z)
+    out
+end
+besselj0(z) = besselj(0, z)
+besselj1(z) = besselj(1, z)
+
+@testset "Bessel" begin
     autodiff(besselj, Const(0), Active(1.0))
     autodiff(besselj, 0, Active(1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-        test_scalar(besselj0, x)
-        test_scalar(besselj1, x)
+        test_scalar(besselj0, x, rtol=1e-5, atol=1e-5)
+        test_scalar(besselj1, x, rtol=1e-5, atol=1e-5)
     end
 
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-# @testset "Packages" begin
-#     include("packages/specialfunctions.jl")
-# end
+include("packages/specialfunctions.jl")
 
 @testset "DiffTest" begin
     include("DiffTests.jl")

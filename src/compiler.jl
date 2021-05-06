@@ -242,10 +242,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
             #=additionalArg=#C_NULL, typeInfo,
+            # uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
         augmented_primalf = nothing
     end
-    
     return adjointf, augmented_primalf
 end
 
@@ -265,7 +265,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primal_job = similar(parent_job, job.source)
     end
     mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
-
+    check_ir(job, mod)
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
         target_machine = tm[]
     else
@@ -548,7 +548,6 @@ end
         # @show (ir, fn)
         # @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
         # @show f, (ccexprs...)
-
         if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta
@@ -749,6 +748,6 @@ end
 end
 
 include("compiler/reflection.jl")
-# include("compiler/validation.jl")
+include("compiler/validation.jl")
 
 end
