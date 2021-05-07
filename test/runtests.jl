@@ -11,6 +11,18 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
 end
 
 
+@testset "Advanced array tests" begin
+
+    function arsum2(f::Array{T}) where T
+        return sum(f)
+    end
+    inp = Float64[1.0, 2.0]
+    dinp = Float64[0.0, 0.0]
+    autodiff(arsum2, Duplicated(inp, dinp))
+    @test inp ≈ Float64[1.0, 2.0]
+    @test dinp ≈ Float64[1.0, 1.0]
+end
+
 @testset "Internal tests" begin
     f(x) = 1.0 + x
     thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
@@ -108,18 +120,6 @@ end
     inp = Float64[1.0, 2.0]
     dinp = Float64[0.0, 0.0]
     autodiff(arsum, Duplicated(inp, dinp))
-    @test inp ≈ Float64[1.0, 2.0]
-    @test dinp ≈ Float64[1.0, 1.0]
-end
-
-@testset "Advanced array tests" begin
-
-    function arsum2(f::Array{T}) where T
-        return sum(f)
-    end
-    inp = Float64[1.0, 2.0]
-    dinp = Float64[0.0, 0.0]
-    autodiff(arsum2, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
 end

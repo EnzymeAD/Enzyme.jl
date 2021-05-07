@@ -11,9 +11,9 @@ Cassette.@context EnzymeCtx
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(Base.DomainError), args...) = return Base.DomainError(args...)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(StaticArrays.Size), x::Type{<:AbstractArray{<:Any, N}}) where {N} = return StaticArrays.Size(x)
 
-@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Math.nan_dom_err), out, x)
-    isnan(out) & !isnan(x) ? error("NaN result for non-NaN input.") : out
-end
+# @inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Math.nan_dom_err), out, x)
+#     isnan(out) & !isnan(x) ? error("NaN result for non-NaN input.") : out
+# end
 
 @inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.factorial_lookup), n, table, lim)
     n < 0 && error("n must not be negative")
@@ -21,6 +21,33 @@ end
     n == 0 && return one(n)
     @inbounds f = table[n]
     return oftype(n, f)
+end
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Checked.throw_overflowerr_binaryop), op, x, y)
+    Base.@_inline_meta
+    error("overflowed for type")
+    # throw(OverflowError(Base.invokelatest(string, x, " ", op, " ", y, " overflowed for type ", typeof(x)))))
+end
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Checked.checked_add), x, y)
+    Base.@_inline_meta
+    z, b = Base.Checked.add_with_overflow(x, y)
+    b && error("overflowed + for type")
+    z
+end
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Checked.checked_sub), x, y)
+    Base.@_inline_meta
+    z, b = Base.Checked.sub_with_overflow(x, y)
+    b && error("overflowed - for type")
+    z
+end
+
+@inline function Cassette.overdub(::EnzymeCtx, ::typeof(Base.Checked.checked_mul), x, y)
+    Base.@_inline_meta
+    z, b = Base.Checked.mul_with_overflow(x, y)
+    b && error("overflowed * for type")
+    z
 end
 
 function ir_element(x, code::Vector)

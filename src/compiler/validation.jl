@@ -21,7 +21,7 @@ function check_ir!(job, errors, mod::LLVM.Module)
 end
 
 function check_ir!(job, errors, f::LLVM.Function)
-    for bb in blocks(f), inst in instructions(bb)
+    for bb in blocks(f), inst in collect(instructions(bb))
         if isa(inst, LLVM.CallInst)
             check_ir!(job, errors, inst)
         end
@@ -95,6 +95,23 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 @debug "Decoding arguments to jl_apply_generic failed" inst bb=LLVM.parent(inst)
                 push!(errors, (DYNAMIC_CALL, bt, nothing))
             end
+        elseif fn == "gpu_malloc"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
+
+            b = Builder(ctx)
+            position!(b, inst)
+
+            mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
+            if mfn == C_NULL
+                ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
+            end
+            mfn2 = LLVM.Function(mfn)
+            nval = ptrtoint!(b, call!(b, mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), llvmtype(inst))
+            replace_uses!(inst, nval)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
 
     elseif isa(dest, InlineAsm)
@@ -139,6 +156,9 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 end
                 if ptr == cglobal(:erf)
                     fn = "erf"
+                end
+                if ptr == cglobal(:malloc)
+                    fn = "malloc"
                 end
                 # if ptr == cglobal(:erfi)
                 #     fn = "erfi"

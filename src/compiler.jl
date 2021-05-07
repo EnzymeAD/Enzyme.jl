@@ -47,7 +47,7 @@ end
 module Runtime
     # the runtime library
     signal_exception() = return
-    malloc(sz) = Base.Libc.malloc(sz)
+    malloc(sz) = ccall("extern malloc", llvmcall, Csize_t, (Csize_t,), sz)
     report_oom(sz) = return
     report_exception(ex) = return
     report_exception_name(ex) = return
@@ -108,12 +108,28 @@ end
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
     fns = functions(mod)
-    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception"]
+    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64"]
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
         end
     end
+
+    if haskey(fns, "julia.ptls_states")
+        fn = fns["julia.ptls_states"]
+        push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0, context(mod)))
+        # push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0, context(mod)))
+    end
+
+
+    for boxfn in ["jl_box_int64"]
+        if haskey(fns, boxfn)
+            fn = fns[boxfn]
+            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0, context(mod)))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0, context(mod)))
+        end
+    end
+
 end
 
 function passbyref(T::DataType)
@@ -284,11 +300,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    # Run early pipeline
-    optimize!(mod, target_machine)
-
     # annotate
     annotate!(mod)
+
+    # Run early pipeline
+    optimize!(mod, target_machine)
 
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)

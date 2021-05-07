@@ -3,6 +3,7 @@ module API
 import LLVM.API: LLVMValueRef, LLVMModuleRef, LLVMTypeRef, LLVMContextRef
 using Enzyme_jll
 using Libdl
+using LLVM
 using CEnum
 
 const EnzymeLogicRef = Ptr{Cvoid}
@@ -168,14 +169,17 @@ function EnzymeGetCLBool(name)
 end
 # void EnzymeSetCLInteger(void *, int64_t);
 
-# function printperf!(val)
-#     ptr = cglobal((:EnzymePrintPerf, libEnzyme))
-#     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
-# end
+function printperf!(val)
+    ptr = cglobal((:EnzymePrintPerf, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
 
 function EnzymeRemoveTrivialAtomicIncrements(func)
     ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
 end
 
+function EnzymeAddAttributorLegacyPass(PM)
+    ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
+end
 
 end

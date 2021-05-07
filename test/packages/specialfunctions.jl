@@ -17,8 +17,9 @@ using SpecialFunctions
     test_scalar(SpecialFunctions.besselj0, x)
     test_scalar(SpecialFunctions.besselj1, x)
     # DomainError potentially thrown causing GC
-    # test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
+    test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
 
+    # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
     # test_scalar(SpecialFunctions.dawson, x)
 
     # Requires derivative of digamma/trigamma
@@ -28,15 +29,15 @@ using SpecialFunctions
 
     if x isa Real && 0 < x < 1
         # Requires GC
-        # test_scalar(SpecialFunctions.erfinv, x)
-        # test_scalar(SpecialFunctions.erfcinv, x)
+        test_scalar(SpecialFunctions.erfinv, x)
+        test_scalar(SpecialFunctions.erfcinv, x)
     end
 
     if x isa Real && x > 0 || x isa Complex
         test_scalar(SpecialFunctions.bessely0, x)
         test_scalar(SpecialFunctions.bessely1, x)
         # DomainError potentially thrown causing GC
-        # test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
+        test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
 
         # No derivative defined in Enzyme for libc atm
         # test_scalar(SpecialFunctions.gamma, x)
