@@ -112,6 +112,111 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
             nval = ptrtoint!(b, call!(b, mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), llvmtype(inst))
             replace_uses!(inst, nval)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
+        elseif fn == "jl_load_and_lookup"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
+
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(flib, LLVM.ConstantExpr)
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+            end
+            if isa(flib, LLVM.GlobalVariable)
+                flib = LLVM.initializer(flib)
+            end
+            if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8, ctx)
+                flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
+            end
+
+            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname, LLVM.ConstantExpr)
+                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            end
+            if isa(fname, LLVM.GlobalVariable)
+                fname = LLVM.initializer(fname)
+            end
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+            end
+            hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
+            if isa(hnd, LLVM.GlobalVariable)
+                hnd = LLVM.name(hnd)
+            end
+
+            @show flib, fname, hnd
+            flush(stdout)
+            flush(stderr)
+
+            if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
+                push!(errors, ("jl_load_and_lookup", bt, nothing))
+                return
+            end
+            # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
+            # @show res
+            flush(stdout)
+            flush(stderr)
+            push!(errors, ("jl_load_and_lookup", bt, nothing))
+        elseif fn == "jl_lazy_load_and_lookup"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
+
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(flib, LLVM.LoadInst)
+                op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+                if isa(op, LLVM.ConstantExpr)
+                    op1 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
+                    if isa(op1, LLVM.ConstantExpr)
+                        op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
+                        if isa(op2, ConstantInt)
+                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
+                            ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
+                            flib = Base.unsafe_pointer_to_objref(ld)
+                        end
+                    end
+                end
+            end
+
+            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname, LLVM.ConstantExpr)
+                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            end
+            if isa(fname, LLVM.GlobalVariable)
+                fname = LLVM.initializer(fname)
+            end
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+            end
+
+            if !isa(fname, String) || !isa(flib, String)
+                push!(errors, ("jl_lazy_load_and_lookup", bt, nothing))
+                return
+            end
+            res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+            replaceWith = LLVM.ConstantInt(LLVM.IntType(64, ctx), reinterpret(UInt64, res))
+            for u in LLVM.uses(inst)
+                st = LLVM.user(u)
+                if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                    ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                    for u in LLVM.uses(ptr)
+                        ld = LLVM.user(u)
+                        if isa(ld, LLVM.LoadInst)
+                            b = Builder(ctx)
+                            position!(b, ld)
+                            replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                        end
+                    end
+                end
+            end
+            
+            b = Builder(ctx)
+            position!(b, inst)
+            replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+
+            @show flib, fname, res
+            # flush(stdout)
+            # flush(stderr)
         end
 
     elseif isa(dest, InlineAsm)
@@ -154,12 +259,16 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 if ptr == cglobal(:jl_array_copy)
                     fn = "jl_array_copy"
                 end
+                if ptr == cglobal(:jl_alloc_string)
+                    fn = "jl_alloc_string"
+                end
                 if ptr == cglobal(:erf)
                     fn = "erf"
                 end
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end
+                
                 # if ptr == cglobal(:erfi)
                 #     fn = "erfi"
                 # end
