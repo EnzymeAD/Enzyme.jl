@@ -65,6 +65,9 @@ function optimize!(mod::LLVM.Module, tm)
         instruction_combining!(pm) # Extra for Enzyme
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
+        # @show "omod", mod
+        # flush(stdout)
+        # flush(stderr)
     end
 end
 

@@ -1,4 +1,5 @@
 using LLVM
+using ObjectFile
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
@@ -13,20 +14,27 @@ function check_ir(job, args...)
 end
 
 function check_ir!(job, errors, mod::LLVM.Module)
-    for f in functions(mod)
-        check_ir!(job, errors, f)
+    # @show "premod", mod
+    # flush(stdout)
+    # flush(stderr)
+    imported = Set(String[])
+    for f in collect(functions(mod))
+        check_ir!(job, errors, imported, f)
     end
 
     return errors
 end
 
-function check_ir!(job, errors, f::LLVM.Function)
-    for bb in blocks(f), inst in collect(instructions(bb))
+function check_ir!(job, errors, imported, f::LLVM.Function)
+    calls = []
+    for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
-            check_ir!(job, errors, inst)
+            push!(calls, inst)
         end
     end
-
+    for inst in calls
+        check_ir!(job, errors, imported, inst)
+    end
     return errors
 end
 
@@ -34,7 +42,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, inst::LLVM.CallInst)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -192,31 +200,93 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 push!(errors, ("jl_lazy_load_and_lookup", bt, nothing))
                 return
             end
-            res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
-            replaceWith = LLVM.ConstantInt(LLVM.IntType(64, ctx), reinterpret(UInt64, res))
-            for u in LLVM.uses(inst)
-                st = LLVM.user(u)
-                if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
-                    ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
-                    for u in LLVM.uses(ptr)
-                        ld = LLVM.user(u)
-                        if isa(ld, LLVM.LoadInst)
-                            b = Builder(ctx)
-                            position!(b, ld)
-                            replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+
+            data = open(flib, "r") do io
+                lib = readmeta(io)
+                sections = Sections(lib)
+                llvmbc = read(findfirst(sections, ".llvmbc"))
+                return llvmbc
+            end
+
+            found = false
+            if data !== nothing
+                inmod = parse(LLVM.Module, data, ctx)
+                found = haskey(functions(inmod), fname)
+            end
+
+            if found
+                if !(fn in imported)
+                    internalize = String[]
+                    for fn in functions(inmod)
+                        if !isempty(LLVM.blocks(fn))
+                            push!(internalize, name(fn))
+                        end
+                    end
+                    for g in globals(inmod)
+                        linkage!(g, LLVM.API.LLVMExternalLinkage)
+                    end
+                    # override libdevice's triple and datalayout to avoid warnings
+                    triple!(inmod, triple(mod))
+                    datalayout!(inmod, datalayout(mod))
+                    # @show mod
+                    # @show inmod
+                    # flush(stdout)
+                    # flush(stderr)
+                    GPUCompiler.link_library!(mod, inmod)
+                    for n in internalize
+                        linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
+                    end
+                    push!(imported, fn)
+                end
+                # @show mod
+                # flush(stdout)
+                # flush(stderr)
+                replaceWith = functions(mod)[fname]
+
+                for u in LLVM.uses(inst)
+                    st = LLVM.user(u)
+                    if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                        ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                        for u in LLVM.uses(ptr)
+                            ld = LLVM.user(u)
+                            if isa(ld, LLVM.LoadInst)
+                                b = Builder(ctx)
+                                position!(b, ld)
+                                replace_uses!(ld, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                            end
                         end
                     end
                 end
-            end
-            
-            b = Builder(ctx)
-            position!(b, inst)
-            replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
-            LLVM.API.LLVMInstructionEraseFromParent(inst)
+                
+                b = Builder(ctx)
 
-            @show flib, fname, res
-            # flush(stdout)
-            # flush(stderr)
+                position!(b, inst)
+                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+
+            else
+                res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(64, ctx), reinterpret(UInt64, res))
+                for u in LLVM.uses(inst)
+                    st = LLVM.user(u)
+                    if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                        ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                        for u in LLVM.uses(ptr)
+                            ld = LLVM.user(u)
+                            if isa(ld, LLVM.LoadInst)
+                                b = Builder(ctx)
+                                position!(b, ld)
+                                replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                            end
+                        end
+                    end
+                end
+                
+                b = Builder(ctx)
+                position!(b, inst)
+                replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            end
         end
 
     elseif isa(dest, InlineAsm)

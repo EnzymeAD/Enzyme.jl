@@ -336,7 +336,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
     end
-
     adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0, context(mod)))
     if augmented_primalf === nothing
@@ -622,6 +621,7 @@ function resolver(name, ctx)
         C_NULL
     end
     if ptr === C_NULL
+        @show name
         error("Enzyme: Symbol lookup failed. Aborting!")
     end
 
@@ -638,7 +638,6 @@ function _link(job, (mod, adjoint_name, primal_name))
 
     # Now invoke the JIT
     orc = jit[]
-
     jitted_mod = compile!(orc, mod, @cfunction(resolver, UInt64, (Cstring, Ptr{Cvoid})))
 
     adjoint_addr = addressin(orc, jitted_mod, adjoint_name)
@@ -691,7 +690,6 @@ const cache = Dict{UInt, Dict{UInt, Any}}()
 
 function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Function, TT<:Type, Split}
     primal, adjoint = fspec(f, tt)
-
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
     # This is counter-intuitive since we would expect the cache to be split

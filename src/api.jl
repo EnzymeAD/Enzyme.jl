@@ -174,6 +174,21 @@ function printperf!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function printtype!(val)
+    ptr = cglobal((:EnzymePrintType, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function maxtypeoffset!(val)
+    ptr = cglobal((:MaxTypeOffset, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, Int64), ptr, val)
+end
+
+function looseTypeAnalysis!(val)
+    ptr = cglobal((:looseTypeAnalysis, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function EnzymeRemoveTrivialAtomicIncrements(func)
     ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
 end
