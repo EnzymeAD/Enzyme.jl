@@ -2,9 +2,11 @@ using SpecialFunctions
 
 # From https://github.com/JuliaDiff/ChainRules.jl/blob/02e7857e34b5c01067a288262f69cfcb9fce069b/test/rulesets/packages/SpecialFunctions.jl#L1
 
-@testset "SpecialFunctions" for x in (1, -1, 0, 0.5, 10, -17.1) #, 1.5 + 0.7im)
-    test_scalar(SpecialFunctions.erf, x)
-    test_scalar(SpecialFunctions.erfc, x)
+@testset "SpecialFunctions" for x in (1, -1, 0, 0.5, 10, -17.1, 1.5 + 0.7im)
+    if x isa Real
+        test_scalar(SpecialFunctions.erf, x)
+        test_scalar(SpecialFunctions.erfc, x)
+    end
 
     # Handled by openspec non defaultly done
     # test_scalar(SpecialFunctions.erfi, x)
@@ -13,11 +15,12 @@ using SpecialFunctions
     # test_scalar(SpecialFunctions.airyaiprime, x)
     # test_scalar(SpecialFunctions.airybi, x)
     # test_scalar(SpecialFunctions.airybiprime, x)
-
-    test_scalar(SpecialFunctions.besselj0, x)
-    test_scalar(SpecialFunctions.besselj1, x)
-    # DomainError potentially thrown causing GC
-    test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
+    if x isa Real
+        test_scalar(SpecialFunctions.besselj0, x)
+        test_scalar(SpecialFunctions.besselj1, x)
+        # DomainError potentially thrown causing GC
+        test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
+    end
 
     # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
     # test_scalar(SpecialFunctions.dawson, x)
@@ -33,7 +36,7 @@ using SpecialFunctions
         test_scalar(SpecialFunctions.erfcinv, x)
     end
 
-    if x isa Real && x > 0 || x isa Complex
+    if x isa Real && x > 0
         test_scalar(SpecialFunctions.bessely0, x)
         test_scalar(SpecialFunctions.bessely1, x)
         # DomainError potentially thrown causing GC

@@ -13,6 +13,10 @@ using Test
     res = autodiff(f, Const(Int))
     @test res === nothing
 
+
+    cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
+    @test cres ≈ 1.0 + 0.0im
+
     unused(_, y) = y
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
