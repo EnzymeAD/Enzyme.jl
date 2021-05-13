@@ -35,9 +35,21 @@ include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
 
-annotate() = ()
-annotate(arg::Annotation, args...) = (arg, annotate(args...)...)
-annotate(arg, args...) = (Const(arg), annotate(args...)...)
+# @inline annotate() = ()
+# @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
+# @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
+
+@inline function annotate(args::Vararg{Any, N}) where N
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        arg = @inbounds args[i]
+        if arg isa Annotation
+            return arg
+        else
+            return Const(arg)
+        end
+    end
+end
 
 prepare_cc() = ()
 prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)

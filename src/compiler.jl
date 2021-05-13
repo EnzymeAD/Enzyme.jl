@@ -162,13 +162,22 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
 
     ctx = LLVM.context(mod)
 
+    @show mod, tt
+    @show primalf
+    flush(stderr)
+    flush(stdout)
+
     for T in tt
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
             continue
         end
-        isboxed = GPUCompiler.deserves_argbox(source_typ) || isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
+        isboxed = GPUCompiler.deserves_argbox(source_typ)
+
+        if !isboxed && nameof(source_typ.name.module) != :CUDA
+            isboxed |= isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
+        end
         
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
@@ -186,11 +195,12 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         else 
             @assert("illegal annotation type")
         end
-        T = eltype(T)
+        T = source_typ
         if isboxed 
             T = Ptr{T}
         end
         typeTree = typetree(T, ctx, dl)
+        @show T, string(typeTree)
         push!(args_typeInfo, typeTree)
         if split
             push!(uncacheable_args, true)
@@ -367,6 +377,10 @@ end
 
     types = DataType[]
 
+    if rettype === Union{}
+        error("return type is Union{}, giving up.")
+    end
+
     LLVM.Interop.JuliaContext() do ctx
         T_void = convert(LLVMType, Nothing, ctx)
         ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
@@ -401,11 +415,10 @@ end
 
             isboxed = GPUCompiler.deserves_argbox(source_typ)
             llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ, ctx)
-
             argexpr = Expr(:., expr, QuoteNode(:val))
             if isboxed
                 push!(types, Any)
-            elseif isa(llvmT, LLVM.SequentialType) # et->isAggregateType
+            elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA # et->isAggregateType
                 # push!(types, Core.LLVMPtr{source_typ, 0}) # XXX: AS?
                 push!(types, Base.RefValue{source_typ}) # XXX: AS?
                 argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
@@ -413,6 +426,9 @@ end
             else
                 push!(types, source_typ)
             end
+
+            @show source_typ, llvmT, isboxed
+
             push!(ccexprs, argexpr)
             push!(T_wrapperargs, llvmT)
             
@@ -430,7 +446,7 @@ end
                 argexpr =  Expr(:., expr, QuoteNode(:dval))
                 if isboxed
                     push!(types, Any)
-                elseif isa(llvmT, LLVM.SequentialType) # et->isAggregateType
+                elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA# et->isAggregateType
                     push!(types, Ptr{source_typ})
                     argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
                 else
@@ -560,9 +576,11 @@ end
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
-        # @show (ir, fn)
-        # @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
-        # @show f, (ccexprs...)
+        @show (ir, fn)
+        @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
+        @show f, (ccexprs...)
+        flush(stderr)
+        flush(stdout)
         if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta
