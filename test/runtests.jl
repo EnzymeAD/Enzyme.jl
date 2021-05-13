@@ -10,18 +10,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
 end
 
-
-@testset "Advanced array tests" begin
-
-    function arsum2(f::Array{T}) where T
-        return sum(f)
-    end
-    inp = Float64[1.0, 2.0]
-    dinp = Float64[0.0, 0.0]
-    autodiff(arsum2, Duplicated(inp, dinp))
-    @test inp ≈ Float64[1.0, 2.0]
-    @test dinp ≈ Float64[1.0, 1.0]
-end
+include("abi.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
@@ -39,7 +28,6 @@ end
     # @test thunk_a.adjoint !== thunk_split.adjoint
 end
 
-include("abi.jl")
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -123,6 +111,19 @@ end
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
 end
+
+@testset "Advanced array tests" begin
+
+    function arsum2(f::Array{T}) where T
+        return sum(f)
+    end
+    inp = Float64[1.0, 2.0]
+    dinp = Float64[0.0, 0.0]
+    autodiff(arsum2, Duplicated(inp, dinp))
+    @test inp ≈ Float64[1.0, 2.0]
+    @test dinp ≈ Float64[1.0, 1.0]
+end
+
 
 @testset "Compare against" begin
     x = 3.0

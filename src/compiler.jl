@@ -108,7 +108,7 @@ end
 function annotate!(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
     fns = functions(mod)
-    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64"]
+    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_subtype"]
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
@@ -136,8 +136,8 @@ function passbyref(T::DataType)
     if T <: Array
         return false 
     else
-        # LLVM.Interop.isboxed(T)
-        return !isprimitivetype(T)
+        return GPUCompiler.deserves_argbox(T)
+        # return !isprimitivetype(T)
     end
 end
 
@@ -162,10 +162,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
 
     ctx = LLVM.context(mod)
 
-    @show mod, tt
-    @show primalf
-    flush(stderr)
-    flush(stdout)
+    # @show mod, tt
+    # @show primalf
+    # flush(stderr)
+    # flush(stdout)
 
     for T in tt
         source_typ = eltype(T)
@@ -174,10 +174,11 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             continue
         end
         isboxed = GPUCompiler.deserves_argbox(source_typ)
+        # @show source_typ, isboxed
 
-        if !isboxed && nameof(source_typ.name.module) != :CUDA
-            isboxed |= isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
-        end
+        # if !isboxed && nameof(source_typ.name.module) != :CUDA
+        #     isboxed |= isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
+        # end
         
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
@@ -200,7 +201,6 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             T = Ptr{T}
         end
         typeTree = typetree(T, ctx, dl)
-        @show T, string(typeTree)
         push!(args_typeInfo, typeTree)
         if split
             push!(uncacheable_args, true)
@@ -275,6 +275,87 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     return adjointf, augmented_primalf
 end
 
+# Modified from GPUCompiler/src/irgen.jl:365 lower_byval
+function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
+    ctx = context(mod)
+    entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
+    # @compiler_assert return_type(entry_ft) == LLVM.VoidType(ctx) job
+
+    args = GPUCompiler.classify_arguments(job, entry_f)
+    filter!(args) do arg
+        arg.cc != GPUCompiler.GHOST
+    end
+
+    # generate the wrapper function type & definition
+    wrapper_types = LLVM.LLVMType[]
+    for (parm, arg) in zip(parameters(entry_f), args)
+        typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+            eltype(arg.codegen.typ)
+        else
+            llvmtype(parm)
+        end
+        push!(wrapper_types, typ)
+    end
+    wrapper_fn = LLVM.name(entry_f)
+    LLVM.name!(entry_f, wrapper_fn * ".inner")
+    wrapper_ft = LLVM.FunctionType(return_type(entry_ft), wrapper_types)
+    wrapper_f = LLVM.Function(mod, wrapper_fn, wrapper_ft)
+
+    # emit IR performing the "conversions"
+    let builder = Builder(ctx)
+        entry = BasicBlock(wrapper_f, "entry", ctx)
+        position!(builder, entry)
+
+        wrapper_args = Vector{LLVM.Value}()
+
+        # perform argument conversions
+        for arg in args
+            if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+                # copy the argument value to a stack slot, and reference it.
+                ptr = alloca!(builder, eltype(arg.codegen.typ))
+                if LLVM.addrspace(arg.codegen.typ) != 0
+                    ptr = addrspacecast!(builder, ptr, arg.codegen.typ)
+                end
+                store!(builder, parameters(wrapper_f)[arg.codegen.i], ptr)
+                push!(wrapper_args, ptr)
+            else
+                push!(wrapper_args, parameters(wrapper_f)[arg.codegen.i])
+                for attr in collect(parameter_attributes(entry_f, arg.codegen.i))
+                    push!(parameter_attributes(wrapper_f, arg.codegen.i), attr)
+                end
+            end
+        end
+
+        res = call!(builder, entry_f, wrapper_args)
+
+        if return_type(entry_ft) == LLVM.VoidType(ctx)
+            ret!(builder)
+        else
+            ret!(builder, res)
+        end
+
+        dispose(builder)
+    end
+
+    # early-inline the original entry function into the wrapper
+    push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0, ctx))
+    linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
+
+    # copy debug info
+    sp = LLVM.get_subprogram(entry_f)
+    if sp !== nothing
+        LLVM.set_subprogram!(wrapper_f, sp)
+    end
+
+    GPUCompiler.fixup_metadata!(entry_f)
+    ModulePassManager() do pm
+        always_inliner!(pm)
+        run!(pm, mod)
+    end
+
+    return wrapper_f
+end
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -309,6 +390,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
            process_module = true
         end
     end
+
+
+    primalf = lower_convention(job, mod, primalf)
 
     # annotate
     annotate!(mod)
@@ -418,16 +502,16 @@ end
             argexpr = Expr(:., expr, QuoteNode(:val))
             if isboxed
                 push!(types, Any)
-            elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA # et->isAggregateType
-                # push!(types, Core.LLVMPtr{source_typ, 0}) # XXX: AS?
-                push!(types, Base.RefValue{source_typ}) # XXX: AS?
-                argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
-                llvmT = T_prjlvalue # LLVM.PointerType(llvmT)
+            # elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA # et->isAggregateType
+            #     # push!(types, Core.LLVMPtr{source_typ, 0}) # XXX: AS?
+            #     push!(types, Base.RefValue{source_typ}) # XXX: AS?
+            #     argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
+            #     llvmT = T_prjlvalue # LLVM.PointerType(llvmT)
             else
                 push!(types, source_typ)
             end
 
-            @show source_typ, llvmT, isboxed
+            # @show source_typ, llvmT, isboxed
 
             push!(ccexprs, argexpr)
             push!(T_wrapperargs, llvmT)
@@ -439,16 +523,16 @@ end
                 llvmT = convert(LLVMType, source_typ, ctx)
                 push!(sret_types, source_typ)
                 push!(T_JuliaSRet, llvmT)
-                if !passbyref(source_typ) # XXX: Not consistent
+                if !isboxed # XXX: Not consistent
                     push!(T_EnzymeSRet, llvmT)
                 end
             elseif T <: Duplicated || T <: DuplicatedNoNeed
                 argexpr =  Expr(:., expr, QuoteNode(:dval))
                 if isboxed
                     push!(types, Any)
-                elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA# et->isAggregateType
-                    push!(types, Ptr{source_typ})
-                    argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
+#                elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA# et->isAggregateType
+#                    push!(types, Ptr{source_typ})
+#                    argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
                 else
                     push!(types, source_typ)
                 end
@@ -505,16 +589,16 @@ end
 
             for T in argtypes
                 T′ = eltype(T)
-                ispassbyref = passbyref(T′)
 
                 if GPUCompiler.isghosttype(T′) || Core.Compiler.isconstType(T′)
                     continue
                 end
+                isboxed = GPUCompiler.deserves_argbox(T′)
                 push!(realparms, params[i])
                 i+=1
                 if T <: Const
                 elseif T <: Active
-                    if ispassbyref
+                    if isboxed
                         #push!(realparms, params[i])
                         #store!(builder, params[i], gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
                         
@@ -559,9 +643,9 @@ end
                 returnNum = 0
                 for T in argtypes
                     T′ = eltype(T)
-                    ispassbyref = passbyref(T′)
+                    isboxed = GPUCompiler.deserves_argbox(T′)
                     if T <: Active
-                        if !ispassbyref
+                        if !isboxed
                             eval = extract_value!(builder, val, returnNum)
                             store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
                             returnNum+=1
@@ -576,11 +660,11 @@ end
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
-        @show (ir, fn)
-        @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
-        @show f, (ccexprs...)
-        flush(stderr)
-        flush(stdout)
+        # @show (ir, fn)
+        # @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
+        # @show f, (ccexprs...)
+        # flush(stderr)
+        # flush(stdout)
         if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta

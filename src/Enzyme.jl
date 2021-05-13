@@ -78,7 +78,7 @@ end
 
 import .Compiler: EnzymeCtx
 # Ops that have intrinsics
-for op in (sin, cos, tan, exp)
+for op in (sin, cos, tan, exp, log)
     for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
         llvmf = "llvm.$(nameof(op)).$suffix"
         @eval begin
