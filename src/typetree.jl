@@ -1,6 +1,5 @@
 # TODO:
 # - type tags?
-# - eltype of Ptr and Array is only `first Element`
 # - recursive types
 
 import LLVM: refcheck
@@ -19,6 +18,13 @@ function TypeTree(CT, idx, ctx)
 end
 Base.copy(tt::TypeTree) = TypeTree(API.EnzymeNewTypeTreeTR(tt))
 Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
+
+function Base.string(tt::TypeTree)
+    raw = API.EnzymeTypeTreeToString(tt)
+    str = Base.unsafe_string(raw)
+    API.EnzymeTypeTreeToStringFree(raw)
+    return str
+end
 
 # function Base.show(io::IO, ::MIME"text/plain", tt::TypeTree)
 #     print(io, "TypeTree: ")
@@ -43,6 +49,10 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
+function typetree(::Type{Nothing}, ctx, dl)
+    TypeTree()
+end
+
 function typetree(::Type{T}, ctx, dl) where T <: Integer
     tt = TypeTree()
     for i in 1:sizeof(T)
@@ -56,17 +66,17 @@ function typetree(::Type{Float16}, ctx, dl)
 end
 
 function typetree(::Type{Float32}, ctx, dl)
-    return TypeTree(API.DT_Float, 0, ctx)
+    return TypeTree(API.DT_Float, -1, ctx)
 end
 
 function typetree(::Type{Float64}, ctx, dl)
-    return TypeTree(API.DT_Double, 0, ctx)
+    return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree(::Type{<:Ptr{T}}, ctx, dl) where T
+function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
-    only!(tt, 0)
+    only!(tt, -1)
     return tt
 end
 
@@ -90,8 +100,11 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     return tt
 end
 
-
 function typetree(@nospecialize(T), ctx, dl)
+    if T isa UnionAll || T isa Union || T == Union{}
+        return TypeTree()
+    end
+
     if fieldcount(T) == 0
         error("$T is unknown leaf")
     end
@@ -101,6 +114,10 @@ function typetree(@nospecialize(T), ctx, dl)
         offset  = fieldoffset(T, f)
         subT    = fieldtype(T, f)
         subtree = typetree(subT, ctx, dl)
+
+        if subT isa UnionAll || subT isa Union || subT == Union{}
+            continue
+        end
 
         # Allocated inline so adjust first path
         if subT.isinlinealloc

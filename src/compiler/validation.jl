@@ -1,4 +1,5 @@
 using LLVM
+using ObjectFile
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
@@ -13,20 +14,24 @@ function check_ir(job, args...)
 end
 
 function check_ir!(job, errors, mod::LLVM.Module)
-    for f in functions(mod)
-        check_ir!(job, errors, f)
+    imported = Set(String[])
+    for f in collect(functions(mod))
+        check_ir!(job, errors, imported, f)
     end
 
     return errors
 end
 
-function check_ir!(job, errors, f::LLVM.Function)
+function check_ir!(job, errors, imported, f::LLVM.Function)
+    calls = []
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
-            check_ir!(job, errors, inst)
+            push!(calls, inst)
         end
     end
-
+    for inst in calls
+        check_ir!(job, errors, imported, inst)
+    end
     return errors
 end
 
@@ -34,7 +39,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, inst::LLVM.CallInst)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -95,22 +100,182 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
                 @debug "Decoding arguments to jl_apply_generic failed" inst bb=LLVM.parent(inst)
                 push!(errors, (DYNAMIC_CALL, bt, nothing))
             end
+        elseif fn == "gpu_malloc"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
 
-        # detect calls to undefined functions
-        elseif isdeclaration(dest) && intrinsic_id(dest) == 0 && !isintrinsic(job, fn)
-            # figure out if the function lives in the Julia runtime library
-            if libjulia[] == C_NULL
-                paths = filter(Libdl.dllist()) do path
-                    name = splitdir(path)[2]
-                    startswith(name, "libjulia")
-                end
-                libjulia[] = Libdl.dlopen(first(paths))
+            b = Builder(ctx)
+            position!(b, inst)
+
+            mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
+            if mfn == C_NULL
+                ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
+            end
+            mfn2 = LLVM.Function(mfn)
+            nval = ptrtoint!(b, call!(b, mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), llvmtype(inst))
+            replace_uses!(inst, nval)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        elseif fn == "jl_load_and_lookup"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
+
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(flib, LLVM.ConstantExpr)
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+            end
+            if isa(flib, LLVM.GlobalVariable)
+                flib = LLVM.initializer(flib)
+            end
+            if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8, ctx)
+                flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
-            if Libdl.dlsym_e(libjulia[], fn) != C_NULL
-                push!(errors, (RUNTIME_FUNCTION, bt, LLVM.name(dest)))
+            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname, LLVM.ConstantExpr)
+                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            end
+            if isa(fname, LLVM.GlobalVariable)
+                fname = LLVM.initializer(fname)
+            end
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+            end
+            hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
+            if isa(hnd, LLVM.GlobalVariable)
+                hnd = LLVM.name(hnd)
+            end
+
+            @show flib, fname, hnd
+            flush(stdout)
+            flush(stderr)
+
+            if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
+                push!(errors, ("jl_load_and_lookup", bt, nothing))
+                return
+            end
+            # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
+            # @show res
+            flush(stdout)
+            flush(stderr)
+            push!(errors, ("jl_load_and_lookup", bt, nothing))
+        elseif fn == "jl_lazy_load_and_lookup"
+            ofn = LLVM.parent(LLVM.parent(inst))
+            mod = LLVM.parent(ofn)
+            ctx = context(mod)
+
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(flib, LLVM.LoadInst)
+                op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+                if isa(op, LLVM.ConstantExpr)
+                    op1 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
+                    if isa(op1, LLVM.ConstantExpr)
+                        op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
+                        if isa(op2, ConstantInt)
+                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
+                            ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
+                            flib = Base.unsafe_pointer_to_objref(ld)
+                        end
+                    end
+                end
+            end
+
+            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname, LLVM.ConstantExpr)
+                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            end
+            if isa(fname, LLVM.GlobalVariable)
+                fname = LLVM.initializer(fname)
+            end
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+            end
+
+            if !isa(fname, String) || !isa(flib, String)
+                push!(errors, ("jl_lazy_load_and_lookup", bt, nothing))
+                return
+            end
+
+            data = open(flib, "r") do io
+                lib = readmeta(io)
+                sections = Sections(lib)
+                llvmbc = read(findfirst(sections, ".llvmbc"))
+                return llvmbc
+            end
+
+            found = false
+            if data !== nothing
+                inmod = parse(LLVM.Module, data, ctx)
+                found = haskey(functions(inmod), fname)
+            end
+
+            if found
+                if !(fn in imported)
+                    internalize = String[]
+                    for fn in functions(inmod)
+                        if !isempty(LLVM.blocks(fn))
+                            push!(internalize, name(fn))
+                        end
+                    end
+                    for g in globals(inmod)
+                        linkage!(g, LLVM.API.LLVMExternalLinkage)
+                    end
+                    # override libdevice's triple and datalayout to avoid warnings
+                    triple!(inmod, triple(mod))
+                    datalayout!(inmod, datalayout(mod))
+                    GPUCompiler.link_library!(mod, inmod)
+                    for n in internalize
+                        linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
+                    end
+                    push!(imported, fn)
+                end
+                replaceWith = functions(mod)[fname]
+
+                for u in LLVM.uses(inst)
+                    st = LLVM.user(u)
+                    if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                        ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                        for u in LLVM.uses(ptr)
+                            ld = LLVM.user(u)
+                            if isa(ld, LLVM.LoadInst)
+                                b = Builder(ctx)
+                                position!(b, ld)
+                                replace_uses!(ld, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                            end
+                        end
+                    end
+                end
+                
+                b = Builder(ctx)
+
+                position!(b, inst)
+                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+
             else
-                push!(errors, (UNKNOWN_FUNCTION, bt, LLVM.name(dest)))
+                res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(64, ctx), reinterpret(UInt64, res))
+                for u in LLVM.uses(inst)
+                    st = LLVM.user(u)
+                    if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                        ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                        for u in LLVM.uses(ptr)
+                            ld = LLVM.user(u)
+                            if isa(ld, LLVM.LoadInst)
+                                b = Builder(ctx)
+                                position!(b, ld)
+                                replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                            end
+                        end
+                    end
+                end
+                
+                b = Builder(ctx)
+                position!(b, inst)
+                replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
         end
 
@@ -119,28 +284,63 @@ function check_ir!(job, errors, inst::LLVM.CallInst)
 
     elseif isa(dest, ConstantExpr)
         # Enzyme should be able to handle these
-    #     # detect calls to literal pointers
-    #     if occursin("inttoptr", string(dest))
-    #         # extract the literal pointer
-    #         ptr_arg = first(operands(dest))
-    #         GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
-    #         ptr_val = convert(Int, ptr_arg)
-    #         ptr = Ptr{Cvoid}(ptr_val)
+        # detect calls to literal pointers and replace with function name, if possible
+        if occursin("inttoptr", string(dest))
+            # extract the literal pointer
+            ptr_arg = first(operands(dest))
+            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+            ptr_val = convert(Int, ptr_arg)
+            ptr = Ptr{Cvoid}(ptr_val)
 
-    #         # look it up in the Julia JIT cache
-    #         frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
-    #         if length(frames) >= 1
-    #             GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
-    #             if VERSION >= v"1.4.0-DEV.123"
-    #                 fn, file, line, linfo, fromC, inlined = last(frames)
-    #             else
-    #                 fn, file, line, linfo, fromC, inlined, ip = last(frames)
-    #             end
-    #             push!(errors, (POINTER_FUNCTION, bt, fn))
-    #         else
-    #             push!(errors, (POINTER_FUNCTION, bt, nothing))
-    #         end
-    #     end
+            # look it up in the Julia JIT cache
+            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+
+            if length(frames) >= 1
+                if VERSION >= v"1.4.0-DEV.123"
+                    fn, file, line, linfo, fromC, inlined = last(frames)
+                else
+                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
+                end
+
+                fn = string(fn)
+                if ptr == cglobal(:jl_alloc_array_1d)
+                    fn = "jl_alloc_array_1d"
+                end
+                if ptr == cglobal(:jl_alloc_array_2d)
+                    fn = "jl_alloc_array_2d"
+                end
+                if ptr == cglobal(:jl_alloc_array_3d)
+                    fn = "jl_alloc_array_3d"
+                end
+                if ptr == cglobal(:jl_new_array)
+                    fn = "jl_new_array"
+                end
+                if ptr == cglobal(:jl_array_copy)
+                    fn = "jl_array_copy"
+                end
+                if ptr == cglobal(:jl_alloc_string)
+                    fn = "jl_alloc_string"
+                end
+                if ptr == cglobal(:erf)
+                    fn = "erf"
+                end
+                if ptr == cglobal(:malloc)
+                    fn = "malloc"
+                end
+                
+                if length(fn) > 1 && fromC 
+                    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                    if lfn == C_NULL
+                        lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
+                    end
+                    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                end
+            #    push!(errors, (POINTER_FUNCTION, bt, fn))
+            #else
+            #    push!(errors, (POINTER_FUNCTION, bt, nothing))
+            end
+        end
     end
 
     return errors

@@ -6,42 +6,44 @@ using Zygote
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x = autodiff(f, Active(x))
+    ∂x, = autodiff(f, Active(x))
     @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
 end
 
+include("abi.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
     thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
     thunk_b = Enzyme.Compiler.thunk(f, Tuple{Const{Float64}})
     @test thunk_a.adjoint !== thunk_b.adjoint
-    @test thunk_a.primal === C_NULL
+    # @test thunk_a.primal === C_NULL
 
-    @test thunk_a(2.0) == 1.0
-    @test thunk_b(2.0) == 2.0
+    @test thunk_a(Active(2.0)) == (1.0,)
+    @test thunk_b(Const(2.0)) === nothing
 
-    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
-    @test thunk_split.primal !== C_NULL
-    @test thunk_split.primal !== thunk_split.adjoint
-    @test thunk_a.adjoint !== thunk_split.adjoint
+    # thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
+    # @test thunk_split.primal !== C_NULL
+    # @test thunk_split.primal !== thunk_split.adjoint
+    # @test thunk_a.adjoint !== thunk_split.adjoint
 end
 
-@testset "Split Tape" begin
-    f(x) = x[1] * x[1]
 
-    thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
-    @test thunk_split.primal !== C_NULL
-    @test thunk_split.primal !== thunk_split.adjoint
-end
+# @testset "Split Tape" begin
+#     f(x) = x[1] * x[1]
+
+#     thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
+#     @test thunk_split.primal !== C_NULL
+#     @test thunk_split.primal !== thunk_split.adjoint
+# end
 
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
-    @test autodiff(f1, Active(1.0)) ≈ 1.0
-    @test autodiff(f2, Active(1.0)) ≈ 2.0
-    @test autodiff(tanh, Active(1.0)) ≈ 0.41997434161402606939
-    @test_broken autodiff(tanh, Active(1.0f0)) ≈ 0.41997434161402606939
+    @test autodiff(f1, Active(1.0))[1] ≈ 1.0
+    @test autodiff(f2, Active(1.0))[1] ≈ 2.0
+    @test autodiff(tanh, Active(1.0))[1] ≈ 0.41997434161402606939
+    @test autodiff(tanh, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
 end
@@ -68,8 +70,8 @@ end
 
 @testset "Simple tests" begin
     g(x) = real((x + im)*(1 - im*x))
-    @test autodiff(g, Active(2.0)) ≈ 2.0
-    @test autodiff(g, Active(3.0)) ≈ 2.0
+    @test first(autodiff(g, Active(2.0))) ≈ 2.0
+    @test first(autodiff(g, Active(3.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
 end
@@ -86,7 +88,7 @@ function euroad(f::T) where T
     return g
 end
 
-euroad′(x) = autodiff(euroad, Active(x))
+euroad′(x) = first(autodiff(euroad, Active(x)))
 
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
 @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
@@ -122,18 +124,19 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 end
 
+
 @testset "Compare against" begin
     x = 3.0
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    @test fd ≈ autodiff(sin, Active(x))
+    @test fd ≈ first(autodiff(sin, Active(x)))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
-    @test fd ≈ autodiff(asin, Active(x))
+    @test fd ≈ first(autodiff(asin, Active(x)))
     test_scalar(asin, x)
 
     function foo(x)
@@ -148,46 +151,45 @@ end
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ autodiff(foo, Active(x))
+    @test fd ≈ first(autodiff(foo, Active(x)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ autodiff(foo, Active(x))
+    @test fd ≈ first(autodiff(foo, Active(x)))
 end
 
-@testset "Bessel" begin
-    """
-        J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
-    """
-    function besselj(ν, z, atol=1e-8)
-        k = 0
-        s = (z/2)^ν / factorial(ν)
-        out = s
-        while abs(s) > atol
-            k += 1
-            s *= (-1) / k / (k+ν) * (z/2)^2
-            out += s
-        end
-        out
+"""
+    J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
+"""
+function mybesselj(ν, z, atol=1e-8)
+    k = 0
+    s = (z/2)^ν / factorial(ν)
+    out = s
+    while abs(s) > atol
+        k += 1
+        s *= (-1) / k / (k+ν) * (z/2)^2
+        out += s
     end
-    # besselj0(z) = besselj(0, z)
-    # besselj1(z) = besselj(1, z)
-    # autodiff(besselj, Const(0), Active(1.0))
-    # autodiff(besselj, 0, Active(1.0))
-    # @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-    #     test_scalar(besselj0, x)
-    #     test_scalar(besselj1, x)
-    # end
+    out
+end
+mybesselj0(z) = mybesselj(0, z)
+mybesselj1(z) = mybesselj(1, z)
+
+@testset "Bessel" begin
+    autodiff(mybesselj, Const(0), Active(1.0))
+    autodiff(mybesselj, 0, Active(1.0))
+    @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
+        test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
+        test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
+    end
 
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-# @testset "Packages" begin
-#     include("packages/specialfunctions.jl")
-# end
+include("packages/specialfunctions.jl")
 
 @testset "DiffTest" begin
     include("DiffTests.jl")

@@ -3,6 +3,7 @@ module API
 import LLVM.API: LLVMValueRef, LLVMModuleRef, LLVMTypeRef, LLVMContextRef
 using Enzyme_jll
 using Libdl
+using LLVM
 using CEnum
 
 const EnzymeLogicRef = Ptr{Cvoid}
@@ -40,6 +41,10 @@ EnzymeTypeTreeOnlyEq(dst, x) = ccall((:EnzymeTypeTreeOnlyEq, libEnzyme), Cvoid, 
 EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
     ccall((:EnzymeTypeTreeShiftIndiciesEq, libEnzyme), Cvoid, (CTypeTreeRef, Cstring, Int64, Int64, UInt64),
         dst, dl, offset, maxSize, addOffset)
+
+
+EnzymeTypeTreeToString(tt) = ccall((:EnzymeTypeTreeToString, libEnzyme), Cstring, (CTypeTreeRef,), tt)
+EnzymeTypeTreeToStringFree(str) = ccall((:EnzymeTypeTreeToStringFree, libEnzyme), Cvoid, (Cstring,), str)
 
 struct CFnTypeInfo
     arguments::Ptr{CTypeTreeRef}
@@ -149,6 +154,52 @@ end
 
 function EnzymeExtractTapeTypeFromAugmentation(ret)
     ccall((:EnzymeExtractTapeTypeFromAugmentation, libEnzyme), LLVMTypeRef, (EnzymeAugmentedReturnPtr,), ret)
+end
+
+import Libdl
+function EnzymeSetCLBool(name, val)
+    handle = Libdl.dlopen(libEnzyme)
+    ptr = Libdl.dlsym(handle, name)
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+function EnzymeGetCLBool(name)
+    handle = Libdl.dlopen(libEnzyme)
+    ptr = Libdl.dlsym(handle, name)
+    ccall((:EnzymeGetCLBool, libEnzyme), UInt8, (Ptr{Cvoid},), ptr)
+end
+# void EnzymeSetCLInteger(void *, int64_t);
+
+function printperf!(val)
+    ptr = cglobal((:EnzymePrintPerf, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function printtype!(val)
+    ptr = cglobal((:EnzymePrintType, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function printall!(val)
+    ptr = cglobal((:EnzymePrint, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function maxtypeoffset!(val)
+    ptr = cglobal((:MaxTypeOffset, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, Int64), ptr, val)
+end
+
+function looseTypeAnalysis!(val)
+    ptr = cglobal((:looseTypeAnalysis, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function EnzymeRemoveTrivialAtomicIncrements(func)
+    ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
+end
+
+function EnzymeAddAttributorLegacyPass(PM)
+    ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
 end
 
 end

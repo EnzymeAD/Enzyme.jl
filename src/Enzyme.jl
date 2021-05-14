@@ -9,7 +9,9 @@ abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
 end
-struct Active{T<:AbstractFloat} <: Annotation{T}
+# To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
+Const(::Type{T}) where T = Const{Type{T}}(T)
+struct Active{T} <: Annotation{T}
     val::T
 end
 Active(i::Integer) = Active(float(i))
@@ -33,24 +35,50 @@ include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
 
-annotate() = ()
-annotate(arg::Annotation, args...) = (arg, annotate(args...)...)
-annotate(arg, args...) = (Const(arg), annotate(args...)...)
+# @inline annotate() = ()
+# @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
+# @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
+
+@inline function annotate(args::Vararg{Any, N}) where N
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        arg = @inbounds args[i]
+        if arg isa Annotation
+            return arg
+        else
+            return Const(arg)
+        end
+    end
+end
 
 prepare_cc() = ()
 prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
 prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
-function autodiff(f, args...)
-    args′ =  annotate(args...)
-    thunk = Compiler.thunk(f, Tuple{map(Core.Typeof, args′)...})
-    thunk(prepare_cc(args′...)...)
+@inline function autodiff(f::F, args...) where F
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
+    thunk(args′...)
+end
+
+@inline function autodiff_no_cassette(f::F, args...) where F
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
+    thunk(args′...)
 end
 
 import .Compiler: EnzymeCtx
 # Ops that have intrinsics
-for op in (sin, cos, tan, exp)
+for op in (sin, cos, tan, exp, log)
     for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
         llvmf = "llvm.$(nameof(op)).$suffix"
         @eval begin
@@ -73,12 +101,12 @@ for op in (copysign,)
 end
 
 for op in (asin,tanh)
-    for (T, llvm_t) in ((Float32, "float"), (Float64, "double"))
+    for (T, llvm_t, suffix) in ((Float32, "float", "f"), (Float64, "double", ""))
         mod = """
-                declare $llvm_t @$(nameof(op))($llvm_t)
+                declare $llvm_t @$(nameof(op))$suffix($llvm_t)
                
                 define $llvm_t @entry($llvm_t) #0 {
-                    %val = call $llvm_t @$op($llvm_t %0)
+                    %val = call $llvm_t @$op$suffix($llvm_t %0)
                     ret $llvm_t %val
                 }
                 attributes #0 = { alwaysinline }
@@ -128,7 +156,10 @@ function pullback(f, args...)
     end
 end
 
+using Adapt
+Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
+
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asin, Float32, (Float32,), x)
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asinf, Float32, (Float32,), x)
 end # module
