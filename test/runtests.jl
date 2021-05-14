@@ -164,7 +164,7 @@ end
 """
     J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
 """
-function besselj(ν, z, atol=1e-8)
+function mybesselj(ν, z, atol=1e-8)
     k = 0
     s = (z/2)^ν / factorial(ν)
     out = s
@@ -175,15 +175,15 @@ function besselj(ν, z, atol=1e-8)
     end
     out
 end
-besselj0(z) = besselj(0, z)
-besselj1(z) = besselj(1, z)
+mybesselj0(z) = mybesselj(0, z)
+mybesselj1(z) = mybesselj(1, z)
 
 @testset "Bessel" begin
-    autodiff(besselj, Const(0), Active(1.0))
-    autodiff(besselj, 0, Active(1.0))
+    autodiff(mybesselj, Const(0), Active(1.0))
+    autodiff(mybesselj, 0, Active(1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-        test_scalar(besselj0, x, rtol=1e-5, atol=1e-5)
-        test_scalar(besselj1, x, rtol=1e-5, atol=1e-5)
+        test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
+        test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
     end
 
 end

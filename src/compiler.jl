@@ -118,7 +118,6 @@ function annotate!(mod)
     if haskey(fns, "julia.ptls_states")
         fn = fns["julia.ptls_states"]
         push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0, context(mod)))
-        # push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0, context(mod)))
     end
 
 
@@ -132,16 +131,6 @@ function annotate!(mod)
 
 end
 
-function passbyref(T::DataType)
-    if T <: Array
-        return false 
-    else
-        return GPUCompiler.deserves_argbox(T)
-        # return !isprimitivetype(T)
-    end
-end
-
-
 function enzyme!(job, mod, primalf, adjoint, split, parallel)
     primal = job.source
     rt = Core.Compiler.return_type(primal.f, primal.tt)
@@ -154,11 +143,6 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         error("return type is Union{}, giving up.")
     end
 
-    # argClassification = GPUCompiler.classify_arguments(job, primalf)
-    # filter!(argClassification) do arg
-    #     arg.cc != GPUCompiler.GHOST
-    # end
-
     args_activity     = API.CDIFFE_TYPE[]
     uncacheable_args  = Bool[]
     args_typeInfo     = TypeTree[]
@@ -166,23 +150,15 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
 
     ctx = LLVM.context(mod)
 
-    # @show mod, tt
-    # @show primalf
-    # flush(stderr)
-    # flush(stdout)
-
     for T in tt
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
-            @assert T <: Const
+            if !(T <: Const)
+                error("Type of ghost or constant is marked as differentiable.")
+            end
             continue
         end
         isboxed = GPUCompiler.deserves_argbox(source_typ)
-        # @show source_typ, isboxed
-
-        # if !isboxed && nameof(source_typ.name.module) != :CUDA
-        #     isboxed |= isa(convert(LLVMType, source_typ, ctx), LLVM.SequentialType)
-        # end
         
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
@@ -227,7 +203,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         retType = API.DFT_OUT_DIFF
     elseif rt <: Complex{<:AbstractFloat}
         retType = API.DFT_OUT_DIFF
-    elseif rt == Nothing || Core.Compiler.isconstType(rt)
+    elseif GPUCompiler.isghosttype(rt) || Core.Compiler.isconstType(rt)
         retType = API.DFT_CONSTANT
     else
         error("What even is $rt")
@@ -236,7 +212,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     TA = TypeAnalysis(triple(mod)) 
     logic = Logic()
 
-    if rt == Nothing || Core.Compiler.isconstType(rt)
+    if GPUCompiler.isghosttype(rt)|| Core.Compiler.isconstType(rt)
         retTT = typetree(Nothing, ctx, dl)
     else
         retTT = typetree(rt, ctx, dl)
@@ -302,7 +278,6 @@ end
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
-    # @compiler_assert return_type(entry_ft) == LLVM.VoidType(ctx) job
 
     RT = return_type(entry_ft)
     args = GPUCompiler.classify_arguments(job, entry_f)
@@ -483,12 +458,12 @@ end
 # Thunk
 ## 
 
-struct Thunk{f, RT, TT#=, Split=#}
+struct CombinedAdjointThunk{f, RT, TT}
     # primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
 end
 
-@inline (thunk::Thunk{F, RT, TT})(args...) where {F, RT, TT} =
+@inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
    enzyme_call(thunk.adjoint, TT, RT, args...)
 
 @generated function enzyme_call(f::Ptr{Cvoid}, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {T, RT, N}
@@ -517,16 +492,8 @@ end
         T_JuliaSRet = LLVMType[]  # Struct return of all Active variables (includes all of T_EnzymeSRet)
         sret_types  = DataType[]  # Julia types of all Active variables
         inputexprs = Union{Expr, Symbol}[]
-
-        argpreserve = Union{Symbol}[]   # By ref values we create and need to preserve
+  # By ref values we create and need to preserve
         ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
-
-        # function byref(expr, T)
-        #     val = gensym(:val)
-        #     push!(inputexprs, :($val = Ref($expr)))
-        #     push!(argpreserve, val)
-        #     :(Base.unsafe_convert($T, Base.cconvert($T, $val)))
-        # end
 
         for (i, T) in enumerate(argtypes)
             source_typ = eltype(T)
@@ -541,16 +508,10 @@ end
             argexpr = Expr(:., expr, QuoteNode(:val))
             if isboxed
                 push!(types, Any)
-            # elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA # et->isAggregateType
-            #     # push!(types, Core.LLVMPtr{source_typ, 0}) # XXX: AS?
-            #     push!(types, Base.RefValue{source_typ}) # XXX: AS?
-            #     argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
-            #     llvmT = T_prjlvalue # LLVM.PointerType(llvmT)
             else
                 push!(types, source_typ)
             end
 
-            # @show source_typ, llvmT, isboxed
 
             push!(ccexprs, argexpr)
             push!(T_wrapperargs, llvmT)
@@ -569,9 +530,6 @@ end
                 argexpr =  Expr(:., expr, QuoteNode(:dval))
                 if isboxed
                     push!(types, Any)
-#                elseif isa(llvmT, LLVM.SequentialType) && nameof(source_typ.name.module) != :CUDA# et->isAggregateType
-#                    push!(types, Ptr{source_typ})
-#                    argexpr = Expr(:call, GlobalRef(Base, :Ref), argexpr)
                 else
                     push!(types, source_typ)
                 end
@@ -638,14 +596,7 @@ end
                 if T <: Const
                 elseif T <: Active
                     if isboxed
-                        #push!(realparms, params[i])
-                        #store!(builder, params[i], gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
-                        
-                        # llvmT = convert(LLVMType, T′, ctx, allow_boxed=true)
-                        # @show llvmT
                         ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)])
-                        # ptr = load!(builder, ptr)
-                        # @show ptr
                         cst = pointercast!(builder, ptr, ptr8)
                         push!(realparms, ptr)
 
@@ -654,7 +605,6 @@ end
                         LLVM.ConstantInt(LLVM.IntType(64, ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
                         LLVM.ConstantInt(LLVM.IntType(1, ctx), 0)]
                         call!(builder, memsetIntr, cparms)
-                        # i+=1
                     end
                     activeNum+=1
                 elseif T <: Duplicated || T <: DuplicatedNoNeed
@@ -699,17 +649,11 @@ end
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
-        # @show (ir, fn)
-        # @show Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}
-        # @show f, (ccexprs...)
-        # flush(stderr)
-        # flush(stdout)
         if !isempty(T_JuliaSRet)  
             quote
                 Base.@_inline_meta
                 sret = Ref{$(Tuple{sret_types...})}()
-                # $(inputexprs...)
-                GC.@preserve sret $(argpreserve...) begin
+                GC.@preserve sret begin
                     ptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
                     ptr = Base.unsafe_convert(Ptr{Cvoid}, ptr)
                     Base.llvmcall(($ir,$fn), Cvoid,
@@ -721,12 +665,9 @@ end
         else 
             quote
                 Base.@_inline_meta
-                # $(inputexprs...)
-                GC.@preserve $(argpreserve...) begin
-                    Base.llvmcall(($ir,$fn), Cvoid,
-                        $(Tuple{Ptr{Cvoid}, types...}),
-                        f, $(ccexprs...))
-                end
+                Base.llvmcall(($ir,$fn), Cvoid,
+                    $(Tuple{Ptr{Cvoid}, types...}),
+                    f, $(ccexprs...))
             end
         end
     end
@@ -797,7 +738,7 @@ function _link(job, (mod, adjoint_name, primal_name))
     end
 
     @assert primal_name === nothing
-    return Thunk{typeof(adjoint.f), rt, adjoint.tt #=, split=#}(#=primal_ptr,=# adjoint_ptr)
+    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt}(#=primal_ptr,=# adjoint_ptr)
 end
 
 # actual compilation
@@ -844,7 +785,7 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
 
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
-    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk{F,rt,tt,#=Split=#}
+    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::CombinedAdjointThunk{F,rt,tt}
 end
 
 import GPUCompiler: deferred_codegen_jobs

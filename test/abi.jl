@@ -27,7 +27,7 @@ using Test
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
-    # SeqeuntialType
+    # SequentialType
     struct Foo
         baz::Int
         qux::Float64

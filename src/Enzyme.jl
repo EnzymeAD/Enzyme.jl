@@ -62,7 +62,7 @@ prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.Thunk{F, rt, tt′}(ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
     thunk(args′...)
 end
 
@@ -72,7 +72,7 @@ end
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.Thunk{F, rt, tt′}(ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
     thunk(args′...)
 end
 
@@ -155,6 +155,9 @@ function pullback(f, args...)
         end
     end
 end
+
+using Adapt
+Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)

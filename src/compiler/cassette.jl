@@ -7,6 +7,8 @@ Cassette.@context EnzymeCtx
 ###
 @inline Cassette.overdub(::EnzymeCtx, ::typeof(Core.kwfunc), f) = return Core.kwfunc(f)
 @inline Cassette.overdub(::EnzymeCtx, ::typeof(Core.apply_type), args...) = return Core.apply_type(args...)
+
+# TODO the following should be handled and tested, but as is don't function entirely @vchuravy
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(Base.OverflowError), args...) = return Base.OverflowError(args...)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(Base.DomainError), args...) = return Base.DomainError(args...)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(StaticArrays.Size), x::Type{<:AbstractArray{<:Any, N}}) where {N} = return StaticArrays.Size(x)

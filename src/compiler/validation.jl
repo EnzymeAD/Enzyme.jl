@@ -14,9 +14,6 @@ function check_ir(job, args...)
 end
 
 function check_ir!(job, errors, mod::LLVM.Module)
-    # @show "premod", mod
-    # flush(stdout)
-    # flush(stderr)
     imported = Set(String[])
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
@@ -228,19 +225,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                     # override libdevice's triple and datalayout to avoid warnings
                     triple!(inmod, triple(mod))
                     datalayout!(inmod, datalayout(mod))
-                    # @show mod
-                    # @show inmod
-                    # flush(stdout)
-                    # flush(stderr)
                     GPUCompiler.link_library!(mod, inmod)
                     for n in internalize
                         linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
                     end
                     push!(imported, fn)
                 end
-                # @show mod
-                # flush(stdout)
-                # flush(stderr)
                 replaceWith = functions(mod)[fname]
 
                 for u in LLVM.uses(inst)
@@ -294,7 +284,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
 
     elseif isa(dest, ConstantExpr)
         # Enzyme should be able to handle these
-        # detect calls to literal pointers
+        # detect calls to literal pointers and replace with function name, if possible
         if occursin("inttoptr", string(dest))
             # extract the literal pointer
             ptr_arg = first(operands(dest))
@@ -312,7 +302,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
                 end
 
-                # @show fn, file, line, linfo, fromC, inlined, frames, l
                 fn = string(fn)
                 if ptr == cglobal(:jl_alloc_array_1d)
                     fn = "jl_alloc_array_1d"
@@ -339,15 +328,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                     fn = "malloc"
                 end
                 
-                # if ptr == cglobal(:erfi)
-                #     fn = "erfi"
-                # end
-                # if ptr == cglobal(:erfc)
-                #     fn = "erfc"
-                # end
-                # ptr == reinterpret(UInt64, cglobal(:jl_alloc_array_1d))#
-                # @show fn, fromC, ptr, cglobal(:jl_alloc_array_2d), ptr == cglobal(:jl_alloc_array_2d)
-                # @show fn, fromC, ptr, reinterpret(UInt64, cglobal(:jl_alloc_array_1d)), reinterpret(UInt64, cglobal(:jl_alloc_array_2d)), reinterpret(UInt64, cglobal(:jl_alloc_array_3d))
                 if length(fn) > 1 && fromC 
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
@@ -355,8 +335,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
                     end
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
-                else
-                    # @show inst, fn
                 end
             #    push!(errors, (POINTER_FUNCTION, bt, fn))
             #else
