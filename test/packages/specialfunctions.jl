@@ -18,7 +18,6 @@ using SpecialFunctions
     if x isa Real
         test_scalar(SpecialFunctions.besselj0, x)
         test_scalar(SpecialFunctions.besselj1, x)
-        # DomainError potentially thrown causing GC
         test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
     end
 
@@ -31,15 +30,14 @@ using SpecialFunctions
     # end
 
     if x isa Real && 0 < x < 1
-        # Requires GC
-        test_scalar(SpecialFunctions.erfinv, x)
-        test_scalar(SpecialFunctions.erfcinv, x)
+        # Requires GC -- avx functions appear
+        # test_scalar(SpecialFunctions.erfinv, x)
+        # test_scalar(SpecialFunctions.erfcinv, x)
     end
 
     if x isa Real && x > 0
         test_scalar(SpecialFunctions.bessely0, x)
         test_scalar(SpecialFunctions.bessely1, x)
-        # DomainError potentially thrown causing GC
         test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
 
         # No derivative defined in Enzyme for libc atm

@@ -14,11 +14,11 @@ Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 
 [compat]
-Adapt = "3.3.0"
+Adapt = "3.3"
 CEnum = "0.4"
 Cassette = "0.3.4"
 Enzyme_jll = "0.0.11"
 GPUCompiler = "0.11"
 LLVM = "3.2"
+ObjectFile = "0.3"
 julia = "1.6"
-ObjectFile = "0.3.6"
