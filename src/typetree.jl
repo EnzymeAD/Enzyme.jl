@@ -39,6 +39,10 @@ function only!(tt::TypeTree, offset::Integer)
     API.EnzymeTypeTreeOnlyEq(tt, offset)
 end
 
+function data0!(tt::TypeTree)
+    API.EnzymeTypeTreeData0Eq(tt)
+end
+
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end

@@ -1,7 +1,7 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, TypeAnalysis, FnTypeInfo, Logic
+import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!, TypeAnalysis, FnTypeInfo, Logic
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -13,6 +13,79 @@ import LLVM: Target, TargetMachine
 # We have one global JIT and TM
 const jit = Ref{OrcJIT}()
 const tm  = Ref{TargetMachine}()
+
+function array_inner(::Type{<:Array{T}}) where T
+    return T
+end
+function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, numArgs::Csize_t, Args::Ptr{LLVM.API.LLVMValueRef})::LLVM.API.LLVMValueRef
+    inst = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+    ctx = LLVM.context(LLVM.Value(OrigCI))
+
+    ce = operands(inst)[1]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
+
+    b = LLVM.Builder(B)
+
+    vals = Vector{LLVM.Value}()
+    for i = 1:numArgs
+        push!(vals, LLVM.Value(unsafe_load(Args, i)))
+    end
+
+    anti = LLVM.call!(b, LLVM.Value(LLVM.API.LLVMGetCalledValue(OrigCI)), vals)
+
+    prod = LLVM.Value(unsafe_load(Args, 2))
+    for i = 3:numArgs
+        prod = LLVM.mul!(b, prod, LLVM.Value(unsafe_load(Args, i)))
+    end
+
+    isunboxed = typ.isinlinealloc
+    elsz = sizeof(typ)
+
+    isunion = typ <: Union
+
+    LLT_ALIGN(x, sz) = (((x) + (sz)-1) & ~((sz)-1))
+
+    if !isunboxed
+        elsz = sizeof(Ptr{Cvoid})
+        al = elsz;
+    else
+        al = 1 # check
+        elsz = LLT_ALIGN(elsz, al)
+    end
+
+    tot = prod
+    tot = LLVM.mul!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), elsz, false))
+
+    if elsz == 1 && !isunion
+        tot = LLVM.add!(b, t, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
+    end
+    if (isunion) 
+        # an extra byte for each isbits union array element, stored after a->maxsize
+        tot = LLVM.add!(b, tot, prod)
+    end
+
+    i1 = LLVM.IntType(1, ctx)
+    i8 = LLVM.IntType(8, ctx)
+    ptrty = LLVM.PointerType(i8) #, LLVM.addrspace(LLVM.llvmtype(anti)))
+    toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(anti)))))
+
+    memtys = LLVM.LLVMType[ptrty, LLVM.llvmtype(tot)]
+    memset = LLVM.Function(mod, LLVM.Intrinsic("llvm.memset"), memtys)
+    memargs = LLVM.Value[toset, LLVM.ConstantInt(i8, 0, false), tot, LLVM.ConstantInt(i1, 0, false)]
+
+    mcall = LLVM.call!(b, memset, memargs)
+    ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
+    return ref
+end
+
+function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValueRef, Fn::LLVM.API.LLVMValueRef)::LLVM.API.LLVMValueRef
+    return C_NULL
+end
 
 function __init__()
     opt_level = Base.JLOptions().opt_level
@@ -31,6 +104,28 @@ function __init__()
     atexit() do
         dispose(jit[])
     end
+
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_1d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_2d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    API.EnzymeRegisterAllocationHandler(
+        "jl_alloc_array_3d",
+        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    # TODO handle array copy
+    # API.EnzymeRegisterAllocationHandler(
+    #     "jl_array_copy",
+    #     @cfunction(copy_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
+    #     @cfunction(copy_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    # )
 end
 
 # Define EnzymeTarget
@@ -131,6 +226,53 @@ function annotate!(mod)
 
 end
 
+function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    @info "alloc_obj_rule" direction ret args numArgs val known_values
+    return UInt8(false)
+end
+
+function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
+    only!(TT, -1)
+    API.EnzymeSetTypeTree(unsafe_load(args), TT)
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
+    shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
+    API.EnzymeSetTypeTree(ret, TT)
+    return UInt8(false)
+end
+
+function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    if (direction & API.UP) != 0
+        API.EnzymeMergeTypeTree(unsafe_load(args), ret)
+    end
+    if (direction & API.DOWN) != 0
+        API.EnzymeMergeTypeTree(ret, unsafe_load(args))
+    end
+    return UInt8(false)
+end
+
+function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ce = operands(inst)[1]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = Base.unsafe_pointer_to_objref(ptr)
+
+    ctx = LLVM.context(LLVM.Value(val))
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+
+    rest = typetree(typ, ctx, dl)
+    only!(rest, -1)
+    API.EnzymeMergeTypeTree(ret, rest)
+
+    for i = 1:numArgs
+        API.EnzymeMergeTypeTree(unsafe_load(args, i), TypeTree(API.DT_Integer, -1, ctx))
+    end
+    return UInt8(false)
+end
+
 function enzyme!(job, mod, primalf, adjoint, split, parallel)
     primal = job.source
     rt = Core.Compiler.return_type(primal.f, primal.tt)
@@ -209,7 +351,31 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         error("What even is $rt")
     end
 
-    TA = TypeAnalysis(triple(mod)) 
+    rules = Dict{String, API.CustomRuleType}(
+        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_int64" => @cfunction(i64_box_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_uint64" => @cfunction(i64_box_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_array_copy" => @cfunction(inout_rule, 
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_1d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_2d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_3d" => @cfunction(alloc_rule, 
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+    )
+
+    TA = TypeAnalysis(triple(mod), rules) 
     logic = Logic()
 
     if GPUCompiler.isghosttype(rt)|| Core.Compiler.isconstType(rt)
