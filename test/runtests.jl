@@ -189,7 +189,9 @@ mybesselj1(z) = mybesselj(1, z)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-include("packages/specialfunctions.jl")
+if !Sys.iswindows()
+    include("packages/specialfunctions.jl")
+end
 
 @testset "DiffTest" begin
     include("DiffTests.jl")
