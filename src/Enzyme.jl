@@ -158,6 +158,9 @@ end
 
 using Adapt
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
+Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
+Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
+Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
