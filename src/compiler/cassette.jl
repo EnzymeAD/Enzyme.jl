@@ -59,6 +59,46 @@ function ir_element(x, code::Vector)
     return x
 end
 
+@inline function Base.copy(a::Array{T,1}) where {T}
+    len = UInt64(Base.length(a))
+    typesize = UInt64(Base.aligned_sizeof(T))
+    bitsunion = Base.isbitsunion(T)
+  
+    mod = "
+  declare void @llvm.memcpy.p0i8.p0i8.i64(i8*, i8*, i64, i1)
+  declare {} addrspace(10)* @jl_alloc_array_1d({} addrspace(10)*, i64)
+  define internal i8* @jl_array_ptr({} addrspace(10)* %a) #0 {
+  top:
+    %bc = bitcast {} addrspace(10)* %a to i8* addrspace(10)*
+    %ld = load i8*, i8* addrspace(10)* %bc
+    ret i8* %ld
+  }
+  
+  declare i8* @jl_array_typetagdata({} addrspace(10)*)
+  define {} addrspace(10)* @entry({} addrspace(10)* %typ, {} addrspace(10)* %a, i64 %len, i64 %tsize, i8 %bitsunion) #0 {
+  top:
+    %data = call nonnull {} addrspace(10)* @jl_alloc_array_1d({} addrspace(10)* %typ, i64 %len)
+    %src = call i8* @jl_array_ptr({} addrspace(10)* %a)
+    %dst = call i8* @jl_array_ptr({} addrspace(10)* %data)
+    %size = mul i64 %len, %tsize
+    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %dst, i8* %src, i64 %size, i1 false)
+    %cmp = icmp eq i8 %bitsunion, 0
+    br i1 %cmp, label %end, label %bu
+  
+  bu:
+    %dst2 = call i8* @jl_array_typetagdata({} addrspace(10)* %data)
+    %src2 = call i8* @jl_array_typetagdata({} addrspace(10)* %a)
+    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %dst2, i8* %src2, i64 %size, i1 false)
+    br label %end
+  
+  end:
+    ret {} addrspace(10)* %data
+    }
+    attributes #0 = { alwaysinline }"
+
+    Base.llvmcall((mod, "entry"), Array{T,1}, Tuple{Any, Any, UInt64, UInt64, Bool}, Array{T, 1}, a, len, typesize, bitsunion)
+end
+
 ##
 # Forces inlining on everything that is not marked `@noinline`
 # avoids overdubbing of pure functions
