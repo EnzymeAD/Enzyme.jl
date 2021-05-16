@@ -318,8 +318,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 if ptr == cglobal(:jl_new_array)
                     fn = "jl_new_array"
                 end
+
                 if ptr == cglobal(:jl_array_copy)
                     fn = "jl_array_copy"
+                    
                 end
                 if ptr == cglobal(:jl_alloc_string)
                     fn = "jl_alloc_string"

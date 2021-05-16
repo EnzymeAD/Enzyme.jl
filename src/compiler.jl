@@ -221,7 +221,6 @@ function annotate!(mod)
 end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
-    @info "alloc_obj_rule" direction ret args numArgs val known_values
     return UInt8(false)
 end
 
@@ -655,8 +654,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     primalf = lower_convention(job, mod, primalf)
-    flush(stderr)
-    flush(stdout)
 
     # annotate
     annotate!(mod)

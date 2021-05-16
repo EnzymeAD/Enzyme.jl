@@ -160,8 +160,8 @@ end
         end
         return mean(a)
     end
-    # Disabled as copy not handled
-    # @test autodiff(gc_copy, Active(5.0))[1] ≈ 10
+    # Cassette breaks things
+    @test Enzyme.autodiff_no_cassette(gc_copy, Active(5.0))[1] ≈ 10
 end
 
 @testset "Compare against" begin
