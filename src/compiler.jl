@@ -363,7 +363,20 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         always_inliner!(pm)
         run!(pm, mod)
     end
-
+    ModulePassManager() do pm
+        # Kill the temporary staging function
+        global_dce!(pm)
+        global_optimizer!(pm)
+        run!(pm, mod)
+    end
+    if haskey(globals(mod), "llvm.used")
+        unsafe_delete!(mod, globals(mod)["llvm.used"])
+        for u in user.(collect(uses(entry_f)))
+            if isa(u, LLVM.GlobalVariable) && endswith(LLVM.name(u), "_slot") && startswith(LLVM.name(u), "julia")
+                unsafe_delete!(mod, u)
+            end
+        end
+    end
     return wrapper_f
 end
 
