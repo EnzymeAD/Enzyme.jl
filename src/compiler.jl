@@ -251,7 +251,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
             #=additionalArg=#C_NULL, typeInfo,
             # uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
-            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
+            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#true))
         augmented_primalf = nothing
     end
     return adjointf, augmented_primalf
@@ -427,7 +427,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     optimize!(mod, target_machine)
 
     if process_module
-        GPUCompiler.optimize_module!(parent_job, mod)
+       GPUCompiler.optimize_module!(parent_job, mod)
     end
 
     if params.run_enzyme
