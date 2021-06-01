@@ -201,6 +201,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
             data = open(flib, "r") do io
                 lib = readmeta(io)
                 sections = Sections(lib)
+                if !(".llvmbc" in sections)
+                    return nothing
+                end
                 llvmbc = read(findfirst(sections, ".llvmbc"))
                 return llvmbc
             end
@@ -247,7 +250,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                         end
                     end
                 end
-                
+
                 b = Builder(ctx)
 
                 position!(b, inst)
@@ -271,7 +274,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                         end
                     end
                 end
-                
+
                 b = Builder(ctx)
                 position!(b, inst)
                 replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
@@ -327,8 +330,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end
-                
-                if length(fn) > 1 && fromC 
+
+                if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
                     if lfn == C_NULL

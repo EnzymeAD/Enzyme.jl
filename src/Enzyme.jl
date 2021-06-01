@@ -62,7 +62,7 @@ prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
     thunk(args′...)
 end
 
@@ -72,7 +72,7 @@ end
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
     thunk(args′...)
 end
 
@@ -104,7 +104,7 @@ for op in (asin,tanh)
     for (T, llvm_t, suffix) in ((Float32, "float", "f"), (Float64, "double", ""))
         mod = """
                 declare $llvm_t @$(nameof(op))$suffix($llvm_t)
-               
+
                 define $llvm_t @entry($llvm_t) #0 {
                     %val = call $llvm_t @$op$suffix($llvm_t %0)
                     ret $llvm_t %val

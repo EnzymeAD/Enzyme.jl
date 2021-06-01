@@ -11,7 +11,7 @@ LLVM.dispose(tt::TypeTree) = API.EnzymeFreeTypeTree(tt)
 
 TypeTree() = TypeTree(API.EnzymeNewTypeTree())
 TypeTree(CT, ctx) = TypeTree(API.EnzymeNewTypeTreeCT(CT, ctx))
-function TypeTree(CT, idx, ctx) 
+function TypeTree(CT, idx, ctx)
     tt = TypeTree(CT, ctx)
     only!(tt, idx)
     return tt
@@ -73,6 +73,10 @@ function typetree(::Type{Float64}, ctx, dl)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
+function typetree(::Type{<:DataType}, ctx, dl)
+    return TypeTree()
+end
+
 function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
@@ -123,9 +127,9 @@ function typetree(@nospecialize(T), ctx, dl)
         if subT.isinlinealloc
             shift!(subtree, dl, 0, sizeof(subT), offset)
         else
-            merge!(subtree, TypeTree(API.DT_Pointer, ctx)) 
+            merge!(subtree, TypeTree(API.DT_Pointer, ctx))
             only!(subtree, offset)
-        end 
+        end
 
         merge!(tt, subtree)
     end
@@ -139,14 +143,14 @@ struct FnTypeInfo
 end
 Base.cconvert(::Type{API.CFnTypeInfo}, fnti::FnTypeInfo) = fnti
 function Base.unsafe_convert(::Type{API.CFnTypeInfo}, fnti::FnTypeInfo)
-    args_kv = Base.unsafe_convert(Ptr{API.IntList}, Base.cconvert(Ptr{API.IntList}, fnti.known_values)) 
-    rTT = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, fnti.rTT)) 
+    args_kv = Base.unsafe_convert(Ptr{API.IntList}, Base.cconvert(Ptr{API.IntList}, fnti.known_values))
+    rTT = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, fnti.rTT))
 
     tts = API.CTypeTreeRef[]
     for tt in fnti.argTTs
-        raw_tt = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, tt)) 
+        raw_tt = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, tt))
         push!(tts, raw_tt)
     end
-    argTTs = Base.unsafe_convert(Ptr{API.CTypeTreeRef}, Base.cconvert(Ptr{API.CTypeTreeRef}, tts)) 
+    argTTs = Base.unsafe_convert(Ptr{API.CTypeTreeRef}, Base.cconvert(Ptr{API.CTypeTreeRef}, tts))
     return API.CFnTypeInfo(argTTs, rTT, args_kv)
 end
