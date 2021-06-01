@@ -3,7 +3,7 @@ using Test
 
 @testset "ABI & Calling convention" begin
 
-    f(x) = x 
+    f(x) = x
 
     # GhostType -> Nothing
     res = autodiff(f, Const(nothing))
@@ -92,4 +92,39 @@ using Test
     # primitive type Int128, Float64, Float128
 
     # returns: sret, const/ghost, !deserve_retbox
+end
+
+
+@testset "Callable ABI" begin
+    function method(f, x)
+        return f(x)
+    end
+
+    struct AFoo
+       x::Float64
+    end
+
+    function (f::AFoo)(x::Float64)
+       return f.x * x
+    end
+
+    @test Enzyme.autodiff_no_cassette(method, AFoo(2.0), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(method, AFoo(2.0), Active(3.0))[1]≈ 2.0
+
+    @test Enzyme.autodiff_no_cassette(AFoo(2.0), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(AFoo(2.0), Active(3.0))[1]≈ 2.0
+
+
+    struct ABar
+    end
+
+    function (f::ABar)(x::Float64)
+       return 2.0 * x
+    end
+
+    @test Enzyme.autodiff_no_cassette(method, ABar(), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(method, ABar(), Active(3.0))[1]≈ 2.0
+
+    @test Enzyme.autodiff_no_cassette(ABar(), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(ABar(), Active(3.0))[1]≈ 2.0
 end
