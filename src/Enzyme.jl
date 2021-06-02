@@ -57,13 +57,7 @@ prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
 @inline function autodiff(f::F, args...) where F
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
-    thunk(args′...)
+    autodiff_no_cassette(f, args...)
 end
 
 @inline function autodiff_no_cassette(f::F, args...) where F
@@ -77,47 +71,6 @@ end
 end
 
 import .Compiler: EnzymeCtx
-# Ops that have intrinsics
-for op in (sin, cos, tan, exp, log)
-    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
-        llvmf = "llvm.$(nameof(op)).$suffix"
-        @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
-                ccall($llvmf, llvmcall, $T, ($T,), x)
-            end
-        end
-    end
-end
-
-for op in (copysign,)
-    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
-        llvmf = "llvm.$(nameof(op)).$suffix"
-        @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T, y::$T)
-                ccall($llvmf, llvmcall, $T, ($T, $T), x, y)
-            end
-        end
-    end
-end
-
-for op in (asin,tanh)
-    for (T, llvm_t, suffix) in ((Float32, "float", "f"), (Float64, "double", ""))
-        mod = """
-                declare $llvm_t @$(nameof(op))$suffix($llvm_t)
-
-                define $llvm_t @entry($llvm_t) #0 {
-                    %val = call $llvm_t @$op$suffix($llvm_t %0)
-                    ret $llvm_t %val
-                }
-                attributes #0 = { alwaysinline }
-               """
-       @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
-                Base.llvmcall(($mod, "entry"), $T, Tuple{$T}, x)
-            end
-        end
-    end
-end
 
 @inline function pack(args...)
     ntuple(Val(length(args))) do i
