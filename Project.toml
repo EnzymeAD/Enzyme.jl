@@ -1,12 +1,11 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.5.2"
+version = "0.6.0"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
-Cassette = "7057c7e9-c182-5462-911a-8362d720325c"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
@@ -16,9 +15,8 @@ ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
-Cassette = "0.3.4"
-Enzyme_jll = "0.0.11, 0.0.12"
-GPUCompiler = "0.11"
+Enzyme_jll = "0.0.13"
+GPUCompiler = "0.12"
 LLVM = "3.2"
 ObjectFile = "0.3"
 julia = "1.6"

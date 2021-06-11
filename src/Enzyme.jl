@@ -3,8 +3,6 @@ module Enzyme
 export autodiff
 export Const, Active, Duplicated
 
-using Cassette
-
 abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
@@ -57,13 +55,9 @@ prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
 @inline function autodiff(f::F, args...) where F
-    autodiff_no_cassette(f, args...)
-end
-
-@inline function autodiff_no_cassette(f::F, args...) where F
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
@@ -115,7 +109,4 @@ Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.va
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
-# WIP
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asinf, Float32, (Float32,), x)
 end # module

@@ -78,25 +78,19 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 include("compiler/optimize.jl")
-include("compiler/cassette.jl")
 
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
 """
-@inline function fspec(f::F, tt::TT, ::Val{cassette}=Val(true)) where {F, TT, cassette}
+@inline function fspec(f::F, tt::TT) where {F, TT}
     # Entry for the cache look-up
     adjoint = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
 
     # primal function. Inferred here to get return type
     _tt = (tt.parameters...,)
 
-    if cassette
-        overdub_tt = Tuple{typeof(Compiler.CTX), F, map(eltype, _tt)...}
-        primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
-    else
-        primal_tt = Tuple{map(eltype, _tt)...}
-        primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
-    end
+    primal_tt = Tuple{map(eltype, _tt)...}
+    primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
 
     return primal, adjoint
 end
@@ -919,8 +913,8 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
     return UInt64(reinterpret(UInt, ptr))
 end
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{cassette}) where {f,tt,cassette}
-    primal, adjoint = fspec(f, tt, Val(cassette))
+@generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
+    primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, false, true)
     job    = CompilerJob(target, primal, params)
