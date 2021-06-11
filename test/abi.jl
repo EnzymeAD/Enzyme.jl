@@ -108,10 +108,7 @@ end
        return f.x * x
     end
 
-    @test Enzyme.autodiff_no_cassette(method, AFoo(2.0), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(method, AFoo(2.0), Active(3.0))[1]≈ 2.0
-
-    @test Enzyme.autodiff_no_cassette(AFoo(2.0), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(AFoo(2.0), Active(3.0))[1]≈ 2.0
 
 
@@ -122,9 +119,6 @@ end
        return 2.0 * x
     end
 
-    @test Enzyme.autodiff_no_cassette(method, ABar(), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(method, ABar(), Active(3.0))[1]≈ 2.0
-
-    @test Enzyme.autodiff_no_cassette(ABar(), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(ABar(), Active(3.0))[1]≈ 2.0
 end

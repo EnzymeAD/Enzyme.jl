@@ -78,25 +78,19 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 include("compiler/optimize.jl")
-include("compiler/cassette.jl")
 
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
 """
-@inline function fspec(f::F, tt::TT, ::Val{cassette}=Val(true)) where {F, TT, cassette}
+@inline function fspec(f::F, tt::TT) where {F, TT}
     # Entry for the cache look-up
     adjoint = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
 
     # primal function. Inferred here to get return type
     _tt = (tt.parameters...,)
 
-    if cassette
-        overdub_tt = Tuple{typeof(Compiler.CTX), F, map(eltype, _tt)...}
-        primal = FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# nothing)
-    else
-        primal_tt = Tuple{map(eltype, _tt)...}
-        primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
-    end
+    primal_tt = Tuple{map(eltype, _tt)...}
+    primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
 
     return primal, adjoint
 end
@@ -217,7 +211,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     elseif GPUCompiler.isghosttype(rt) || Core.Compiler.isconstType(rt)
         retType = API.DFT_CONSTANT
     else
-        error("What even is $rt")
+        error("Unhandled return type $rt")
     end
 
     TA = TypeAnalysis(triple(mod))
@@ -406,8 +400,76 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         primal_job = similar(parent_job, job.source)
     end
-    mod, primalf = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
+    mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
+    primalf = meta.entry
     check_ir(job, mod)
+
+    ctx = context(mod)
+    custom = []
+    must_wrap = false
+
+    # Julia function to LLVM stem and arity
+    known_ops = Dict(
+        Base.sin => (:sin, 1),
+        Base.cos => (:cos, 1),
+        Base.tan => (:tan, 1),
+        Base.exp => (:exp, 1),
+        Base.log => (:log, 1),
+        Base.asin => (:asin, 1),
+        Base.tanh => (:tanh, 1)
+    )
+    for (mi, k) in meta.compiled
+        meth = mi.def
+        name = meth.name
+        jlmod  = meth.module
+
+        Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
+        func = getfield(jlmod, name)
+        func ∈ keys(known_ops) || continue
+
+        sparam_vals = mi.sparam_vals
+        name, arity = known_ops[func]
+
+        length(sparam_vals) == arity || continue
+        T = first(sparam_vals)
+        T ∈ (Float32, Float64) && all(==(T), sparam_vals) || continue
+        name = string(name)
+        name = T == Float32 ? name*"f" : name
+
+        llvmfn = functions(mod)[k.specfunc]
+        push!(custom, llvmfn)
+
+        attributes = function_attributes(llvmfn)
+        push!(attributes, EnumAttribute("noinline", 0, ctx))
+        push!(attributes, StringAttribute("enzyme_math", name, ctx))
+
+        # Need to wrap the code when outermost
+        must_wrap |= llvmfn == primalf
+    end
+
+    if must_wrap
+        llvmfn = primalf
+        FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
+
+        wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
+
+        let builder = Builder(ctx)
+            entry = BasicBlock(wrapper_f, "entry", ctx)
+            position!(builder, entry)
+
+            res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
+
+            if return_type(FT) == LLVM.VoidType(ctx)
+                ret!(builder)
+            else
+                ret!(builder, res)
+            end
+
+            dispose(builder)
+        end
+        primalf = wrapper_f
+    end
+
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
         target_machine = tm[]
     else
@@ -425,7 +487,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
            process_module = true
         end
     end
-
 
     primalf = lower_convention(job, mod, primalf)
     flush(stderr)
@@ -447,6 +508,20 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         adjointf = primalf
         augmented_primalf = nothing
+    end
+
+    for f in custom
+        iter = function_attributes(f)
+        elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
+        LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
+        for eattr in elems
+            at = Attribute(eattr)
+            if isa(at, LLVM.EnumAttribute)
+                if kind(at) == "noinline"
+                    delete!(iter, at)
+                end
+            end
+        end
     end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
@@ -862,8 +937,8 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
     return UInt64(reinterpret(UInt, ptr))
 end
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{cassette}) where {f,tt,cassette}
-    primal, adjoint = fspec(f, tt, Val(cassette))
+@generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
+    primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, false, true)
     job    = CompilerJob(target, primal, params)

@@ -3,8 +3,6 @@ module Enzyme
 export autodiff
 export Const, Active, Duplicated
 
-using Cassette
-
 abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
@@ -59,17 +57,7 @@ prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 @inline function autodiff(f::F, args...) where F
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(true))
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
-    thunk(args′...)
-end
-
-@inline function autodiff_no_cassette(f::F, args...) where F
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(false))
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
@@ -77,47 +65,6 @@ end
 end
 
 import .Compiler: EnzymeCtx
-# Ops that have intrinsics
-for op in (sin, cos, tan, exp, log)
-    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
-        llvmf = "llvm.$(nameof(op)).$suffix"
-        @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
-                ccall($llvmf, llvmcall, $T, ($T,), x)
-            end
-        end
-    end
-end
-
-for op in (copysign,)
-    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
-        llvmf = "llvm.$(nameof(op)).$suffix"
-        @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T, y::$T)
-                ccall($llvmf, llvmcall, $T, ($T, $T), x, y)
-            end
-        end
-    end
-end
-
-for op in (asin,tanh)
-    for (T, llvm_t, suffix) in ((Float32, "float", "f"), (Float64, "double", ""))
-        mod = """
-                declare $llvm_t @$(nameof(op))$suffix($llvm_t)
-
-                define $llvm_t @entry($llvm_t) #0 {
-                    %val = call $llvm_t @$op$suffix($llvm_t %0)
-                    ret $llvm_t %val
-                }
-                attributes #0 = { alwaysinline }
-               """
-       @eval begin
-            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
-                Base.llvmcall(($mod, "entry"), $T, Tuple{$T}, x)
-            end
-        end
-    end
-end
 
 @inline function pack(args...)
     ntuple(Val(length(args))) do i
@@ -162,7 +109,4 @@ Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.va
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
-# WIP
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
-# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asinf, Float32, (Float32,), x)
 end # module
