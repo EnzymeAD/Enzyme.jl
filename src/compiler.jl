@@ -404,46 +404,70 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     primalf = meta.entry
     check_ir(job, mod)
 
+    ctx = context(mod)
     custom = []
+    must_wrap = false
 
-    for (v, k) in meta.compiled
-        for (op, name) in ((Base.sin, "sin"), (Base.cos, "cos"), (Base.tan, "tan"), (Base.exp, "exp"), (Base.log, "log"), (Base.asin, "asin"), (Base.tanh, "tanh"))
-            if length(v.sparam_vals) >=1 && all(x->(x in [Float32, Float64] && x==v.sparam_vals[1]), v.sparam_vals) && v.def in methods(op)
-                llvmfn = functions(mod)[k.specfunc]
-                push!(custom, llvmfn)
-                push!(function_attributes(llvmfn), EnumAttribute("noinline", 0, context(mod)))
-                if v.sparam_vals[1] == Float32
-                    push!(function_attributes(llvmfn), StringAttribute("enzyme_math", name*"f", context(mod)))
-                else
-                    push!(function_attributes(llvmfn), StringAttribute("enzyme_math", name, context(mod)))
-                end
+    # Julia function to LLVM stem and arity
+    known_ops = Dict(
+        Base.sin => (:sin, 1),
+        Base.cos => (:cos, 1),
+        Base.tan => (:tan, 1),
+        Base.exp => (:exp, 1),
+        Base.log => (:log, 1),
+        Base.asin => (:asin, 1),
+        Base.tanh => (:tanh, 1)
+    )
+    for (mi, k) in meta.compiled
+        meth = mi.def
+        name = meth.name
+        jlmod  = meth.module
 
-                # Need to wrap the code when outermost
-                if llvmfn == primalf
+        Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
+        func = getfield(jlmod, name)
+        func ∈ keys(known_ops) || continue
 
-                    FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
+        sparam_vals = mi.sparam_vals
+        name, arity = known_ops[func]
 
-                    wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
+        length(sparam_vals) == arity || continue
+        T = first(sparam_vals)
+        T ∈ (Float32, Float64) && all(==(T), sparam_vals) || continue
+        name = string(name)
+        name = T == Float32 ? name*"f" : name
 
-                    ctx = context(mod)
-                    let builder = Builder(ctx)
-                        entry = BasicBlock(wrapper_f, "entry", ctx)
-                        position!(builder, entry)
+        llvmfn = functions(mod)[k.specfunc]
+        push!(custom, llvmfn)
 
-                        res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
+        attributes = function_attributes(llvmfn)
+        push!(attributes, EnumAttribute("noinline", 0, ctx))
+        push!(attributes, StringAttribute("enzyme_math", name, ctx))
 
-                        if return_type(FT) == LLVM.VoidType(ctx)
-                            ret!(builder)
-                        else
-                            ret!(builder, res)
-                        end
+        # Need to wrap the code when outermost
+        must_wrap |= llvmfn == primalf
+    end
 
-                        dispose(builder)
-                    end
-                    primalf = wrapper_f
-                end
+    if must_wrap
+        llvmfn = primalf
+        FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
+
+        wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
+
+        let builder = Builder(ctx)
+            entry = BasicBlock(wrapper_f, "entry", ctx)
+            position!(builder, entry)
+
+            res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
+
+            if return_type(FT) == LLVM.VoidType(ctx)
+                ret!(builder)
+            else
+                ret!(builder, res)
             end
+
+            dispose(builder)
         end
+        primalf = wrapper_f
     end
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
