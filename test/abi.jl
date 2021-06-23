@@ -82,6 +82,12 @@ using Test
     @test dx[] ≈ 3.0
     @test dy[] ≈ 2.0
 
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), (x->x*x,), Active(2.0))
+    @test mid ≈ 4.0
+
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), [x->x*x], Active(2.0))
+    @test mid ≈ 4.0
+
     # deserves_argbox yes and no
     struct Bar
         r::Ref{Int}

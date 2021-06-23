@@ -110,6 +110,9 @@ function typetree(@nospecialize(T), ctx, dl)
     end
 
     if fieldcount(T) == 0
+        if T <: Function
+            return TypeTree()
+        end
         error("$T is unknown leaf")
     end
 
