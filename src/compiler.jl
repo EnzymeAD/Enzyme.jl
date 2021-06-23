@@ -64,7 +64,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     if elsz == 1 && !isunion
         tot = LLVM.add!(b, t, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
     end
-    if (isunion) 
+    if (isunion)
         # an extra byte for each isbits union array element, stored after a->maxsize
         tot = LLVM.add!(b, tot, prod)
     end
@@ -356,30 +356,30 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     end
 
     rules = Dict{String, API.CustomRuleType}(
-        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule, 
+        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_int64" => @cfunction(i64_box_rule, 
+        "jl_box_int64" => @cfunction(i64_box_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_uint64" => @cfunction(i64_box_rule, 
+        "jl_box_uint64" => @cfunction(i64_box_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_array_copy" => @cfunction(inout_rule, 
+        "jl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_1d" => @cfunction(alloc_rule, 
+        "jl_alloc_array_1d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule, 
+        "jl_alloc_array_2d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule, 
+        "jl_alloc_array_3d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )
 
-    TA = TypeAnalysis(triple(mod), rules) 
+    TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
 
     if GPUCompiler.isghosttype(rt)|| Core.Compiler.isconstType(rt)
@@ -550,6 +550,10 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     return wrapper_f
 end
 
+function adim(::Array{T, N}) where {T, N}
+    return N
+end
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -590,12 +594,27 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
-        func ∈ keys(known_ops) || continue
 
         sparam_vals = mi.sparam_vals
+
+
+        if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
+            AT = first(sparam_vals)
+            T = eltype(AT)
+            N = adim(AT)
+            bitsunion = Base.isbitsunion(T)
+            @show func, AT, T, N
+            flush(stdout)
+            flush(stderr)
+            error("jl_copy unhandled")
+        end
+
+        func ∈ keys(known_ops) || continue
+
         name, arity = known_ops[func]
 
         length(sparam_vals) == arity || continue
+
         T = first(sparam_vals)
         T ∈ (Float32, Float64) && all(==(T), sparam_vals) || continue
         name = string(name)
