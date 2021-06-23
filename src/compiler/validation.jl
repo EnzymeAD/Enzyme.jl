@@ -324,9 +324,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 if ptr == cglobal(:jl_alloc_string)
                     fn = "jl_alloc_string"
                 end
-                if ptr == cglobal(:erf)
-                    fn = "erf"
-                end
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end
