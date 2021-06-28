@@ -1,0 +1,12 @@
+# Internal API
+
+!!! note
+
+    This is the documentation of Enzymes's internal API. The internal API is
+    *not* subject to semantic versioning and may change at any time and
+    without deprecation.
+
+```@autodocs
+Modules = [Enzyme.Compiler]
+Order = [:module, :type, :constant, :macro, :function]
+```
