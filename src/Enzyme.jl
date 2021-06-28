@@ -33,6 +33,12 @@ Constructor: `Active(x)`
 
 Mark a function argument `x` of [`autodiff`](@ref) as active,
 Enzyme will auto-differentiate in respect `Active` arguments.
+
+!!! note
+
+    Enzyme gradients with respect to integer values are zero.
+    [`Active`](@ref) will automatically convert plain integers to floating
+    point values, but cannot do so for integer values in tuples and structs.
 """
 struct Active{T} <: Annotation{T}
     val::T
@@ -138,6 +144,12 @@ here, `autodiff` returns a tuple
 ``(\\partial f/\\partial a, \\partial f/\\partial d)``,
 while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not returned).
 `c` will be treated as `Const(c)`.
+
+!!! note
+
+    Enzyme gradients with respect to integer values are zero.
+    [`Active`](@ref) will automatically convert plain integers to floating
+    point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(f::F, args...) where F
     args′ = annotate(args...)
