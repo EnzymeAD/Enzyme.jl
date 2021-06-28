@@ -16,6 +16,7 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "API" => "api.md",
+        "Implementing pullbacks" => "pullbacks.md",
         "For developers" => "dev_docs.md",
         "Internal API" => "internal_api.md",
     ],
