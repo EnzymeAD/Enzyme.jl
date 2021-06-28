@@ -1,5 +1,10 @@
 # <img src="https://enzyme.mit.edu/logo.svg" width="75" align=left> The Enzyme High-Performance Automatic Differentiator of LLVM
 
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://wsmoses.github.io/Enzyme.jl/stable)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://wsmoses.github.io/Enzyme.jl/dev)
+[![Build Status](https://github.com/wsmoses/Enzyme.jl/workflows/CI/badge.svg)](https://github.com/wsmoses/Enzyme.jl/actions)
+[![Coverage](https://codecov.io/gh/wsmoses/Enzyme.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/wsmoses/Enzyme.jl)
+
 This is a package containing the Julia bindings for [Enzyme](https://github.com/wsmoses/enzyme). This is very much a work in progress and bug reports/discussion is greatly appreciated!
 
 Enzyme is a plugin that performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
