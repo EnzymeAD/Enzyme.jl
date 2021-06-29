@@ -11,7 +11,7 @@ const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 
 const UP = Cint(1)
-DOWN = Cint(2)
+const DOWN = Cint(2)
 const BOTH = Cint(3)
 
 struct IntList
