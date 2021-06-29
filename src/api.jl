@@ -10,6 +10,10 @@ const EnzymeLogicRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 
+const UP = Cint(1)
+const DOWN = Cint(2)
+const BOTH = Cint(3)
+
 struct IntList
     data::Ptr{Int64}
     size::Csize_t
@@ -35,8 +39,8 @@ EnzymeNewTypeTreeCT(T, ctx) = ccall((:EnzymeNewTypeTreeCT, libEnzyme), CTypeTree
 EnzymeNewTypeTreeTR(tt) = ccall((:EnzymeNewTypeTreeTR, libEnzyme), CTypeTreeRef, (CTypeTreeRef,), tt)
 
 EnzymeFreeTypeTree(tt) = ccall((:EnzymeFreeTypeTree, libEnzyme), Cvoid, (CTypeTreeRef,), tt)
-EnzymeSetTypeTree(dst, src) = ccall((:EnzymeSetTypeTree, libEnzyme), Cvoid, (CTypeTreeRef, CTypeTreeRef), dst, src)
-EnzymeMergeTypeTree(dst, src) = ccall((:EnzymeMergeTypeTree, libEnzyme), Cvoid, (CTypeTreeRef, CTypeTreeRef), dst, src)
+EnzymeSetTypeTree(dst, src) = ccall((:EnzymeSetTypeTree, libEnzyme), UInt8, (CTypeTreeRef, CTypeTreeRef), dst, src)
+EnzymeMergeTypeTree(dst, src) = ccall((:EnzymeMergeTypeTree, libEnzyme), UInt8, (CTypeTreeRef, CTypeTreeRef), dst, src)
 EnzymeTypeTreeOnlyEq(dst, x) = ccall((:EnzymeTypeTreeOnlyEq, libEnzyme), Cvoid, (CTypeTreeRef, Int64), dst, x)
 EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
     ccall((:EnzymeTypeTreeShiftIndiciesEq, libEnzyme), Cvoid, (CTypeTreeRef, Cstring, Int64, Int64, UInt64),
@@ -110,9 +114,10 @@ function EnzymeCreateAugmentedPrimal(logic, todiff, retType, constant_args, TA, 
         typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, atomicAdd, postOpt)
 end
 
-# typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
-#                                CTypeTree * /*args*/, size_t /*numArgs*/,
-#                                LLVMValueRef);
+# typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
+#                                   CTypeTreeRef * /*args*/,
+#                                   struct IntList * /*knownValues*/,
+#                                   size_t /*numArgs*/, LLVMValueRef);
 const CustomRuleType = Ptr{Cvoid}
 
 function CreateTypeAnalysis(triple, rulenames, rules)
@@ -127,6 +132,10 @@ end
 function FreeTypeAnalysis(ta)
     ccall((:FreeTypeAnalysis, libEnzyme), Cvoid, (EnzymeTypeAnalysisRef,), ta)
 end
+
+const CustomShadowAlloc = Ptr{Cvoid}
+const CustomShadowFree = Ptr{Cvoid}
+EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall((:EnzymeRegisterAllocationHandler, libEnzyme), Cvoid, (Cstring, CustomShadowAlloc, CustomShadowFree), name, ahandle, fhandle)
 
 function CreateLogic()
     ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, ())

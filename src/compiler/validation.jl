@@ -15,6 +15,20 @@ end
 
 function check_ir!(job, errors, mod::LLVM.Module)
     imported = Set(String[])
+    if haskey(functions(mod), "malloc")
+        f = functions(mod)["malloc"]
+        name!(f, "")
+        ctx = context(mod)
+        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+
+        prev_ft = eltype(llvmtype(f)::LLVM.PointerType)::LLVM.FunctionType
+
+        mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
+        replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, llvmtype(f))))
+        unsafe_delete!(mod, f)
+        @show "replaced malloc with", mfn
+    end
+    @show "post mallocfix", mod, haskey(functions(mod), "malloc")
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
     end
@@ -318,8 +332,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 if ptr == cglobal(:jl_new_array)
                     fn = "jl_new_array"
                 end
+
                 if ptr == cglobal(:jl_array_copy)
                     fn = "jl_array_copy"
+
                 end
                 if ptr == cglobal(:jl_alloc_string)
                     fn = "jl_alloc_string"

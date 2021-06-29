@@ -3,6 +3,7 @@ using Test
 using FiniteDifferences
 using ForwardDiff
 using Zygote
+using Statistics
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
@@ -124,6 +125,52 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 end
 
+@testset "Bithacks" begin
+    function fneg(x::Float64)
+        xptr = reinterpret(Int64, x)
+        y = Int64(-9223372036854775808)
+        out = y ⊻ xptr;
+        return reinterpret(Float64, out)
+    end
+    @test autodiff(fneg, Active(2.0))[1] ≈ -1.0
+    function expor(x::Float64)
+        xptr = reinterpret(Int64, x)
+        y = UInt64(4607182418800017408)
+        out = y | xptr;
+        return reinterpret(Float64, out)
+    end
+    @test autodiff(expor, Active(0.42))[1] ≈ 4.0
+end
+
+
+@testset "GC" begin
+    function gc_alloc(x)  # Basically g(x) = x^2
+        a = Array{Float64, 1}(undef, 10)
+        for n in 1:length(a)
+            a[n] = x^2
+        end
+        return mean(a)
+    end
+    @test autodiff(gc_alloc, Active(5.0))[1] ≈ 10
+
+    # TODO (after BLAS)
+    # A = Vector[2.0, 3.0]
+    # B = Vector[4.0, 5.0]
+    # dB = Vector[0.0, 0.0]
+    # f = (X, Y) -> sum(X .* Y)
+    # Enzyme.autodiff(f, A, Duplicated(B, dB))
+
+    function gc_copy(x)  # Basically g(x) = x^2
+        a = x * ones(10)
+        for n in 1:length(a)
+            a[n] = x^2
+        end
+        return mean(a)
+    end
+    # Cassette breaks things
+    # TODO
+    # @test Enzyme.autodiff(gc_copy, Active(5.0))[1] ≈ 10
+end
 
 @testset "Compare against" begin
     x = 3.0
