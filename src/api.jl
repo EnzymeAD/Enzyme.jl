@@ -12,7 +12,7 @@ const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 
 UP = Cint(1);
 DOWN = Cint(2)
-BOTH = Cint(3)
+const BOTH = Cint(3)
 
 struct IntList
     data::Ptr{Int64}
