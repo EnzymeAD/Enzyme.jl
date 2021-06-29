@@ -3,20 +3,66 @@ module Enzyme
 export autodiff
 export Const, Active, Duplicated
 
+"""
+    abstract type Annotation{T}
+
+Abstract type for [`autodiff`](@ref) function argument wrappers like
+[`Const`](@ref), [`Active`](@ref) and [`Duplicated`](@ref).
+"""
 abstract type Annotation{T} end
+
+"""
+    struct Const{T} <: Annotation{T}
+
+Constructor: `Const(x)`
+
+Mark a function argument `x` of [`autodiff`](@ref) as constant,
+Enzyme will not auto-differentiate in respect `Const` arguments.
+"""
 struct Const{T} <: Annotation{T}
     val::T
 end
+
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
 Const(::Type{T}) where T = Const{Type{T}}(T)
+
+"""
+    struct Active{T} <: Annotation{T}
+
+Constructor: `Active(x)`
+
+Mark a function argument `x` of [`autodiff`](@ref) as active,
+Enzyme will auto-differentiate in respect `Active` arguments.
+
+!!! note
+
+    Enzyme gradients with respect to integer values are zero.
+    [`Active`](@ref) will automatically convert plain integers to floating
+    point values, but cannot do so for integer values in tuples and structs.
+"""
 struct Active{T} <: Annotation{T}
     val::T
 end
+
 Active(i::Integer) = Active(float(i))
+
+
+"""
+    struct Duplicated{T} <: Annotation{T}
+
+Constructor: `Duplicated(x, ∂f_∂x)`
+
+Mark a function argument `x` of [`autodiff`](@ref) as duplicated, Enzyme will
+auto-differentiate in respect to such arguments, with `dx` acting as an
+accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
+`∂f_∂x`.
+"""
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
 end
+
+
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
@@ -54,6 +100,57 @@ prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)..
 prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
+"""
+    autodiff(f, args...)
+
+Auto-differentiate function `f` at arguments `args`.
+
+Limitations:
+
+* `f` may only return a `Real` (of a built-in/primitive type) or `nothing`,
+  not an array, struct, `BigFloat`, etc. To handle vector-valued return
+  types, use a mutating `f!` that returns `nothing` and stores it's return
+  value in one of the arguments, which must be wrapped in a
+  [`Duplicated`](@ref).
+
+* `f` may not allocate memory, this restriction is likely to be removed in
+  future versions.
+
+`args` may be numbers, arrays, structs of numbers, structs of arrays and so
+on. Enzyme will only differentiate in respect to arguments that are wrapped
+in an [`Active`](@ref) (for immutable arguments like primitive types and
+structs thereof) or [`Duplicated`](@ref) (for mutable arguments like arrays,
+`Ref`s and structs thereof). Non-annotated arguments will automatically be
+treated as [`Const`](@ref).
+
+Example:
+
+```jldoctest
+using Enzyme
+
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
+∂f_∂a, ∂f_∂d = autodiff(f, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
+
+# output
+
+(3.966106403010388, 54450.0)
+```
+
+here, `autodiff` returns a tuple
+``(\\partial f/\\partial a, \\partial f/\\partial d)``,
+while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not returned).
+`c` will be treated as `Const(c)`.
+
+!!! note
+
+    Enzyme gradients with respect to integer values are zero.
+    [`Active`](@ref) will automatically convert plain integers to floating
+    point values, but cannot do so for integer values in tuples and structs.
+"""
 @inline function autodiff(f::F, args...) where F
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
