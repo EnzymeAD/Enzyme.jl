@@ -10,7 +10,7 @@ const EnzymeLogicRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 
-UP = Cint(1);
+const UP = Cint(1)
 DOWN = Cint(2)
 const BOTH = Cint(3)
 
