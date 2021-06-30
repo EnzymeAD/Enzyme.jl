@@ -10,7 +10,7 @@ makedocs(;
     sitename="Enzyme.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://wsmoses.github.io/Enzyme.jl",
+        canonical="https://enzyme.mit.edu/julia/",
         assets=String[],
     ),
     pages = [
@@ -23,10 +23,4 @@ makedocs(;
     doctest = true,
     linkcheck = true,
     strict = true,
-)
-
-deploydocs(;
-    repo="github.com/wsmoses/Enzyme.jl",
-    forcepush = true,
-    push_preview = true,
 )

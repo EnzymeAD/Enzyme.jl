@@ -1,20 +1,37 @@
-name: Build and deploy Jekyll site to GitHub Pages
+name: Build and deploy documentation to Scripts
 
 on:
   push:
     branches:
-      - gh-pages
+      - master
 
 jobs:
-  github-pages:
+  docs:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+      - run: |
+          julia --project=docs -e '
+            using Pkg
+            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.instantiate()'
+      - run: |
+          julia --project=docs -e '
+            using Documenter: DocMeta, doctest
+            using Enzyme
+            DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+            doctest(Enzyme)'
+      - run: julia --project=docs docs/make.jl
+
       - uses: wsmoses/action-deploy-scripts@main
         with:
           locker: 'enzyme-compiler'
           remote: julia
           privateKey: ${{ secrets.SCRIPTS_PRIVATE_KEY }}
           rmRemote: true
-          local: .
+          local: docs/build
 

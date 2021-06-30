@@ -1,7 +1,6 @@
 # <img src="https://enzyme.mit.edu/logo.svg" width="75" align=left> The Enzyme High-Performance Automatic Differentiator of LLVM
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://enzyme.mit.edu/julia/stable)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://enzyme.mit.edu/julia/dev)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://enzyme.mit.edu/julia)
 [![Build Status](https://github.com/wsmoses/Enzyme.jl/workflows/CI/badge.svg)](https://github.com/wsmoses/Enzyme.jl/actions)
 [![Coverage](https://codecov.io/gh/wsmoses/Enzyme.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/wsmoses/Enzyme.jl)
 
@@ -23,7 +22,7 @@ f1(x) = x*x
 @test autodiff(f1, Active(1.0)) ≈ 2.0
 ```
 
-For details, see the [package documentation](https://wsmoses.github.io/Enzyme.jl/stable).
+For details, see the [package documentation](https://enzyme.mit.edu/julia).
 
 More information on installing and using Enzyme directly (not through Julia) can be found on our website: [https://enzyme.mit.edu](https://enzyme.mit.edu).
 
