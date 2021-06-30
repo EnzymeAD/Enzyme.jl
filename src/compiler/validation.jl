@@ -26,9 +26,7 @@ function check_ir!(job, errors, mod::LLVM.Module)
         mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
         replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, llvmtype(f))))
         unsafe_delete!(mod, f)
-        @show "replaced malloc with", mfn
     end
-    @show "post mallocfix", mod, haskey(functions(mod), "malloc")
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
     end
