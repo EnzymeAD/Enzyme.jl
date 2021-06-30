@@ -320,7 +320,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         elseif T <: DuplicatedNoNeed
             push!(args_activity, API.DFT_DUP_NONEED)
         else
-            @assert("illegal annotation type")
+            error("illegal annotation type")
         end
         T = source_typ
         if isboxed
