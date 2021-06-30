@@ -114,7 +114,7 @@ Limitations:
   [`Duplicated`](@ref).
 
 * `f` may not allocate memory, this restriction is likely to be removed in
-  future versions.
+  future versions. Technically it can currently allocate memory directly, but not in a function called by `f`.
 
 `args` may be numbers, arrays, structs of numbers, structs of arrays and so
 on. Enzyme will only differentiate in respect to arguments that are wrapped

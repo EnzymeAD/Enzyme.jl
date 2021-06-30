@@ -1,0 +1,20 @@
+name: Build and deploy Jekyll site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - gh-pages
+
+jobs:
+  github-pages:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: wsmoses/action-deploy-scripts@main
+        with:
+          locker: 'enzyme-compiler'
+          remote: julia
+          privateKey: ${{ secrets.SCRIPTS_PRIVATE_KEY }}
+          rmRemote: true
+          local: .
+
