@@ -36,7 +36,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     b = LLVM.Builder(B)
 
-    vals = Vector{LLVM.Value}()
+    vals = LLVM.Value[]
     for i = 1:numArgs
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
     end
@@ -92,6 +92,647 @@ function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValu
     return C_NULL
 end
 
+dedupargs() = ()
+dedupargs(a, da, args...) = (a, dedupargs(args...)...)
+
+
+if VERSION < v"1.7"
+@generated function alloc(tt::Type{T}) where T
+    sz = sizeof(T)
+    type = reinterpret(Int64, Base.pointer_from_objref(T))
+    mod ="""
+        declare {}*** @julia.ptls_states()
+        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64, {}*)
+        define {} addrspace(10)* @allocate() #1 {
+            %1 = call {}*** @julia.ptls_states()
+            %2 = bitcast {}*** %1 to i8*
+            %res = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* %2, i64 $sz, {}* inttoptr (i64 $type to {}*))
+            ret {} addrspace(10)* %res
+        }
+        attributes #1 = { alwaysinline }
+        """
+    quote
+        ref = Base.llvmcall(($mod, "allocate"), Any, Tuple{})
+        return ref
+    end
+end
+else
+@generated function alloc(tt::Type{T}) where T
+    sz = sizeof(T)
+    type = reinterpret(Int64, Base.pointer_from_objref(T))
+    # TODO: can we get these offsets from somewhere
+    gcstack_offset = 2305843009213693940 # -offsetof(jl_task_t, gcstack) / sizeof(void*)
+    ptls_offset = 14 # offsetof(jl_task_t, ptls) / sizeof(void *)
+    mod ="""
+        declare {}*** @julia.get_pgcstack()
+        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64, {}*)
+        define {} addrspace(10)* @allocate() #1 {
+            %pgcstack = call {}*** @julia.get_pgcstack()
+            %1 = bitcast {}*** %pgcstack to {}**
+            %current_task = getelementptr inbounds {}*, {}** %1, i64 $(gcstack_offset)
+            %ptls_field = getelementptr inbounds {}*, {}** %current_task, i64 $(ptls_offset)
+            %ptls_load = load {}*, {}** %ptls_field, align 8
+            %2 = bitcast {}* %ptls_load to i8*
+            %res = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* %2, i64 $sz, {}* inttoptr (i64 $(type) to {}*))
+            ret {} addrspace(10)* %res
+        }
+        attributes #1 = { alwaysinline }
+        """
+    quote
+        ref = Base.llvmcall(($mod, "allocate"), Any, Tuple{})
+        return ref
+    end
+end
+end
+
+
+
+function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
+
+    args = Any[]
+    for i in 1:arg_size
+        # TODO when split mode use the below
+        push!(args, __args[i])
+        continue
+
+        if __activity[i] != 0
+            # TODO use only for non mutable
+            push!(args, Duplicated(__args[i], __shadows[i]))
+        else
+            push!(args, Const(__args[i]))
+        end
+    end
+
+    @warn "reverse differentiating jl_apply_generic call without split mode", fn, arg_size
+    res::Any = fn(args...)
+    __ret[1] = res
+
+    tape::Any = nothing
+    resT = typeof(res)
+    if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
+        __ret[2] = alloc(resT)
+        tape = unsafe_load(ret_ptr, 2)
+        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
+        #       we can mutate inplace, despite `typeof(res)` being immutable
+        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{resT}}, ret_ptr), 2), zero(resT))
+        @assert tape == 0.0
+        @assert tape == __ret[2]
+    else
+        shadow = res
+        __ret[2] = shadow
+    end
+
+    __ret[3] = tape
+    return nothing
+end
+
+function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+
+    args = []
+    actives = []
+    for i in 1:arg_size
+        if __activity[i] != 0
+            p = __args[i]
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+                push!(actives, (shadow_ptr, i))
+            else
+                s = __shadows[i]
+                push!(args, Duplicated(p, s))
+            end
+        else
+            push!(args, Const(__args[i]))
+        end
+    end
+
+    # TODO handle active args
+    tt′   = Tuple{map(Core.Typeof, args)...}
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
+    rt    = Core.Compiler.return_type(fn, tt)
+
+    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+        push!(args, tape)
+    end
+
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    tup = thunk(args...)
+
+    for (d, (s, i)) in zip(tup, actives)
+        a = unsafe_load(s, i)
+        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+        unsafe_store!(ref, d+a)
+    end
+
+    @warn "done reverse differentiating jl_apply_generic call without split mode", fn, tup
+
+    return nothing
+end
+
+
+function runtime_invoke_fwd(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
+
+    fn = __args[1]
+    args = []
+    for i in 2:arg_size
+        val = __args[i]
+        # TODO when split mode use the below
+        push!(args, val)
+        continue
+
+        if __activity[i] != 0
+            # TODO use only for non mutable
+            push!(args, Duplicated(val, __shadows[i]))
+        else
+            push!(args, Const(val))
+        end
+    end
+
+    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
+    res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
+
+    __ret[1] = res
+
+    tape::Any = nothing
+    resT = typeof(res)
+
+    if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
+        __ret[2] = alloc(resT)
+        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
+        #       we can mutate inplace, despite `typeof(res)` being immutable
+        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
+        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{typeof(res)}}, ret_ptr), 2), 0.0)
+        @assert tape == 0.0
+        @assert tape == __ret[2]
+    else
+        shadow = res
+        __ret[2] = shadow
+    end
+
+    __ret[3] = tape
+    @warn "done primal differentiating jl_invoke call without split mode", fn, mi, args, res
+
+    return nothing
+end
+
+function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+
+    fn = __args[1]
+    args = []
+    actives = []
+    for i in 2:arg_size
+        if __activity[i] != 0
+            p = __args[i]
+            # TODO generalize to if mutable type
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+                push!(actives, (shadow_ptr, i))
+            else
+                s = __shadows[i]
+                push!(args, Duplicated(p, s))
+            end
+        else
+            push!(args, Const(__args[i]))
+        end
+    end
+
+    @warn "reverse differentiating jl_invoke call without split mode", fn, mi
+
+    # TODO handle active args
+
+    specTypes = mi.specTypes.parameters
+    F = specTypes[1]
+    tt = Tuple{specTypes[2:end]...}
+    @assert F == typeof(fn)
+
+    tt′   = Tuple{map(Core.Typeof, args)...}
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
+    rt    = Core.Compiler.return_type(fn, tt)
+
+    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+        push!(args, tape)
+    end
+
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    tup = thunk(args...)
+
+    for (d, (s, i)) in zip(tup, actives)
+        a = unsafe_load(s, i)
+        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+        unsafe_store!(ref, d+a)
+    end
+
+    return nothing
+end
+
+function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
+
+    args = []
+    for i in 1:arg_size
+        # TODO when split mode use the below
+        push!(args, __args[i])
+        continue
+
+        if __activity[i]
+            #TODO mutability check
+            push!(args, Duplicated(__args[i], __shadows[i]))
+        else
+            push!(args, Const(__args[i]))
+        end
+    end
+
+    @warn "forward differentiating jl_apply_latest call without split mode", args
+
+    res::Any = fn(args[1]...)
+    __ret[1] = res
+
+    tape::Any = nothing
+    shadow::Any = nothing
+
+    if typeof(res) <: AbstractFloat || typeof(res) <: Complex{<:AbstractFloat}
+        __ret[2] = alloc(typeof(res))
+        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
+        #       we can mutate inplace, despite `typeof(res)` being immutable
+        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
+        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{typeof(res)}}, ret_ptr), 2), 0.0)
+        @assert tape == 0.0
+        @assert tape == __ret[2]
+    else
+        shadow = res
+        __ret[2] = shadow
+        unsafe_store!(ret_ptr, shadow, 2)
+    end
+
+    __ret[3] = tape
+
+    return nothing
+end
+
+function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
+    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+
+    args = []
+    primals = __args[1]
+    shadows = __shadows[1]
+
+    actives = []
+    for (i, (p, s)) in enumerate(zip(primals, shadows))
+        # TODO generalize to mutable
+        if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+            push!(args, Active(p))
+            push!(actives, (i, s))
+        else
+            push!(args, Duplicated(p, s))
+        end
+    end
+
+    @warn "reverse differentiating jl_apply_latest call without split mode"
+
+    tt′   = Tuple{map(Core.Typeof, args)...}
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
+    rt    = Core.Compiler.return_type(fn, tt)
+
+    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+        push!(args, tape)
+    end
+
+    # TODO use split mode
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+
+    tup = thunk(args...)
+
+    for (d, (i, a)) in zip(tup, actives)
+        ref = reinterpret(Ptr{Ptr{typeof(a)}}, shadow_ptr)
+        unsafe_store!(unsafe_load(ref, i), d+a)
+    end
+
+    return nothing
+end
+
+function emit_gc_preserve_begin(B::LLVM.Builder, args)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = context(mod)
+
+    if haskey(functions(mod), "llvm.julia.gc_preserve_begin")
+        jlgcpreserve_func = functions(mod)["llvm.julia.gc_preserve_begin"]
+    else
+        funcT = LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true)
+        jlgcpreserve_func = LLVM.Function(mod, "llvm.julia.gc_preserve_begin", funcT)
+    end
+
+    token = call!(B, jlgcpreserve_func, args)
+    return token
+end
+
+function emit_gc_preserve_end(B::LLVM.Builder, token)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = context(mod)
+
+    if haskey(functions(mod), "llvm.julia.gc_preserve_end")
+        jlgcpreserve_func = functions(mod)["llvm.julia.gc_preserve_end"]
+    else
+        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)])
+        jlgcpreserve_func = LLVM.Function(mod, "llvm.julia.gc_preserve_end", funcT)
+    end
+
+    call!(B, jlgcpreserve_func, [token])
+    return
+end
+
+function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, fun, numRet, lookup, tape)
+    T_int8 = LLVM.Int8Type(ctx)
+    T_pint8 = LLVM.PointerType(T_int8)
+    T_int32 = LLVM.Int32Type(ctx)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+
+    ops = collect(operands(orig))[(start+1):end-1]
+
+    num = convert(UInt32, length(ops))
+    llnum = LLVM.ConstantInt(num; ctx)
+
+    EB = LLVM.Builder(ctx)
+    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
+    # TODO: Optimization by emitting liverange
+    ret = LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
+    primal = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
+    shadow = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
+    activity = LLVM.array_alloca!(EB, T_int8, llnum)
+
+    for i in 1:numRet
+        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
+        LLVM.store!(B, LLVM.null(T_prjlvalue), LLVM.inbounds_gep!(B, ret, idx))
+    end
+
+    jl_fn = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start]))
+    vals = LLVM.Value[jl_fn, ret, primal, shadow, activity, llnum]
+
+    to_preserve = LLVM.Value[]
+
+    for (i, op) in enumerate(ops)
+        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+        if lookup
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+        push!(to_preserve, val)
+        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+        activeC = LLVM.ConstantInt(T_int8, active)
+        LLVM.store!(B, activeC, LLVM.inbounds_gep!(B, activity, idx))
+
+        if active
+            shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
+            push!(to_preserve, shadow_val)
+            LLVM.store!(B, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)),
+                        LLVM.inbounds_gep!(B, shadow, idx))
+        else
+            LLVM.store!(B, LLVM.null(llvmtype(op)),
+                        LLVM.inbounds_gep!(B, shadow, idx))
+        end
+    end
+
+    token = emit_gc_preserve_begin(B, to_preserve)
+
+    T_args = LLVM.LLVMType[T_prjlvalue, T_pprjlvalue, T_pprjlvalue, T_pprjlvalue, T_pint8, T_int32]
+    if tape != C_NULL
+        push!(T_args, T_prjlvalue)
+        push!(vals, LLVM.Value(tape))
+    end
+    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
+    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+    LLVM.call!(B, rtfn, vals)
+
+    # TODO: GC, ret
+    return ret, token
+end
+
+function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    @assert conv == 37
+
+    B = LLVM.Builder(B)
+
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+
+    if shadowR != C_NULL
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        unsafe_store!(shadowR, shadow.ref)
+    end
+
+    if normalR != C_NULL
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        unsafe_store!(normalR, normal.ref)
+    end
+
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    unsafe_store!(tapeR, tape.ref)
+
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    B = LLVM.Builder(B)
+
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+
+function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    @assert conv == 38
+
+    B = LLVM.Builder(B)
+
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+
+    if shadowR != C_NULL
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        unsafe_store!(shadowR, shadow.ref)
+    end
+
+    if normalR != C_NULL
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        unsafe_store!(normalR, normal.ref)
+    end
+
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    unsafe_store!(tapeR, tape.ref)
+
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    B = LLVM.Builder(B)
+
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+
+function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    @assert conv == 37
+
+    B = LLVM.Builder(B)
+
+    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+
+    if shadowR != C_NULL
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        unsafe_store!(shadowR, shadow.ref)
+    end
+
+    if normalR != C_NULL
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        unsafe_store!(normalR, normal.ref)
+    end
+
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    unsafe_store!(tapeR, tape.ref)
+
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
+
+    B = LLVM.Builder(B)
+
+    _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    emit_gc_preserve_end(B, token)
+
+    return nothing
+end
+
+function emit_error(B::LLVM.Builder, string)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = context(mod)
+
+    # 1. get the error function
+    if haskey(functions(mod), "jl_error")
+        jlerror_func = functions(mod)["jl_error"]
+    else
+        jlerror_T = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
+        jlerror_func = LLVM.Function(mod, "jl_error", jlerror_T)
+        push!(function_attributes(jlerror_func), EnumAttribute("noreturn"; ctx))
+    end
+
+    # 2. Call error function and insert unreachable
+    call!(B, jlerror_func, LLVM.Value[globalstring_ptr!(B, string)])
+
+    # FIXME(@wsmoses): Allow for emission of new BB in this code path
+    # unreachable!(B)
+
+    # 3. Change insertion point so that we don't stumble later
+    # after_error = BasicBlock(fn, "after_error"; ctx)
+    # position!(B, after_error)
+end
+
+function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_new_task")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function newtask_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_new_task")
+    return nothing
+end
+
+function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented forward for jl_array_copy")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for jl_array_copy")
+    return nothing
+end
+
+
 function __init__()
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
@@ -107,6 +748,37 @@ function __init__()
         "jl_alloc_array_3d",
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_apply_generic",
+        @cfunction(generic_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(generic_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+
+    API.EnzymeRegisterCallHandler(
+        "jl_invoke",
+        @cfunction(invoke_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(invoke_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_f__apply_latest",
+        @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_f__call_latest",
+        @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_new_task",
+        @cfunction(newtask_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(newtask_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_array_copy",
+        @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     # TODO handle array copy
     # API.EnzymeRegisterAllocationHandler(
@@ -185,14 +857,13 @@ end
 const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
-    "jl_subtype", "julia.get_pgcstack",
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region"
 ))
 
 function annotate!(mod)
     ctx = context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     fns = functions(mod)
-
 
     for inactivefn in inactivefns
         if haskey(fns, inactivefn)
@@ -460,6 +1131,10 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, wrapper_fn, wrapper_ft)
 
+    hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
+    push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
+    push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
+
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
         entry = BasicBlock(wrapper_f, "entry"; ctx)
@@ -517,6 +1192,9 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
+    end
+    if !hasReturnsTwice
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
     end
     ModulePassManager() do pm
         # Kill the temporary staging function
@@ -594,7 +1272,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         func ∈ keys(known_ops) || continue
 
         name, arity = known_ops[func]
-        
+
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
@@ -721,6 +1399,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
+
     return mod, (;adjointf, augmented_primalf)
 end
 
@@ -958,7 +1637,7 @@ end
                         $(Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}),
                         tptr, fptr, $(ccexprs...))
                 end
-                sret[]
+                return sret[]
             end
         else
             quote
@@ -966,6 +1645,7 @@ end
                 Base.llvmcall(($ir,$fn), Cvoid,
                     $(Tuple{Ptr{Cvoid}, types...}),
                     fptr, $(ccexprs...))
+                return ()
             end
         end
     end

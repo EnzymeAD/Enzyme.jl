@@ -84,46 +84,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 push!(errors, (DELAYED_BINDING, bt, nothing))
             end
         elseif fn == "jl_invoke"
-            try
-                if VERSION < v"1.3.0-DEV.244"
-                    meth, args, nargs, _ = operands(inst)
-                else
-                    f, args, nargs, meth = operands(inst)
-                end
-                meth = first(operands(meth::ConstantExpr))::ConstantExpr
-                meth = first(operands(meth))::ConstantInt
-                meth = convert(Int, meth)
-                meth = Ptr{Cvoid}(meth)
-                meth = Base.unsafe_pointer_to_objref(meth)::Core.MethodInstance
-                push!(errors, (DYNAMIC_CALL, bt, meth.def))
-            catch e
-                isa(e,TypeError) || rethrow()
-                @debug "Decoding arguments to jl_invoke failed" inst bb=LLVM.parent(inst)
-                push!(errors, (DYNAMIC_CALL, bt, nothing))
-            end
         elseif fn == "jl_apply_generic"
-            try
-                if VERSION < v"1.3.0-DEV.244"
-                    args, nargs, _ = operands(inst)
-                    ## args is a buffer where arguments are stored in
-                    f, args = user.(uses(args))
-                    ## first store into the args buffer is a direct store
-                    f = first(operands(f::LLVM.StoreInst))::ConstantExpr
-                else
-                    f, args, nargs, _ = operands(inst)
-                end
-
-                f = first(operands(f))::ConstantExpr # get rid of addrspacecast
-                f = first(operands(f))::ConstantInt # get rid of inttoptr
-                f = convert(Int, f)
-                f = Ptr{Cvoid}(f)
-                f = Base.unsafe_pointer_to_objref(f)
-                push!(errors, (DYNAMIC_CALL, bt, f))
-            catch e
-                isa(e,TypeError) || rethrow()
-                @debug "Decoding arguments to jl_apply_generic failed" inst bb=LLVM.parent(inst)
-                push!(errors, (DYNAMIC_CALL, bt, nothing))
-            end
         elseif fn == "gpu_malloc"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
@@ -340,6 +301,21 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 end
                 if ptr == cglobal(:jl_alloc_string)
                     fn = "jl_alloc_string"
+                end
+                if ptr == cglobal(:jl_in_threaded_region)
+                    fn = "jl_in_threaded_region"
+                end
+                if ptr == cglobal(:jl_enter_threaded_region)
+                    fn = "jl_enter_threaded_region"
+                end
+                if ptr == cglobal(:jl_exit_threaded_region)
+                    fn = "jl_exit_threaded_region"
+                end
+                if ptr == cglobal(:jl_set_task_tid)
+                    fn = "jl_set_task_tid"
+                end
+                if ptr == cglobal(:jl_new_task)
+                    fn = "jl_new_task"
                 end
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
