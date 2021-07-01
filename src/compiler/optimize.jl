@@ -65,10 +65,10 @@ function optimize!(mod::LLVM.Module, tm)
         instruction_combining!(pm) # Extra for Enzyme
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
-        # @show "omod", mod
-        # flush(stdout)
-        # flush(stderr)
     end
+    # @show "omod", mod
+    # flush(stdout)
+    # flush(stderr)
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L603
@@ -99,7 +99,7 @@ function addOptimizationPasses!(pm)
 
     alloc_opt!(pm)
     # consider AggressiveInstCombinePass at optlevel > 2
-    
+
     instruction_combining!(pm)
     cfgsimplification!(pm)
     scalar_repl_aggregates!(pm)
@@ -206,6 +206,9 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
 end
 
 function post_optimze!(mod, tm)
+    # @show "pre_post", mod
+    # flush(stdout)
+    # flush(stderr)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm)
         addOptimizationPasses!(pm)
@@ -216,4 +219,7 @@ function post_optimze!(mod, tm)
         addMachinePasses!(pm)
         run!(pm, mod)
     end
+    # @show "post_mod", mod
+    # flush(stdout)
+    # flush(stderr)
 end

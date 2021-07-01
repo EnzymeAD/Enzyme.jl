@@ -7,11 +7,11 @@ using Test
 
     # GhostType -> Nothing
     res = autodiff(f, Const(nothing))
-    @test res === nothing
+    @test res === ()
 
     # ConstType -> Type{Int}
     res = autodiff(f, Const(Int))
-    @test res === nothing
+    @test res === ()
 
 
     cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
@@ -68,7 +68,7 @@ using Test
     regular = LList(LList(nothing, 1.0), 2.0)
     shadow  = LList(LList(nothing, 0.0), 0.0)
     ad = autodiff(sumlist, Duplicated(regular, shadow))
-    @test ad === nothing
+    @test ad === ()
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
 
     mulr(x, y) = x[] * y[]
@@ -77,7 +77,7 @@ using Test
     dx = Ref(0.0)
     dy = Ref(0.0)
     n = autodiff(mulr, Duplicated(x, dx), Duplicated(y, dy))
-    @test n === nothing
+    @test n === ()
     @test dx[] ≈ 3.0
     @test dy[] ≈ 2.0
 

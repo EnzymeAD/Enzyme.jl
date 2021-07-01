@@ -21,7 +21,7 @@ include("abi.jl")
     # @test thunk_a.primal === C_NULL
 
     @test thunk_a(Active(2.0)) == (1.0,)
-    @test thunk_b(Const(2.0)) === nothing
+    @test thunk_b(Const(2.0)) === ()
 
     # thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
     # @test thunk_split.primal !== C_NULL
@@ -340,4 +340,31 @@ end
     # autodiff(broadcast_hmlstm,
     #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
+end
+
+
+@testset "generic" begin
+    genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active(2.0))[1]
+end
+
+@testset "broadcast" begin
+    A = rand(10); B = rand(10); R = similar(A)
+    dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
+
+    function foo_bc!(R, A, B)
+        R .= A .+ B
+        return nothing
+    end
+
+    autodiff(foo_bc!, Duplicated(R, dR), Duplicated(A, dA), Duplicated(B, dB))
+
+    # works since aliasing is "simple"
+    autodiff(foo_bc!, Duplicated(R, dR), Duplicated(R, dR), Duplicated(B, dB))
+
+    A = rand(10,10); B = rand(10, 10)
+    dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
+
+    # Enzyme can't deduce type of integer
+    # @test_throws ErrorException autodiff(foo_bc!, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end

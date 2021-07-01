@@ -217,6 +217,11 @@ function printall!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function inlineall!(val)
+    ptr = cglobal((:EnzymeInline, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function maxtypeoffset!(val)
     ptr = cglobal((:MaxTypeOffset, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, Int64), ptr, val)

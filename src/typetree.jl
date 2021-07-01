@@ -81,6 +81,10 @@ function typetree(::Type{<:DataType}, ctx, dl)
     return TypeTree()
 end
 
+function typetree(::Type{Any}, ctx, dl)
+    return TypeTree()
+end
+
 function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
