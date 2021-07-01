@@ -65,6 +65,12 @@ end
                      # but don't need the forward
 )
 
+@cenum(CDerivativeMode,
+  DEM_ForwardMode = 0,
+  DEM_ReverseModePrimal = 1,
+  DEM_ReverseModeGradient = 2,
+  DEM_ReverseModeCombined = 3
+)
 
 # Create the derivative function itself.
 #  \p todiff is the function to differentiate
@@ -89,7 +95,7 @@ function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA
          EnzymeTypeAnalysisRef, UInt8, UInt8, UInt8, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, topLevel, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, topLevel ? DEM_ReverseModeCombined : DEM_ReverseModeGradient, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd, postOpt)
 end
 
@@ -136,6 +142,23 @@ end
 const CustomShadowAlloc = Ptr{Cvoid}
 const CustomShadowFree = Ptr{Cvoid}
 EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall((:EnzymeRegisterAllocationHandler, libEnzyme), Cvoid, (Cstring, CustomShadowAlloc, CustomShadowFree), name, ahandle, fhandle)
+
+
+const CustomForwardPass = Ptr{Cvoid}
+const CustomReversePass = Ptr{Cvoid}
+EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass, CustomReversePass), name, fwdhandle, revhandle)
+
+const EnzymeGradientUtilsRef = Ptr{Cvoid}
+
+EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall((:EnzymeGradientUtilsNewFromOriginal, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
+EnzymeGradientUtilsLookup(gutils, val, B) = ccall((:EnzymeGradientUtilsLookup, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
+EnzymeGradientUtilsInvertPointer(gutils, val, B) = ccall((:EnzymeGradientUtilsInvertPointer, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
+EnzymeGradientUtilsDiffe(gutils, val, B) = ccall((:EnzymeGradientUtilsDiffe, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
+EnzymeGradientUtilsAddToDiffe(gutils, val, diffe, B, T) = ccall((:EnzymeGradientUtilsAddToDiffe, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMTypeRef), gutils, val, diffe, B, T)
+EnzymeGradientUtilsSetDiffe(gutils, val, diffe, B) = ccall((:EnzymeGradientUtilsSetDiffe, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, diffe, B)
+EnzymeGradientUtilsIsConstantValue(gutils, val, B) = ccall((:EnzymeGradientUtilsIsConstantValue, libEnzyme), UInt8, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
+EnzymeGradientUtilsIsConstantInstruction(gutils, val, B) = ccall((:EnzymeGradientUtilsIsConstantInstruction, libEnzyme), UInt8, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
+
 
 function CreateLogic()
     ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, ())
