@@ -172,6 +172,7 @@ end
     # @test Enzyme.autodiff(gc_copy, Active(5.0))[1] ≈ 10
 end
 
+
 @testset "Compare against" begin
     x = 3.0
     fd = central_fdm(5, 1)(sin, x)
@@ -206,6 +207,9 @@ end
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
     @test fd ≈ first(autodiff(foo, Active(x)))
+
+    f74(a, c) = a * √c
+    @test √3 ≈ first(autodiff(f74, Active(2), 3))
 end
 
 """

@@ -3,17 +3,29 @@ using ObjectFile
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
-function check_ir(job, args...)
-    errors = check_ir!(job, IRError[], args...)
+function restore_lookups(mod::LLVM.Module, map)
+    i64 = LLVM.IntType(64, context(mod))
+    for (k, v) in map
+        if haskey(functions(mod), k)
+            f = functions(mod)[k]
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, v), llvmtype(f))))
+            unsafe_delete!(mod, f)
+        end
+    end
+end
+
+function check_ir(job, mod::LLVM.Module)
+    known_fns = Dict{String, Int}()
+    errors = check_ir!(job, IRError[], mod, known_fns)
     unique!(errors)
     if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 
-    return
+    return known_fns
 end
 
-function check_ir!(job, errors, mod::LLVM.Module)
+function check_ir!(job, errors, mod::LLVM.Module, known_fns)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -28,13 +40,13 @@ function check_ir!(job, errors, mod::LLVM.Module)
         unsafe_delete!(mod, f)
     end
     for f in collect(functions(mod))
-        check_ir!(job, errors, imported, f)
+        check_ir!(job, errors, imported, f, known_fns)
     end
 
     return errors
 end
 
-function check_ir!(job, errors, imported, f::LLVM.Function)
+function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
     calls = []
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
@@ -42,7 +54,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
         end
     end
     for inst in calls
-        check_ir!(job, errors, imported, inst)
+        check_ir!(job, errors, imported, inst, known_fns)
     end
     return errors
 end
@@ -51,7 +63,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, imported, inst::LLVM.CallInst)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -160,18 +172,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 hnd = LLVM.name(hnd)
             end
 
-            @show flib, fname, hnd
-            flush(stdout)
-            flush(stderr)
-
             if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
                 push!(errors, ("jl_load_and_lookup", bt, nothing))
                 return
             end
             # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
-            # @show res
-            flush(stdout)
-            flush(stderr)
             push!(errors, ("jl_load_and_lookup", bt, nothing))
         elseif fn == "jl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
@@ -330,10 +335,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                 if ptr == cglobal(:jl_new_array)
                     fn = "jl_new_array"
                 end
-
                 if ptr == cglobal(:jl_array_copy)
                     fn = "jl_array_copy"
-
                 end
                 if ptr == cglobal(:jl_alloc_string)
                     fn = "jl_alloc_string"
@@ -348,11 +351,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst)
                     if lfn == C_NULL
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
                     end
+                    known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
                 end
-            #    push!(errors, (POINTER_FUNCTION, bt, fn))
-            #else
-            #    push!(errors, (POINTER_FUNCTION, bt, nothing))
             end
         end
     end

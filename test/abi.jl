@@ -71,7 +71,6 @@ using Test
     @test ad === nothing
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
 
-
     mulr(x, y) = x[] * y[]
     x = Ref(2.0)
     y = Ref(3.0)

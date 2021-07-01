@@ -571,7 +571,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-    check_ir(job, mod)
+    known_fns = check_ir(job, mod)
 
     ctx = context(mod)
     custom = []
@@ -597,15 +597,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.sparam_vals
 
-
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
             N = adim(AT)
             bitsunion = Base.isbitsunion(T)
-            @show func, AT, T, N
-            flush(stdout)
-            flush(stderr)
             error("jl_copy unhandled")
         end
 
@@ -713,6 +709,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
         augmented_primalf_name = name(augmented_primalf)
     end
+
+    restore_lookups(mod, known_fns)
 
     if parent_job !== nothing
         post_optimze!(mod, target_machine)
