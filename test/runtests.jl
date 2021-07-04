@@ -333,3 +333,9 @@ end
     #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
+
+
+@testset "generic" begin
+    genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active(2.0))[1]
+end

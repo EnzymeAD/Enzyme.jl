@@ -157,7 +157,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, #=Pullback=#Val(false)}(f, ptr)
     thunk(args′...)
 end
 

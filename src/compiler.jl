@@ -90,102 +90,203 @@ end
 dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
+@generated function alloc(tt::Type{T}) where T
+    quote
+        ref::Any = Base.llvmcall(("""
+        declare {}*** @julia.ptls_states()
+        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64, {} addrspace(10)*)
+        define {} addrspace(10)* @allocate(i64 %size, {} addrspace(10)* %ty) #1 {
+            %1 = call {}*** @julia.ptls_states()
+            %2 = bitcast {}*** %1 to i8*
+            %res = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* %2, i64 %size, {} addrspace(10)* %ty)
+            ret {} addrspace(10)* %res
+        }
+        attributes #1 = { alwaysinline }
+        """, "allocate"), Any, Tuple{Int64, Any}, $(sizeof(T)), $T)
+        return ref
+    end
+end
+
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
-    @show "runtime_generic_fwd", fn, arg_size, arg_ptr
-    flush(stdout)
-    flush(stderr)
+    @warn "primal differentiating jl_apply_generic call without split mode"
     args = []
     for i in 1:arg_size
+
         # TODO when split mode use the below
         push!(args, unsafe_load(arg_ptr, i))
         continue
 
-        if unsafe_load(activity_ptr, i)
+        if unsafe_load(activity_ptr, i) != 0
+            # TODO use only for non mutable
             push!(args, Duplicated(unsafe_load(arg_ptr, i), unsafe_load(shadow_ptr, i)))
         else
             push!(args, Const(unsafe_load(arg_ptr, i)))
         end
     end
-    @show "generic fwd", fn, args, "todo shadow"
+    res::Any = fn(args...)
 
-    res = fn(args...)
-    unsafe_store!(ret_ptr, res)
-    unsafe_store!(ret_ptr, res, 2)
-    return nothing
-end
+    unsafe_store!(ret_ptr, res, 1)
 
-function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
-    @show "runtime_apply_latest_fwd", fn, arg_size, arg_ptr
-    flush(stdout)
-    flush(stderr)
-    args = []
-    for i in 1:arg_size
-        # TODO when split mode use the below
-        push!(args, unsafe_load(arg_ptr, i))
-        continue
+    tape::Any = nothing
 
-        if unsafe_load(activity_ptr, i)
-            push!(args, Duplicated(unsafe_load(arg_ptr, i), unsafe_load(shadow_ptr, i)))
-        else
-            push!(args, Const(unsafe_load(arg_ptr, i)))
-        end
+    if typeof(res) <: AbstractFloat || typeof(res) <: Complex{<:AbstractFloat}
+        # Here we're assuming that this creates a boxed type
+        
+        ref::Any = 1.23456 #alloc(typeof(res))
+        # ref::Any = Ref{typeof(res)}(0.0)
+        # ref::Any = Core.Box(0.0)
+        # Ref{typeof(res)}(0.0)
+        unsafe_store!(ret_ptr, ref, 2)
+
+        # tape = ref # "hello world"
+
+        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
+        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{Float64}}, ret_ptr), 2), 0.0)
+
+        @assert tape == 0.0
+    else
+        shadow = res
+        unsafe_store!(ret_ptr, shadow, 2)
     end
-    @show "apply_latest fwd", fn, args, "todo shadow"
 
-    res = fn(args[1]...)
-    unsafe_store!(ret_ptr, res)
-    unsafe_store!(ret_ptr, res, 2)
+
+    unsafe_store!(ret_ptr, tape, 3)
+
     return nothing
 end
 
-function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    @warn "reverse differentiating jl_apply_generic call without split mode"
+
     args = []
+    actives = []
     for i in 1:arg_size
         if unsafe_load(activity_ptr, i) != 0
-            push!(args, Duplicated(unsafe_load(arg_ptr, i), unsafe_load(shadow_ptr, i)))
+            p = unsafe_load(arg_ptr, i)
+            # TODO generalize to if mutable type
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+                push!(actives, (shadow_ptr, i))
+            else
+                s = unsafe_load(shadow_ptr, i)
+                push!(args, Duplicated(p, s))
+            end
         else
             push!(args, Const(unsafe_load(arg_ptr, i)))
         end
     end
 
     # TODO handle active args
-
-    @show "generic rev", fn, args
-    flush(stdout)
-    flush(stderr)
     
     tt′   = Tuple{map(Core.Typeof, args)...}
     ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
-    thunk(args...)
+
+
+    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+        push!(args, tape)
+    end
+
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    tup = thunk(args...)
+
+    for (d, (s, i)) in zip(tup, actives)
+        a = unsafe_load(s, i)
+        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+        unsafe_store!(ref, d+a)
+    end
 
     return nothing
 end
 
-function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+    @warn "forward differentiating jl_apply_latest call without split mode"
+
+    args = []
+    for i in 1:arg_size
+        # TODO when split mode use the below
+        push!(args, unsafe_load(arg_ptr, i))
+        continue
+
+        if unsafe_load(activity_ptr, i)
+            #TODO mutability check
+            push!(args, Duplicated(unsafe_load(arg_ptr, i), unsafe_load(shadow_ptr, i)))
+        else
+            push!(args, Const(unsafe_load(arg_ptr, i)))
+        end
+    end
+
+    res::Any = fn(args[1]...)
+    unsafe_store!(ret_ptr, res)
+
+    tape::Any = nothing
+    shadow::Any = nothing
+
+    if typeof(res) <: AbstractFloat || typeof(res) <: Complex{<:AbstractFloat}
+        # Here we're assuming that this creates a boxed type
+        ref::Any = 1.234567 #alloc(typeof(res))
+        # ref::Any = Core.Box(0.0)
+        # Ref{typeof(res)}(0.0)
+        unsafe_store!(ret_ptr, ref, 2)
+
+        # tape = ref # "hello world"
+
+        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
+        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{Float64}}, ret_ptr), 2), 0.0)
+
+        @assert tape == 0.0
+    else
+        shadow = res
+        unsafe_store!(ret_ptr, shadow, 2)
+    end
+
+    unsafe_store!(ret_ptr, tape, 3)
+
+    return nothing
+end
+
+function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    @warn "reverse differentiating jl_apply_latest call without split mode"
+
     args = []
     primals = unsafe_load(arg_ptr)
     shadows = unsafe_load(shadow_ptr)
-    for (p, s) in zip(primals, shadows)
-        push!(args, Duplicated(p, s))
+
+    actives = []
+    for (i, (p, s)) in enumerate(zip(primals, shadows))
+        # TODO generalize to mutable
+        if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+            push!(args, Active(p))
+            push!(actives, (i, s))
+        else
+            push!(args, Duplicated(p, s))
+        end
     end
-    @show "latest rev", fn, args
-    flush(stdout)
-    flush(stderr)
 
     tt′   = Tuple{map(Core.Typeof, args)...}
     ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
-    thunk(args...)
+
+    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+        push!(args, tape)
+    end
+
+    # TODO use split mode
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+
+    tup = thunk(args...)
+
+    for (d, (i, a)) in zip(tup, actives)
+        ref = reinterpret(Ptr{Ptr{typeof(a)}}, shadow_ptr)
+        unsafe_store!(unsafe_load(ref, i), d+a)
+    end
 
     return nothing
 end
 
-function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, fun, numRet)
+function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, fun, numRet, lookup, tape)
     number = LLVM.ConstantInt(convert(UInt64, fun), ctx)
 
     T_jlvalue = LLVM.StructType(LLVMType[], ctx)
@@ -209,8 +310,11 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
 
     for (i, op) in enumerate(ops)
         idx = LLVM.Value[LLVM.ConstantInt(i-1, ctx)]
-        LLVM.store!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op)),
-                    LLVM.inbounds_gep!(B, primal, idx))
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+        if lookup
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
@@ -225,6 +329,9 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     end
 
     nfn = LLVM.inttoptr!(B, number, LLVM.PointerType(LLVM.FunctionType(LLVM.VoidType(ctx), LLVM.LLVMType[], vararg=true)))  
+    if tape != C_NULL
+        push!(vals, LLVM.Value(tape))
+    end
     LLVM.call!(B, nfn, vals)
 
     return ret
@@ -243,7 +350,7 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     B = LLVM.Builder(B)
     
-    ret = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#2)
+    ret = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1, ctx)]))
@@ -255,6 +362,9 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         unsafe_store!(normalR, normal.ref)
     end
 
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2, ctx)]))
+    unsafe_store!(tapeR, tape.ref)
+
     return nothing
 end
 
@@ -265,7 +375,7 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     B = LLVM.Builder(B)
 
-    genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#0)
+    genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
 
     return nothing
 end
@@ -284,7 +394,7 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    ret = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#2)
+    ret = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1, ctx)]))
@@ -296,6 +406,9 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         unsafe_store!(normalR, normal.ref)
     end
 
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2, ctx)]))
+    unsafe_store!(tapeR, tape.ref)
+
     return nothing
 end
 
@@ -306,7 +419,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#0)
+    genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
 
     return nothing
 end
@@ -972,21 +1085,25 @@ end
 # Thunk
 ##
 
-struct CombinedAdjointThunk{F, RT, TT}
+struct CombinedAdjointThunk{F, RT, TT, Pullback}
     fn::F
     # primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
 end
 
-@inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, thunk.fn, TT, RT, args...)
+@inline (thunk::CombinedAdjointThunk{F, RT, TT, Pullback})(args...) where {F, RT, TT, Pullback} =
+   enzyme_call(thunk.adjoint, thunk.fn, Pullback, TT, RT, args...)
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, f::F, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {F, T, RT, N}
+@generated function enzyme_call(fptr::Ptr{Cvoid}, f::F, pullback::Val{Pullback}, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {F, T, RT, N, Pullback}
     argtt    = tt.parameters[1]
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
-    @assert length(argtypes) == length(argexprs)
+    if Pullback && (rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat})
+        @assert length(argtypes)+1 == length(argexprs)
+    else
+        @assert length(argtypes)   == length(argexprs)
+    end
 
     types = DataType[]
 
@@ -1073,7 +1190,11 @@ end
         if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
             push!(types, rettype)
             push!(T_wrapperargs, convert(LLVMType, rettype, ctx))
-            push!(ccexprs, :(one($rettype)))
+            if !Pullback
+                push!(ccexprs, :(one($rettype)))
+            else
+                push!(ccexprs, last(argexprs))
+            end
         end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
@@ -1272,7 +1393,7 @@ function _link(job, (mod, adjoint_name, primal_name))
     end
 
     @assert primal_name === nothing
-    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
+    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt, #=pullback=#Val(false)}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
 end
 
 # actual compilation
