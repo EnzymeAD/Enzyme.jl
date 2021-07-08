@@ -69,8 +69,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         tot = LLVM.add!(b, tot, prod)
     end
 
-    i1 = LLVM.IntType(1, ctx)
-    i8 = LLVM.IntType(8, ctx)
+    i1 = LLVM.IntType(1; ctx)
+    i8 = LLVM.IntType(8; ctx)
     ptrty = LLVM.PointerType(i8) #, LLVM.addrspace(LLVM.llvmtype(anti)))
     toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(anti)))))
 
@@ -195,7 +195,8 @@ end
 ##
 
 function annotate!(mod)
-    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    ctx = context(mod)
+    inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     fns = functions(mod)
     for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_subtype"]
         if haskey(fns, inactivefn)
@@ -206,15 +207,15 @@ function annotate!(mod)
 
     if haskey(fns, "julia.ptls_states")
         fn = fns["julia.ptls_states"]
-        push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0, context(mod)))
+        push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
     end
 
 
     for boxfn in ["jl_box_int64"]
         if haskey(fns, boxfn)
             fn = fns[boxfn]
-            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0, context(mod)))
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0, context(mod)))
+            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
         end
     end
 
@@ -458,7 +459,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     sret = 0
-    if !isempty(parameters(entry_f)) && EnumAttribute("sret") in parameter_attributes(entry_f, 1)
+    if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in parameter_attributes(entry_f, 1)
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = 1
     end
@@ -477,12 +478,12 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
-        entry = BasicBlock(wrapper_f, "entry", ctx)
+        entry = BasicBlock(wrapper_f, "entry"; ctx)
         position!(builder, entry)
 
         wrapper_args = Vector{LLVM.Value}()
 
-        if !isempty(parameters(entry_f)) && EnumAttribute("sret") in parameter_attributes(entry_f, 1)
+        if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in parameter_attributes(entry_f, 1)
             sretPtr = alloca!(builder, llvmtype(parameters(wrapper_f)[1]))
             push!(wrapper_args, sretPtr)
         end
@@ -519,7 +520,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     end
 
     # early-inline the original entry function into the wrapper
-    push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0, ctx))
+    push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0; ctx))
     linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
 
     # copy debug info
@@ -621,8 +622,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         push!(custom, llvmfn)
 
         attributes = function_attributes(llvmfn)
-        push!(attributes, EnumAttribute("noinline", 0, ctx))
-        push!(attributes, StringAttribute("enzyme_math", name, ctx))
+        push!(attributes, EnumAttribute("noinline", 0; ctx))
+        push!(attributes, StringAttribute("enzyme_math", name; ctx))
 
         # Need to wrap the code when outermost
         must_wrap |= llvmfn == primalf
@@ -635,7 +636,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
 
         let builder = Builder(ctx)
-            entry = BasicBlock(wrapper_f, "entry", ctx)
+            entry = BasicBlock(wrapper_f, "entry"; ctx)
             position!(builder, entry)
 
             res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
@@ -725,7 +726,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     adjointf = functions(mod)[adjointf_name]
-    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0, context(mod)))
+    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
     if augmented_primalf === nothing
         return mod, adjointf
     else
@@ -764,10 +765,10 @@ end
         error("return type is Union{}, giving up.")
     end
 
-    LLVM.Interop.JuliaContext() do ctx
-        T_void = convert(LLVMType, Nothing, ctx)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
-        T_jlvalue = LLVM.StructType(LLVMType[], ctx)
+    LLVM.Context() do ctx
+        T_void = convert(LLVMType, Nothing; ctx)
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
         # Create Enzyme calling convention
@@ -777,12 +778,12 @@ end
         T_JuliaSRet = LLVMType[]  # Struct return of all Active variables (includes all of T_EnzymeSRet)
         sret_types  = DataType[]  # Julia types of all Active variables
         inputexprs = Union{Expr, Symbol}[]
-  # By ref values we create and need to preserve
+        # By ref values we create and need to preserve
         ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
 
         if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
             isboxed = GPUCompiler.deserves_argbox(F)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F, ctx)
+            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
             argexpr = :(f)
             if isboxed
                 push!(types, Any)
@@ -803,7 +804,7 @@ end
             expr = argexprs[i]
 
             isboxed = GPUCompiler.deserves_argbox(source_typ)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ, ctx)
+            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ; ctx)
             argexpr = Expr(:., expr, QuoteNode(:val))
             if isboxed
                 push!(types, Any)
@@ -819,7 +820,7 @@ end
 
             if T <: Active
                 # Use deserves_argbox??
-                llvmT = convert(LLVMType, source_typ, ctx)
+                llvmT = convert(LLVMType, source_typ; ctx)
                 push!(sret_types, source_typ)
                 push!(T_JuliaSRet, llvmT)
                 if !isboxed # XXX: Not consistent
@@ -842,7 +843,7 @@ end
         # API.DFT_OUT_DIFF
         if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
             push!(types, rettype)
-            push!(T_wrapperargs, convert(LLVMType, rettype, ctx))
+            push!(T_wrapperargs, convert(LLVMType, rettype; ctx))
             if !Pullback
                 push!(ccexprs, :(one($rettype)))
             else
@@ -852,17 +853,17 @@ end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
         if !isempty(T_EnzymeSRet)
-            ret = LLVM.StructType(T_EnzymeSRet)
+            ret = LLVM.StructType(T_EnzymeSRet; ctx)
         else
             ret = T_void
         end
 
         # pointer to call
-        pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
+        pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
 
         # sret argument
         if !isempty(sret_types)
-            pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
+            pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
         end
 
         llvm_f, _ = LLVM.Interop.create_function(T_void, T_wrapperargs)
@@ -872,17 +873,17 @@ end
         params = [parameters(llvm_f)...]
         target =  !isempty(sret_types) ? 2 : 1
 
-        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8, ctx), LLVM.IntType(64, ctx), LLVM.IntType(1, ctx)])
+        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8; ctx), LLVM.IntType(64; ctx), LLVM.IntType(1; ctx)])
         memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
         LLVM.Builder(ctx) do builder
-            entry = BasicBlock(llvm_f, "entry", ctx)
+            entry = BasicBlock(llvm_f, "entry"; ctx)
             position!(builder, entry)
 
             realparms = LLVM.Value[]
             i = target+1
 
             if !isempty(T_JuliaSRet)
-                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet)))
+                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
             end
 
             activeNum = 0
@@ -904,14 +905,14 @@ end
                 elseif T <: Active
                     isboxed = GPUCompiler.deserves_argbox(T′)
                     if isboxed
-                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)])
+                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)])
                         cst = pointercast!(builder, ptr, ptr8)
                         push!(realparms, ptr)
 
                         cparms = LLVM.Value[cst,
-                        LLVM.ConstantInt(LLVM.IntType(8, ctx), 0),
-                        LLVM.ConstantInt(LLVM.IntType(64, ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
-                        LLVM.ConstantInt(LLVM.IntType(1, ctx), 0)]
+                        LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
+                        LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
+                        LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)]
                         call!(builder, memsetIntr, cparms)
                     end
                     activeNum+=1
@@ -944,7 +945,7 @@ end
                     if T <: Active
                         if !isboxed
                             eval = extract_value!(builder, val, returnNum)
-                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
+                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
                             returnNum+=1
                         end
                         activeNum+=1
