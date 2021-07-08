@@ -10,9 +10,13 @@ import GPUCompiler: CompilerJob, FunctionSpec, codegen
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
-# We have one global JIT and TM
-const jit = Ref{OrcJIT}()
-const tm  = Ref{TargetMachine}()
+if LLVM.has_orc_v1()
+    include("compiler/orcv1.jl")
+else
+    include("compiler/orcv2.jl")
+end
+
+using .JIT
 
 function array_inner(::Type{<:Array{T}}) where T
     return T
@@ -88,23 +92,6 @@ function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValu
 end
 
 function __init__()
-    opt_level = Base.JLOptions().opt_level
-    if opt_level < 2
-        optlevel = LLVM.API.LLVMCodeGenLevelNone
-    elseif opt_level == 2
-        optlevel = LLVM.API.LLVMCodeGenLevelDefault
-    else
-        optlevel = LLVM.API.LLVMCodeGenLevelAggressive
-    end
-
-    tm[] = GPUCompiler.JITTargetMachine(optlevel=optlevel)
-    LLVM.asm_verbosity!(tm[], true)
-
-    jit[] = OrcJIT(tm[]) # takes ownership of tm
-    atexit() do
-        dispose(jit[])
-    end
-
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
@@ -653,7 +640,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
-        target_machine = tm[]
+        target_machine = JIT.get_tm()
     else
         target_machine = GPUCompiler.llvm_machine(primal_job.target)
     end
@@ -727,12 +714,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
-    if augmented_primalf === nothing
-        return mod, adjointf
-    else
+    if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
-        return mod, (adjointf, augmented_primalf)
     end
+    return mod, (;adjointf, augmented_primalf)
 end
 
 ##
@@ -986,39 +971,6 @@ end
 # JIT
 ##
 
-function resolver(name, ctx)
-    name = unsafe_string(name)
-    ptr = try
-        ## Step 0: Should have already resolved it iff it was in the
-        ##         same module
-        ## Step 1: See if it's something known to the execution enging
-        # TODO: Do we need to do this?
-        # address(jit[], name)
-
-        ## Step 2: Search the program symbols
-        #
-        # SearchForAddressOfSymbol expects an unmangled 'C' symbol name.
-        # Iff we are on Darwin, strip the leading '_' off.
-        @static if Sys.isapple()
-            if name[1] == '_'
-                name = name[2:end]
-            end
-        end
-        LLVM.API.LLVMSearchForAddressOfSymbol(name)
-        ## Step 4: Lookup in libatomic
-        # TODO: Do we need to do this?
-    catch ex
-        @error "Enzyme: Lookup failed" jl_name exception=(ex, Base.catch_backtrace())
-        C_NULL
-    end
-    if ptr === C_NULL
-        @show name
-        error("Enzyme: Symbol lookup failed. Aborting!")
-    end
-
-    return UInt64(reinterpret(UInt, ptr))
-end
-
 function _link(job, (mod, adjoint_name, primal_name))
     params = job.params
     adjoint = params.adjoint
@@ -1028,10 +980,9 @@ function _link(job, (mod, adjoint_name, primal_name))
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     # Now invoke the JIT
-    orc = jit[]
-    jitted_mod = compile!(orc, mod, @cfunction(resolver, UInt64, (Cstring, Ptr{Cvoid})))
+    jitted_mod = JIT.add!(mod)
+    adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
 
-    adjoint_addr = addressin(orc, jitted_mod, adjoint_name)
     adjoint_ptr  = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
         throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, adjoint not found"))
@@ -1039,7 +990,7 @@ function _link(job, (mod, adjoint_name, primal_name))
     if primal_name === nothing
         primal_ptr = C_NULL
     else
-        primal_addr = addressin(orc, jitted_mod, primal_name)
+        primal_addr = JIT.lookup(jitted_mod, primal_name)
         primal_ptr  = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, primal not found"))
@@ -1054,14 +1005,9 @@ end
 function _thunk(job)
     params = job.params
 
-    mod, fns = codegen(:llvm, job, optimize=false)
+    mod, meta = codegen(:llvm, job, optimize=false)
 
-    if fns isa Tuple
-        adjointf, augmented_primalf = fns
-    else
-        adjointf = fns
-        augmented_primalf = nothing
-    end
+    adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
     adjoint_name = name(adjointf)
 
@@ -1072,7 +1018,7 @@ function _thunk(job)
     end
 
     # Run post optimization pipeline
-    post_optimze!(mod, tm[])
+    post_optimze!(mod, JIT.get_tm())
 
     return (mod, adjoint_name, primal_name)
 end
@@ -1099,49 +1045,13 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-mutable struct CallbackContext
-    job::Compiler.CompilerJob
-    stub::String
-    compiled::Bool
-end
-
-const outstanding = IdDict{CallbackContext, Nothing}()
-
-# Setup the lazy callback for creating a module
-function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
-    orc = OrcJIT(orc_ref)
-    cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
-
-    @assert !cc.compiled
-    job = cc.job
-
-    thunk = Compiler._link(job, Compiler._thunk(job))
-    cc.compiled = true
-    delete!(outstanding, cc)
-
-    # 4. Update the stub pointer to point to the recently compiled module
-    set_stub!(orc, cc.stub, thunk.adjoint)
-
-    # 5. Return the address of tie implementation, since we are going to call it now
-    ptr = thunk.adjoint
-    return UInt64(reinterpret(UInt, ptr))
-end
-
 @generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, false, true)
     job    = CompilerJob(target, primal, params)
 
-    cc = CallbackContext(job, String(gensym(:trampoline)), false)
-    outstanding[cc] = nothing
-
-    c_callback = @cfunction(callback, UInt64, (LLVM.API.LLVMOrcJITStackRef, Ptr{Cvoid}))
-
-    orc = Compiler.jit[]
-    initial_addr = callback!(orc, c_callback, pointer_from_objref(cc))
-    create_stub!(orc, cc.stub, initial_addr)
-    addr = address(orc, cc.stub)
+    addr = get_trampoline(job)
     id = Base.reinterpret(Int, pointer(addr))
 
     deferred_codegen_jobs[id] = job

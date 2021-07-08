@@ -9,19 +9,14 @@ function reflect(@nospecialize(func), @nospecialize(types);
     job    = Compiler.CompilerJob(target, primal, params)
 
     # Codegen the primal function and all its dependency in one module
-    mod, fns = Compiler.codegen(:llvm, job, optimize=optimize, #= validate=false =#)
+    mod, meta = Compiler.codegen(:llvm, job, optimize=optimize, #= validate=false =#)
+
 
     if second_stage
         post_optimze!(mod, tm[])
     end
 
-    if fns isa Tuple
-        adjointf, augmented_primalf = fns
-    else
-        adjointf = fns
-        augmented_primalf = nothing
-    end
-    llvmf = adjointf
+    llvmf = meta.adjointf
 
     return llvmf, mod
 end
