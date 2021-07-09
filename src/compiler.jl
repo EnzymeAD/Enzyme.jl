@@ -415,23 +415,6 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     return adjointf, augmented_primalf
 end
 
-function Base.in(attr::LLVM.EnumAttribute, iter::LLVM.FunctionAttrSet)
-    elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
-    if length(iter) > 0
-      # FIXME: this prevents a nullptr ref in LLVM similar to D26392
-      LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
-    end
-    for eattr in elems
-        at = Attribute(eattr)
-        if isa(at, LLVM.EnumAttribute)
-            if kind(at) == kind(attr)
-                return true
-            end
-        end
-    end
-    return false
-end
-
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
     ctx = context(mod)
@@ -445,10 +428,11 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
-    sret = 0
-    if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in parameter_attributes(entry_f, 1)
+    attrs = Set(collect(parameter_attributes(entry_f, 1)))
+    sret = false
+    if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in attrs
         RT = eltype(llvmtype(first(parameters(entry_f))))
-        sret = 1
+        sret = true
     end
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
@@ -470,7 +454,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
         wrapper_args = Vector{LLVM.Value}()
 
-        if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in parameter_attributes(entry_f, 1)
+        if sret
             sretPtr = alloca!(builder, llvmtype(parameters(wrapper_f)[1]))
             push!(wrapper_args, sretPtr)
         end
@@ -495,7 +479,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         end
         res = call!(builder, entry_f, wrapper_args)
 
-        if sret == 1
+        if sret
             ret!(builder, load!(builder, sretPtr))
         elseif return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
