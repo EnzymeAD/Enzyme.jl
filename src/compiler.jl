@@ -701,6 +701,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
     end
+
+    for fn in functions(mod)
+        fn == adjointf && continue
+        augmented_primalf !== nothing && fn === augmented_primalf && continue
+        isempty(LLVM.blocks(fn)) && continue
+        linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
+    end
     return mod, (;adjointf, augmented_primalf)
 end
 
