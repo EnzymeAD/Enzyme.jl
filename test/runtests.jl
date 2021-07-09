@@ -114,7 +114,6 @@ end
 end
 
 @testset "Advanced array tests" begin
-
     function arsum2(f::Array{T}) where T
         return sum(f)
     end
@@ -141,7 +140,6 @@ end
     end
     @test autodiff(expor, Active(0.42))[1] ≈ 4.0
 end
-
 
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2

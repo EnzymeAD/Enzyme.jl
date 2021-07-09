@@ -182,22 +182,32 @@ end
 # Enzyme compiler step
 ##
 
+const inactivefns = Set((
+    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
+    "jl_subtype", "julia.get_pgcstack",
+))
+
 function annotate!(mod)
     ctx = context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     fns = functions(mod)
-    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_subtype"]
+
+
+    for inactivefn in inactivefns
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
         end
     end
 
-    if haskey(fns, "julia.ptls_states")
-        fn = fns["julia.ptls_states"]
-        push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+    for fname in ["julia.get_pgcstack", "julia.ptls_states"]
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+        end
     end
-
 
     for boxfn in ["jl_box_int64"]
         if haskey(fns, boxfn)
