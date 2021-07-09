@@ -90,12 +90,13 @@ end
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
                                        returnValue, dretUsed, topLevel, additionalArg, typeInfo,
                                        uncacheable_args, augmented, atomicAdd, postOpt)
+    mode = topLevel ? DEM_ReverseModeCombined : DEM_ReverseModeGradient
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, UInt8, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, topLevel ? DEM_ReverseModeCombined : DEM_ReverseModeGradient, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd, postOpt)
 end
 
