@@ -571,6 +571,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
+
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
@@ -737,21 +738,25 @@ end
 # Thunk
 ##
 
-struct CombinedAdjointThunk{F, RT, TT}
+struct CombinedAdjointThunk{F, RT, TT, Pullback}
     fn::F
     # primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
 end
 
-@inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, thunk.fn, TT, RT, args...)
+@inline (thunk::CombinedAdjointThunk{F, RT, TT, Pullback})(args...) where {F, RT, TT, Pullback} =
+   enzyme_call(thunk.adjoint, thunk.fn, Pullback, TT, RT, args...)
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, f::F, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {F, T, RT, N}
+@generated function enzyme_call(fptr::Ptr{Cvoid}, f::F, pullback::Val{Pullback}, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {F, T, RT, N, Pullback}
     argtt    = tt.parameters[1]
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
-    @assert length(argtypes) == length(argexprs)
+    if Pullback && (rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat})
+        @assert length(argtypes)+1 == length(argexprs)
+    else
+        @assert length(argtypes)   == length(argexprs)
+    end
 
     types = DataType[]
 
@@ -838,7 +843,11 @@ end
         if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
             push!(types, rettype)
             push!(T_wrapperargs, convert(LLVMType, rettype, ctx))
-            push!(ccexprs, :(one($rettype)))
+            if !Pullback
+                push!(ccexprs, :(one($rettype)))
+            else
+                push!(ccexprs, last(argexprs))
+            end
         end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
@@ -1037,7 +1046,7 @@ function _link(job, (mod, adjoint_name, primal_name))
     end
 
     @assert primal_name === nothing
-    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
+    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt, #=pullback=#Val(false)}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
 end
 
 # actual compilation

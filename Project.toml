@@ -15,7 +15,7 @@ ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
-Enzyme_jll = "0.0.13"
+Enzyme_jll = "~0.0.15"
 GPUCompiler = "0.12"
 LLVM = "3.2"
 ObjectFile = "0.3"
