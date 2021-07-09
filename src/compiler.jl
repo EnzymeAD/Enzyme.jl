@@ -429,9 +429,8 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
-    attrs = Set(collect(parameter_attributes(entry_f, 1)))
     sret = false
-    if !isempty(parameters(entry_f)) && EnumAttribute("sret"; ctx) in attrs
+    if !isempty(parameters(entry_f)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(entry_f, 1))))
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = true
     end

@@ -126,7 +126,7 @@ function get_trampoline(job)
 end
 
 function add!(mod)
-    lljit = jit[].joy
+    lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
