@@ -1,7 +1,8 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!, TypeAnalysis, FnTypeInfo, Logic
+import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
+                 TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -47,7 +48,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         prod = LLVM.mul!(b, prod, LLVM.Value(unsafe_load(Args, i)))
     end
 
-    isunboxed = typ.isinlinealloc
+    isunboxed = allocatedinline(typ)
     elsz = sizeof(typ)
 
     isunion = typ <: Union
