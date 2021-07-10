@@ -578,7 +578,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
 
-        sparam_vals = mi.sparam_vals
+        sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
@@ -591,7 +591,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         func ∈ keys(known_ops) || continue
 
         name, arity = known_ops[func]
-
+        
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
