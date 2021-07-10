@@ -201,15 +201,14 @@ function annotate!(mod)
         end
     end
 
-    for fname in ["julia.get_pgcstack", "julia.ptls_states"]
+    for fname in ("julia.get_pgcstack", "julia.ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
-            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
         end
     end
 
-    for boxfn in ["jl_box_int64"]
+    for boxfn in ("jl_box_int64",)
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
