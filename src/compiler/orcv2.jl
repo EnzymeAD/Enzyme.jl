@@ -60,6 +60,8 @@ function __init__()
 end
 
 function move_to_threadsafe(ir)
+    LLVM.verify(ir)
+
     # So 1. serialize the module
     buf = convert(MemoryBuffer, ir)
 
