@@ -60,15 +60,16 @@ function __init__()
 end
 
 function move_to_threadsafe(ir)
-    LLVM.verify(ir)
+    LLVM.verify(ir) # try to catch broken modules
 
     # So 1. serialize the module
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    ctx = ThreadSafeContext()
-    mod = parse(LLVM.Module, buf; ctx=context(ctx))
-    return ThreadSafeModule(mod; ctx)
+    return ThreadSafeContext() do ctx
+        mod = parse(LLVM.Module, buf; ctx=context(ctx))
+        ThreadSafeModule(mod; ctx)
+    end
 end
 
 function get_trampoline(job)
