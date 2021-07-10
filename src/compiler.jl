@@ -204,7 +204,7 @@ function annotate!(mod)
     for fname in ["julia.get_pgcstack", "julia.ptls_states"]
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            # push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
         end
     end
