@@ -4,7 +4,7 @@ using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module, map)
-    i64 = LLVM.IntType(64, context(mod))
+    i64 = LLVM.IntType(64; ctx=context(mod))
     for (k, v) in map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
@@ -31,7 +31,7 @@ function check_ir!(job, errors, mod::LLVM.Module, known_fns)
         f = functions(mod)["malloc"]
         name!(f, "")
         ctx = context(mod)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
 
         prev_ft = eltype(llvmtype(f)::LLVM.PointerType)::LLVM.FunctionType
 
@@ -134,7 +134,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
 
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
             if mfn == C_NULL
-                ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
+                ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
                 mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
             end
             mfn2 = LLVM.Function(mfn)
@@ -153,7 +153,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
             if isa(flib, LLVM.GlobalVariable)
                 flib = LLVM.initializer(flib)
             end
-            if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8, ctx)
+            if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8; ctx)
                 flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
@@ -164,7 +164,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
@@ -206,7 +206,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8, ctx)
+            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 
@@ -227,7 +227,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
 
             found = false
             if data !== nothing
-                inmod = parse(LLVM.Module, data, ctx)
+                inmod = parse(LLVM.Module, data; ctx)
                 found = haskey(functions(inmod), fname)
             end
 
@@ -276,7 +276,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
 
             else
                 res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
-                replaceWith = LLVM.ConstantInt(LLVM.IntType(64, ctx), reinterpret(UInt64, res))
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(64; ctx), reinterpret(UInt64, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
@@ -350,6 +350,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
                     if lfn == C_NULL
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
+                    else
+                        lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
                     end
                     known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)

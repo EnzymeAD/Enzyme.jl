@@ -7,3 +7,8 @@ function hasfieldcount(@nospecialize(dt))
     return true
 end
 
+if VERSION <= v"1.6"
+    allocatedinline(@nospecialize(T)) = T.isinlinealloc
+else
+    import Base: allocatedinline
+end

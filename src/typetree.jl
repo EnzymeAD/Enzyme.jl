@@ -108,6 +108,7 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     return tt
 end
 
+
 function typetree(@nospecialize(T), ctx, dl)
     if T isa UnionAll || T isa Union || T == Union{}
         return TypeTree()
@@ -131,7 +132,7 @@ function typetree(@nospecialize(T), ctx, dl)
         end
 
         # Allocated inline so adjust first path
-        if subT.isinlinealloc
+        if allocatedinline(subT)
             shift!(subtree, dl, 0, sizeof(subT), offset)
         else
             merge!(subtree, TypeTree(API.DT_Pointer, ctx))

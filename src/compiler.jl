@@ -1,7 +1,8 @@
 module Compiler
 
 import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
-import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!, TypeAnalysis, FnTypeInfo, Logic
+import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
+                 TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -10,9 +11,13 @@ import GPUCompiler: CompilerJob, FunctionSpec, codegen
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
-# We have one global JIT and TM
-const jit = Ref{OrcJIT}()
-const tm  = Ref{TargetMachine}()
+if LLVM.has_orc_v1()
+    include("compiler/orcv1.jl")
+else
+    include("compiler/orcv2.jl")
+end
+
+using .JIT
 
 function array_inner(::Type{<:Array{T}}) where T
     return T
@@ -43,7 +48,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         prod = LLVM.mul!(b, prod, LLVM.Value(unsafe_load(Args, i)))
     end
 
-    isunboxed = typ.isinlinealloc
+    isunboxed = allocatedinline(typ)
     elsz = sizeof(typ)
 
     isunion = typ <: Union
@@ -69,8 +74,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         tot = LLVM.add!(b, tot, prod)
     end
 
-    i1 = LLVM.IntType(1, ctx)
-    i8 = LLVM.IntType(8, ctx)
+    i1 = LLVM.IntType(1; ctx)
+    i8 = LLVM.IntType(8; ctx)
     ptrty = LLVM.PointerType(i8) #, LLVM.addrspace(LLVM.llvmtype(anti)))
     toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(anti)))))
 
@@ -88,23 +93,6 @@ function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValu
 end
 
 function __init__()
-    opt_level = Base.JLOptions().opt_level
-    if opt_level < 2
-        optlevel = LLVM.API.LLVMCodeGenLevelNone
-    elseif opt_level == 2
-        optlevel = LLVM.API.LLVMCodeGenLevelDefault
-    else
-        optlevel = LLVM.API.LLVMCodeGenLevelAggressive
-    end
-
-    tm[] = GPUCompiler.JITTargetMachine(optlevel=optlevel)
-    LLVM.asm_verbosity!(tm[], true)
-
-    jit[] = OrcJIT(tm[]) # takes ownership of tm
-    atexit() do
-        dispose(jit[])
-    end
-
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
@@ -194,27 +182,38 @@ end
 # Enzyme compiler step
 ##
 
+const inactivefns = Set((
+    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
+    "jl_subtype", "julia.get_pgcstack",
+))
+
 function annotate!(mod)
-    inactive = LLVM.StringAttribute("enzyme_inactive", "", context(mod))
+    ctx = context(mod)
+    inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     fns = functions(mod)
-    for inactivefn in ["jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception", "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_subtype"]
+
+
+    for inactivefn in inactivefns
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
         end
     end
 
-    if haskey(fns, "julia.ptls_states")
-        fn = fns["julia.ptls_states"]
-        push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0, context(mod)))
+    for fname in ("julia.get_pgcstack", "julia.ptls_states")
+        if haskey(fns, fname)
+            fn = fns[fname]
+            # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+        end
     end
 
-
-    for boxfn in ["jl_box_int64"]
+    for boxfn in ("jl_box_int64",)
         if haskey(fns, boxfn)
             fn = fns[boxfn]
-            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0, context(mod)))
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0, context(mod)))
+            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
         end
     end
 
@@ -427,23 +426,6 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     return adjointf, augmented_primalf
 end
 
-function Base.in(attr::LLVM.EnumAttribute, iter::LLVM.FunctionAttrSet)
-    elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
-    if length(iter) > 0
-      # FIXME: this prevents a nullptr ref in LLVM similar to D26392
-      LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
-    end
-    for eattr in elems
-        at = Attribute(eattr)
-        if isa(at, LLVM.EnumAttribute)
-            if kind(at) == kind(attr)
-                return true
-            end
-        end
-    end
-    return false
-end
-
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
     ctx = context(mod)
@@ -457,10 +439,10 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
-    sret = 0
-    if !isempty(parameters(entry_f)) && EnumAttribute("sret") in parameter_attributes(entry_f, 1)
+    sret = false
+    if !isempty(parameters(entry_f)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(entry_f, 1))))
         RT = eltype(llvmtype(first(parameters(entry_f))))
-        sret = 1
+        sret = true
     end
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
@@ -477,12 +459,12 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
-        entry = BasicBlock(wrapper_f, "entry", ctx)
+        entry = BasicBlock(wrapper_f, "entry"; ctx)
         position!(builder, entry)
 
         wrapper_args = Vector{LLVM.Value}()
 
-        if !isempty(parameters(entry_f)) && EnumAttribute("sret") in parameter_attributes(entry_f, 1)
+        if sret
             sretPtr = alloca!(builder, llvmtype(parameters(wrapper_f)[1]))
             push!(wrapper_args, sretPtr)
         end
@@ -507,7 +489,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         end
         res = call!(builder, entry_f, wrapper_args)
 
-        if sret == 1
+        if sret
             ret!(builder, load!(builder, sretPtr))
         elseif return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
@@ -519,7 +501,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     end
 
     # early-inline the original entry function into the wrapper
-    push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0, ctx))
+    push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0; ctx))
     linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
 
     # copy debug info
@@ -596,7 +578,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
 
-        sparam_vals = mi.sparam_vals
+        sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
@@ -609,7 +591,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         func ∈ keys(known_ops) || continue
 
         name, arity = known_ops[func]
-
+        
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
@@ -621,8 +603,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         push!(custom, llvmfn)
 
         attributes = function_attributes(llvmfn)
-        push!(attributes, EnumAttribute("noinline", 0, ctx))
-        push!(attributes, StringAttribute("enzyme_math", name, ctx))
+        push!(attributes, EnumAttribute("noinline", 0; ctx))
+        push!(attributes, StringAttribute("enzyme_math", name; ctx))
 
         # Need to wrap the code when outermost
         must_wrap |= llvmfn == primalf
@@ -635,7 +617,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
 
         let builder = Builder(ctx)
-            entry = BasicBlock(wrapper_f, "entry", ctx)
+            entry = BasicBlock(wrapper_f, "entry"; ctx)
             position!(builder, entry)
 
             res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
@@ -652,7 +634,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
-        target_machine = tm[]
+        target_machine = JIT.get_tm()
     else
         target_machine = GPUCompiler.llvm_machine(primal_job.target)
     end
@@ -725,13 +707,18 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     adjointf = functions(mod)[adjointf_name]
-    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0, context(mod)))
-    if augmented_primalf === nothing
-        return mod, adjointf
-    else
+    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
+    if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
-        return mod, (adjointf, augmented_primalf)
     end
+
+    for fn in functions(mod)
+        fn == adjointf && continue
+        augmented_primalf !== nothing && fn === augmented_primalf && continue
+        isempty(LLVM.blocks(fn)) && continue
+        linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
+    end
+    return mod, (;adjointf, augmented_primalf)
 end
 
 ##
@@ -764,10 +751,10 @@ end
         error("return type is Union{}, giving up.")
     end
 
-    LLVM.Interop.JuliaContext() do ctx
-        T_void = convert(LLVMType, Nothing, ctx)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8, ctx))
-        T_jlvalue = LLVM.StructType(LLVMType[], ctx)
+    LLVM.Context() do ctx
+        T_void = convert(LLVMType, Nothing; ctx)
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
         # Create Enzyme calling convention
@@ -777,12 +764,12 @@ end
         T_JuliaSRet = LLVMType[]  # Struct return of all Active variables (includes all of T_EnzymeSRet)
         sret_types  = DataType[]  # Julia types of all Active variables
         inputexprs = Union{Expr, Symbol}[]
-  # By ref values we create and need to preserve
+        # By ref values we create and need to preserve
         ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
 
         if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
             isboxed = GPUCompiler.deserves_argbox(F)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F, ctx)
+            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
             argexpr = :(f)
             if isboxed
                 push!(types, Any)
@@ -803,7 +790,7 @@ end
             expr = argexprs[i]
 
             isboxed = GPUCompiler.deserves_argbox(source_typ)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ, ctx)
+            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ; ctx)
             argexpr = Expr(:., expr, QuoteNode(:val))
             if isboxed
                 push!(types, Any)
@@ -819,7 +806,7 @@ end
 
             if T <: Active
                 # Use deserves_argbox??
-                llvmT = convert(LLVMType, source_typ, ctx)
+                llvmT = convert(LLVMType, source_typ; ctx)
                 push!(sret_types, source_typ)
                 push!(T_JuliaSRet, llvmT)
                 if !isboxed # XXX: Not consistent
@@ -842,7 +829,7 @@ end
         # API.DFT_OUT_DIFF
         if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
             push!(types, rettype)
-            push!(T_wrapperargs, convert(LLVMType, rettype, ctx))
+            push!(T_wrapperargs, convert(LLVMType, rettype; ctx))
             if !Pullback
                 push!(ccexprs, :(one($rettype)))
             else
@@ -852,17 +839,17 @@ end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
         if !isempty(T_EnzymeSRet)
-            ret = LLVM.StructType(T_EnzymeSRet)
+            ret = LLVM.StructType(T_EnzymeSRet; ctx)
         else
             ret = T_void
         end
 
         # pointer to call
-        pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
+        pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
 
         # sret argument
         if !isempty(sret_types)
-            pushfirst!(T_wrapperargs, convert(LLVMType, Int, ctx))
+            pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
         end
 
         llvm_f, _ = LLVM.Interop.create_function(T_void, T_wrapperargs)
@@ -872,17 +859,17 @@ end
         params = [parameters(llvm_f)...]
         target =  !isempty(sret_types) ? 2 : 1
 
-        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8, ctx), LLVM.IntType(64, ctx), LLVM.IntType(1, ctx)])
+        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8; ctx), LLVM.IntType(64; ctx), LLVM.IntType(1; ctx)])
         memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
         LLVM.Builder(ctx) do builder
-            entry = BasicBlock(llvm_f, "entry", ctx)
+            entry = BasicBlock(llvm_f, "entry"; ctx)
             position!(builder, entry)
 
             realparms = LLVM.Value[]
             i = target+1
 
             if !isempty(T_JuliaSRet)
-                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet)))
+                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
             end
 
             activeNum = 0
@@ -904,14 +891,14 @@ end
                 elseif T <: Active
                     isboxed = GPUCompiler.deserves_argbox(T′)
                     if isboxed
-                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)])
+                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)])
                         cst = pointercast!(builder, ptr, ptr8)
                         push!(realparms, ptr)
 
                         cparms = LLVM.Value[cst,
-                        LLVM.ConstantInt(LLVM.IntType(8, ctx), 0),
-                        LLVM.ConstantInt(LLVM.IntType(64, ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
-                        LLVM.ConstantInt(LLVM.IntType(1, ctx), 0)]
+                        LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
+                        LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
+                        LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)]
                         call!(builder, memsetIntr, cparms)
                     end
                     activeNum+=1
@@ -944,7 +931,7 @@ end
                     if T <: Active
                         if !isboxed
                             eval = extract_value!(builder, val, returnNum)
-                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64, ctx), 0), LLVM.ConstantInt(LLVM.IntType(32, ctx), activeNum)]))
+                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
                             returnNum+=1
                         end
                         activeNum+=1
@@ -985,39 +972,6 @@ end
 # JIT
 ##
 
-function resolver(name, ctx)
-    name = unsafe_string(name)
-    ptr = try
-        ## Step 0: Should have already resolved it iff it was in the
-        ##         same module
-        ## Step 1: See if it's something known to the execution enging
-        # TODO: Do we need to do this?
-        # address(jit[], name)
-
-        ## Step 2: Search the program symbols
-        #
-        # SearchForAddressOfSymbol expects an unmangled 'C' symbol name.
-        # Iff we are on Darwin, strip the leading '_' off.
-        @static if Sys.isapple()
-            if name[1] == '_'
-                name = name[2:end]
-            end
-        end
-        LLVM.API.LLVMSearchForAddressOfSymbol(name)
-        ## Step 4: Lookup in libatomic
-        # TODO: Do we need to do this?
-    catch ex
-        @error "Enzyme: Lookup failed" jl_name exception=(ex, Base.catch_backtrace())
-        C_NULL
-    end
-    if ptr === C_NULL
-        @show name
-        error("Enzyme: Symbol lookup failed. Aborting!")
-    end
-
-    return UInt64(reinterpret(UInt, ptr))
-end
-
 function _link(job, (mod, adjoint_name, primal_name))
     params = job.params
     adjoint = params.adjoint
@@ -1027,10 +981,9 @@ function _link(job, (mod, adjoint_name, primal_name))
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     # Now invoke the JIT
-    orc = jit[]
-    jitted_mod = compile!(orc, mod, @cfunction(resolver, UInt64, (Cstring, Ptr{Cvoid})))
+    jitted_mod = JIT.add!(mod)
+    adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
 
-    adjoint_addr = addressin(orc, jitted_mod, adjoint_name)
     adjoint_ptr  = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
         throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, adjoint not found"))
@@ -1038,7 +991,7 @@ function _link(job, (mod, adjoint_name, primal_name))
     if primal_name === nothing
         primal_ptr = C_NULL
     else
-        primal_addr = addressin(orc, jitted_mod, primal_name)
+        primal_addr = JIT.lookup(jitted_mod, primal_name)
         primal_ptr  = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, primal not found"))
@@ -1053,14 +1006,9 @@ end
 function _thunk(job)
     params = job.params
 
-    mod, fns = codegen(:llvm, job, optimize=false)
+    mod, meta = codegen(:llvm, job, optimize=false)
 
-    if fns isa Tuple
-        adjointf, augmented_primalf = fns
-    else
-        adjointf = fns
-        augmented_primalf = nothing
-    end
+    adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
     adjoint_name = name(adjointf)
 
@@ -1071,7 +1019,7 @@ function _thunk(job)
     end
 
     # Run post optimization pipeline
-    post_optimze!(mod, tm[])
+    post_optimze!(mod, JIT.get_tm())
 
     return (mod, adjoint_name, primal_name)
 end
@@ -1098,49 +1046,13 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-mutable struct CallbackContext
-    job::Compiler.CompilerJob
-    stub::String
-    compiled::Bool
-end
-
-const outstanding = IdDict{CallbackContext, Nothing}()
-
-# Setup the lazy callback for creating a module
-function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
-    orc = OrcJIT(orc_ref)
-    cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
-
-    @assert !cc.compiled
-    job = cc.job
-
-    thunk = Compiler._link(job, Compiler._thunk(job))
-    cc.compiled = true
-    delete!(outstanding, cc)
-
-    # 4. Update the stub pointer to point to the recently compiled module
-    set_stub!(orc, cc.stub, thunk.adjoint)
-
-    # 5. Return the address of tie implementation, since we are going to call it now
-    ptr = thunk.adjoint
-    return UInt64(reinterpret(UInt, ptr))
-end
-
 @generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, false, true)
     job    = CompilerJob(target, primal, params)
 
-    cc = CallbackContext(job, String(gensym(:trampoline)), false)
-    outstanding[cc] = nothing
-
-    c_callback = @cfunction(callback, UInt64, (LLVM.API.LLVMOrcJITStackRef, Ptr{Cvoid}))
-
-    orc = Compiler.jit[]
-    initial_addr = callback!(orc, c_callback, pointer_from_objref(cc))
-    create_stub!(orc, cc.stub, initial_addr)
-    addr = address(orc, cc.stub)
+    addr = get_trampoline(job)
     id = Base.reinterpret(Int, pointer(addr))
 
     deferred_codegen_jobs[id] = job
