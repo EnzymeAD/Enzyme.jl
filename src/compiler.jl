@@ -204,7 +204,8 @@ function annotate!(mod)
     for fname in ("julia.get_pgcstack", "julia.ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
         end
     end
 
