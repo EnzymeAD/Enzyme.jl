@@ -111,7 +111,6 @@ function get_trampoline(job)
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
         LLVM.name!(adjointf, target_sym)
-
         tsm = move_to_threadsafe(mod)
 
         il = LLVM.IRTransformLayer(lljit)

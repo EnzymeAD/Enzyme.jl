@@ -350,6 +350,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
                     if lfn == C_NULL
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
+                    else
+                        lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
                     end
                     known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
