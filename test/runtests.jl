@@ -297,6 +297,16 @@ end
 
 end
 
+@testset "IO" begin
+
+    function printsq(x)
+        println(x)
+        x*x
+    end
+
+    autodiff(sq, Active(2.3))
+end
+
 @testset "hmlstm" begin
     sigm(x)  = @fastmath 1 / (1 + exp(-x))
     @fastmath function hmlstm_update_c_scalar(z, zb, c, f, i, g)
