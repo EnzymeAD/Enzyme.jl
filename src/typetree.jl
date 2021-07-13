@@ -53,10 +53,6 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
-function typetree(::Type{Nothing}, ctx, dl)
-    TypeTree()
-end
-
 function typetree(::Type{T}, ctx, dl) where T <: Integer
     tt = TypeTree()
     for i in 1:sizeof(T)
