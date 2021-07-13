@@ -19,6 +19,96 @@ end
 
 using .JIT
 
+function get_function!(builderF, mod, name)
+    if haskey(functions(mod), name)
+        return functions(mod)[name]
+    else
+        return builderF(mod, context(mod), name)
+    end
+end
+
+if VERSION < v"1.7"
+
+declare_ptls!(mod) = get_function!(mod, "julia.ptls_states") do mod, ctx, name
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
+
+    funcT = LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue))
+    LLVM.Function(mod, name, funcT)
+end
+
+function emit_ptls!(B)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    func = declare_ptls!(mod)
+    return call!(B, func)
+end
+
+function get_ptls(func)
+    entry_bb = first(blocks(func))
+    ptls_func = declare_ptls!(LLVM.parent(func))
+
+    for I in instructions(entry_bb)
+        if I isa LLVM.CallInst && called_value(I) == ptls_func
+            return I
+        end
+    end
+    return nothing
+end
+
+function reinsert_gcmarker!(func)
+    if get_ptls(func) === nothing
+        B = Builder(context(LLVM.parent(func)))
+        entry_bb = first(blocks(func))
+        position!(B, first(instructions(entry_bb)))
+        emit_ptls!(B)
+    end
+end
+
+else
+
+declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack") do mod, ctx, name
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
+
+    funcT = LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue))
+    LLVM.Function(mod, name, funcT)
+end
+
+function emit_pgcstack(B)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    func = declare_pgcstack!(mod)
+    return call!(B, func)
+end
+
+function get_pgcstack(func)
+    entry_bb = first(blocks(func))
+    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+
+    for I in instructions(entry_bb)
+        if I isa LLVM.CallInst && called_value(I) == pgcstack_func
+            return I
+        end
+    end
+    return nothing
+end
+
+function reinsert_gcmarker!(func)
+    if get_pgcstack(func) === nothing
+        B = Builder(context(LLVM.parent(func)))
+        entry_bb = first(blocks(func))
+        position!(B, first(instructions(entry_bb)))
+        emit_pgcstack(B)
+    end
+end
+
+end
+
 function array_inner(::Type{<:Array{T}}) where T
     return T
 end
@@ -436,14 +526,12 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args)
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    if haskey(functions(mod), "llvm.julia.gc_preserve_begin")
-        jlgcpreserve_func = functions(mod)["llvm.julia.gc_preserve_begin"]
-    else
+    func = get_function!(mod, "llvm.julia.gc_preserve_begin") do mod, ctx, name
         funcT = LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true)
-        jlgcpreserve_func = LLVM.Function(mod, "llvm.julia.gc_preserve_begin", funcT)
+        LLVM.Function(mod, name, funcT)
     end
 
-    token = call!(B, jlgcpreserve_func, args)
+    token = call!(B, func, args)
     return token
 end
 
@@ -453,14 +541,12 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    if haskey(functions(mod), "llvm.julia.gc_preserve_end")
-        jlgcpreserve_func = functions(mod)["llvm.julia.gc_preserve_end"]
-    else
+    func = get_function!(mod, "llvm.julia.gc_preserve_end") do mod, ctx, name
         funcT = LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)])
-        jlgcpreserve_func = LLVM.Function(mod, "llvm.julia.gc_preserve_end", funcT)
+        LLVM.Function(mod, name, funcT)
     end
 
-    call!(B, jlgcpreserve_func, [token])
+    call!(B, func, [token])
     return
 end
 
@@ -681,16 +767,15 @@ function emit_error(B::LLVM.Builder, string)
     ctx = context(mod)
 
     # 1. get the error function
-    if haskey(functions(mod), "jl_error")
-        jlerror_func = functions(mod)["jl_error"]
-    else
-        jlerror_T = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
-        jlerror_func = LLVM.Function(mod, "jl_error", jlerror_T)
-        push!(function_attributes(jlerror_func), EnumAttribute("noreturn"; ctx))
+    func = get_function!(mod, "jl_error") do mod, ctx, name
+        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
+        func = LLVM.Function(mod, name, funcT)
+        push!(function_attributes(func), EnumAttribute("noreturn"; ctx))
+        return func
     end
 
     # 2. Call error function and insert unreachable
-    call!(B, jlerror_func, LLVM.Value[globalstring_ptr!(B, string)])
+    call!(B, func, LLVM.Value[globalstring_ptr!(B, string)])
 
     # FIXME(@wsmoses): Allow for emission of new BB in this code path
     # unreachable!(B)
@@ -754,7 +839,6 @@ function __init__()
         @cfunction(generic_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(generic_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-
     API.EnzymeRegisterCallHandler(
         "jl_invoke",
         @cfunction(invoke_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
@@ -780,12 +864,6 @@ function __init__()
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    # TODO handle array copy
-    # API.EnzymeRegisterAllocationHandler(
-    #     "jl_array_copy",
-    #     @cfunction(copy_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
-    #     @cfunction(copy_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
-    # )
 end
 
 # Define EnzymeTarget
@@ -1381,6 +1459,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     restore_lookups(mod, known_fns)
 
     if parent_job !== nothing
+        reinsert_gcmarker!(adjointf)
+        augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
         post_optimze!(mod, target_machine)
     end
 
@@ -1704,6 +1784,11 @@ function _thunk(job)
     else
         primal_name = nothing
     end
+
+    # Enzyme kills dead instructions, and removes the ptls call
+    # which we need for correct GC handling in LateLowerGC
+    reinsert_gcmarker!(adjointf)
+    augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
 
     # Run post optimization pipeline
     post_optimze!(mod, JIT.get_tm())
