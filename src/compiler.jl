@@ -583,6 +583,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
+        if func == Base.println
+            llvmfn = functions(mod)[k.specfunc]
+            push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
+        end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
