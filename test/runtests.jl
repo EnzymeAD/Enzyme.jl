@@ -304,7 +304,7 @@ end
         x*x
     end
 
-    autodiff(sq, Active(2.3))
+    autodiff(printsq, Active(2.3))
 end
 
 @testset "hmlstm" begin
