@@ -1754,13 +1754,6 @@ end
 ##
 
 function _link(job, (mod, adjoint_name, primal_name))
-    params = job.params
-    adjoint = params.adjoint
-    split = params.split
-
-    primal = job.source
-    rt = Core.Compiler.return_type(primal.f, primal.tt)
-
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
     adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
