@@ -85,6 +85,10 @@ function typetree(::Type{Any}, ctx, dl)
     return TypeTree()
 end
 
+function typetree(::Type{Symbol}, ctx, dl)
+    return TypeTree()
+end
+
 function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
     tt = typetree(T, ctx, dl)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
@@ -112,6 +116,11 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     return tt
 end
 
+if VERSION >= v"1.7.0-DEV.204"
+    import Base: ismutabletype
+else
+    ismutabletype(T) = isa(T, DataType) && T.mutable
+end
 
 function typetree(@nospecialize(T), ctx, dl)
     if T isa UnionAll || T isa Union || T == Union{}
@@ -120,6 +129,9 @@ function typetree(@nospecialize(T), ctx, dl)
 
     if fieldcount(T) == 0
         if T <: Function
+            return TypeTree()
+        end
+        if isa(T, DataType) && !ismutabletype(T) # singleton
             return TypeTree()
         end
         error("$T is unknown leaf")
