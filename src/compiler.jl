@@ -1497,6 +1497,17 @@ struct CombinedAdjointThunk{F, RT, TT, Pullback}
     adjoint::Ptr{Cvoid}
 end
 
+struct AugmentedForward{F, RT, TT}
+    fn::F
+    primal::Ptr{Cvoid}
+end
+
+struct AdjointThunk{F, RT, TT}
+    fn::F
+    adjoint::Ptr{Cvoid}
+end
+
+
 @inline (thunk::CombinedAdjointThunk{F, RT, TT, Pullback})(args...) where {F, RT, TT, Pullback} =
    enzyme_call(thunk.adjoint, thunk.fn, Pullback, TT, RT, args...)
 
@@ -1765,8 +1776,7 @@ function _link(job, (mod, adjoint_name, primal_name))
         end
     end
 
-    @assert primal_name === nothing
-    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt, #=pullback=#Val(false)}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
+    return Thunk(adjoint_ptr, primal_ptr)
 end
 
 # actual compilation
@@ -1813,7 +1823,14 @@ function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Funct
 
     rt = Core.Compiler.return_type(primal.f, primal.tt)
 
-    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::CombinedAdjointThunk{F,rt,tt}
+    thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
+    if Split
+        augmented = AugmentedForwardThunk{F, rt, adjoint.tt}(f, thunk.primal)
+        pullback  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        return (augmented, pullback)
+    else
+        return CombinedAdjointThunk{F, rt, adjoint.tt, Val(false)}(f, thunk.adjoint)
+    end
 end
 
 import GPUCompiler: deferred_codegen_jobs
