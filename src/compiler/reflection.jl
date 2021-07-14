@@ -1,11 +1,14 @@
-function reflect(@nospecialize(func), @nospecialize(types);
+function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
                  split::Bool=false)
 
     primal, adjoint = fspec(func, types)
 
+    rt = Core.Compiler.return_type(primal.f, primal.tt)
+    rt = A{rt}
+
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, split, run_enzyme)
+    params = Compiler.EnzymeCompilerParams(adjoint, split, rt, run_enzyme)
     job    = Compiler.CompilerJob(target, primal, params)
 
     # Codegen the primal function and all its dependency in one module
@@ -21,21 +24,21 @@ function reflect(@nospecialize(func), @nospecialize(types);
     return llvmf, mod
 end
 
-function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(types);
+function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types);
                           optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
                           raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
-    llvmf, mod = reflect(func, types; optimize,run_enzyme, second_stage)
+    llvmf, mod = reflect(func, A, types; optimize,run_enzyme, second_stage)
 
     str = ccall(:jl_dump_function_ir, Ref{String},
                 (LLVM.API.LLVMValueRef, Bool, Bool, Ptr{UInt8}),
                 llvmf, !raw, dump_module, debuginfo)
     print(io, str)
 end
-enzyme_code_llvm(@nospecialize(func), @nospecialize(types); kwargs...) = enzyme_code_llvm(stdout, func, types; kwargs...)
+enzyme_code_llvm(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_llvm(stdout, func, A, types; kwargs...)
 
-function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(types))
-    llvmf, mod = reflect(func, types)
+function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types))
+    llvmf, mod = reflect(func, A, types)
     str = String(LLVM.emit(tm[], mod, LLVM.API.LLVMAssemblyFile))
     print(io, str)
 end
-enzyme_code_native(@nospecialize(func), @nospecialize(types); kwargs...) = enzyme_code_native(stdout, func, types; kwargs...)
+enzyme_code_native(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_native(stdout, func, A, types; kwargs...)

@@ -101,7 +101,7 @@ prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
 """
-    autodiff(f, args...)
+    autodiff(f, Activity, args...)
 
 Auto-differentiate function `f` at arguments `args`.
 
@@ -123,6 +123,8 @@ structs thereof) or [`Duplicated`](@ref) (for mutable arguments like arrays,
 `Ref`s and structs thereof). Non-annotated arguments will automatically be
 treated as [`Const`](@ref).
 
+`Activity` is the Activity of the return value, it may be `Const` or `Active`.
+
 Example:
 
 ```jldoctest
@@ -133,7 +135,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
-∂f_∂a, ∂f_∂d = autodiff(f, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
+∂f_∂a, ∂f_∂d = autodiff(f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
 
 # output
 
@@ -151,13 +153,16 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(f::F, args...) where F
+@inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, #=Pullback=#Val(false)}(f, ptr)
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(A{rt}))
+    thunk = Compiler.CombinedAdjointThunk{F, A{rt}, tt′}(f, ptr)
+    if A <: Active
+        args′ = (args′..., one(rt))
+    end
     thunk(args′...)
 end
 
@@ -178,13 +183,15 @@ end
 @inline ∇unpack(arg::Duplicated) = (arg.dval[],)
 @inline ∇unpack(arg::Duplicated, args...) = (arg.dval[], ∇unpack(args...)...)
 
+# TODO: Remove these functions
 function gradient(f, args...)
     ∇args = pack(args...)
     f′ = function (args...)
         Base.@_inline_meta
         f(unpack(args...)...)
     end
-    autodiff(f′, ∇args...)
+    # TODO: Active is to aggressive
+    autodiff(f′, Active, ∇args...)
     return ∇unpack(∇args...)
 end
 
