@@ -235,6 +235,11 @@ else
 end
 end
 
+struct Tape
+    thunk::AdjointThunk
+    internal_tape # TODO Billy
+    shadow_return::Any
+end
 
 
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
@@ -245,38 +250,48 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 
     args = Any[]
     for i in 1:arg_size
-        # TODO when split mode use the below
-        push!(args, __args[i])
-        continue
-
         if __activity[i] != 0
-            # TODO use only for non mutable
-            push!(args, Duplicated(__args[i], __shadows[i]))
+            p = __args[i]
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+                push!(actives, (shadow_ptr, i))
+            else
+                s = __shadows[i]
+                push!(args, Duplicated(p, s))
+            end
         else
             push!(args, Const(__args[i]))
         end
     end
 
-    @warn "reverse differentiating jl_apply_generic call without split mode", fn, arg_size
-    res::Any = fn(args...)
-    __ret[1] = res
+    # TODO: Annotation of return value
+    annotation = Active
 
-    tape::Any = nothing
-    resT = typeof(res)
-    if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    forward, adjoint = thunk(fn, annotation, tt′, Val(true))
+
+    res = forward(args...)
+    __ret[1] = res[1]
+
+    if annotation <: Active
         __ret[2] = alloc(resT)
-        tape = unsafe_load(ret_ptr, 2)
+        shadow_return = unsafe_load(ret_ptr, 2)
         # NOTE: this assumes that that we got a fresh allocation from `alloc` that
         #       we can mutate inplace, despite `typeof(res)` being immutable
         unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{resT}}, ret_ptr), 2), zero(resT))
-        @assert tape == 0.0
-        @assert tape == __ret[2]
+        @assert shadow_return == 0.0
+        @assert shadow_return == __ret[2]
+    elseif annotation <: Const
+        __ret[2] = __ret[1]
+        shadow_return = nothing
+    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
+        error("TODO")
     else
-        shadow = res
-        __ret[2] = shadow
+        error("Unknown annotation")
     end
+    internal_tape = res[3]
 
-    __ret[3] = tape
+    __ret[3] = Tape(adjoint, internal_tape, shadow_return)
     return nothing
 end
 
@@ -302,27 +317,22 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         end
     end
 
-    # TODO handle active args
-    tt′   = Tuple{map(Core.Typeof, args)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = Core.Compiler.return_type(fn, tt)
+    tape = tape::Tape
 
-    rt = guess_activity(rt)
-    if rt <: Active
-        push!(args, tape)
+    if tape.shadow_return !== nothing
+        push!(args, tape.shadow_return)
+    end
+    if tape.internal_tape !== nothing
+        push!(args, tape.internal_tape)
     end
 
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
-    tup = thunk(args...)
+    tup = tape.thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
         a = unsafe_load(s, i)
         ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
         unsafe_store!(ref, d+a)
     end
-
-    @warn "done reverse differentiating jl_apply_generic call without split mode", fn, tup
 
     return nothing
 end
@@ -1839,8 +1849,8 @@ function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F,
     thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
     if Split
         augmented = AugmentedForwardThunk{F, rt, adjoint.tt}(f, thunk.primal)
-        pullback  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
-        return (augmented, pullback)
+        adjoint  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        return (augmented, adjoint)
     else
         return CombinedAdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
     end
