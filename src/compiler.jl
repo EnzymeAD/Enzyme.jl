@@ -204,170 +204,164 @@ end
 dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
-
-if VERSION < v"1.7.0-DEV.1205"
-@generated function alloc(tt::Type{T}) where T
-    sz = sizeof(T)
-    type = reinterpret(Int64, Base.pointer_from_objref(T))
-    mod ="""
-        declare {}*** @julia.ptls_states()
-        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64, {}*)
-        define {} addrspace(10)* @allocate() #1 {
-            %1 = call {}*** @julia.ptls_states()
-            %2 = bitcast {}*** %1 to i8*
-            %res = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* %2, i64 $sz, {}* inttoptr (i64 $type to {}*))
-            ret {} addrspace(10)* %res
-        }
-        attributes #1 = { alwaysinline }
-        """
-    quote
-        ref = Base.llvmcall(($mod, "allocate"), Any, Tuple{})
-        return ref
-    end
-end
-else
-@generated function alloc(tt::Type{T}) where T
-    sz = sizeof(T)
-    type = reinterpret(Int64, Base.pointer_from_objref(T))
-    # TODO: can we get these offsets from somewhere
-    gcstack_offset = -12 # -offsetof(jl_task_t, gcstack) / sizeof(void*)
-    ptls_offset = 14 # offsetof(jl_task_t, ptls) / sizeof(void *)
-    mod ="""
-        declare {}*** @julia.get_pgcstack()
-        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64, {}*)
-        define {} addrspace(10)* @allocate() #1 {
-            %pgcstack = call {}*** @julia.get_pgcstack()
-            %1 = bitcast {}*** %pgcstack to {}**
-            %current_task = getelementptr inbounds {}*, {}** %1, i64 $(gcstack_offset)
-            %ptls_field = getelementptr inbounds {}*, {}** %current_task, i64 $(ptls_offset)
-            %ptls_load = load {}*, {}** %ptls_field, align 8
-            %2 = bitcast {}* %ptls_load to i8*
-            %res = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* %2, i64 $sz, {}* inttoptr (i64 $(type) to {}*))
-            ret {} addrspace(10)* %res
-        }
-        attributes #1 = { alwaysinline }
-        """
-    quote
-        ref = Base.llvmcall(($mod, "allocate"), Any, Tuple{})
-        return ref
-    end
-end
-end
-
 struct Tape
     thunk::AdjointThunk
-    internal_tape # TODO Billy
+    internal_tape::Ptr{Cvoid}
     shadow_return::Any
+    resT::DataType
 end
 
+function allocate_box(T)
+    ptr = Libc.malloc(16 + sizeof(T)) # only need 8bytes for tag, but need alignment of 16
+    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) + 16)
+    jl_set_typeof(ptr, T)
+    ptr
+end
+
+function free_box(ptr)
+    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) - 16)
+    Libc.free(ptr)
+end
+
+function jl_set_typeof(v::Ptr{Cvoid}, T)
+    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
+    Base.unsafe_store!(tag, T) # set tag
+    return nothing
+end
+
+function jl_typeof(v::Ptr{Cvoid})
+    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
+    return Base.unsafe_load(tag)
+end
 
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
+    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
+    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
+    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
 
     args = Any[]
     for i in 1:arg_size
-        # TODO when split mode use the below
-        push!(args, __args[i])
-        continue
-
+        p = Base.unsafe_load(arg_ptr, i)
         if __activity[i] != 0
-            # TODO use only for non mutable
-            push!(args, Duplicated(__args[i], __shadows[i]))
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+            else
+                s = Base.unsafe_load(shadow_ptr, i)
+                push!(args, Duplicated(p, s))
+            end
         else
-            push!(args, Const(__args[i]))
+            push!(args, Const(p))
         end
     end
 
-    @warn "reverse differentiating jl_apply_generic call without split mode", fn, arg_size
-    res::Any = fn(args...)
-    __ret[1] = res
+    # TODO: Annotation of return value
+    annotation = Active
 
-    tape::Any = nothing
-    resT = typeof(res)
-    if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
-        __ret[2] = alloc(resT)
-        tape = unsafe_load(ret_ptr, 2)
-        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
-        #       we can mutate inplace, despite `typeof(res)` being immutable
-        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{resT}}, ret_ptr), 2), zero(resT))
-        @assert tape == 0.0
-        @assert tape == __ret[2]
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    forward, adjoint = thunk(fn, annotation, tt′, Val(true))
+
+    res = forward(args...)
+    origRet = res[2]
+    resT = typeof(origRet)
+    Base.unsafe_store!(ret_ptr, origRet, 1)
+
+    if annotation <: Active
+        # This assumes that we have an Immutable object here that got passed as a boxed value
+        # TODO: what to do with mutable?
+        shadow_return = Ref(zero(resT))
+        # shadow_return = allocate_box(resT)
+        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
+        # This should have been:
+        # Base.unsafe_store!(reinterpret(Ptr{Ptr{Cvoid}, ret_ptr), shadow_return, 2) # due to this store we need typetag
+        Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
+    elseif annotation <: Const
+        Base.unsafe_store!(ret_ptr, origRet, 2)
+        shadow_return = nothing
+    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
+        Base.unsafe_store!(ret_ptr, res[3], 2)
+        shadow_return = nothing
     else
-        shadow = res
-        __ret[2] = shadow
+        error("Unknown annotation")
     end
+    internal_tape = res[1]
 
-    __ret[3] = tape
+    tape = Tape(adjoint, internal_tape, shadow_return, resT)
+    Base.unsafe_store!(ret_ptr, tape, 3)
     return nothing
 end
 
 function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
     for i in 1:arg_size
+        p = Base.unsafe_load(arg_ptr, i)
         if __activity[i] != 0
-            p = __args[i]
             if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
                 push!(args, Active(p))
                 push!(actives, (shadow_ptr, i))
             else
-                s = __shadows[i]
+                s = Base.unsafe_load(shadow_ptr, i)
                 push!(args, Duplicated(p, s))
             end
         else
-            push!(args, Const(__args[i]))
+            push!(args, Const(p))
         end
     end
 
-    # TODO handle active args
-    tt′   = Tuple{map(Core.Typeof, args)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = Core.Compiler.return_type(fn, tt)
+    tape = tape::Tape
 
-    rt = guess_activity(rt)
-    if rt <: Active
-        push!(args, tape)
+    # if tape.shadow_return !== C_NULL
+    if tape.shadow_return !== nothing
+        # val = Base.unsafe_load(reinterpret(Ptr{tape.resT}, tape.shadow_return))
+        val = tape.shadow_return
+        if !(val isa tape.resT)
+            val = tape.shadow_return[]
+        end
+        push!(args, val)
+        # free_box(tape.shadow_return)
+    end
+    if tape.internal_tape !== nothing
+        push!(args, tape.internal_tape)
     end
 
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
-    tup = thunk(args...)
+    tup = tape.thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
         a = unsafe_load(s, i)
-        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-        unsafe_store!(ref, d+a)
+        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
+        # they are not idempotent on the Julia level. We could "force" `a` to be
+        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+        if a isa Base.RefValue
+            # TODO, what if primal value is `d isa RefValue`?
+            @assert eltype(a) == typeof(d)
+            a[] += d
+        else
+            @assert false "Expected Base.RefValue for active"
+        end
+        # ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+        # unsafe_store!(ref, d+a)
     end
-
-    @warn "done reverse differentiating jl_apply_generic call without split mode", fn, tup
 
     return nothing
 end
 
 
 function runtime_invoke_fwd(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
 
-    fn = __args[1]
+    fn = Base.unsafe_load(arg_ptr, 1)
     args = []
     for i in 2:arg_size
-        val = __args[i]
+        val = Base.unsafe_load(arg_ptr, i)
         # TODO when split mode use the below
         push!(args, val)
         continue
 
         if __activity[i] != 0
             # TODO use only for non mutable
-            push!(args, Duplicated(val, __shadows[i]))
+            push!(args, Duplicated(val, Base.unsafe_load(shadow_ptr, i)))
         else
             push!(args, Const(val))
         end
@@ -376,51 +370,47 @@ function runtime_invoke_fwd(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
     @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
     res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
 
-    __ret[1] = res
+    Base.unsafe_store!(ret_ptr, res, 1)
 
     tape::Any = nothing
     resT = typeof(res)
 
     if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
-        __ret[2] = alloc(resT)
-        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
-        #       we can mutate inplace, despite `typeof(res)` being immutable
-        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
-        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{typeof(res)}}, ret_ptr), 2), 0.0)
-        @assert tape == 0.0
-        @assert tape == __ret[2]
+        # This assumes that we have an Immutable object here that got passed as a boxed value
+        shadow_return = Ref(zero(resT))
+        # shadow_return = allocate_box(resT)
+        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
+        Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
     else
         shadow = res
-        __ret[2] = shadow
+        Base.unsafe_store!(ret_ptr, shadow, 2)
     end
 
-    __ret[3] = tape
+    Base.unsafe_store!(ret_ptr, tape, 3)
     @warn "done primal differentiating jl_invoke call without split mode", fn, mi, args, res
 
     return nothing
 end
 
 function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
-    fn = __args[1]
+    fn = Base.unsafe_load(arg_ptr, 1)
     args = []
     actives = []
     for i in 2:arg_size
+        p = Base.unsafe_load(arg_ptr, i)
         if __activity[i] != 0
-            p = __args[i]
             # TODO generalize to if mutable type
             if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
                 push!(args, Active(p))
                 push!(actives, (shadow_ptr, i))
             else
-                s = __shadows[i]
+                s = Base.unsafe_load(shadow_ptr, i)
                 push!(args, Duplicated(p, s))
             end
         else
-            push!(args, Const(__args[i]))
+            push!(args, Const(p))
         end
     end
 
@@ -454,15 +444,12 @@ function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
 end
 
 function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    __ret = Base.unsafe_wrap(Array, ret_ptr, 3)
 
     args = []
     for i in 1:arg_size
         # TODO when split mode use the below
-        push!(args, __args[i])
+        push!(args, Base.unsafe_load(arg_ptr, 1))
         continue
 
         if __activity[i]
@@ -476,38 +463,35 @@ function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     @warn "forward differentiating jl_apply_latest call without split mode", args
 
     res::Any = fn(args[1]...)
-    __ret[1] = res
+    Base.unsafe_store!(ret_ptr, res, 1)
 
     tape::Any = nothing
     shadow::Any = nothing
 
+    resT = typeof(res)
     if typeof(res) <: AbstractFloat || typeof(res) <: Complex{<:AbstractFloat}
-        __ret[2] = alloc(typeof(res))
-        # NOTE: this assumes that that we got a fresh allocation from `alloc` that
-        #       we can mutate inplace, despite `typeof(res)` being immutable
-        tape = unsafe_load(reinterpret(Ptr{Any}, ret_ptr), 2)
-        unsafe_store!(unsafe_load(reinterpret(Ptr{Ptr{typeof(res)}}, ret_ptr), 2), 0.0)
-        @assert tape == 0.0
-        @assert tape == __ret[2]
+        # This assumes that we have an Immutable object here that got passed as a boxed value
+        shadow_return = Ref(zero(resT))
+        # shadow_return = allocate_box(resT)
+        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
+        Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
     else
         shadow = res
-        __ret[2] = shadow
+        Base.unsafe_store!(ret_ptr, shadow, 2)
         unsafe_store!(ret_ptr, shadow, 2)
     end
 
-    __ret[3] = tape
+    Base.unsafe_store!(ret_ptr, tape, 3)
 
     return nothing
 end
 
 function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
-    __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
-    __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     args = []
-    primals = __args[1]
-    shadows = __shadows[1]
+    primals = Base.unsafe_load(arg_ptr, 1)
+    shadows = Base.unsafe_load(shadow_ptr, 1)
 
     actives = []
     for (i, (p, s)) in enumerate(zip(primals, shadows))
@@ -1697,7 +1681,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-    
+
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
@@ -1719,7 +1703,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     actualRetType = nothing
     for (mi, k) in meta.compiled
         haskey(functions(mod), k.specfunc) || continue
-        
+
         llvmfn = functions(mod)[k.specfunc]
         if llvmfn == primalf
             actualRetType = k.ci.rettype
