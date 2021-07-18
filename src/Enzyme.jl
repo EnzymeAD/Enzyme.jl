@@ -173,6 +173,21 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
 end
 
 """
+    autodiff(f, args...)
+
+Like [`autodiff`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function autodiff(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    A     = guess_activity(rt)
+    autodiff(f, A, args′...)
+end
+
+
+"""
     autodiff_deferred(f, Activity, args...)
 
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
@@ -234,8 +249,7 @@ function gradient(f, args...)
         Base.@_inline_meta
         f(unpack(args...)...)
     end
-    # TODO: Active is to aggressive
-    autodiff(f′, Active, ∇args...)
+    autodiff(f′, ∇args...)
     return ∇unpack(∇args...)
 end
 

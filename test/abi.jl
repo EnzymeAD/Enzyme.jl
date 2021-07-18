@@ -9,15 +9,27 @@ using Test
     res = autodiff(f, Const, Const(nothing))
     @test res === ()
 
+    res = autodiff(f, Const(nothing))
+    @test res === ()
+
     # ConstType -> Type{Int}
     res = autodiff(f, Const, Const(Int))
+    @test res === ()
+
+    res = autodiff(f, Const(Int))
     @test res === ()
 
     cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
 
+    cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
+    @test cres ≈ 1.0 + 0.0im
+
     unused(_, y) = y
     res0, = autodiff(unused, Active, Const(nothing), Active(2.0))
+    @test res0 ≈ 1.0
+
+    res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
 
     # TODO(wsmoses): Type analysis fails
@@ -36,6 +48,10 @@ using Test
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
+    pair = autodiff(mul, Active(2.0), Active(3.0))
+    @test pair[1] ≈ 3.0
+    @test pair[2] ≈ 2.0
+
     # SequentialType
     struct Foo
         baz::Int
@@ -46,9 +62,14 @@ using Test
     res2,  = autodiff(g, Active, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
 
+    res2,  = autodiff(g, Active(Foo(3, 1.2)))
+    @test res2.qux ≈ 1.0
 
     unused2(_, y) = y.qux
     resF, = autodiff(unused2, Active, Const(nothing), Active(Foo(3, 2.0)))
+    @test resF.qux ≈ 1.0
+
+    resF, = autodiff(unused2, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
 
     h(x, y) = x.qux * y.qux
@@ -56,8 +77,15 @@ using Test
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
+    res3 = autodiff(h, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
+    @test res3[1].qux ≈ 3.4
+    @test res3[2].qux ≈ 1.2
+
     caller(f, x) = f(x)
     res4, = autodiff(caller, Active, (x)->x, Active(3.0))
+    @test res4 ≈ 1.0
+
+    res4, = autodiff(caller, (x)->x, Active(3.0))
     @test res4 ≈ 1.0
 
     struct LList
