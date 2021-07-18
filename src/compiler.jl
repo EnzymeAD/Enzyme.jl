@@ -27,7 +27,7 @@ function get_function!(builderF, mod, name)
     end
 end
 
-if VERSION < v"1.7"
+if VERSION < v"1.7.0-DEV.1205"
 
 declare_ptls!(mod) = get_function!(mod, "julia.ptls_states") do mod, ctx, name
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -186,7 +186,7 @@ dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
 
-if VERSION < v"1.7"
+if VERSION < v"1.7.0-DEV.1205"
 @generated function alloc(tt::Type{T}) where T
     sz = sizeof(T)
     type = reinterpret(Int64, Base.pointer_from_objref(T))
