@@ -375,6 +375,9 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_3d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "julia.pointer_from_objref" => @cfunction(inout_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )
 
@@ -580,6 +583,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
+        if func == Base.println
+            llvmfn = functions(mod)[k.specfunc]
+            push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
+        end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
