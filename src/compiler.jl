@@ -1317,7 +1317,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.exp => (:exp, 1),
         Base.log => (:log, 1),
         Base.asin => (:asin, 1),
-        Base.tanh => (:tanh, 1)
+        Base.tanh => (:tanh, 1),
+        Base.FastMath.tanh_fast => (:tanh, 1)
     )
     for (mi, k) in meta.compiled
         meth = mi.def
