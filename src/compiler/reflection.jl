@@ -13,7 +13,7 @@ function reflect(@nospecialize(func), @nospecialize(types);
 
 
     if second_stage
-        post_optimze!(mod, tm[])
+        post_optimze!(mod, JIT.get_tm())
     end
 
     llvmf = meta.adjointf
