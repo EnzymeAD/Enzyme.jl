@@ -1,6 +1,6 @@
 module Compiler
 
-import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation
+import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_activity
 import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
                  TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
@@ -307,11 +307,9 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
 
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
-        rt = Active{rt}
-    else
-        rt = Const{rt}
     end
 
     ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
@@ -412,12 +410,10 @@ function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
     @assert F == typeof(fn)
 
     tt = Tuple{specTypes[2:end]...}
-    rt    = Core.Compiler.return_type(fn, tt)
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    rt = Core.Compiler.return_type(fn, tt)
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
-        rt = Active{rt}
-    else
-        rt = Const{rt}
     end
 
     tt′   = Tuple{map(Core.Typeof, args)...}
@@ -506,11 +502,9 @@ function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     tt′   = Tuple{map(Core.Typeof, args)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
-        rt = Active{rt}
-    else
-        rt = Const{rt}
     end
 
     ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))

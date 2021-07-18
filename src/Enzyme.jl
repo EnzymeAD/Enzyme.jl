@@ -70,6 +70,14 @@ end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
+function guess_activity(T)
+    if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
+        return Active{T}
+    else
+        return Const{T}
+    end
+end
+
 import LLVM
 
 include("api.jl")
@@ -177,6 +185,25 @@ code, as well as high-order differentiation.
     rt    = Core.Compiler.return_type(f, tt)
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(A{rt}))
     thunk = Compiler.CombinedAdjointThunk{F, A{rt}, tt′}(f, ptr)
+    if A <: Active
+        args′ = (args′..., one(rt))
+    end
+    thunk(args′...)
+end
+
+"""
+    autodiff_deferred(f, args...)
+
+Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function autodiff_deferred(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    A     = guess_activity(rt)
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(A{rt}))
+    thunk = Compiler.CombinedAdjointThunk{F, A, tt′}(f, ptr)
     if A <: Active
         args′ = (args′..., one(rt))
     end
