@@ -154,6 +154,23 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    thunk = Enzyme.Compiler.thunk(f, A, tt′, #=Split=# Val(false))
+    if A <: Active
+        rt = eltype(Compiler.return_type(thunk))
+        args′ = (args′..., one(rt))
+    end
+    thunk(args′...)
+end
+
+"""
+    autodiff_deferred(f, Activity, args...)
+
+Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
+code, as well as high-order differentiation.
+"""
+@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}

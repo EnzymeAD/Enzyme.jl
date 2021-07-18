@@ -1179,7 +1179,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
-    RT = return_type(entry_ft)
+    RT = LLVM.return_type(entry_ft)
     args = GPUCompiler.classify_arguments(job, entry_f)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
@@ -1243,7 +1243,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
         if sret
             ret!(builder, load!(builder, sretPtr))
-        elseif return_type(entry_ft) == LLVM.VoidType(ctx)
+        elseif LLVM.return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
         else
             ret!(builder, res)
@@ -1381,7 +1381,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
             res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
 
-            if return_type(FT) == LLVM.VoidType(ctx)
+            if LLVM.return_type(FT) == LLVM.VoidType(ctx)
                 ret!(builder)
             else
                 ret!(builder, res)
@@ -1494,20 +1494,24 @@ struct Thunk
 end
 
 # User facing interface
-struct CombinedAdjointThunk{F, RT, TT}
+abstract type AbstractThunk{F, RT, TT} end
+
+struct CombinedAdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
     fn::F
     adjoint::Ptr{Cvoid}
 end
 
-struct AugmentedForwardThunk{F, RT, TT}
+struct AugmentedForwardThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
     fn::F
     primal::Ptr{Cvoid}
 end
 
-struct AdjointThunk{F, RT, TT}
+struct AdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
     fn::F
     adjoint::Ptr{Cvoid}
 end
+
+return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
 
 @inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
    enzyme_call(thunk.adjoint, Val(false), TT, RT, thunk.fn, args...)
@@ -1812,7 +1816,7 @@ end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
-function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Function, A<:Annotation, TT<:Type, Split}
+function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F, A<:Annotation, TT<:Type, Split}
     primal, adjoint = fspec(f, tt)
 
     if A isa UnionAll
