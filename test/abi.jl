@@ -12,6 +12,9 @@ using Test
     res = autodiff(f, Const(nothing))
     @test res === ()
 
+    res = Enzyme.autodiff_deferred(f, Const(nothing))
+    @test res === ()
+
     # ConstType -> Type{Int}
     res = autodiff(f, Const, Const(Int))
     @test res === ()
@@ -19,12 +22,20 @@ using Test
     res = autodiff(f, Const(Int))
     @test res === ()
 
+    res = Enzyme.autodiff_deferred(f, Const(Int))
+    @test res === ()
+
+    # Complex numbers
     cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
 
     cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
 
+    cres, = Enzyme.autodiff_deferred(f, Active(1.5 + 0.7im))
+    @test cres ≈ 1.0 + 0.0im
+
+    # Unused singleton argument
     unused(_, y) = y
     res0, = autodiff(unused, Active, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
@@ -32,6 +43,7 @@ using Test
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
 
+    # returning an Array, with Const
     function squareRetArray(x)
         x[1] *= 2
         x
@@ -41,6 +53,11 @@ using Test
     autodiff(squareRetArray, Const, Duplicated(x, dx))
     @test dx[1] ≈ 2.4
 
+    x = [0.0]
+    dx = [1.2]
+    autodiff_deferred(squareRetArray, Const, Duplicated(x, dx))
+    @test dx[1] ≈ 2.4
+
     # Multi arg => sret
     mul(x, y) = x * y
     pair = autodiff(mul, Active, Active(2.0), Active(3.0))
@@ -48,6 +65,10 @@ using Test
     @test pair[2] ≈ 2.0
 
     pair = autodiff(mul, Active(2.0), Active(3.0))
+    @test pair[1] ≈ 3.0
+    @test pair[2] ≈ 2.0
+
+    pair = autodiff_deferred(mul, Active(2.0), Active(3.0))
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
