@@ -32,15 +32,14 @@ using Test
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
 
-    # TODO(wsmoses): Type analysis fails
-    # function squareRetArray(x)
-    #     x[1] *= 2
-    #     x
-    # end
-    # x = [0.0]
-    # dx = [1.2]
-    # autodiff(squareRetArray, Const, Duplicated(x, dx))
-    # @test dx[1] ≈ 2.4
+    function squareRetArray(x)
+        x[1] *= 2
+        x
+    end
+    x = [0.0]
+    dx = [1.2]
+    autodiff(squareRetArray, Const, Duplicated(x, dx))
+    @test dx[1] ≈ 2.4
 
     # Multi arg => sret
     mul(x, y) = x * y

@@ -167,7 +167,7 @@ end
         end
         return mean(a)
     end
-    # TODO(wsmoses): Probably needs _copy
+    # TODO(wsmoses): Illegal update analysis
     # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
 end
 
@@ -366,8 +366,7 @@ end
     autodiff(foo_bc!, Const, Duplicated(R, dR), Duplicated(R, dR), Duplicated(B, dB))
 
     A = rand(10,10); B = rand(10, 10)
-    dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
+    dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
-    # TODO(wsmoses): Enzyme can't deduce type of integer
-    # @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+    @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end
