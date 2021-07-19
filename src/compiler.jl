@@ -1,6 +1,6 @@
 module Compiler
 
-import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed
+import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_activity
 import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
                  TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
@@ -304,15 +304,16 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 
     # TODO handle active args
     tt′   = Tuple{map(Core.Typeof, args)...}
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
 
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
     end
 
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
     tup = thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
@@ -406,18 +407,18 @@ function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
 
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
-    tt = Tuple{specTypes[2:end]...}
     @assert F == typeof(fn)
 
-    tt′   = Tuple{map(Core.Typeof, args)...}
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
-    rt    = Core.Compiler.return_type(fn, tt)
-
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    tt = Tuple{specTypes[2:end]...}
+    rt = Core.Compiler.return_type(fn, tt)
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
     end
 
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    tt′   = Tuple{map(Core.Typeof, args)...}
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
     tup = thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
@@ -499,16 +500,15 @@ function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     @warn "reverse differentiating jl_apply_latest call without split mode"
 
     tt′   = Tuple{map(Core.Typeof, args)...}
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′))
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(fn, tt)
-
-    if rt <: AbstractFloat || rt <: Complex{<:AbstractFloat}
+    rt = guess_activity(rt)
+    if rt <: Active
         push!(args, tape)
     end
 
-    # TODO use split mode
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, #=Pullback=#Val(true)}(fn, ptr)
+    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
 
     tup = thunk(args...)
 
@@ -891,6 +891,7 @@ abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
 struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     adjoint::FunctionSpec
     split::Bool
+    rt::Type{<:Annotation}
     run_enzyme::Bool
 end
 
@@ -1015,14 +1016,13 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
 end
 
 function enzyme!(job, mod, primalf, adjoint, split, parallel)
-    primal = job.source
-    rt = Core.Compiler.return_type(primal.f, primal.tt)
+    rt = job.params.rt
     ctx     = context(mod)
     dl      = string(LLVM.datalayout(mod))
 
     tt = [adjoint.tt.parameters...,]
 
-    if rt === Union{}
+    if eltype(rt) === Union{}
         error("return type is Union{}, giving up.")
     end
 
@@ -1084,21 +1084,16 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         push!(args_known_values, API.IntList())
     end
 
-    # TODO ABI returned
     # The return of createprimal and gradient has this ABI
     #  It returns a struct containing the following values
     #     If requested, the original return value of the function
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
     #       The adjoint of that argument
-    if rt <: Integer || rt <: DataType
+    if rt <: Const
         retType = API.DFT_CONSTANT
-    elseif rt <: AbstractFloat
+    elseif rt <: Active
         retType = API.DFT_OUT_DIFF
-    elseif rt <: Complex{<:AbstractFloat}
-        retType = API.DFT_OUT_DIFF
-    elseif GPUCompiler.isghosttype(rt) || Core.Compiler.isconstType(rt)
-        retType = API.DFT_CONSTANT
     else
         error("Unhandled return type $rt")
     end
@@ -1133,12 +1128,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
 
-    if GPUCompiler.isghosttype(rt)|| Core.Compiler.isconstType(rt)
-        retTT = typetree(Nothing, ctx, dl)
-    else
-        retTT = typetree(rt, ctx, dl)
-    end
-
+    retTT = typetree(GPUCompiler.deserves_argbox(eltype(rt)) ? Ptr{eltype(rt)} : eltype(rt), ctx, dl)
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
     if split
@@ -1183,7 +1173,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
-    RT = return_type(entry_ft)
+    RT = LLVM.return_type(entry_ft)
     args = GPUCompiler.classify_arguments(job, entry_f)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
@@ -1247,7 +1237,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
         if sret
             ret!(builder, load!(builder, sretPtr))
-        elseif return_type(entry_ft) == LLVM.VoidType(ctx)
+        elseif LLVM.return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
         else
             ret!(builder, res)
@@ -1327,7 +1317,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.exp => (:exp, 1),
         Base.log => (:log, 1),
         Base.asin => (:asin, 1),
-        Base.tanh => (:tanh, 1)
+        Base.tanh => (:tanh, 1),
+        Base.FastMath.tanh_fast => (:tanh, 1)
     )
     for (mi, k) in meta.compiled
         meth = mi.def
@@ -1385,7 +1376,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
             res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
 
-            if return_type(FT) == LLVM.VoidType(ctx)
+            if LLVM.return_type(FT) == LLVM.VoidType(ctx)
                 ret!(builder)
             else
                 ret!(builder, res)
@@ -1491,29 +1482,55 @@ end
 # Thunk
 ##
 
-struct CombinedAdjointThunk{F, RT, TT, Pullback}
+# Compiler result
+struct Thunk
+    adjoint::Ptr{Cvoid}
+    primal::Ptr{Cvoid}
+end
+
+# User facing interface
+abstract type AbstractThunk{F, RT, TT} end
+
+struct CombinedAdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
     fn::F
-    # primal::Ptr{Cvoid}
     adjoint::Ptr{Cvoid}
 end
 
-@inline (thunk::CombinedAdjointThunk{F, RT, TT, Pullback})(args...) where {F, RT, TT, Pullback} =
-   enzyme_call(thunk.adjoint, thunk.fn, Pullback, TT, RT, args...)
+struct AugmentedForwardThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+    fn::F
+    primal::Ptr{Cvoid}
+end
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, f::F, pullback::Val{Pullback}, tt::Type{T}, rt::Type{RT}, args::Vararg{Any, N}) where {F, T, RT, N, Pullback}
+struct AdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+    fn::F
+    adjoint::Ptr{Cvoid}
+end
+
+return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
+
+@inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
+   enzyme_call(thunk.adjoint, Val(false), TT, RT, thunk.fn, args...)
+
+@inline (thunk::AdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
+   enzyme_call(thunk.adjoint, Val(true), TT, RT, thunk.fn, args...)
+
+@generated function enzyme_call(fptr::Ptr{Cvoid}, tape::Val{Tape}, tt::Type{T},
+                                rt::Type{RT}, f::F, args::Vararg{Any, N}) where {F, T, RT, N, Tape}
     argtt    = tt.parameters[1]
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
-    if Pullback && (rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat})
+    if rettype <: Active
         @assert length(argtypes)+1 == length(argexprs)
-    else
+    elseif rettype <: Const
         @assert length(argtypes)   == length(argexprs)
+    else
+        error("Duplicated returns not handled.")
     end
 
     types = DataType[]
 
-    if rettype === Union{}
+    if eltype(rettype) === Union{}
         error("return type is Union{}, giving up.")
     end
 
@@ -1593,14 +1610,11 @@ end
         end
 
         # API.DFT_OUT_DIFF
-        if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
-            push!(types, rettype)
-            push!(T_wrapperargs, convert(LLVMType, rettype; ctx))
-            if !Pullback
-                push!(ccexprs, :(one($rettype)))
-            else
-                push!(ccexprs, last(argexprs))
-            end
+        if rettype <: Active
+            @assert allocatedinline(eltype(rettype))
+            push!(types, eltype(rettype))
+            push!(T_wrapperargs, convert(LLVMType, eltype(rettype); ctx))
+            push!(ccexprs, last(argexprs))
         end
         # XXX: What if not `Nothing`/`Missing` what if struct or array or...
 
@@ -1675,7 +1689,7 @@ end
             end
 
             # Primal Differential Return type
-            if rettype <: AbstractFloat || rettype <: Complex{<:AbstractFloat}
+            if rettype <: Active
                 push!(realparms, params[i])
             end
 
@@ -1765,8 +1779,7 @@ function _link(job, (mod, adjoint_name, primal_name))
         end
     end
 
-    @assert primal_name === nothing
-    return CombinedAdjointThunk{typeof(adjoint.f), rt, adjoint.tt, #=pullback=#Val(false)}(adjoint.f, #=primal_ptr,=# adjoint_ptr)
+    return Thunk(adjoint_ptr, primal_ptr)
 end
 
 # actual compilation
@@ -1798,30 +1811,46 @@ end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
-function thunk(f::F,tt::TT=Tuple{},::Val{Split}=Val(false)) where {F<:Core.Function, TT<:Type, Split}
+function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F, A<:Annotation, TT<:Type, Split}
     primal, adjoint = fspec(f, tt)
+
+    if A isa UnionAll
+        rt = Core.Compiler.return_type(primal.f, primal.tt)
+        rt = A{rt}
+    else
+        @assert A isa DataType
+        # Can we relax this condition?
+        @assert eltype(A) == Core.Compiler.return_type(primal.f, primal.tt)
+        rt = A
+    end
+
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
     # This is counter-intuitive since we would expect the cache to be split
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
-    local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, UInt64(Split)))
+    local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, hash(rt, UInt64(Split))))
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Split, true)
+    params = Compiler.EnzymeCompilerParams(adjoint, Split, rt, true)
     job    = Compiler.CompilerJob(target, primal, params)
 
-    rt = Core.Compiler.return_type(primal.f, primal.tt)
-
-    GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::CombinedAdjointThunk{F,rt,tt}
+    thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
+    if Split
+        augmented = AugmentedForwardThunk{F, rt, adjoint.tt}(f, thunk.primal)
+        pullback  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        return (augmented, pullback)
+    else
+        return CombinedAdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+    end
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}) where {f,tt}
+@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}) where {f,tt, rt}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, false, true)
+    params = EnzymeCompilerParams(adjoint, false, rt, true)
     job    = CompilerJob(target, primal, params)
 
     addr = get_trampoline(job)

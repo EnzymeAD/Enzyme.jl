@@ -7,7 +7,7 @@ using Statistics
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x, = autodiff(f, Active(x))
+    ∂x, = autodiff(f, Active, Active(x))
     @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
 end
 
@@ -15,15 +15,17 @@ include("abi.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk_a = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}})
-    thunk_b = Enzyme.Compiler.thunk(f, Tuple{Const{Float64}})
+    thunk_a = Enzyme.Compiler.thunk(f, Active, Tuple{Active{Float64}})
+    thunk_b = Enzyme.Compiler.thunk(f, Const, Tuple{Const{Float64}})
+    thunk_c = Enzyme.Compiler.thunk(f, Active{Float64}, Tuple{Active{Float64}})
     @test thunk_a.adjoint !== thunk_b.adjoint
-    # @test thunk_a.primal === C_NULL
+    @test thunk_c.adjoint === thunk_a.adjoint
 
-    @test thunk_a(Active(2.0)) == (1.0,)
+    @test thunk_a(Active(2.0), 1.0) == (1.0,)
+    @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    # thunk_split = Enzyme.Compiler.thunk(f, Tuple{Active{Float64}}, Val(true))
+    forward, pullback = Enzyme.Compiler.thunk(f, Active, Tuple{Active{Float64}}, Val(true))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -41,10 +43,10 @@ end
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
-    @test autodiff(f1, Active(1.0))[1] ≈ 1.0
-    @test autodiff(f2, Active(1.0))[1] ≈ 2.0
-    @test autodiff(tanh, Active(1.0))[1] ≈ 0.41997434161402606939
-    @test autodiff(tanh, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
+    @test autodiff(f1, Active, Active(1.0))[1] ≈ 1.0
+    @test autodiff(f2, Active, Active(1.0))[1] ≈ 2.0
+    @test autodiff(tanh, Active, Active(1.0))[1] ≈ 0.41997434161402606939
+    @test autodiff(tanh, Active, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
 end
@@ -56,7 +58,7 @@ end
     ∇x = Ref(0.0)
     ∇y = Ref(0.0)
 
-    autodiff((a,b)->a[]*b[], Duplicated(x, ∇x), Duplicated(y, ∇y))
+    autodiff((a,b)->a[]*b[], Active, Duplicated(x, ∇x), Duplicated(y, ∇y))
 
     @test ∇y[] == 1.0
     @test ∇x[] == 2.0
@@ -71,8 +73,8 @@ end
 
 @testset "Simple tests" begin
     g(x) = real((x + im)*(1 - im*x))
-    @test first(autodiff(g, Active(2.0))) ≈ 2.0
-    @test first(autodiff(g, Active(3.0))) ≈ 2.0
+    @test first(autodiff(g, Active, Active(2.0))) ≈ 2.0
+    @test first(autodiff(g, Active, Active(3.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
 end
@@ -89,7 +91,7 @@ function euroad(f::T) where T
     return g
 end
 
-euroad′(x) = first(autodiff(euroad, Active(x)))
+euroad′(x) = first(autodiff(euroad, Active, Active(x)))
 
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
 @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
@@ -108,7 +110,7 @@ end
 
     inp = Float64[1.0, 2.0]
     dinp = Float64[0.0, 0.0]
-    autodiff(arsum, Duplicated(inp, dinp))
+    autodiff(arsum, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
 end
@@ -119,7 +121,7 @@ end
     end
     inp = Float64[1.0, 2.0]
     dinp = Float64[0.0, 0.0]
-    autodiff(arsum2, Duplicated(inp, dinp))
+    autodiff(arsum2, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
 end
@@ -131,14 +133,14 @@ end
         out = y ⊻ xptr;
         return reinterpret(Float64, out)
     end
-    @test autodiff(fneg, Active(2.0))[1] ≈ -1.0
+    @test autodiff(fneg, Active, Active(2.0))[1] ≈ -1.0
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
         y = UInt64(4607182418800017408)
         out = y | xptr;
         return reinterpret(Float64, out)
     end
-    @test autodiff(expor, Active(0.42))[1] ≈ 4.0
+    @test autodiff(expor, Active, Active(0.42))[1] ≈ 4.0
 end
 
 @testset "GC" begin
@@ -149,14 +151,14 @@ end
         end
         return mean(a)
     end
-    @test autodiff(gc_alloc, Active(5.0))[1] ≈ 10
+    @test autodiff(gc_alloc, Active, Active(5.0))[1] ≈ 10
 
     # TODO (after BLAS)
     # A = Vector[2.0, 3.0]
     # B = Vector[4.0, 5.0]
     # dB = Vector[0.0, 0.0]
     # f = (X, Y) -> sum(X .* Y)
-    # Enzyme.autodiff(f, A, Duplicated(B, dB))
+    # Enzyme.autodiff(f, Active, A, Duplicated(B, dB))
 
     function gc_copy(x)  # Basically g(x) = x^2
         a = x * ones(10)
@@ -165,9 +167,8 @@ end
         end
         return mean(a)
     end
-    # Cassette breaks things
-    # TODO
-    # @test Enzyme.autodiff(gc_copy, Active(5.0))[1] ≈ 10
+    # TODO(wsmoses): Illegal update analysis
+    # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
 end
 
 
@@ -176,13 +177,13 @@ end
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    @test fd ≈ first(autodiff(sin, Active(x)))
+    @test fd ≈ first(autodiff(sin, Active, Active(x)))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
-    @test fd ≈ first(autodiff(asin, Active(x)))
+    @test fd ≈ first(autodiff(asin, Active, Active(x)))
     test_scalar(asin, x)
 
     function foo(x)
@@ -197,17 +198,17 @@ end
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ first(autodiff(foo, Active(x)))
+    @test fd ≈ first(autodiff(foo, Active, Active(x)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ first(autodiff(foo, Active(x)))
+    @test fd ≈ first(autodiff(foo, Active, Active(x)))
 
     f74(a, c) = a * √c
-    @test √3 ≈ first(autodiff(f74, Active(2), 3))
+    @test √3 ≈ first(autodiff(f74, Active, Active(2), 3))
 end
 
 """
@@ -228,8 +229,8 @@ mybesselj0(z) = mybesselj(0, z)
 mybesselj1(z) = mybesselj(1, z)
 
 @testset "Bessel" begin
-    autodiff(mybesselj, Const(0), Active(1.0))
-    autodiff(mybesselj, 0, Active(1.0))
+    autodiff(mybesselj, Active, Const(0), Active(1.0))
+    autodiff(mybesselj, Active, 0, Active(1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
@@ -254,6 +255,7 @@ end
         test_scalar(f, n)
     end
 
+    # TODO(vchuravy/wsmoses): Enable these tests
     # for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
     #     @test isa(f(y), Number)
     # end
@@ -304,7 +306,7 @@ end
         x*x
     end
 
-    autodiff(printsq, Active(2.3))
+    autodiff(printsq, Active, Active(2.3))
 end
 
 @testset "hmlstm" begin
@@ -337,7 +339,8 @@ end
     ∇I = zeros(Float32, N, N)
     ∇G = zeros(Float32, N, N)
 
-    # autodiff(broadcast_hmlstm,
+    # TODO(wsmoses): Check after updating Enzyme_jll
+    # autodiff(broadcast_hmlstm, Const,
     #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
@@ -345,7 +348,7 @@ end
 
 @testset "generic" begin
     genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
-    @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active(2.0))[1]
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active, Active(2.0))[1]
 end
 
 @testset "broadcast" begin
@@ -357,14 +360,13 @@ end
         return nothing
     end
 
-    autodiff(foo_bc!, Duplicated(R, dR), Duplicated(A, dA), Duplicated(B, dB))
+    autodiff(foo_bc!, Const, Duplicated(R, dR), Duplicated(A, dA), Duplicated(B, dB))
 
     # works since aliasing is "simple"
-    autodiff(foo_bc!, Duplicated(R, dR), Duplicated(R, dR), Duplicated(B, dB))
+    autodiff(foo_bc!, Const, Duplicated(R, dR), Duplicated(R, dR), Duplicated(B, dB))
 
     A = rand(10,10); B = rand(10, 10)
-    dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
+    dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
-    # Enzyme can't deduce type of integer
-    # @test_throws ErrorException autodiff(foo_bc!, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+    @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end

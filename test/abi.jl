@@ -6,23 +6,47 @@ using Test
     f(x) = x
 
     # GhostType -> Nothing
+    res = autodiff(f, Const, Const(nothing))
+    @test res === ()
+
     res = autodiff(f, Const(nothing))
     @test res === ()
 
     # ConstType -> Type{Int}
+    res = autodiff(f, Const, Const(Int))
+    @test res === ()
+
     res = autodiff(f, Const(Int))
     @test res === ()
 
+    cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
+    @test cres ≈ 1.0 + 0.0im
 
     cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
 
     unused(_, y) = y
+    res0, = autodiff(unused, Active, Const(nothing), Active(2.0))
+    @test res0 ≈ 1.0
+
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
 
+    function squareRetArray(x)
+        x[1] *= 2
+        x
+    end
+    x = [0.0]
+    dx = [1.2]
+    autodiff(squareRetArray, Const, Duplicated(x, dx))
+    @test dx[1] ≈ 2.4
+
     # Multi arg => sret
     mul(x, y) = x * y
+    pair = autodiff(mul, Active, Active(2.0), Active(3.0))
+    @test pair[1] ≈ 3.0
+    @test pair[2] ≈ 2.0
+
     pair = autodiff(mul, Active(2.0), Active(3.0))
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
@@ -34,20 +58,32 @@ using Test
     end
 
     g(x) = x.qux
+    res2,  = autodiff(g, Active, Active(Foo(3, 1.2)))
+    @test res2.qux ≈ 1.0
+
     res2,  = autodiff(g, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
 
-
     unused2(_, y) = y.qux
+    resF, = autodiff(unused2, Active, Const(nothing), Active(Foo(3, 2.0)))
+    @test resF.qux ≈ 1.0
+
     resF, = autodiff(unused2, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
 
     h(x, y) = x.qux * y.qux
+    res3 = autodiff(h, Active, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
+    @test res3[1].qux ≈ 3.4
+    @test res3[2].qux ≈ 1.2
+
     res3 = autodiff(h, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
     caller(f, x) = f(x)
+    res4, = autodiff(caller, Active, (x)->x, Active(3.0))
+    @test res4 ≈ 1.0
+
     res4, = autodiff(caller, (x)->x, Active(3.0))
     @test res4 ≈ 1.0
 
@@ -67,7 +103,7 @@ using Test
 
     regular = LList(LList(nothing, 1.0), 2.0)
     shadow  = LList(LList(nothing, 0.0), 0.0)
-    ad = autodiff(sumlist, Duplicated(regular, shadow))
+    ad = autodiff(sumlist, Active, Duplicated(regular, shadow))
     @test ad === ()
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
 
@@ -76,15 +112,15 @@ using Test
     y = Ref(3.0)
     dx = Ref(0.0)
     dy = Ref(0.0)
-    n = autodiff(mulr, Duplicated(x, dx), Duplicated(y, dy))
+    n = autodiff(mulr, Active, Duplicated(x, dx), Duplicated(y, dy))
     @test n === ()
     @test dx[] ≈ 3.0
     @test dy[] ≈ 2.0
 
-    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), (x->x*x,), Active(2.0))
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), [x->x*x], Active(2.0))
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))
     @test mid ≈ 4.0
 
     # deserves_argbox yes and no
@@ -113,9 +149,8 @@ end
        return f.x * x
     end
 
-    @test Enzyme.autodiff(method, AFoo(2.0), Active(3.0))[1]≈ 2.0
-    @test Enzyme.autodiff(AFoo(2.0), Active(3.0))[1]≈ 2.0
-
+    @test Enzyme.autodiff(method, Active, AFoo(2.0), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(AFoo(2.0), Active, Active(3.0))[1]≈ 2.0
 
     struct ABar
     end
@@ -124,6 +159,6 @@ end
        return 2.0 * x
     end
 
-    @test Enzyme.autodiff(method, ABar(), Active(3.0))[1]≈ 2.0
-    @test Enzyme.autodiff(ABar(), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(method, Active, ABar(), Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(ABar(), Active, Active(3.0))[1]≈ 2.0
 end
