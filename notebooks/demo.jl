@@ -10,7 +10,6 @@ begin
 	using PlutoUI
 	using ChainRules
 	using BenchmarkTools
-	using LinearAlgebra
 	import ForwardDiff
 	import Zygote
 end
@@ -216,22 +215,39 @@ and correctness of the gradients
 	Duplicated(A, ∂z_∂A),
 	Duplicated(B, ∂z_∂B))
 
-# ╔═╡ adb359b3-781d-475a-9f9b-8c97e2ebfca3
-function la_mul!(R, A, B)
-	# Enzyme currently can't handle Array returns
-	LinearAlgebra.mul!(R, A, B)
-	nothing
+# ╔═╡ febf0550-8c6d-4a26-8bc1-3af206294d41
+md"""
+# Some more fun
+"""
+
+# ╔═╡ aa7d84ae-6504-41fe-915d-98a10137d64a
+struct LList
+    next::Union{LList,Nothing}
+	val::Float64
+end 
+
+# ╔═╡ ac02df55-6c63-4f5d-b643-ff89930152ee
+function sumlist(n::LList)
+    sum = 0.0
+    while n !== nothing
+        sum += n.val
+        n = n.next
+    end
+    sum
 end
 
-# ╔═╡ 9d7077ac-037a-46ad-b490-8cd1d4112917
-@benchmark Enzyme.autodiff(la_mul!, 
-	Duplicated(R, ∂z_∂R),
-	Duplicated(A, ∂z_∂A),
-	Duplicated(B, ∂z_∂B))
+# ╔═╡ edfe9131-4316-4af3-b6eb-4c0bc89fe0ce
+begin    
+    regular = LList(LList(nothing, 1.0), 2.0)
+    shadow  = LList(LList(nothing, 0.0), 0.0)
+    autodiff(sumlist, Duplicated(regular, shadow))
+end
 
+# ╔═╡ 398b0cde-ff8e-4238-be65-33699e17abb6
+shadow.val ≈ 1.0
 
-# ╔═╡ febf0550-8c6d-4a26-8bc1-3af206294d41
-
+# ╔═╡ 686b7891-0ff5-4b7f-ba54-92aff8bacb12
+shadow.next.val ≈ 1.0
 
 # ╔═╡ 4335c393-1765-4641-ae4b-52cafac4238d
 html"<button onclick='present()'>present</button>"
@@ -243,7 +259,6 @@ BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
@@ -653,7 +668,7 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╟─60d880ac-b534-41b6-a868-3aead8cdf827
 # ╠═b8b856f1-9bd6-40fc-a141-280b0f8a34ff
 # ╠═cf180dad-90a5-4380-9b74-7725dcaf0e73
-# ╠═6bf01d28-9c5e-4220-bc42-bf446ee7d807
+# ╟─6bf01d28-9c5e-4220-bc42-bf446ee7d807
 # ╠═7dfe8143-bd09-4046-8141-bd51e12a3e5d
 # ╠═124e04fe-9393-44de-a556-52fd5d1cf9db
 # ╟─bda1fecc-2499-4deb-bc4d-988e29887929
@@ -681,9 +696,12 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╠═f6856069-8bfa-49ed-8f5e-f1bd6009c4f4
 # ╠═e59d8304-603f-4893-8e73-ed23dad2d28f
 # ╠═c4ded44a-3193-402b-9f10-0e3ec60f0c65
-# ╠═adb359b3-781d-475a-9f9b-8c97e2ebfca3
-# ╠═9d7077ac-037a-46ad-b490-8cd1d4112917
-# ╠═febf0550-8c6d-4a26-8bc1-3af206294d41
+# ╟─febf0550-8c6d-4a26-8bc1-3af206294d41
+# ╠═aa7d84ae-6504-41fe-915d-98a10137d64a
+# ╠═ac02df55-6c63-4f5d-b643-ff89930152ee
+# ╠═edfe9131-4316-4af3-b6eb-4c0bc89fe0ce
+# ╠═398b0cde-ff8e-4238-be65-33699e17abb6
+# ╠═686b7891-0ff5-4b7f-ba54-92aff8bacb12
 # ╟─4335c393-1765-4641-ae4b-52cafac4238d
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
