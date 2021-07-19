@@ -1128,7 +1128,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
 
-    retTT = typetree(eltype(rt), ctx, dl)
+    retTT = typetree(GPUCompiler.deserves_argbox(eltype(rt)) ? Ptr{eltype(rt)} : eltype(rt), ctx, dl)
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
     if split
