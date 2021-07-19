@@ -7,14 +7,13 @@ using InteractiveUtils
 # ╔═╡ f6b815e8-e813-11eb-0760-9165c6cf726f
 begin
 	using Enzyme
+	using PlutoUI
 	using ChainRules
 	using BenchmarkTools
-	using ForwardDiff
-	using Zygote
+	using LinearAlgebra
+	import ForwardDiff
+	import Zygote
 end
-
-# ╔═╡ b3a4c95d-51cc-4db6-b2f7-040cc4135100
-square(x) = x^2
 
 # ╔═╡ 6f099fd4-10c4-43fb-9f7a-cdb8e0378623
 md"""
@@ -24,6 +23,9 @@ md"""
 - `Duplicated`
 - `DuplicatedNoNeed`
 """
+
+# ╔═╡ b3a4c95d-51cc-4db6-b2f7-040cc4135100
+square(x) = x^2
 
 # ╔═╡ 8f207356-c29a-4762-a7ce-011b8919f667
 autodiff(square, 1.0)
@@ -41,7 +43,9 @@ autodiff(square, Active(1.0))
 
 # ╔═╡ 6bf01d28-9c5e-4220-bc42-bf446ee7d807
 md"""
-Support for mutations
+## Supporting mutating functions
+
+Enzyme can differentiate through mutating functions. This requires that the users passes in the shadow variables with the `Duplicated` or `DuplicatedNoNeed` activity annotation.
 """
 
 # ╔═╡ 7dfe8143-bd09-4046-8141-bd51e12a3e5d
@@ -78,6 +82,8 @@ end
 
 # ╔═╡ 59c51921-a7ce-4014-827f-a460ea0e2e7e
 md"""
+## `DuplicatedNoNeed`
+
 If we do not care about the return value of our function and are only interested in calculating the gradient we can use `DuplicatedNoNeed`.
 """
 
@@ -93,20 +99,31 @@ let
 	y[], dy[], x[], dx[]
 end
 
+# ╔═╡ 6db932aa-1bed-461c-9029-cfd77e783f7a
+with_terminal() do
+  Enzyme.Compiler.enzyme_code_llvm( cube,
+	Tuple{Enzyme.Duplicated{Base.RefValue{Float64}}, 
+	Duplicated{Base.RefValue{Float64}}}, debuginfo=:none)
+end
+
 # ╔═╡ 39279922-2994-4d2a-83c0-fead3083f247
-# Enzyme.Compiler.enzyme_code_llvm(cube,
-# 	Tuple{Enzyme.DuplicatedNoNeed{Base.RefValue{Float64}}, 
-# 	Duplicated{Base.RefValue{Float64}}})
+with_terminal() do
+  Enzyme.Compiler.enzyme_code_llvm( cube,
+	Tuple{Enzyme.DuplicatedNoNeed{Base.RefValue{Float64}}, 
+	Duplicated{Base.RefValue{Float64}}}, debuginfo=:none)
+end
 
 # ╔═╡ 5e85ad6a-6508-4bf0-b25b-a64ba65556f5
 md"""
-Let's differentiate through some control flow
+# Differentiating through control-flow
+
+Let's differentiate through some control flow. This kind of scalar code is where normally one would use `ForwardDiff.jl` since the machine learning optimized toolkits like Zygote have unacceptable overheads.
 """
 
 # ╔═╡ 6826dc6e-2e9c-4dcc-89c4-cc98ca03cab0
 # Taylor series for `-log(1-x)`
 # eval at -log(1-1/2) = -log(1/2)
-function taylor(f::T, N) where T
+function taylor(f::T, N=10^7) where T
     g = zero(T)
     for i in 1:N
         g += f^i / i
@@ -115,11 +132,31 @@ function taylor(f::T, N) where T
 end
 
 # ╔═╡ 58ca6247-082e-4f66-947b-29181c3ebedf
-autodiff(taylor, Active(0.5), Const(10^7))
+autodiff(taylor, Active(0.5), Const(10^8))
+
+# ╔═╡ ef02d55d-bc5d-4802-b200-1b0d0a037ec6
+fwd_taylor(x) = ForwardDiff.derivative(taylor, 0.5)
+
+# ╔═╡ cf51c8b8-733d-436e-a881-116653126906
+zyg_taylor(x) = Zygote.gradient(taylor, x)
+
+# ╔═╡ c0bc6781-00b5-4803-974c-7760dfa140c2
+enz_taylor(x) = autodiff(taylor, Active(x))
+
+# ╔═╡ 49f3d740-906a-4987-b79e-a7af9e1b54e5
+@benchmark fwd_taylor($(Ref(0.5))[])
+
+# ╔═╡ d996f5e0-0755-4d86-b747-5f21944183bd
+@benchmark zyg_taylor($(Ref(0.5))[])
+
+# ╔═╡ 078aa223-1e77-4084-90e2-cd87d71b5988
+@benchmark enz_taylor($(Ref(0.5))[])
 
 # ╔═╡ e21a7977-73b2-4c6a-90b7-3c9dbc04e613
 md"""
-A custom matrix multiply
+# Differentiating through more complicated codes
+
+## A custom matrix multiply
 """
 
 # ╔═╡ 21858576-c2a0-474f-9aa7-d14ee7f7210c
@@ -145,8 +182,8 @@ begin
 	∂z_∂R = rand(size(R)...)  # Some gradient/tangent passed to us
 
 	∂z_∂A = zero(A)
-	∂z_∂B = zero(B);
-end
+	∂z_∂B = zero(B)
+end;
 
 # ╔═╡ 113ca417-ede9-4f15-85ff-7c6fb7d97494
 Enzyme.autodiff(mymul!, 
@@ -154,19 +191,24 @@ Enzyme.autodiff(mymul!,
 	Duplicated(A, ∂z_∂A),
 	Duplicated(B, ∂z_∂B))
 
+# ╔═╡ 3f3771a0-3d23-4ba5-b5f0-cb49ec40260c
+md"""
+Let's confirm correctness of result
+"""
+
 # ╔═╡ 62182140-d067-4814-a83d-f6c9d6b3a15f
 R ≈ A * B
 
+# ╔═╡ bfa753c2-1f61-4c38-b4d3-55f068dd0948
+md"""
+and correctness of the gradients
+"""
+
 # ╔═╡ f6856069-8bfa-49ed-8f5e-f1bd6009c4f4
-∂z_∂A ≈ ∂z_∂R * B' # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[1]
+∂z_∂A ≈ ∂z_∂R * B'
 
 # ╔═╡ e59d8304-603f-4893-8e73-ed23dad2d28f
-∂z_∂B ≈ A' * ∂z_∂R # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[2]
-
-# ╔═╡ 157b7744-a179-4287-b7b4-d6a71cac71f5
-md"""
-
-"""
+∂z_∂B ≈ A' * ∂z_∂R
 
 # ╔═╡ c4ded44a-3193-402b-9f10-0e3ec60f0c65
 @benchmark Enzyme.autodiff(mymul!, 
@@ -174,34 +216,25 @@ md"""
 	Duplicated(A, ∂z_∂A),
 	Duplicated(B, ∂z_∂B))
 
-# ╔═╡ 38697354-6dfc-45f3-adc7-b535f731e700
-@benchmark Enzyme.autodiff(mymul!, 
-	Enzyme.DuplicatedNoNeed(R, ∂z_∂R),
-	Duplicated(A, ∂z_∂A),
-	Duplicated(B, ∂z_∂B))
-
-# ╔═╡ 2a25dcb8-5a8a-4e60-a714-618199f30adf
-let
-	x = Ref(4.0)
-	dx = Ref(0.0)
-	
-	y = Ref(0.0)
-	dy = Ref(1.0)
-	@benchmark autodiff(cube, Enzyme.DuplicatedNoNeed($y, $dy), Duplicated($x, $dx))
+# ╔═╡ adb359b3-781d-475a-9f9b-8c97e2ebfca3
+function la_mul!(R, A, B)
+	# Enzyme currently can't handle Array returns
+	LinearAlgebra.mul!(R, A, B)
+	nothing
 end
 
 # ╔═╡ 9d7077ac-037a-46ad-b490-8cd1d4112917
+@benchmark Enzyme.autodiff(la_mul!, 
+	Duplicated(R, ∂z_∂R),
+	Duplicated(A, ∂z_∂A),
+	Duplicated(B, ∂z_∂B))
 
 
-
-# ╔═╡ bd897a78-3778-4a5e-b986-4ccf0c017914
-
-
-# ╔═╡ e2da740a-567f-4f73-8182-286a42d727ad
+# ╔═╡ febf0550-8c6d-4a26-8bc1-3af206294d41
 
 
-# ╔═╡ d856d714-eab4-4caf-8089-43bfbbba4f40
-
+# ╔═╡ 4335c393-1765-4641-ae4b-52cafac4238d
+html"<button onclick='present()'>present</button>"
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -210,13 +243,16 @@ BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 BenchmarkTools = "~1.1.1"
 ChainRules = "~0.8.22"
-Enzyme = "~0.6.2"
+Enzyme = "~0.6.4"
 ForwardDiff = "~0.10.18"
+PlutoUI = "~0.7.9"
 Zygote = "~0.6.16"
 """
 
@@ -326,9 +362,9 @@ uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 
 [[Enzyme]]
 deps = ["Adapt", "CEnum", "Enzyme_jll", "GPUCompiler", "LLVM", "Libdl", "ObjectFile"]
-git-tree-sha1 = "f96fe9de54347fe43106e8595704c82eeb33d7b0"
+git-tree-sha1 = "29a884b30338585a31ca43d3e839f4f8cb8d7498"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
-version = "0.6.2"
+version = "0.6.4"
 
 [[Enzyme_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -480,6 +516,12 @@ version = "1.1.0"
 deps = ["Artifacts", "Dates", "Downloads", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 
+[[PlutoUI]]
+deps = ["Base64", "Dates", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "Suppressor"]
+git-tree-sha1 = "44e225d5837e2a2345e69a1d1e01ac2443ff9fcb"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.9"
+
 [[Preferences]]
 deps = ["TOML"]
 git-tree-sha1 = "00cfd92944ca9c760982747e9a1d0d5d86ab1e5a"
@@ -548,6 +590,11 @@ git-tree-sha1 = "010dc73c7146869c042b49adcdb6bf528c12e859"
 uuid = "53d494c1-5632-5724-8f4c-31dff12d585f"
 version = "0.3.0"
 
+[[Suppressor]]
+git-tree-sha1 = "a819d77f31f83e5792a76081eee1ea6342ab8787"
+uuid = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
+version = "0.2.0"
+
 [[TOML]]
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
@@ -600,37 +647,43 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 
 # ╔═╡ Cell order:
 # ╠═f6b815e8-e813-11eb-0760-9165c6cf726f
-# ╠═b3a4c95d-51cc-4db6-b2f7-040cc4135100
 # ╟─6f099fd4-10c4-43fb-9f7a-cdb8e0378623
+# ╠═b3a4c95d-51cc-4db6-b2f7-040cc4135100
 # ╠═8f207356-c29a-4762-a7ce-011b8919f667
 # ╟─60d880ac-b534-41b6-a868-3aead8cdf827
 # ╠═b8b856f1-9bd6-40fc-a141-280b0f8a34ff
 # ╠═cf180dad-90a5-4380-9b74-7725dcaf0e73
-# ╟─6bf01d28-9c5e-4220-bc42-bf446ee7d807
+# ╠═6bf01d28-9c5e-4220-bc42-bf446ee7d807
 # ╠═7dfe8143-bd09-4046-8141-bd51e12a3e5d
 # ╠═124e04fe-9393-44de-a556-52fd5d1cf9db
 # ╟─bda1fecc-2499-4deb-bc4d-988e29887929
 # ╠═fb55cc7a-dc83-4d42-87d3-c1ab3450ca28
 # ╟─59c51921-a7ce-4014-827f-a460ea0e2e7e
 # ╠═258c181e-52f3-4a8f-b2ca-6713c7137766
+# ╠═6db932aa-1bed-461c-9029-cfd77e783f7a
 # ╠═39279922-2994-4d2a-83c0-fead3083f247
-# ╟─5e85ad6a-6508-4bf0-b25b-a64ba65556f5
+# ╠═5e85ad6a-6508-4bf0-b25b-a64ba65556f5
 # ╠═6826dc6e-2e9c-4dcc-89c4-cc98ca03cab0
 # ╠═58ca6247-082e-4f66-947b-29181c3ebedf
+# ╠═ef02d55d-bc5d-4802-b200-1b0d0a037ec6
+# ╠═cf51c8b8-733d-436e-a881-116653126906
+# ╠═c0bc6781-00b5-4803-974c-7760dfa140c2
+# ╠═49f3d740-906a-4987-b79e-a7af9e1b54e5
+# ╠═d996f5e0-0755-4d86-b747-5f21944183bd
+# ╠═078aa223-1e77-4084-90e2-cd87d71b5988
 # ╠═e21a7977-73b2-4c6a-90b7-3c9dbc04e613
 # ╠═21858576-c2a0-474f-9aa7-d14ee7f7210c
 # ╠═29ee6b7a-971e-4d46-ac3b-d793124a4542
 # ╠═113ca417-ede9-4f15-85ff-7c6fb7d97494
+# ╟─3f3771a0-3d23-4ba5-b5f0-cb49ec40260c
 # ╠═62182140-d067-4814-a83d-f6c9d6b3a15f
+# ╠═bfa753c2-1f61-4c38-b4d3-55f068dd0948
 # ╠═f6856069-8bfa-49ed-8f5e-f1bd6009c4f4
 # ╠═e59d8304-603f-4893-8e73-ed23dad2d28f
-# ╠═157b7744-a179-4287-b7b4-d6a71cac71f5
 # ╠═c4ded44a-3193-402b-9f10-0e3ec60f0c65
-# ╠═38697354-6dfc-45f3-adc7-b535f731e700
-# ╠═2a25dcb8-5a8a-4e60-a714-618199f30adf
+# ╠═adb359b3-781d-475a-9f9b-8c97e2ebfca3
 # ╠═9d7077ac-037a-46ad-b490-8cd1d4112917
-# ╠═bd897a78-3778-4a5e-b986-4ccf0c017914
-# ╠═e2da740a-567f-4f73-8182-286a42d727ad
-# ╠═d856d714-eab4-4caf-8089-43bfbbba4f40
+# ╠═febf0550-8c6d-4a26-8bc1-3af206294d41
+# ╟─4335c393-1765-4641-ae4b-52cafac4238d
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
