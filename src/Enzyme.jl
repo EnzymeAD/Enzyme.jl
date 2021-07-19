@@ -1,7 +1,7 @@
 module Enzyme
 
-export autodiff
-export Const, Active, Duplicated
+export autodiff, autodiff_deferred
+export Const, Active, Duplicated, DuplicatedNoNeed
 
 """
     abstract type Annotation{T}
@@ -196,12 +196,19 @@ code, as well as high-order differentiation.
 @inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(A{rt}))
-    thunk = Compiler.CombinedAdjointThunk{F, A{rt}, tt′}(f, ptr)
-    if A <: Active
-        args′ = (args′..., one(rt))
+    if A isa UnionAll
+        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = Core.Compiler.return_type(f, tt)
+        rt = A{rt}
+    else
+        @assert A isa DataType
+        rt = A
+    end
+
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
+    if rt <: Active
+        args′ = (args′..., one(eltype(rt)))
     end
     thunk(args′...)
 end
@@ -216,11 +223,11 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    A     = guess_activity(rt)
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(A{rt}))
-    thunk = Compiler.CombinedAdjointThunk{F, A, tt′}(f, ptr)
-    if A <: Active
-        args′ = (args′..., one(rt))
+    rt    = guess_activity(rt)
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
+    if rt <: Active
+        args′ = (args′..., one(eltype(rt)))
     end
     thunk(args′...)
 end
