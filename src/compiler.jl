@@ -1475,7 +1475,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
-    return mod, (;adjointf, augmented_primalf)
+    return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
 ##
