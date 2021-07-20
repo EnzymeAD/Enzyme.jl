@@ -370,3 +370,10 @@ end
 
     @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end
+
+
+@testset "DuplicatedReturn" begin
+    moo(x) = fill(x, 10, 10)
+
+    @test_throws ErrorException autodiff(moo, Active(2.1))
+end
