@@ -1335,12 +1335,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             continue
         end
-        if func == Base.invalid_char
-            llvmfn = functions(mod)[k.specfunc]
-            push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
-            push!(function_attributes(llvmfn), EnumAttribute("readnone"; ctx))
-            continue
-        end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
