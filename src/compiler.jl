@@ -1333,6 +1333,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if func == Base.println
             llvmfn = functions(mod)[k.specfunc]
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
+            continue
         end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)

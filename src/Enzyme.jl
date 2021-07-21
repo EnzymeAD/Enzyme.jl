@@ -73,6 +73,8 @@ Base.eltype(::Type{<:Annotation{T}}) where T = T
 function guess_activity(T)
     if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
         return Active{T}
+    elseif T <: AbstractArray
+        return Duplicated{T}
     else
         return Const{T}
     end
