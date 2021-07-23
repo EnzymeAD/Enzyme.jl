@@ -211,7 +211,7 @@ else
     sz = sizeof(T)
     type = reinterpret(Int64, Base.pointer_from_objref(T))
     # TODO: can we get these offsets from somewhere
-    gcstack_offset = 2305843009213693940 # -offsetof(jl_task_t, gcstack) / sizeof(void*)
+    gcstack_offset = -12 # -offsetof(jl_task_t, gcstack) / sizeof(void*)
     ptls_offset = 14 # offsetof(jl_task_t, ptls) / sizeof(void *)
     mod ="""
         declare {}*** @julia.get_pgcstack()
