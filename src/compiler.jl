@@ -4044,6 +4044,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                   ])
             continue
         end
+        # Since this is noreturn, it can't write to any operations in the function
+        # in a way accessible by the function. Ideally the attributor should actually
+        # handle this and similar not impacting the read/write behavior of the calling
+        # fn, but it doesn't presently so for now we will ensure this by hand
+        if func == Base.Checked.throw_overflowerr_binaryop
+            llvmfn = functions(mod)[k.specfunc]
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx), EnumAttribute("readonly"; ctx)])
+            continue
+        end
         if in(func, InactiveFunctions)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
