@@ -262,7 +262,7 @@ end
     end
     inp = Float64[1.0, 2.0]
     dinp = Float64[0.0, 0.0]
-    autodiff(arsum2, Active, Duplicated(inp, dinp))
+    autodiff(arsumsq, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[6.0, 6.0]
 end
