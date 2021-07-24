@@ -317,6 +317,24 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 if ptr == cglobal(:jl_new_task)
                     fn = "jl_new_task"
                 end
+                if ptr == cglobal(:jl_array_grow_beg)
+                    fn = "jl_array_grow_beg"
+                end
+                if ptr == cglobal(:jl_array_grow_end)
+                    fn = "jl_array_grow_end"
+                end
+                if ptr == cglobal(:jl_array_grow_at)
+                    fn = "jl_array_grow_at"
+                end
+                if ptr == cglobal(:jl_array_del_beg)
+                    fn = "jl_array_del_beg"
+                end
+                if ptr == cglobal(:jl_array_del_end)
+                    fn = "jl_array_del_end"
+                end
+                if ptr == cglobal(:jl_array_del_at)
+                    fn = "jl_array_del_at"
+                end
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end

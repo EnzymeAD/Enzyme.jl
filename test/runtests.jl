@@ -377,3 +377,18 @@ end
 
     @test_throws ErrorException autodiff(moo, Active(2.1))
 end
+
+@testset "Array push" begin
+
+    function pusher(x, y)
+        push!(x, y)
+        x[1] + x[2]
+    end
+
+    x  = [2.3]
+    dx = [0.0]
+    # Requires jll bump
+    # @test 1.0 ≈ first(Enzyme.autodiff(pusher, Duplicated(x, dx), Active(2.0)))
+    # @test x ≈ [2.3, 2.0]
+    # @test dx ≈ [1.0]
+end
