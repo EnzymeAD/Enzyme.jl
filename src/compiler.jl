@@ -273,7 +273,6 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
             p = __args[i]
             if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
                 push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
             else
                 s = __shadows[i]
                 push!(args, Duplicated(p, s))
@@ -290,7 +289,10 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     forward, adjoint = thunk(fn, annotation, tt′, Val(true))
 
     res = forward(args...)
-    __ret[1] = res[1]
+    origRet = res[2]
+    resT = typeof(origRet)
+    @show res, origRet, resT
+    __ret[1] = origRet
 
     if annotation <: Active
         __ret[2] = alloc(resT)
@@ -301,14 +303,14 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         @assert shadow_return == 0.0
         @assert shadow_return == __ret[2]
     elseif annotation <: Const
-        __ret[2] = __ret[1]
+        __ret[2] = origRet
         shadow_return = nothing
     elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
-        error("TODO")
+        __ret[2] = res[3]
     else
         error("Unknown annotation")
     end
-    internal_tape = res[3]
+    internal_tape = res[1]
 
     __ret[3] = Tape(adjoint, internal_tape, shadow_return)
     return nothing
@@ -1124,6 +1126,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         retType = API.DFT_CONSTANT
     elseif rt <: Active
         retType = API.DFT_OUT_DIFF
+    elseif rt <: Duplicated
+        retType = API.DFT_DUP_ARG
+    elseif rt <: DuplicatedNoNeed
+        retType = API.DFT_DUP_NONEED
     else
         error("Unhandled return type $rt")
     end
@@ -1162,9 +1168,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
     if split
+        returnUsed = !(GPUCompiler.isghosttype(eltype(rt)) || Core.Compiler.isconstType(eltype(rt)))
         augmented = API.EnzymeCreateAugmentedPrimal(
-            logic, primalf, retType, args_activity, TA, #=returnUsed=# true,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# parallel, #=postOpt=# false)
+            logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# true, #=atomicAdd=# parallel, #=postOpt=# false)
 
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
@@ -1261,24 +1268,32 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, Mode:
     existed = Array{UInt8}(undef, 3)
     if is_forward
         API.EnzymeExtractReturnInfo(augmented, data, existed)
+        # tape -- todo ??? on wrap
+        if existed[1] != 0
+            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+            push!(T_JuliaSRet, LLVM.LLVMType(tape))
+        else
+            error("Assuming always has a tape")
+        end
         # primal return
-        if existed[1]
+        if existed[2] != 0
             push!(T_JuliaSRet, eltype(rettype))
         end
         # shadow return
-        if existed[2]
+        if existed[3] != 0
             push!(T_JuliaSRet, eltype(rettype))
-        end
-        # tape -- todo ??? on wrap
-        if existed[3]
-            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-            push!(T_JuliaSRet, tape)
+        else
+            @assert rettype <: Const || rettype <: Active
         end
     end
 
     # sret argument
     if !isempty(T_JuliaSRet)
-        pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
+        pushfirst!(T_wrapperargs, LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
+    end
+
+    if needs_tape
+        push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeExtractTapeTypeFromAugmentation(augmented)))
     end
 
     FT = LLVM.FunctionType(T_void, T_wrapperargs)
@@ -1298,7 +1313,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, Mode:
         i = target
 
         if !isempty(T_JuliaSRet)
-            sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
+            sret = params[1]
         end
 
         activeNum = 0
@@ -1340,11 +1355,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, Mode:
 
         if is_adjoint && rettype <: Active
             push!(realparms, params[i])
+            i += 1
         end
 
         if needs_tape
-            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-            push!(realparams, augmented)
+            push!(realparms, params[i])
+            i += 1
         end
 
         val = call!(builder, enzymefn, realparms)
@@ -1352,7 +1368,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, Mode:
         if is_forward
             returnNum = 0
             for i in 1:3
-                if existed[i]
+                if existed[i] != 0
                     eval = val
                     if data[i] != -1
                         eval = extract_value!(builder, val, data[i])
@@ -1713,7 +1729,7 @@ end
    enzyme_call(thunk.adjoint, AdjointThunk, TT, RT, thunk.fn, args...)
 
 @inline (thunk::AugmentedForwardThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, AugmentedForwardThunk, TT, RT, thunk.fn, args...)
+   enzyme_call(thunk.primal, AugmentedForwardThunk, TT, RT, thunk.fn, args...)
 
 @generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, tt::Type{T},
                                 rt::Type{RT}, f::F, args::Vararg{Any, N}) where {F, T, RT, N, CC}
@@ -1728,9 +1744,9 @@ end
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
     if rettype <: Active
-        @assert length(argtypes)+1 == length(argexprs)
+        @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
     elseif rettype <: Const
-        @assert length(argtypes)   == length(argexprs)
+        @assert length(argtypes)              + needs_tape == length(argexprs)
     else
         error("Duplicated returns not handled.")
     end
@@ -1778,7 +1794,9 @@ end
         T <: Const && continue
 
         if T <: Active
-            push!(sret_types, source_typ)
+            if is_adjoint
+                push!(sret_types, source_typ)
+            end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
             argexpr =  Expr(:., expr, QuoteNode(:dval))
             if isboxed
@@ -1793,10 +1811,30 @@ end
     end
 
     # API.DFT_OUT_DIFF
-    if rettype <: Active
+    if is_adjoint && rettype <: Active
         @assert allocatedinline(eltype(rettype))
         push!(types, eltype(rettype))
+        idx = length(argtypes) + 1
+        push!(ccexprs, argexprs[idx])
+    end
+
+    if needs_tape
+        # TODO
+        push!(types, Ptr{Cvoid})
         push!(ccexprs, last(argexprs))
+    end
+
+    if is_forward
+        # Tape
+        push!(sret_types, Ptr{Cvoid})
+
+        returnUsed = !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
+        if returnUsed
+            push!(sret_types, eltype(rettype))
+            if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                push!(sret_types, eltype(rettype))
+            end
+        end
     end
 
     # XXX: What if not `Nothing`/`Missing` what if struct or array or...
