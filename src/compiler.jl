@@ -868,6 +868,57 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     return nothing
 end
 
+function enq_work_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented forward for enq_work")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for enq_work")
+    return nothing
+end
+
+function wait_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented forward for wait")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for wait")
+    return nothing
+end
+
+function set_tid_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
+        B = LLVM.Builder(B)
+        ops[1] = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+        ops[2] = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]))
+        called_value = pop!(ops)
+        LLVM.call!(B, called_value, ops) 
+    end
+
+    return nothing
+end
+
+function set_tid_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    return nothing
+end
+
+
 function __init__()
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
@@ -928,6 +979,21 @@ function __init__()
         "jl_array_grow_end",
         @cfunction(jl_array_grow_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_array_grow_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "Base.enq_work",
+        @cfunction(enq_work_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(enq_work_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "Base._wait",
+        @cfunction(wait_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(wait_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_set_task_tid",
+        @cfunction(set_tid_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(set_tid_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 
@@ -1001,7 +1067,10 @@ end
 const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
-    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region"
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
+    "llvm.julia.gc_preserve_begin",
+    "llvm.julia.gc_preserve_end",
+    "julia.except_enter", "jl_excstack_state", "jl_pop_handler", "jl_restore_excstack"
 ))
 
 function annotate!(mod)
@@ -1035,6 +1104,22 @@ function annotate!(mod)
 end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ce = operands(inst)[3]
+    
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = Base.unsafe_pointer_to_objref(ptr)
+
+    ctx = LLVM.context(LLVM.Value(val))
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+
+    rest = typetree(typ, ctx, dl)
+    only!(rest, -1)
+    API.EnzymeMergeTypeTree(ret, rest)
+
     return UInt8(false)
 end
 
@@ -1048,6 +1133,12 @@ function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTyp
     return UInt8(false)
 end
 
+function outint_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    ctx = LLVM.context(LLVM.Value(val))
+    API.EnzymeMergeTypeTree(ret, TypeTree(API.DT_Integer, -1, ctx))
+    return UInt8(false)
+end
+
 function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     if (direction & API.UP) != 0
         API.EnzymeMergeTypeTree(unsafe_load(args), ret)
@@ -1055,6 +1146,10 @@ function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     if (direction & API.DOWN) != 0
         API.EnzymeMergeTypeTree(ret, unsafe_load(args))
     end
+    return UInt8(false)
+end
+
+function noop_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     return UInt8(false)
 end
 
@@ -1176,6 +1271,9 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         "jl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "julia.except_enter" => @cfunction(outint_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_1d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
@@ -1183,6 +1281,12 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_3d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "Base.enq_work" => @cfunction(noop_type_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "Base._wait" => @cfunction(noop_type_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.pointer_from_objref" => @cfunction(inout_rule,
@@ -1400,6 +1504,16 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             continue
         end
+        if func == Base.enq_work
+            llvmfn = functions(mod)[k.specfunc]
+            push!(function_attributes(llvmfn), StringAttribute("enzyme_math", "Base.enq_work"; ctx))
+            continue
+        end
+        if func == Base._wait
+            llvmfn = functions(mod)[k.specfunc]
+            push!(function_attributes(llvmfn), StringAttribute("enzyme_math", "Base._wait"; ctx))
+            continue
+        end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
@@ -1482,6 +1596,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)
     end
+    
+    annotate!(mod)
 
     if params.run_enzyme
         # Generate the adjoint
@@ -1490,6 +1606,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
+    @show mod
 
     for f in custom
         iter = function_attributes(f)

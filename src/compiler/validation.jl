@@ -48,13 +48,19 @@ end
 
 function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
     calls = []
+    loads = []
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
+        elseif isa(inst, LLVM.LoadInst)
+            push!(loads, inst)
         end
     end
     for inst in calls
         check_ir!(job, errors, imported, inst, known_fns)
+    end
+    for inst in loads
+        check_ir!(job, errors, imported, inst)
     end
     return errors
 end
@@ -317,6 +323,33 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 if ptr == cglobal(:jl_new_task)
                     fn = "jl_new_task"
                 end
+                if ptr == cglobal(:jl_get_current_task)
+                    fn = "jl_get_current_task"
+                end
+                if ptr == cglobal(:jl_is_task_started)
+                    fn = "jl_is_task_started"
+                end
+                if ptr == cglobal(:jl_get_task_tid)
+                    fn = "jl_get_task_tid"
+                end
+                if ptr == cglobal(:jl_enqueue_task)
+                    fn = "jl_enqueue_task"
+                end
+                if ptr == cglobal(:jl_set_next_task)
+                    fn = "jl_set_next_task"
+                end
+                if ptr == cglobal(:jl_get_next_task)
+                    fn = "jl_get_next_task"
+                end
+                if ptr == cglobal(:jl_switch)
+                    fn = "jl_switch"
+                end
+                if ptr == cglobal(:jl_safe_printf)
+                    fn = "jl_safe_printf"
+                end
+                if ptr == cglobal(:jl_wakeup_thread)
+                    fn = "jl_wakeup_thread"
+                end
                 if ptr == cglobal(:jl_array_grow_beg)
                     fn = "jl_array_grow_beg"
                 end
@@ -349,6 +382,41 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                     end
                     known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                end
+            end
+        end
+    end
+
+    return errors
+end
+
+function check_ir!(job, errors, imported, inst::LLVM.LoadInst)
+    dest = operands(inst)[1]
+    if isa(dest, ConstantExpr)
+        # Enzyme should be able to handle these
+        # detect calls to literal pointers and replace with function name, if possible
+        if occursin("inttoptr", string(dest))
+            # extract the literal pointer
+            ptr_arg = first(operands(dest))
+            if isa(ptr_arg, ConstantInt)
+                GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+                ptr_val = convert(Int, ptr_arg)
+                ptr = Ptr{Cvoid}(ptr_val)
+
+                val = ""
+                if ptr == cglobal(:jl_n_threads)
+                    val = "jl_n_threads"
+                end
+                
+                if length(val) > 1
+                    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                    lfn = LLVM.API.LLVMGetNamedGlobal(mod, val)
+                    if lfn == C_NULL
+                        lfn = LLVM.API.LLVMAddGlobal(mod, eltype(llvmtype(dest)::LLVM.PointerType), val)
+                    else
+                        lfn = LLVM.API.LLVMConstBitCast(lfn, llvmtype(dest))
+                    end
+                    LLVM.API.LLVMSetOperand(inst, 0, lfn)
                 end
             end
         end

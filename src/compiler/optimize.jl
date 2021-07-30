@@ -57,7 +57,6 @@ function optimize!(mod::LLVM.Module, tm)
 
         # GC passes
         barrier_noop!(pm)
-        lower_exc_handlers!(pm)
         gc_invariant_verifier!(pm, false)
 
         # FIXME: Currently crashes printing
