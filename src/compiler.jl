@@ -936,7 +936,7 @@ end
 const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
-    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region"
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id"
 ))
 
 function annotate!(mod)
@@ -967,9 +967,22 @@ function annotate!(mod)
         end
     end
 
+    for rfn in ("jl_object_id_", "jl_object_id")
+        if haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+        end
+    end
 end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    return UInt8(false)
+end
+
+function int_return_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
+    only!(TT, -1)
+    API.EnzymeSetTypeTree(ret, TT)
     return UInt8(false)
 end
 
