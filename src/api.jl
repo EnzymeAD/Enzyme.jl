@@ -237,6 +237,11 @@ function looseTypeAnalysis!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function instname!(val)
+    ptr = cglobal((:EnzymeNameInstructions, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function EnzymeRemoveTrivialAtomicIncrements(func)
     ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
 end
