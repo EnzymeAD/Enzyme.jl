@@ -976,6 +976,20 @@ function annotate!(mod)
 end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ce = operands(inst)[3]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    typ = Base.unsafe_pointer_to_objref(ptr)
+
+    ctx = LLVM.context(LLVM.Value(val))
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+
+    rest = typetree(typ, ctx, dl)
+    only!(rest, -1)
+    API.EnzymeMergeTypeTree(ret, rest)
     return UInt8(false)
 end
 
