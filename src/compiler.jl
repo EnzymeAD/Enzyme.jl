@@ -1311,6 +1311,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # Julia function to LLVM stem and arity
     known_ops = Dict(
+        Base.cbrt => (:cbrt, 1),
         Base.sin => (:sin, 1),
         Base.cos => (:cos, 1),
         Base.tan => (:tan, 1),
