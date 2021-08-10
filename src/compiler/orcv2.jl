@@ -36,7 +36,23 @@ function __init__()
     tempTM = LLVM.JITTargetMachine(;optlevel)
     LLVM.asm_verbosity!(tempTM, true)
 
-    lljit = LLJIT(;tm=tempTM)
+    if haskey(ENV, "ENABLE_GDBLISTENER")
+        ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
+            oll = ObjectLinkingLayer(es)
+            register!(oll, GDBRegistrationListener())
+            return oll
+        end
+
+        GC.@preserve ollc begin
+            builder = LLJITBuilder()
+            LLVM.linkinglayercreator!(builder, ollc)
+            tmb = TargetMachineBuilder(tempTM)
+            LLVM.targetmachinebuilder!(builder, tmb)
+            lljit = LLJIT(builder)
+        end
+    else
+        lljit = LLJIT(;tm=tempTM)
+    end
 
     jd_main = JITDylib(lljit)
 
