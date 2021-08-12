@@ -818,6 +818,50 @@ function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 end
 
 
+function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+    ops = collect(operands(orig))[1:end-1]
+
+    to_preserve = LLVM.Value[]
+
+    for (i, op) in enumerate(ops)
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+        push!(to_preserve, val)
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+
+        if active
+            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)))
+
+        end
+    end
+
+    token = emit_gc_preserve_begin(B, to_preserve)
+    unsafe_store!(normalR, token.ref)
+
+    return nothing
+end
+
+function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for llvm.julia.gc_preserve_begin")
+    return nothing
+end
+
+function gcpreserve_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    return nothing
+end
+
+function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    @show LLVM.parent(LLVM.parent(LLVM.Instruction(OrigCI)))
+    @show LLVM.Instruction(OrigCI)
+
+    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for llvm.julia.gc_preserve_end")
+    return nothing
+end
+
+
+
 function __init__()
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
@@ -863,6 +907,16 @@ function __init__()
         "jl_array_copy",
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "llvm.julia.gc_preserve_begin",
+        @cfunction(gcpreserve_begin_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(gcpreserve_begin_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "llvm.julia.gc_preserve_end",
+        @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 
@@ -936,7 +990,8 @@ end
 const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
-    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id"
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end"
 ))
 
 function annotate!(mod)
