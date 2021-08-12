@@ -825,7 +825,7 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     to_preserve = LLVM.Value[]
 
-    for (i, op) in enumerate(ops)
+    for op in ops
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         push!(to_preserve, val)
 
@@ -833,18 +833,32 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
         if active
             push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)))
-
         end
     end
 
-    token = emit_gc_preserve_begin(B, to_preserve)
+    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
     unsafe_store!(normalR, token.ref)
 
     return nothing
 end
 
+const GCToks = Dict{LLVM.Instruction, LLVM.Instruction}()
+
 function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for llvm.julia.gc_preserve_begin")
+    builder = LLVM.Builder(B)
+    orig = LLVM.Instruction(OrigCI)
+    if haskey(GCToks, orig)
+        token = GCToks[orig]
+        delete!(GCToks, orig)
+    else
+        f   = LLVM.parent(orig)
+        mod = LLVM.parent(f)
+        ctx = LLVM.context(mod)
+
+        token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
+        GCToks[orig] = token
+    end
+    emit_gc_preserve_end(builder, token)
     return nothing
 end
 
@@ -853,10 +867,35 @@ function gcpreserve_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 end
 
 function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    @show LLVM.parent(LLVM.parent(LLVM.Instruction(OrigCI)))
-    @show LLVM.Instruction(OrigCI)
+    orig = LLVM.Instruction(OrigCI)
+    origPres = operands(orig)[1]
 
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for llvm.julia.gc_preserve_end")
+    ops = collect(operands(origPres))[1:end-1]
+
+    to_preserve = LLVM.Value[]
+
+    for op in ops
+        val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, op), B))
+        push!(to_preserve, val)
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+
+        if active
+            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B)))
+        end
+    end
+
+    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+
+    if haskey(GCToks, origPres)
+        placeHolder = GCToks[origPres]
+        LLVM.replace_uses!(placeHolder, token)
+        delete!(GCToks, origPres)
+        LLVM.API.LLVMInstructionEraseFromParent(placeholder)
+    else
+        GCToks[origPres] = token
+    end
+
     return nothing
 end
 
