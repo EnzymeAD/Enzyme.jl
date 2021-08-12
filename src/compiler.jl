@@ -1030,7 +1030,10 @@ const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
-    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end"
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
+    "jl_f_fieldtype",
+    # BIG TODO
+    "jl_gc_add_finalizer_th"
 ))
 
 function annotate!(mod)
@@ -1045,7 +1048,7 @@ function annotate!(mod)
         end
     end
 
-    for fname in ("julia.get_pgcstack", "julia.ptls_states")
+    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
             # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
@@ -1053,10 +1056,24 @@ function annotate!(mod)
         end
     end
 
-    for boxfn in ("jl_box_int64",)
+    for fname in ("julia.pointer_from_objref",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+        end
+    end
+
+    for boxfn in ("jl_box_int64", "julia.gc_alloc_obj", "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+        end
+    end
+
+    for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
+        if haskey(fns, gc)
+            fn = fns[gc]
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
         end
     end
@@ -1065,6 +1082,85 @@ function annotate!(mod)
         if haskey(fns, rfn)
             fn = fns[rfn]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+        end
+    end
+
+    # MPI_Irecv
+    for rfn in ("MPI_Irecv", "PMPI_Irecv")
+        if false && haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememorargmemonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("norecurse", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nosync", 0; ctx))
+            push!(parameter_attributes(fn, 0), LLVM.EnumAttribute("writeonly", 0; ctx))
+            # todo add nocapture, readonly for arg 2 [1-indexed] if known pointer
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("writeonly", 0; ctx))
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("nocapture", 0; ctx))
+            push!(parameter_attributes(fn, 7), LLVM.EnumAttribute("writeonly", 0; ctx))
+        end
+    end
+    # MPI_Isend
+    for rfn in ("MPI_Isend", "PMPI_Isend")
+        if false && haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememorargmemonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("norecurse", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nosync", 0; ctx))
+            push!(parameter_attributes(fn, 0), LLVM.EnumAttribute("writeonly", 0; ctx))
+            # todo add nocapture, readonly for arg 2 [1-indexed] if known pointer
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("readonly", 0; ctx))
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("nocapture", 0; ctx))
+            push!(parameter_attributes(fn, 7), LLVM.EnumAttribute("writeonly", 0; ctx))
+        end
+    end
+    for rfn in ("MPI_Comm_rank", "PMPI_Comm_rank")
+        if false && haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememorargmemonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("norecurse", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nosync", 0; ctx))
+            # todo add nocapture, readonly for arg 1 [1-indexed] if known pointer
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("readonly", 0; ctx))
+            # push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("nocapture", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("writeonly", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("nocapture", 0; ctx))
+        end
+    end
+    for rfn in ("MPI_Wait", "PMPI_Wait")
+        if false && haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("norecurse", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nosync", 0; ctx))
+            push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("nocapture", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("writeonly", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("nocapture", 0; ctx))
+        end
+    end
+    for rfn in ("MPI_Waitall", "PMPI_Waitall")
+        if false && haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("norecurse", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nosync", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(parameter_attributes(fn, 2), LLVM.EnumAttribute("nocapture", 0; ctx))
+            push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("writeonly", 0; ctx))
+            push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("nocapture", 0; ctx))
         end
     end
 end
