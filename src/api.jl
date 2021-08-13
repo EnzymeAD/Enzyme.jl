@@ -250,4 +250,8 @@ function EnzymeAddAttributorLegacyPass(PM)
     ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
 end
 
+function moveBefore(i1, i2)
+    ccall((:EnzymeMoveBefore, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef), i1, i2)
+end
+
 end

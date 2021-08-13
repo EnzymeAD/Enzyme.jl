@@ -133,7 +133,9 @@ function addOptimizationPasses!(pm)
     # over the structure of an aggregate)
     scalar_repl_aggregates!(pm)
     instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+end
 
+function addOptimizationPasses2!(pm)
     gvn!(pm)
     mem_cpy_opt!(pm)
     sccp!(pm)
@@ -214,6 +216,23 @@ function post_optimze!(mod, tm)
         addOptimizationPasses!(pm)
         run!(pm, mod)
     end
+    # @show "mid_post", mod
+    # flush(stdout)
+    # flush(stderr)
+    # LLVM.ModulePassManager() do pm
+    #     gvn!(pm)
+    #     run!(pm, mod)
+    # end
+    # @show "post gvn", mod
+    # flush(stdout)
+    # flush(stderr)
+    LLVM.ModulePassManager() do pm
+        addOptimizationPasses2!(pm)
+        run!(pm, mod)
+    end
+    # @show "post opt2", mod
+    # flush(stdout)
+    # flush(stderr)
     LLVM.ModulePassManager() do pm
         addJuliaLegalizationPasses!(pm, true)
         addMachinePasses!(pm)
