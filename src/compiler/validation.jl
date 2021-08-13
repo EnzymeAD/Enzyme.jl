@@ -347,6 +347,15 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
 		if ptr == cglobal(:jl_gc_add_finalizer_th)
 		    fn = "jl_gc_add_finalizer_th"
 		end
+		if ptr == cglobal(:jl_array_ptr_copy)
+		    fn = "jl_array_ptr_copy"
+		end
+		if ptr == cglobal(:jl_array_typetagdata)
+		    fn = "jl_array_typetagdata"
+		end
+		if ptr == cglobal(:memmove)
+		    fn = "memmove"
+		end
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))

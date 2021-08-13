@@ -920,7 +920,7 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         placeHolder = GCToks[origPres]
         LLVM.replace_uses!(placeHolder, token)
         delete!(GCToks, origPres)
-        LLVM.API.LLVMInstructionEraseFromParent(placeholder)
+        LLVM.API.LLVMInstructionEraseFromParent(placeHolder)
     else
         GCToks[origPres] = token
     end
