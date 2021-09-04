@@ -30,7 +30,6 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Unknown = 6
 )
 
-
 struct EnzymeTypeTree end
 const CTypeTreeRef = Ptr{EnzymeTypeTree}
 
@@ -248,6 +247,12 @@ end
 
 function EnzymeAddAttributorLegacyPass(PM)
     ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
+end
+
+function __init__()
+    ptr = cglobal((:EnzymeJuliaAddrLoad, libEnzyme))
+    val = true
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
 end
