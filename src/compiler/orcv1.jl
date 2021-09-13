@@ -28,6 +28,10 @@ function __init__()
     LLVM.asm_verbosity!(tm[], true)
 
     jit[] = OrcJIT(tm[]) # takes ownership of tm
+
+    if haskey(ENV, "ENABLE_GDBLISTENER")
+        LLVM.register!(jit[], LLVM.GDBRegistrationListener())
+    end
     atexit() do
         dispose(jit[])
     end

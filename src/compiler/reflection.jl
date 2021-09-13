@@ -38,7 +38,7 @@ enzyme_code_llvm(@nospecialize(func), @nospecialize(A), @nospecialize(types); kw
 
 function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types))
     llvmf, mod = reflect(func, A, types)
-    str = String(LLVM.emit(tm[], mod, LLVM.API.LLVMAssemblyFile))
+    str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
     print(io, str)
 end
 enzyme_code_native(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_native(stdout, func, A, types; kwargs...)
