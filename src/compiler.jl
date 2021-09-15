@@ -46,6 +46,35 @@ function get_function!(builderF, mod, name)
     end
 end
 
+function fix_inlining!(mod)
+    for f in collect(functions(mod))
+	    calls = []
+	    for bb in blocks(f), inst in instructions(bb)
+		if !isa(inst, LLVM.CallInst)
+		    continue
+		end
+    		dest = called_value(inst)
+		if !isa(dest, LLVM.Function)
+		     continue
+		end
+		fn = LLVM.name(dest)
+		if fn != "julia.get_pgcstack"
+		     continue
+		end
+		push!(calls, inst)
+	    end
+	    @show calls
+	    for c in calls[2:end]
+		LLVM.replace_uses!(c, calls[1])
+        	LLVM.API.LLVMInstructionEraseFromParent(c)
+	    end
+	    if length(calls) > 0
+		API.moveBefore(calls[1], first(instructions(first(blocks(f)))))
+		@show calls[1]
+	    end
+    end
+end
+
 if VERSION < v"1.7.0-DEV.1205"
 
 declare_ptls!(mod) = get_function!(mod, "julia.ptls_states") do mod, ctx, name
@@ -1830,6 +1859,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
+
+    # fix_inlining!(mod)
 
     for f in custom
         iter = function_attributes(f)
