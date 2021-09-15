@@ -1419,6 +1419,37 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     return llvm_f
 end
 
+function fixup_metadata!(f::LLVM.Function)
+    for param in parameters(f)
+        if isa(llvmtype(param), LLVM.PointerType)
+            # collect all uses of the pointer
+            worklist = Vector{LLVM.Instruction}(user.(collect(uses(param))))
+            while !isempty(worklist)
+                value = popfirst!(worklist)
+
+                # remove the invariant.load attribute
+                md = metadata(value)
+                if haskey(md, LLVM.MD_invariant_load)
+                    delete!(md, LLVM.MD_invariant_load)
+                end
+                if haskey(md, LLVM.MD_tbaa)
+                    delete!(md, LLVM.MD_tbaa)
+                end
+
+                # recurse on the output of some instructions
+                if isa(value, LLVM.BitCastInst) ||
+                   isa(value, LLVM.GetElementPtrInst) ||
+                   isa(value, LLVM.AddrSpaceCastInst)
+                    append!(worklist, user.(collect(uses(value))))
+                end
+
+                # IMPORTANT NOTE: if we ever want to inline functions at the LLVM level,
+                # we need to recurse into call instructions here, and strip metadata from
+                # called functions (see CUDAnative.jl#238).
+            end
+        end
+    end
+end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
@@ -1426,7 +1457,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
-    args = GPUCompiler.classify_arguments(job, entry_f)
+    args = GPUCompiler.classify_arguments(job, entry_ft)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
@@ -1508,7 +1539,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         LLVM.set_subprogram!(wrapper_f, sp)
     end
 
-    GPUCompiler.fixup_metadata!(entry_f)
+    fixup_metadata!(entry_f)
     ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
@@ -1867,7 +1898,32 @@ end
         end
     end
 
-    # XXX: What if not `Nothing`/`Missing` what if struct or array or...
+
+	# calls fptr
+	ctx = LLVM.Context()
+	llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
+    if !isempty(sret_types)
+	  pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+	end
+    pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+    T_void = convert(LLVMType, Nothing; ctx)
+	llvm_f, _ = LLVM.Interop.create_function(T_void, llvmtys)
+	mod = LLVM.parent(llvm_f)
+    i64 = LLVM.IntType(64; ctx)
+	LLVM.Builder(ctx) do builder
+		entry = BasicBlock(llvm_f, "entry"; ctx)
+		position!(builder, entry)
+		params = collect(parameters(llvm_f))
+		lfn = @inbounds params[1]
+		params = params[2:end]
+		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in params])))
+		call!(builder, lfn, params)
+		ret!(builder)
+	end
+
+	ir = string(mod)
+	fn = LLVM.name(llvm_f)
+
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
         return quote
@@ -1876,18 +1932,18 @@ end
             GC.@preserve sret begin
                 tptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
                 tptr = Base.unsafe_convert(Ptr{Cvoid}, tptr)
-                ccall(fptr, Cvoid,
-                    (Ptr{Cvoid}, $(types...)),
-                    tptr, $(ccexprs...))
+                Base.llvmcall(($ir, $fn), Cvoid,
+                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                    fptr, tptr, $(ccexprs...))
             end
             return sret[]
         end
     else
         return quote
             Base.@_inline_meta
-            ccall(fptr, Cvoid,
-                ($(types...),),
-                $(ccexprs...))
+            Base.llvmcall(($ir, $fn), Cvoid,
+                Tuple{Ptr{Cvoid}, $(types...),},
+                fptr, $(ccexprs...))
             return ()
         end
     end
