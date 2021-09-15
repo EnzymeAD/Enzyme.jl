@@ -377,3 +377,14 @@ end
 
     @test_throws ErrorException autodiff(moo, Active(2.1))
 end
+
+@testset "GCPreserve" begin
+    function f(x, y)
+        GC.@preserve x y begin
+            ccall(:memcpy, Cvoid,
+                (Ptr{Float64},Ptr{Float64},Csize_t), x, y, 8)
+        end
+        nothing
+    end
+    autodiff(f, Duplicated([1.0], [0.0]), Duplicated([1.0], [0.0]))
+end

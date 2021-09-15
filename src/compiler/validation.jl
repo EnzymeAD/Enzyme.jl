@@ -320,6 +320,33 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end
+                if ptr == cglobal(:jl_array_grow_beg)
+                    fn = "jl_array_grow_beg"
+                end
+                if ptr == cglobal(:jl_array_grow_end)
+                    fn = "jl_array_grow_end"
+                end
+                if ptr == cglobal(:jl_array_grow_at)
+                    fn = "jl_array_grow_at"
+                end
+                if ptr == cglobal(:jl_array_del_beg)
+                    fn = "jl_array_del_beg"
+                end
+                if ptr == cglobal(:jl_array_del_end)
+                    fn = "jl_array_del_end"
+                end
+                if ptr == cglobal(:jl_array_del_at)
+                    fn = "jl_array_del_at"
+                end
+        if ptr == cglobal(:jl_value_ptr)
+            fn = "jl_value_ptr"
+        end
+        if ptr == cglobal(:jl_get_ptls_states)
+            fn = "jl_get_ptls_states"
+        end
+        if ptr == cglobal(:jl_gc_add_finalizer_th)
+            fn = "jl_gc_add_finalizer_th"
+        end
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))

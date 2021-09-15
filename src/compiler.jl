@@ -841,6 +841,89 @@ function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 end
 
 
+function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+    ops = collect(operands(orig))[1:end-1]
+
+    to_preserve = LLVM.Value[]
+
+    for op in ops
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+        push!(to_preserve, val)
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+
+        if active
+            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)))
+        end
+    end
+
+    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+    unsafe_store!(normalR, token.ref)
+
+    return nothing
+end
+
+const GCToks = Dict{LLVM.Instruction, LLVM.Instruction}()
+
+function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    builder = LLVM.Builder(B)
+    orig = LLVM.Instruction(OrigCI)
+    if haskey(GCToks, orig)
+        token = GCToks[orig]
+        delete!(GCToks, orig)
+    else
+        f   = LLVM.parent(orig)
+        mod = LLVM.parent(f)
+        ctx = LLVM.context(mod)
+
+        token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
+        GCToks[orig] = token
+    end
+    emit_gc_preserve_end(builder, token)
+    return nothing
+end
+
+function gcpreserve_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    return nothing
+end
+
+function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    origPres = operands(orig)[1]
+
+    ops = collect(operands(origPres))[1:end-1]
+
+    to_preserve = LLVM.Value[]
+
+    for op in ops
+        val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, op), B))
+        push!(to_preserve, val)
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+
+        if active
+            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B)))
+        end
+    end
+
+    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+
+    if haskey(GCToks, origPres)
+        placeHolder = GCToks[origPres]
+        LLVM.replace_uses!(placeHolder, token)
+        delete!(GCToks, origPres)
+        LLVM.API.LLVMInstructionEraseFromParent(placeholder)
+    else
+        GCToks[origPres] = token
+    end
+
+    return nothing
+end
+
+
+
 function __init__()
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
@@ -886,6 +969,16 @@ function __init__()
         "jl_array_copy",
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "llvm.julia.gc_preserve_begin",
+        @cfunction(gcpreserve_begin_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(gcpreserve_begin_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "llvm.julia.gc_preserve_end",
+        @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 
@@ -960,7 +1053,11 @@ const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
-    "jl_breakpoint"
+    "jl_breakpoint",
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
+    "jl_f_fieldtype",
+    # BIG TODO
+    "jl_gc_add_finalizer_th"
 ))
 
 function annotate!(mod)
@@ -975,7 +1072,7 @@ function annotate!(mod)
         end
     end
 
-    for fname in ("julia.get_pgcstack", "julia.ptls_states")
+    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
             # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
@@ -983,10 +1080,24 @@ function annotate!(mod)
         end
     end
 
-    for boxfn in ("jl_box_int64",)
+    for fname in ("julia.pointer_from_objref",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+        end
+    end
+
+    for boxfn in ("jl_box_int64", "julia.gc_alloc_obj", "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+        end
+    end
+
+    for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
+        if haskey(fns, gc)
+            fn = fns[gc]
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
         end
     end
