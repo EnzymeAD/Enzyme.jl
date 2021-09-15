@@ -17,6 +17,25 @@ else
     include("compiler/orcv2.jl")
 end
 
+# User facing interface
+abstract type AbstractThunk{F, RT, TT} end
+
+struct CombinedAdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+    fn::F
+    adjoint::Ptr{Cvoid}
+end
+
+struct AugmentedForwardThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+    fn::F
+    primal::Ptr{Cvoid}
+end
+
+struct AdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+    fn::F
+    adjoint::Ptr{Cvoid}
+end
+return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
+
 using .JIT
 
 function get_function!(builderF, mod, name)
@@ -235,6 +254,11 @@ else
 end
 end
 
+struct Tape
+    thunk::AdjointThunk
+    internal_tape # TODO Billy
+    shadow_return::Any
+end
 
 
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
@@ -284,7 +308,6 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     __args = Base.unsafe_wrap(Array, arg_ptr, arg_size)
     __shadows = Base.unsafe_wrap(Array, shadow_ptr, arg_size)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
     args = []
     actives = []
     for i in 1:arg_size
@@ -1043,10 +1066,11 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, split, parallel)
-    rt = job.params.rt
-    ctx     = context(mod)
-    dl      = string(LLVM.datalayout(mod))
+function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
+    rt  = job.params.rt
+    ctx = context(mod)
+    dl  = string(LLVM.datalayout(mod))
+    F   = typeof(adjoint.f)
 
     tt = [adjoint.tt.parameters...,]
 
@@ -1060,9 +1084,9 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     args_known_values = API.IntList[]
 
     ctx = LLVM.context(mod)
-    if !GPUCompiler.isghosttype(typeof(adjoint.f)) && !Core.Compiler.isconstType(typeof(adjoint.f))
+    if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         push!(args_activity, API.DFT_CONSTANT)
-        typeTree = typetree(typeof(adjoint.f), ctx, dl)
+        typeTree = typetree(F, ctx, dl)
         push!(args_typeInfo, typeTree)
         if split
             push!(uncacheable_args, true)
@@ -1122,6 +1146,10 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
         retType = API.DFT_CONSTANT
     elseif rt <: Active
         retType = API.DFT_OUT_DIFF
+    elseif rt <: Duplicated
+        retType = API.DFT_DUP_ARG
+    elseif rt <: DuplicatedNoNeed
+        retType = API.DFT_DUP_NONEED
     else
         error("Unhandled return type $rt")
     end
@@ -1156,44 +1184,272 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
 
-    retTT = typetree(GPUCompiler.deserves_argbox(eltype(rt)) ? Ptr{eltype(rt)} : eltype(rt), ctx, dl)
+    retTT = typetree(GPUCompiler.deserves_argbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
     if split
+        returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
         augmented = API.EnzymeCreateAugmentedPrimal(
-            logic, primalf, retType, args_activity, TA, #=returnUsed=# true,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, #=atomicAdd=# parallel, #=postOpt=# false)
+            logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# true, #=atomicAdd=# parallel, #=postOpt=# false)
 
-        # 2. get new_primalf
+        # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
+        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+        augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented)
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
         #     + specifically by setting uncacheable_args[i] = true
-        # 2. Forward tape from augmented primalf to adjoint (as last arg)
-        # 3. Make creation of augumented primalf vs joint forward and reverse optional
-
-        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        data = Array{Int64, 1}(undef, 3)
-        existed = Array{UInt8, 1}(undef, 3)
-
-        API.EnzymeExtractReturnInfo(augmented, data, existed)
 
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#false,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel, #=postOpt=#false))
+        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented)
     else
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#true,
             #=additionalArg=#C_NULL, typeInfo,
-            # uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
         augmented_primalf = nothing
+        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing)
     end
     return adjointf, augmented_primalf
+end
+
+function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented)
+    @assert Mode != API.DEM_ForwardMode
+    is_forward = Mode == API.DEM_ReverseModePrimal
+    is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
+    is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
+    needs_tape = Mode == API.DEM_ReverseModeGradient
+
+
+
+    mod = LLVM.parent(enzymefn)
+    ctx = LLVM.context(mod)
+
+    push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0; ctx))
+    T_void = convert(LLVMType, Nothing; ctx)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+
+    # Create Enzyme calling convention
+    T_wrapperargs = LLVMType[] # Arguments of the wrapper
+
+    T_JuliaSRet = LLVMType[]  # Struct return of all objects
+                              # + If the adjoint this will be all Active variables (includes all of T_EnzymeSRet)
+                              # + If the forward, this will be ?return, ?shadowReturn, ?tape
+
+    if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
+        isboxed = GPUCompiler.deserves_argbox(F)
+        llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
+        push!(T_wrapperargs, llvmT)
+    end
+
+    for T in argtypes
+        source_typ = eltype(T)
+        if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            @assert T <: Const
+            continue
+        end
+
+        isboxed = GPUCompiler.deserves_argbox(source_typ)
+        llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ; ctx)
+
+        push!(T_wrapperargs, llvmT)
+
+        T <: Const && continue
+
+        if T <: Active
+            if is_adjoint
+                # Use deserves_argbox??
+                llvmT = convert(LLVMType, source_typ; ctx)
+                push!(T_JuliaSRet, llvmT)
+            end
+        elseif T <: Duplicated || T <: DuplicatedNoNeed
+            push!(T_wrapperargs, llvmT)
+        else
+            error("calling convention should be annotated, got $T")
+        end
+    end
+
+    # API.DFT_OUT_DIFF
+    if is_adjoint && rettype <: Active
+        @assert allocatedinline(actualRetType)
+        push!(T_wrapperargs, convert(LLVMType, actualRetType; ctx))
+    end
+
+    data    = Array{Int64}(undef, 3)
+    existed = Array{UInt8}(undef, 3)
+    if is_forward
+        API.EnzymeExtractReturnInfo(augmented, data, existed)
+        # tape -- todo ??? on wrap
+        if existed[1] != 0
+            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+            push!(T_JuliaSRet, LLVM.LLVMType(tape))
+        else
+            error("Assuming always has a tape")
+        end
+        # primal return
+        if existed[2] != 0
+            push!(T_JuliaSRet, actualRetType)
+        end
+        # shadow return
+        if existed[3] != 0
+            push!(T_JuliaSRet, actualRetType)
+        else
+            @assert rettype <: Const || rettype <: Active
+        end
+    end
+
+    # sret argument
+    if !isempty(T_JuliaSRet)
+        pushfirst!(T_wrapperargs, LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
+    end
+
+    if needs_tape
+        push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeExtractTapeTypeFromAugmentation(augmented)))
+    end
+
+    FT = LLVM.FunctionType(T_void, T_wrapperargs)
+    llvm_f = LLVM.Function(mod, LLVM.name(enzymefn)*"wrap", FT)
+    dl = datalayout(mod)
+
+    params = [parameters(llvm_f)...]
+    target =  !isempty(T_JuliaSRet) ? 2 : 1
+
+    intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8; ctx), LLVM.IntType(64; ctx), LLVM.IntType(1; ctx)])
+    memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
+    LLVM.Builder(ctx) do builder
+        entry = BasicBlock(llvm_f, "entry"; ctx)
+        position!(builder, entry)
+
+        realparms = LLVM.Value[]
+        i = target
+
+        if !isempty(T_JuliaSRet)
+            sret = params[1]
+        end
+
+        activeNum = 0
+
+        if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
+            push!(realparms, params[i])
+            i+=1
+        end
+
+        for T in argtypes
+            T′ = eltype(T)
+
+            if GPUCompiler.isghosttype(T′) || Core.Compiler.isconstType(T′)
+                continue
+            end
+            push!(realparms, params[i])
+            i += 1
+            if T <: Const
+            elseif T <: Active
+                isboxed = GPUCompiler.deserves_argbox(T′)
+                if isboxed
+                    @assert !is_split
+                    ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)])
+                    cst = pointercast!(builder, ptr, ptr8)
+                    push!(realparms, ptr)
+
+                    cparms = LLVM.Value[cst,
+                    LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
+                    LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
+                    LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)]
+                    call!(builder, memsetIntr, cparms)
+                end
+                activeNum += 1
+            elseif T <: Duplicated || T <: DuplicatedNoNeed
+                push!(realparms, params[i])
+                i += 1
+            end
+        end
+
+        if is_adjoint && rettype <: Active
+            push!(realparms, params[i])
+            i += 1
+        end
+
+        if needs_tape
+            push!(realparms, params[i])
+            i += 1
+        end
+
+        val = call!(builder, enzymefn, realparms)
+
+        if is_forward
+            returnNum = 0
+            for i in 1:3
+                if existed[i] != 0
+                    eval = val
+                    if data[i] != -1
+                        eval = extract_value!(builder, val, data[i])
+                    end
+                    store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
+                    returnNum+=1
+                end
+            end
+        else
+            activeNum = 0
+            returnNum = 0
+            for T in argtypes
+                T′ = eltype(T)
+                isboxed = GPUCompiler.deserves_argbox(T′)
+                if T <: Active
+                    if !isboxed
+                        eval = extract_value!(builder, val, returnNum)
+                        store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
+                        returnNum+=1
+                    end
+                    activeNum+=1
+                end
+            end
+        end
+        ret!(builder)
+    end
+
+    return llvm_f
+end
+
+function fixup_metadata!(f::LLVM.Function)
+    for param in parameters(f)
+        if isa(llvmtype(param), LLVM.PointerType)
+            # collect all uses of the pointer
+            worklist = Vector{LLVM.Instruction}(user.(collect(uses(param))))
+            while !isempty(worklist)
+                value = popfirst!(worklist)
+
+                # remove the invariant.load attribute
+                md = metadata(value)
+                if haskey(md, LLVM.MD_invariant_load)
+                    delete!(md, LLVM.MD_invariant_load)
+                end
+                if haskey(md, LLVM.MD_tbaa)
+                    delete!(md, LLVM.MD_tbaa)
+                end
+
+                # recurse on the output of some instructions
+                if isa(value, LLVM.BitCastInst) ||
+                   isa(value, LLVM.GetElementPtrInst) ||
+                   isa(value, LLVM.AddrSpaceCastInst)
+                    append!(worklist, user.(collect(uses(value))))
+                end
+
+                # IMPORTANT NOTE: if we ever want to inline functions at the LLVM level,
+                # we need to recurse into call instructions here, and strip metadata from
+                # called functions (see CUDAnative.jl#238).
+            end
+        end
+    end
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
@@ -1284,7 +1540,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         LLVM.set_subprogram!(wrapper_f, sp)
     end
 
-    GPUCompiler.fixup_metadata!(entry_f)
+    fixup_metadata!(entry_f)
     ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
@@ -1330,7 +1586,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-
+    
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
@@ -1349,7 +1605,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.tanh => (:tanh, 1),
         Base.FastMath.tanh_fast => (:tanh, 1)
     )
+    actualRetType = nothing
     for (mi, k) in meta.compiled
+        haskey(functions(mod), k.specfunc) || continue
+        
+        llvmfn = functions(mod)[k.specfunc]
+        if llvmfn == primalf
+            actualRetType = k.ci.rettype
+        end
+
         meth = mi.def
         name = meth.name
         jlmod  = meth.module
@@ -1357,10 +1621,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
 
+
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
         if func == Base.println
-            llvmfn = functions(mod)[k.specfunc]
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             continue
         end
@@ -1393,6 +1657,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # Need to wrap the code when outermost
         must_wrap |= llvmfn == primalf
     end
+    @assert actualRetType != nothing
 
     if must_wrap
         llvmfn = primalf
@@ -1449,7 +1714,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
     else
         adjointf = primalf
         augmented_primalf = nothing
@@ -1486,6 +1751,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     adjointf = functions(mod)[adjointf_name]
+
     # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
 
     if process_module
@@ -1518,42 +1784,31 @@ struct Thunk
     primal::Ptr{Cvoid}
 end
 
-# User facing interface
-abstract type AbstractThunk{F, RT, TT} end
-
-struct CombinedAdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
-    fn::F
-    adjoint::Ptr{Cvoid}
-end
-
-struct AugmentedForwardThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
-    fn::F
-    primal::Ptr{Cvoid}
-end
-
-struct AdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
-    fn::F
-    adjoint::Ptr{Cvoid}
-end
-
-return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
-
 @inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, Val(false), TT, RT, thunk.fn, args...)
+   enzyme_call(thunk.adjoint, CombinedAdjointThunk, TT, RT, thunk.fn, args...)
 
 @inline (thunk::AdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, Val(true), TT, RT, thunk.fn, args...)
+   enzyme_call(thunk.adjoint, AdjointThunk, TT, RT, thunk.fn, args...)
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, tape::Val{Tape}, tt::Type{T},
-                                rt::Type{RT}, f::F, args::Vararg{Any, N}) where {F, T, RT, N, Tape}
+@inline (thunk::AugmentedForwardThunk{F, RT, TT})(args...) where {F, RT, TT} =
+   enzyme_call(thunk.primal, AugmentedForwardThunk, TT, RT, thunk.fn, args...)
+
+@generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, tt::Type{T},
+                                rt::Type{RT}, f::F, args::Vararg{Any, N}) where {F, T, RT, N, CC}
+
+    is_forward = CC <: AugmentedForwardThunk
+    is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
+    is_split   = CC <: AdjointThunk || CC <: AugmentedForwardThunk
+    needs_tape = CC <: AdjointThunk
+
     argtt    = tt.parameters[1]
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
     if rettype <: Active
-        @assert length(argtypes)+1 == length(argexprs)
+        @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
     elseif rettype <: Const
-        @assert length(argtypes)   == length(argexprs)
+        @assert length(argtypes)              + needs_tape == length(argexprs)
     else
         error("Duplicated returns not handled.")
     end
@@ -1564,217 +1819,133 @@ return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
         error("return type is Union{}, giving up.")
     end
 
-    LLVM.Context() do ctx
-        T_void = convert(LLVMType, Nothing; ctx)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    sret_types  = DataType[]  # Julia types of all returned variables
+    # By ref values we create and need to preserve
+    ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
 
-        # Create Enzyme calling convention
-        T_wrapperargs = LLVMType[] # Arguments of the wrapper
-        T_EnzymeSRet = LLVMType[] # Struct returns of Active variables in the enzyme call
-                                  # Equal to all Active vars passed by value
-        T_JuliaSRet = LLVMType[]  # Struct return of all Active variables (includes all of T_EnzymeSRet)
-        sret_types  = DataType[]  # Julia types of all Active variables
-        inputexprs = Union{Expr, Symbol}[]
-        # By ref values we create and need to preserve
-        ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
-
-        if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-            isboxed = GPUCompiler.deserves_argbox(F)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
-            argexpr = :(f)
-            if isboxed
-                push!(types, Any)
-            else
-                push!(types, F)
-            end
-
-            push!(ccexprs, argexpr)
-            push!(T_wrapperargs, llvmT)
+    if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
+        isboxed = GPUCompiler.deserves_argbox(F)
+        argexpr = :(f)
+        if isboxed
+            push!(types, Any)
+        else
+            push!(types, F)
         end
 
-        for (i, T) in enumerate(argtypes)
-            source_typ = eltype(T)
-            if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
-                @assert T <: Const
-                continue
-            end
-            expr = argexprs[i]
+        push!(ccexprs, argexpr)
+    end
 
-            isboxed = GPUCompiler.deserves_argbox(source_typ)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ; ctx)
-            argexpr = Expr(:., expr, QuoteNode(:val))
+    for (i, T) in enumerate(argtypes)
+        source_typ = eltype(T)
+        if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            @assert T <: Const
+            continue
+        end
+        expr = argexprs[i]
+
+        isboxed = GPUCompiler.deserves_argbox(source_typ)
+        argexpr = Expr(:., expr, QuoteNode(:val))
+        if isboxed
+            push!(types, Any)
+        else
+            push!(types, source_typ)
+        end
+
+        push!(ccexprs, argexpr)
+
+        T <: Const && continue
+
+        if T <: Active
+            if is_adjoint
+                push!(sret_types, source_typ)
+            end
+        elseif T <: Duplicated || T <: DuplicatedNoNeed
+            argexpr =  Expr(:., expr, QuoteNode(:dval))
             if isboxed
                 push!(types, Any)
             else
                 push!(types, source_typ)
             end
-
-
             push!(ccexprs, argexpr)
-            push!(T_wrapperargs, llvmT)
-
-            T <: Const && continue
-
-            if T <: Active
-                # Use deserves_argbox??
-                llvmT = convert(LLVMType, source_typ; ctx)
-                push!(sret_types, source_typ)
-                push!(T_JuliaSRet, llvmT)
-                if !isboxed # XXX: Not consistent
-                    push!(T_EnzymeSRet, llvmT)
-                end
-            elseif T <: Duplicated || T <: DuplicatedNoNeed
-                argexpr =  Expr(:., expr, QuoteNode(:dval))
-                if isboxed
-                    push!(types, Any)
-                else
-                    push!(types, source_typ)
-                end
-                push!(ccexprs, argexpr)
-                push!(T_wrapperargs, llvmT)
-            else
-                error("calling convention should be annotated, got $T")
-            end
-        end
-
-        # API.DFT_OUT_DIFF
-        if rettype <: Active
-            @assert allocatedinline(eltype(rettype))
-            push!(types, eltype(rettype))
-            push!(T_wrapperargs, convert(LLVMType, eltype(rettype); ctx))
-            push!(ccexprs, last(argexprs))
-        end
-        # XXX: What if not `Nothing`/`Missing` what if struct or array or...
-
-        if !isempty(T_EnzymeSRet)
-            ret = LLVM.StructType(T_EnzymeSRet; ctx)
         else
-            ret = T_void
+            error("calling convention should be annotated, got $T")
         end
+    end
 
-        # pointer to call
-        pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
+    # API.DFT_OUT_DIFF
+    if is_adjoint && rettype <: Active
+        @assert allocatedinline(eltype(rettype))
+        push!(types, eltype(rettype))
+        idx = length(argtypes) + 1
+        push!(ccexprs, argexprs[idx])
+    end
 
-        # sret argument
-        if !isempty(sret_types)
-            pushfirst!(T_wrapperargs, convert(LLVMType, Int; ctx))
+    if needs_tape
+        # TODO
+        push!(types, Ptr{Cvoid})
+        push!(ccexprs, last(argexprs))
+    end
+
+    if is_forward
+        # Tape
+        push!(sret_types, Ptr{Cvoid})
+
+        returnUsed = !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
+        if returnUsed
+            push!(sret_types, eltype(rettype))
+            if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                push!(sret_types, eltype(rettype))
+            end
         end
+    end
 
-        llvm_f, _ = LLVM.Interop.create_function(T_void, T_wrapperargs)
-        mod = LLVM.parent(llvm_f)
-        dl = datalayout(mod)
 
-        params = [parameters(llvm_f)...]
-        target =  !isempty(sret_types) ? 2 : 1
+	# calls fptr
+	ctx = LLVM.Context()
+	llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
+    if !isempty(sret_types)
+	  pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+	end
+    pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+    T_void = convert(LLVMType, Nothing; ctx)
+	llvm_f, _ = LLVM.Interop.create_function(T_void, llvmtys)
+	mod = LLVM.parent(llvm_f)
+    i64 = LLVM.IntType(64; ctx)
+	LLVM.Builder(ctx) do builder
+		entry = BasicBlock(llvm_f, "entry"; ctx)
+		position!(builder, entry)
+		params = collect(parameters(llvm_f))
+		lfn = @inbounds params[1]
+		params = params[2:end]
+		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in params])))
+		call!(builder, lfn, params)
+		ret!(builder)
+	end
 
-        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8; ctx), LLVM.IntType(64; ctx), LLVM.IntType(1; ctx)])
-        memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
-        LLVM.Builder(ctx) do builder
-            entry = BasicBlock(llvm_f, "entry"; ctx)
-            position!(builder, entry)
+	ir = string(mod)
+	fn = LLVM.name(llvm_f)
 
-            realparms = LLVM.Value[]
-            i = target+1
-
-            if !isempty(T_JuliaSRet)
-                sret = inttoptr!(builder, params[1], LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
+    @assert length(types) == length(ccexprs)
+    if !isempty(sret_types)
+        return quote
+            Base.@_inline_meta
+            sret = Ref{$(Tuple{sret_types...})}()
+            GC.@preserve sret begin
+                tptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
+                tptr = Base.unsafe_convert(Ptr{Cvoid}, tptr)
+                Base.llvmcall(($ir, $fn), Cvoid,
+                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                    fptr, tptr, $(ccexprs...))
             end
-
-            activeNum = 0
-
-            if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-                push!(realparms, params[i])
-                i+=1
-            end
-
-            for T in argtypes
-                T′ = eltype(T)
-
-                if GPUCompiler.isghosttype(T′) || Core.Compiler.isconstType(T′)
-                    continue
-                end
-                push!(realparms, params[i])
-                i+=1
-                if T <: Const
-                elseif T <: Active
-                    isboxed = GPUCompiler.deserves_argbox(T′)
-                    if isboxed
-                        ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)])
-                        cst = pointercast!(builder, ptr, ptr8)
-                        push!(realparms, ptr)
-
-                        cparms = LLVM.Value[cst,
-                        LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
-                        LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
-                        LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)]
-                        call!(builder, memsetIntr, cparms)
-                    end
-                    activeNum+=1
-                elseif T <: Duplicated || T <: DuplicatedNoNeed
-                    push!(realparms, params[i])
-                    i+=1
-                end
-            end
-
-            # Primal Differential Return type
-            if rettype <: Active
-                push!(realparms, params[i])
-            end
-
-
-            E_types = LLVM.LLVMType[]
-            for p in realparms
-                push!(E_types, LLVM.llvmtype(p))
-            end
-            ft = LLVM.FunctionType(ret, E_types)
-
-            ptr = inttoptr!(builder, params[target], LLVM.PointerType(ft))
-            val = call!(builder, ptr, realparms)
-            if !isempty(T_JuliaSRet)
-                activeNum = 0
-                returnNum = 0
-                for T in argtypes
-                    T′ = eltype(T)
-                    isboxed = GPUCompiler.deserves_argbox(T′)
-                    if T <: Active
-                        if !isboxed
-                            eval = extract_value!(builder, val, returnNum)
-                            store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
-                            returnNum+=1
-                        end
-                        activeNum+=1
-                    end
-                end
-            end
-            ret!(builder)
+            return sret[]
         end
-
-        ir = string(mod)
-        fn = LLVM.name(llvm_f)
-
-        if !isempty(T_JuliaSRet)
-            quote
-                Base.@_inline_meta
-                sret = Ref{$(Tuple{sret_types...})}()
-                GC.@preserve sret begin
-                    tptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
-                    tptr = Base.unsafe_convert(Ptr{Cvoid}, tptr)
-                    Base.llvmcall(($ir,$fn), Cvoid,
-                        $(Tuple{Ptr{Cvoid}, Ptr{Cvoid}, types...}),
-                        tptr, fptr, $(ccexprs...))
-                end
-                return sret[]
-            end
-        else
-            quote
-                Base.@_inline_meta
-                Base.llvmcall(($ir,$fn), Cvoid,
-                    $(Tuple{Ptr{Cvoid}, types...}),
-                    fptr, $(ccexprs...))
-                return ()
-            end
+    else
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(($ir, $fn), Cvoid,
+                Tuple{Ptr{Cvoid}, $(types...),},
+                fptr, $(ccexprs...))
+            return ()
         end
     end
 end
@@ -1854,6 +2025,10 @@ function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F,
         rt = A
     end
 
+    if eltype(rt) == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
     # This is counter-intuitive since we would expect the cache to be split
@@ -1868,8 +2043,8 @@ function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F,
     thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
     if Split
         augmented = AugmentedForwardThunk{F, rt, adjoint.tt}(f, thunk.primal)
-        pullback  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
-        return (augmented, pullback)
+        adjoint  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        return (augmented, adjoint)
     else
         return CombinedAdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
     end

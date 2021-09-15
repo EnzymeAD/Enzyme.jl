@@ -207,6 +207,10 @@ code, as well as high-order differentiation.
         rt = A
     end
 
+    if eltype(rt) == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
     thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
     if rt <: Active
