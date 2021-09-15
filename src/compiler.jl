@@ -1174,7 +1174,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
-    args = GPUCompiler.classify_arguments(job, entry_f)
+    args = GPUCompiler.classify_arguments(job, entry_ft)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
