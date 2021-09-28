@@ -320,6 +320,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 if ptr == cglobal(:malloc)
                     fn = "malloc"
                 end
+                if ptr == cglobal(:memmove)
+                    fn = "memmove"
+                end
                 if ptr == cglobal(:jl_array_grow_beg)
                     fn = "jl_array_grow_beg"
                 end
