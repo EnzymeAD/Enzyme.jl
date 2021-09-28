@@ -1,6 +1,6 @@
 module Compiler
 
-import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_activity
+import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_activity, eltype
 import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
                  TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
@@ -239,20 +239,10 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    @show "rgf", arg_size
-    flush(stdout)
-    flush(stderr)
     args = Any[]
     
     for i in 1:arg_size
-      @show "rgf i=", i, 
-      flush(stdout)
-      flush(stderr)
         p = Base.unsafe_load(arg_ptr, i)
-      @show "rgf", p
-      flush(stdout)
-      flush(stderr)
         if __activity[i] != 0
             if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
                 push!(args, Active(p))
@@ -266,7 +256,9 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     end
 
     # TODO: Annotation of return value
-    annotation = Active
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, annotation, tt′, Val(true))
@@ -278,13 +270,7 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 
     if annotation <: Active
         # This assumes that we have an Immutable object here that got passed as a boxed value
-        # TODO: what to do with mutable?
         shadow_return = Ref(zero(resT))
-        @show "generic fwd shadow return", shadow_return, shadow_return[]
-        # shadow_return = allocate_box(resT)
-        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
-        # This should have been:
-        # Base.unsafe_store!(reinterpret(Ptr{Ptr{Cvoid}, ret_ptr), shadow_return, 2) # due to this store we need typetag
         Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
     elseif annotation <: Const
         Base.unsafe_store!(ret_ptr, origRet, 2)
@@ -323,15 +309,12 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 
     tape = tape::Tape
 
-    # if tape.shadow_return !== C_NULL
     if tape.shadow_return !== nothing
-        # val = Base.unsafe_load(reinterpret(Ptr{tape.resT}, tape.shadow_return))
         val = tape.shadow_return
         if !(val isa tape.resT)
             val = tape.shadow_return[]
         end
         push!(args, val)
-        # free_box(tape.shadow_return)
     end
     if tape.internal_tape !== nothing
         push!(args, tape.internal_tape)
@@ -345,21 +328,14 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         # they are not idempotent on the Julia level. We could "force" `a` to be
         # a boxed T, but would lose the mutable memory semantics that Enzyme requires
         if a isa Base.RefValue
-            # TODO, what if primal value is `d isa RefValue`?
             @assert eltype(a) == typeof(d)
             a[] += d
-            @show "post generic shadow active", a, a[], d
         else
-            @assert false "Expected Base.RefValue for active"
+            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+            unsafe_store!(ref, d+a)
         end
-        # ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-        # unsafe_store!(ref, d+a)
     end
     
-    if tape.shadow_return !== nothing
-        @show "post generic shadow return", tape.shadow_return, tape.shadow_return[]
-    end
-
     return nothing
 end
 
@@ -480,8 +456,9 @@ function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
         end
     end
 
-    # TODO: Annotation of return value
-    annotation = Active
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, annotation, tt′, Val(true))
@@ -493,9 +470,6 @@ function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
 
     if annotation <: Active
         shadow_return = Ref(zero(resT))
-        @show "apply latest fwd shadow", shadow_return, shadow_return[]
-        # shadow_return = allocate_box(resT)
-        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
         Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
     elseif annotation <: Const
         Base.unsafe_store!(ret_ptr, origRet, 2)
@@ -534,7 +508,11 @@ function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     tape = tape::Tape
 
     if tape.shadow_return !== nothing
-        push!(args, tape.shadow_return)
+        val = tape.shadow_return
+        if !(val isa tape.resT)
+            val = tape.shadow_return[]
+        end
+        push!(args, val)
     end
     if tape.internal_tape !== nothing
         push!(args, tape.internal_tape)
@@ -544,10 +522,18 @@ function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
 
     for (d, (s, i)) in zip(tup, actives)
         a = unsafe_load(s, i)
-        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-        unsafe_store!(ref, d+a)
+        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
+        # they are not idempotent on the Julia level. We could "force" `a` to be
+        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+        if a isa Base.RefValue
+            @assert eltype(a) == typeof(d)
+            a[] += d
+        else
+            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+            unsafe_store!(ref, d+a)
+        end
     end
-
+    
     return nothing
 end
 
