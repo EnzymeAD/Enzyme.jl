@@ -238,44 +238,6 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     thunk(args′...)
 end
 
-@inline function pack(args...)
-    ntuple(Val(length(args))) do i
-        Base.@_inline_meta
-        arg = args[i]
-        @assert arg isa AbstractFloat
-        return Duplicated(Ref(args[i]), Ref(zero(args[i])))
-    end
-end
-
-@inline unpack() = ()
-@inline unpack(arg) = (arg[],)
-@inline unpack(arg, args...) = (arg[], unpack(args...)...)
-
-@inline ∇unpack() = ()
-@inline ∇unpack(arg::Duplicated) = (arg.dval[],)
-@inline ∇unpack(arg::Duplicated, args...) = (arg.dval[], ∇unpack(args...)...)
-
-# TODO: Remove these functions
-function gradient(f, args...)
-    ∇args = pack(args...)
-    f′ = function (args...)
-        Base.@_inline_meta
-        f(unpack(args...)...)
-    end
-    autodiff(f′, ∇args...)
-    return ∇unpack(∇args...)
-end
-
-function pullback(f, args...)
-    return (c) -> begin
-        ∇vals = gradient(f, args...)
-        return ntuple(Val(length(∇vals))) do i
-            Base.@_inline_meta
-            return c*∇vals[i]
-        end
-    end
-end
-
 using Adapt
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))

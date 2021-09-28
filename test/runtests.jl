@@ -2,7 +2,6 @@ using Enzyme
 using Test
 using FiniteDifferences
 using ForwardDiff
-using Zygote
 using Statistics
 
 # Test against FiniteDifferences
@@ -62,13 +61,6 @@ end
 
     @test ∇y[] == 1.0
     @test ∇x[] == 2.0
-end
-
-@testset "Zygote" begin
-    mul(a, b) = a*b
-    Zygote.@adjoint mul(a, b) = mul(a, b), Enzyme.pullback(mul, a, b)
-
-    @test gradient(mul, 2.0, 3.0) == (3.0, 2.0)
 end
 
 @testset "Simple tests" begin
@@ -197,14 +189,12 @@ end
     fd = central_fdm(5, 1)(foo, x)
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
-    @test fd ≈ Zygote.gradient(foo, x)[1]
     @test fd ≈ first(autodiff(foo, Active, Active(x)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
-    @test fd ≈ Zygote.gradient(foo, x)[1]
     @test fd ≈ first(autodiff(foo, Active, Active(x)))
 
     f74(a, c) = a * √c
