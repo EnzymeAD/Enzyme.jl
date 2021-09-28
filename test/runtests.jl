@@ -388,3 +388,20 @@ end
     end
     autodiff(f, Duplicated([1.0], [0.0]), Duplicated([1.0], [0.0]))
 end
+
+@testset "GCPreserve2" begin
+    function f!(a_out, a_in)
+           a_out[1:end-1] .= a_in[2:end]
+           return nothing
+    end
+    a_in = rand(4)
+    a_out = a_in
+
+    shadow_a_out = ones(4)
+    shadow_a_in = shadow_a_out
+
+    autodiff(f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
+    
+    @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
+    @test shadow_a_out ≈ Float64[0.0, 1.0, 1.0, 2.0]
+end
