@@ -53,8 +53,10 @@ function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
             push!(calls, inst)
         end
     end
-    for inst in calls
-        check_ir!(job, errors, imported, inst, known_fns)
+
+    while length(calls) > 0
+        inst = pop!(calls)
+        check_ir!(job, errors, imported, inst, known_fns, calls)
     end
     return errors
 end
@@ -63,7 +65,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -247,6 +249,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                             if isa(ld, LLVM.LoadInst)
                                 b = Builder(ctx)
                                 position!(b, ld)
+                                for u in LLVM.uses(ld)
+                                    u = LLVM.user(u)
+                                    if isa(u, LLVM.CallInst)
+                                        push!(calls, u)
+                                    end
+                                end
                                 replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
                             end
                         end
@@ -255,7 +263,34 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
 
                 b = Builder(ctx)
                 position!(b, inst)
-                replace_uses!(inst, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                replacement = LLVM.inttoptr!(b, replaceWith, llvmtype(inst))
+                            for u in LLVM.uses(inst)
+                                u = LLVM.user(u)
+                                if isa(u, LLVM.CallInst)
+                                    push!(calls, u)
+                                end
+                                if isa(u, LLVM.PHIInst)
+                                    if all(x->first(x) == inst || first(x) == replacement, LLVM.incoming(u))
+
+                                        for u in LLVM.uses(u)
+                                            u = LLVM.user(u)
+                                            if isa(u, LLVM.CallInst)
+                                                push!(calls, u)
+                                            end
+                                            if isa(u, LLVM.BitCastInst)
+                                                for u1 in LLVM.uses(u)
+                                                    u1 = LLVM.user(u1)
+                                                    if isa(u1, LLVM.CallInst)
+                                                        push!(calls, u1)
+                                                    end
+                                                end
+                                                replace_uses!(u, LLVM.inttoptr!(b, replaceWith, llvmtype(u)))
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                replace_uses!(inst, replacement)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
         end
@@ -341,15 +376,18 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns)
                 if ptr == cglobal(:jl_array_del_at)
                     fn = "jl_array_del_at"
                 end
-        if ptr == cglobal(:jl_value_ptr)
-            fn = "jl_value_ptr"
-        end
-        if ptr == cglobal(:jl_get_ptls_states)
-            fn = "jl_get_ptls_states"
-        end
-        if ptr == cglobal(:jl_gc_add_finalizer_th)
-            fn = "jl_gc_add_finalizer_th"
-        end
+                if ptr == cglobal(:jl_array_ptr)
+                    fn = "jl_array_ptr"
+                end
+                if ptr == cglobal(:jl_value_ptr)
+                    fn = "jl_value_ptr"
+                end
+                if ptr == cglobal(:jl_get_ptls_states)
+                    fn = "jl_get_ptls_states"
+                end
+                if ptr == cglobal(:jl_gc_add_finalizer_th)
+                    fn = "jl_gc_add_finalizer_th"
+                end
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))

@@ -592,7 +592,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         if active
             shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
             push!(to_preserve, shadow_val)
-            LLVM.store!(B, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)),
+            LLVM.store!(B, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B)),
                         LLVM.inbounds_gep!(B, shadow, idx))
         else
             LLVM.store!(B, LLVM.null(llvmtype(op)),
@@ -894,6 +894,20 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 end
 
 
+function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_f_setfield")
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+
+function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_f_setfield")
+    return nothing
+end
+
 
 function register_handler!(variants, fwd_handler, rev_handler)
     for variant in variants
@@ -956,6 +970,11 @@ function __init__()
         ("llvm.julia.gc_preserve_end",),
         @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    API.EnzymeRegisterCallHandler(
+        "jl_f_setfield",
+        @cfunction(setfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(setfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 
@@ -1028,7 +1047,7 @@ end
 
 const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
-    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
     "jl_breakpoint",
     "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
@@ -1746,6 +1765,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         must_wrap |= llvmfn == primalf
     end
     @assert actualRetType != nothing
+    
 
     if must_wrap
         llvmfn = primalf
