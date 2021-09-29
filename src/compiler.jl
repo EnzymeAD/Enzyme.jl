@@ -211,29 +211,6 @@ struct Tape
     resT::DataType
 end
 
-function allocate_box(T)
-    ptr = Libc.malloc(16 + sizeof(T)) # only need 8bytes for tag, but need alignment of 16
-    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) + 16)
-    jl_set_typeof(ptr, T)
-    ptr
-end
-
-function free_box(ptr)
-    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) - 16)
-    Libc.free(ptr)
-end
-
-function jl_set_typeof(v::Ptr{Cvoid}, T)
-    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
-    Base.unsafe_store!(tag, T) # set tag
-    return nothing
-end
-
-function jl_typeof(v::Ptr{Cvoid})
-    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
-    return Base.unsafe_load(tag)
-end
-
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
