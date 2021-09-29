@@ -211,29 +211,6 @@ struct Tape
     resT::DataType
 end
 
-function allocate_box(T)
-    ptr = Libc.malloc(16 + sizeof(T)) # only need 8bytes for tag, but need alignment of 16
-    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) + 16)
-    jl_set_typeof(ptr, T)
-    ptr
-end
-
-function free_box(ptr)
-    ptr = reinterpret(Ptr{Cvoid}, reinterpret(UInt, ptr) - 16)
-    Libc.free(ptr)
-end
-
-function jl_set_typeof(v::Ptr{Cvoid}, T)
-    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
-    Base.unsafe_store!(tag, T) # set tag
-    return nothing
-end
-
-function jl_typeof(v::Ptr{Cvoid})
-    tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
-    return Base.unsafe_load(tag)
-end
-
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
@@ -918,6 +895,12 @@ end
 
 
 
+function register_handler!(variants, fwd_handler, rev_handler)
+    for variant in variants
+        API.EnzymeRegisterCallHandler(variant, fwd_handler, rev_handler)
+    end
+end
+
 function __init__()
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
@@ -934,43 +917,43 @@ function __init__()
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_apply_generic",
+    register_handler!(
+        ("jl_apply_generic", "ijl_apply_generic"),
         @cfunction(generic_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(generic_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_invoke",
+    register_handler!(
+        ("jl_invoke",),
         @cfunction(invoke_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(invoke_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_f__apply_latest",
+    register_handler!(
+        ("jl_f__apply_latest",),
         @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_f__call_latest",
+    register_handler!(
+        ("jl_f__call_latest",),
         @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_new_task",
+    register_handler!(
+        ("jl_new_task",),
         @cfunction(newtask_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(newtask_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_array_copy",
+    register_handler!(
+        ("jl_array_copy",),
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "llvm.julia.gc_preserve_begin",
+    register_handler!(
+        ("llvm.julia.gc_preserve_begin",),
         @cfunction(gcpreserve_begin_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(gcpreserve_begin_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "llvm.julia.gc_preserve_end",
+    register_handler!(
+        ("llvm.julia.gc_preserve_end",),
         @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
