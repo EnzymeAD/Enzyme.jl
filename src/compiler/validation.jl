@@ -73,18 +73,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
 
         # some special handling for runtime functions that we don't implement
         if fn == "jl_get_binding_or_error"
-            try
-                m, sym, _ = operands(inst)
-                sym = first(operands(sym::ConstantExpr))::ConstantInt
-                sym = convert(Int, sym)
-                sym = Ptr{Cvoid}(sym)
-                sym = Base.unsafe_pointer_to_objref(sym)
-                push!(errors, (DELAYED_BINDING, bt, sym))
-            catch e
-                isa(e,TypeError) || rethrow()
-                @debug "Decoding arguments to jl_get_binding_or_error failed" inst bb=LLVM.parent(inst)
-                push!(errors, (DELAYED_BINDING, bt, nothing))
-            end
         elseif fn == "jl_invoke"
         elseif fn == "jl_apply_generic"
         elseif fn == "gpu_malloc"
