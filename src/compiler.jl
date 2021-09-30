@@ -802,6 +802,38 @@ function newtask_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     return nothing
 end
 
+function enq_work_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for Base.enq_work")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for Base.enq_work")
+    return nothing
+end
+
+function wait_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for Base.wait")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+
+    return nothing
+end
+
+function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for Base.wait")
+    return nothing
+end
+
 function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented forward for jl_array_copy")
 
@@ -975,6 +1007,16 @@ function __init__()
         @cfunction(newtask_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
+        ("jl_enq_work",),
+        @cfunction(enq_work_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(enq_work_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    register_handler!(
+        ("jl_wait",),
+        @cfunction(wait_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(wait_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    register_handler!(
         ("jl_array_copy",),
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
@@ -1127,6 +1169,10 @@ function annotate!(mod)
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
         end
     end
+end
+
+function noop_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    return UInt8(false)
 end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
@@ -1307,6 +1353,12 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.pointer_from_objref" => @cfunction(inout_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_wait" => @cfunction(noop_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_enq_work" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )
@@ -1764,6 +1816,18 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             N = adim(AT)
             bitsunion = Base.isbitsunion(T)
             error("jl_copy unhandled")
+        end
+        if func == Base.enq_work
+            attributes = function_attributes(llvmfn)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
+            continue
+        end
+        if func == Base.wait || func == Base._wait
+            attributes = function_attributes(llvmfn)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
+            continue
         end
 
         func ∈ keys(known_ops) || continue

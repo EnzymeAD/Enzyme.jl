@@ -405,4 +405,14 @@ end
     end
     @test 1.0 ≈ autodiff(f, false, Active(2.14))[1]
     @test_throws Base.UndefVarError autodiff(f, true, Active(2.14))
+
+    function foo(x, y)
+        if x
+            Threads.@threads for N in 1:5:20
+                println("The number of this iteration is $N")
+            end
+        end
+        y
+    end
+    @test 1.0 ≈ autodiff(foo, false, Active(2.14))[1]
 end
