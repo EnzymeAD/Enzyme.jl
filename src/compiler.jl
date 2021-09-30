@@ -571,8 +571,11 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         LLVM.store!(B, LLVM.null(T_prjlvalue), LLVM.inbounds_gep!(B, ret, idx))
     end
 
-    jl_fn = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start]))
-    vals = LLVM.Value[jl_fn, ret, primal, shadow, activity, llnum]
+    jl_fn = API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start])
+    if lookup
+        jl_fn = API.EnzymeGradientUtilsLookup(gutils, jl_fn, B)
+    end
+    vals = LLVM.Value[LLVM.Value(jl_fn), ret, primal, shadow, activity, llnum]
 
     to_preserve = LLVM.Value[]
 
@@ -592,7 +595,11 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         if active
             shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
             push!(to_preserve, shadow_val)
-            LLVM.store!(B, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B)),
+            inverted = API.EnzymeGradientUtilsInvertPointer(gutils, op, B)
+            if lookup
+                inverted = API.EnzymeGradientUtilsLookup(gutils, inverted, B)
+            end
+            LLVM.store!(B, LLVM.Value(inverted),
                         LLVM.inbounds_gep!(B, shadow, idx))
         else
             LLVM.store!(B, LLVM.null(llvmtype(op)),
@@ -908,6 +915,22 @@ function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     return nothing
 end
 
+function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
+    err = emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_get_binding_or_error")
+    API.moveBefore(CI, err)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+
+function get_binding_or_error_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_get_binding_or_error")
+    return nothing
+end
+
 
 function register_handler!(variants, fwd_handler, rev_handler)
     for variant in variants
@@ -942,12 +965,7 @@ function __init__()
         @cfunction(invoke_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
-        ("jl_f__apply_latest",),
-        @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-        @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
-    )
-    register_handler!(
-        ("jl_f__call_latest",),
+        ("jl_f__apply_latest", "jl_f__call_latest"),
         @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(apply_latest_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
@@ -971,10 +989,15 @@ function __init__()
         @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
-    API.EnzymeRegisterCallHandler(
-        "jl_f_setfield",
+    register_handler!(
+        ("jl_f_setfield",),
         @cfunction(setfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(setfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    register_handler!(
+        ("jl_get_binding_or_error","ijl_get_binding_or_error"),
+        @cfunction(get_binding_or_error_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(get_binding_or_error_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 

@@ -395,3 +395,14 @@ end
     @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
     @test shadow_a_out ≈ Float64[0.0, 1.0, 1.0, 2.0]
 end
+
+@testset "UndefVar" begin
+    function f(x, y)
+        if x
+            undefinedfnthowmagic()
+        end
+        y
+    end
+    @test 1.0 ≈ autodiff(f, false, Active(2.14))[1]
+    @test_throws Base.UndefVarError autodiff(f, true, Active(2.14))
+end
