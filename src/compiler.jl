@@ -18,26 +18,26 @@ else
 end
 
 # User facing interface
-abstract type AbstractThunk{F, RT, TT} end
+abstract type AbstractThunk{F, RT, TT, DF} end
 
-struct CombinedAdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
+struct CombinedAdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT, DF}
     fn::F
     adjoint::Ptr{Cvoid}
     dfn::DF
 end
 
-struct AugmentedForwardThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
+struct AugmentedForwardThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT, DF}
     fn::F
     primal::Ptr{Cvoid}
     dfn::DF
 end
 
-struct AdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
+struct AdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT, DF}
     fn::F
     adjoint::Ptr{Cvoid}
     dfn::DF
 end
-return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
+return_type(::AbstractThunk{F, RT, TT, DF}) where {F, RT, TT, DF} = RT
 
 using .JIT
 
@@ -207,17 +207,9 @@ end
 dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
-    # TASKING TODO 1/3
-    # fn, dfn = augmentAndGradient(fn)
-    # t = jl_new_task(fn)
-    # # shadow t
-    # dt = jl_new_task(dfn)
 
-function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, dpost::Any, ssize::Int)
-    @show fn, dfn, post, dpost, ssize
-
-    flush(stdout)
-    flush(stderr)
+function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ssize::Int)
+    @warn "active variables passeed by value to jl_new_task are not yet supported"
 
     tt′ = Tuple{}
     args = ()
@@ -233,14 +225,14 @@ function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, dp
         return res[2]
     end
 
-    ftask = ccall(:jl_new_task, Any, (Any, Any, Int), fclosure, post, ssize)
+    ftask = ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 
     function rclosure()
         adjoint(taperef[])
-        return nothing
+        return 0
     end
     
-    rtask = ccall(:jl_new_task, Any, (Any, Any, Int), rclosure, dpost, ssize)
+    rtask = ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), rclosure, post, ssize)
     
     Base.unsafe_store!(ret_ptr, ftask, 1)
     Base.unsafe_store!(ret_ptr, rtask, 2)
@@ -830,13 +822,17 @@ function emit_error(B::LLVM.Builder, string)
 end
 
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    # fn, dfn = augmentAndGradient(fn)
+    # t = jl_new_task(fn)
+    # # shadow t
+    # dt = jl_new_task(dfn)
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
-    fun = @cfunction(runtime_newtask_fwd, Cvoid, (Ptr{Any}, Any, Any, Any, Any, Int))
+    fun = @cfunction(runtime_newtask_fwd, Cvoid, (Ptr{Any}, Any, Any, Any, Int))
 
     B = LLVM.Builder(B)
     
@@ -862,13 +858,12 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[2], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))]
 
     to_preserve = LLVM.Value[vals[2], vals[3]]
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    T_args = LLVM.LLVMType[T_pprjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_int64]
+    T_args = LLVM.LLVMType[T_pprjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_int64]
     
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
@@ -887,11 +882,6 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     emit_gc_preserve_end(B, token)
 
-    # TASKING TODO 1/3
-    # fn, dfn = augmentAndGradient(fn)
-    # t = jl_new_task(fn)
-    # # shadow t
-    # dt = jl_new_task(dfn)
     return nothing
 end
 
@@ -934,9 +924,11 @@ function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     waitfn = find_match(mod, "jl_wait")
     @assert waitfn !== nothing
-    shadowtask = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
     cal = LLVM.call!(LLVM.Builder(B), waitfn, [shadowtask])
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    LLVM.API.LLVMSetInstructionCallConv(cal, conv)
     return nothing
 end
 
@@ -955,9 +947,11 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     enq_work_fn = find_match(mod, "jl_enq_work")
     @assert enq_work_fn !== nothing
-    shadowtask = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
     cal = LLVM.call!(LLVM.Builder(B), enq_work_fn, [shadowtask])
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    LLVM.API.LLVMSetInstructionCallConv(cal, conv)
     return nothing
 end
 
@@ -2022,12 +2016,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         if func == Base.enq_work
             attributes = function_attributes(llvmfn)
+            push!(custom, llvmfn)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
             continue
         end
         if func == Base.wait || func == Base._wait
             attributes = function_attributes(llvmfn)
+            push!(custom, llvmfn)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
             continue
@@ -2044,7 +2040,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
-        llvmfn = functions(mod)[k.specfunc]
         push!(custom, llvmfn)
 
         attributes = function_attributes(llvmfn)
@@ -2086,7 +2081,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         target_machine = GPUCompiler.llvm_machine(primal_job.target)
     end
 
-    parallel = false
+    parallel = Threads.nthreads() > 1
     process_module = false
     if parent_job !== nothing
         if parent_job.target isa GPUCompiler.PTXCompilerTarget ||
@@ -2125,8 +2120,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         for eattr in elems
             at = Attribute(eattr)
             if isa(at, LLVM.EnumAttribute)
-                if kind(at) == "noinline"
+                if kind(at) == kind(EnumAttribute("noinline"; ctx))
                     delete!(iter, at)
+                    break
                 end
             end
         end

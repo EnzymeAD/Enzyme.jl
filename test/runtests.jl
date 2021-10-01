@@ -14,9 +14,9 @@ include("abi.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk_a = Enzyme.Compiler.thunk(f, Active, Tuple{Active{Float64}})
-    thunk_b = Enzyme.Compiler.thunk(f, Const, Tuple{Const{Float64}})
-    thunk_c = Enzyme.Compiler.thunk(f, Active{Float64}, Tuple{Active{Float64}})
+    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}})
+    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}})
+    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}})
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
 
@@ -24,7 +24,7 @@ include("abi.jl")
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, Active, Tuple{Active{Float64}}, Val(true))
+    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(true))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -231,6 +231,26 @@ end
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
     include("packages/specialfunctions.jl")
+end
+
+@testset "Threads" begin
+
+    function tasktest(M, x)
+        xr = Ref(x)
+        task = Threads.@spawn begin
+            @inbounds M[1] = xr[]
+        end
+        @inbounds M[2] = x
+        wait(task)
+        nothing
+    end
+
+    R = Float64[0., 0.]
+    dR = Float64[2., 3.]
+
+    @test 5.0 ≈ Enzyme.autodiff(tasktest, Duplicated(R, dR), Active(2.0))[1]
+    @test Float64[2.0, 2.0] ≈ R
+    @test Float64[0.0, 0.0] ≈ dR
 end
 
 @testset "DiffTest" begin
