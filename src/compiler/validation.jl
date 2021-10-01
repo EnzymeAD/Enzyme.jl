@@ -376,6 +376,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                 if ptr == cglobal(:jl_gc_add_finalizer_th)
                     fn = "jl_gc_add_finalizer_th"
                 end
+                if ptr == cglobal(:jl_symbol_n)
+                    fn = "jl_symbol_n"
+                end
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))

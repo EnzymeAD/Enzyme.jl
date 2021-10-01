@@ -416,3 +416,15 @@ end
     end
     @test 1.0 ≈ autodiff(foo, false, Active(2.14))[1]
 end
+
+@testset "Split GC" begin
+    @noinline function bmat(x)
+        data = [x]
+        return data
+    end
+
+    function f(x::Float64)
+        @inbounds return bmat(x)[1]
+    end
+    @test 1.0 ≈ autodiff(f, Active(0.1))[1]
+end
