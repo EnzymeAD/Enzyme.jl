@@ -157,6 +157,19 @@ using Test
 end
 
 
+@testset "Closure ABI" begin
+    function clo2(x)
+        V = [x]
+        y -> V[1] * y
+    end
+    f = clo2(2.0)
+    @test 2.0 ≈ Enzyme.autodiff(f, Active(3.0))[1]
+    
+    df = clo2(0.0)
+    @test 2.0 ≈ Enzyme.autodiff(Duplicated(f, df), Active(3.0))[1]
+    @test 3.0 ≈ df.V[1] 
+end
+
 @testset "Callable ABI" begin
     function method(f, x)
         return f(x)

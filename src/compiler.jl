@@ -20,19 +20,22 @@ end
 # User facing interface
 abstract type AbstractThunk{F, RT, TT} end
 
-struct CombinedAdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+struct CombinedAdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
     fn::F
     adjoint::Ptr{Cvoid}
+    dfn::DF
 end
 
-struct AugmentedForwardThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+struct AugmentedForwardThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
     fn::F
     primal::Ptr{Cvoid}
+    dfn::DF
 end
 
-struct AdjointThunk{F, RT, TT} <: AbstractThunk{F, RT, TT}
+struct AdjointThunk{F, RT, TT, DF} <: AbstractThunk{F, RT, TT}
     fn::F
     adjoint::Ptr{Cvoid}
+    dfn::DF
 end
 return_type(::AbstractThunk{F, RT, TT}) where {F, RT, TT} = RT
 
@@ -204,6 +207,46 @@ end
 dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
+    # TASKING TODO 1/3
+    # fn, dfn = augmentAndGradient(fn)
+    # t = jl_new_task(fn)
+    # # shadow t
+    # dt = jl_new_task(dfn)
+
+function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, dpost::Any, ssize::Int)
+    @show fn, dfn, post, dpost, ssize
+
+    flush(stdout)
+    flush(stderr)
+
+    tt′ = Tuple{}
+    args = ()
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(true))
+
+    taperef = Ref{Ptr{Cvoid}}(C_NULL)
+
+    function fclosure()
+        res = forward()
+        taperef[] = res[1]
+        return res[2]
+    end
+
+    ftask = ccall(:jl_new_task, Any, (Any, Any, Int), fclosure, post, ssize)
+
+    function rclosure()
+        adjoint(taperef[])
+        return nothing
+    end
+    
+    rtask = ccall(:jl_new_task, Any, (Any, Any, Int), rclosure, dpost, ssize)
+    
+    Base.unsafe_store!(ret_ptr, ftask, 1)
+    Base.unsafe_store!(ret_ptr, rtask, 2)
+    return nothing
+end
+
 struct Tape
     thunk::AdjointThunk
     internal_tape::Ptr{Cvoid}
@@ -238,7 +281,7 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, annotation, tt′, Val(true))
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(true))
 
     res = forward(args...)
     origRet = res[2]
@@ -400,7 +443,7 @@ function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
 
     tt′   = Tuple{map(Core.Typeof, args)...}
     ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′}(fn, ptr)
+    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, Nothing}(fn, ptr, #=dfn=#nothing)
     tup = thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
@@ -438,7 +481,7 @@ function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, annotation, tt′, Val(true))
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(true))
 
     res = forward(args...)
     origRet = res[2]
@@ -787,13 +830,63 @@ function emit_error(B::LLVM.Builder, string)
 end
 
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_new_task")
-
+    orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    fun = @cfunction(runtime_newtask_fwd, Cvoid, (Ptr{Any}, Any, Any, Any, Any, Int))
+
+    B = LLVM.Builder(B)
+    
+    T_int64 = LLVM.Int64Type(ctx)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+
+    ops = collect(operands(orig))[1:end-1]
+
+    EB = LLVM.Builder(ctx)
+    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
+    # TODO: Optimization by emitting liverange
+    ret = LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(2; ctx))
+
+    for i in 1:2
+        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
+        LLVM.store!(B, LLVM.null(T_prjlvalue), LLVM.inbounds_gep!(B, ret, idx))
     end
-   
+
+    vals = LLVM.Value[ret,
+                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
+                       LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
+                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
+                       LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[2], B)),
+                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))]
+
+    to_preserve = LLVM.Value[vals[2], vals[3]]
+    token = emit_gc_preserve_begin(B, to_preserve)
+
+    T_args = LLVM.LLVMType[T_pprjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_int64]
+    
+    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
+    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+    LLVM.call!(B, rtfn, vals)
+
+    # TODO: GC, ret
+    if shadowR != C_NULL
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        unsafe_store!(shadowR, shadow.ref)
+    end
+
+    if normalR != C_NULL
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        unsafe_store!(normalR, normal.ref)
+    end
+
+    emit_gc_preserve_end(B, token)
+
     # TASKING TODO 1/3
     # fn, dfn = augmentAndGradient(fn)
     # t = jl_new_task(fn)
@@ -815,10 +908,35 @@ function enq_work_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     return nothing
 end
 
+function find_match(mod, name)
+    for f in functions(mod)
+        iter = function_attributes(f)
+        elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
+        LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
+        for eattr in elems
+            at = Attribute(eattr)
+            if isa(at, LLVM.StringAttribute)
+                if kind(at) == "enzyme_math"
+                    if value(at) == name
+                        return f
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for Base.enq_work")
-    # TASKING TODO 2/3
-    # jl_wait(shadow(t))
+    # jl_wait(shadow(t)) 
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    waitfn = find_match(mod, "jl_wait")
+    @assert waitfn !== nothing
+    shadowtask = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    cal = LLVM.call!(LLVM.Builder(B), waitfn, [shadowtask])
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     return nothing
 end
 
@@ -831,9 +949,15 @@ function wait_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
 end
 
 function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for Base.wait")
-    # TASKING TODO 3/3
-    # jl_enq_work(shadow(t))
+    # jl_enq_work(shadow(t)) 
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    enq_work_fn = find_match(mod, "jl_enq_work")
+    @assert enq_work_fn !== nothing
+    shadowtask = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    cal = LLVM.call!(LLVM.Builder(B), enq_work_fn, [shadowtask])
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     return nothing
 end
 
@@ -1135,6 +1259,7 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     split::Bool
     rt::Type{<:Annotation}
     run_enzyme::Bool
+    dupClosure::Bool
 end
 
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
@@ -1308,7 +1433,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
+function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure)
     rt  = job.params.rt
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
@@ -1327,9 +1452,13 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
 
     ctx = LLVM.context(mod)
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-        push!(args_activity, API.DFT_CONSTANT)
         typeTree = typetree(F, ctx, dl)
         push!(args_typeInfo, typeTree)
+        if dupClosure
+            push!(args_activity, API.DFT_DUP_ARG)
+        else
+            push!(args_activity, API.DFT_CONSTANT)
+        end
         if split
             push!(uncacheable_args, true)
         else
@@ -1445,7 +1574,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented)
+        augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure)
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
@@ -1456,7 +1585,7 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
             #=returnValue=#false, #=dretUsed=#false, #=topLevel=#false,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel, #=postOpt=#false))
-        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented)
+        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure)
     else
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
@@ -1464,12 +1593,12 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
         augmented_primalf = nothing
-        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing)
+        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure)
     end
     return adjointf, augmented_primalf
 end
 
-function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented)
+function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure)
     @assert Mode != API.DEM_ForwardMode
     is_forward = Mode == API.DEM_ReverseModePrimal
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
@@ -1498,6 +1627,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         isboxed = GPUCompiler.deserves_argbox(F)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
         push!(T_wrapperargs, llvmT)
+        if dupClosure
+            push!(T_wrapperargs, llvmT)
+        end
     end
 
     for T in argtypes
@@ -1590,6 +1722,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
             push!(realparms, params[i])
             i+=1
+            if dupClosure
+                push!(realparms, params[i])
+                i+=1
+            end
         end
 
         for T in argtypes
@@ -1823,6 +1959,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     params  = job.params
     split   = params.split
     adjoint = params.adjoint
+    dupClosure = params.dupClosure
     primal  = job.source
 
     if parent_job === nothing
@@ -1975,7 +2112,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure)
     else
         adjointf = primalf
         augmented_primalf = nothing
@@ -2045,17 +2182,17 @@ struct Thunk
     primal::Ptr{Cvoid}
 end
 
-@inline (thunk::CombinedAdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, CombinedAdjointThunk, TT, RT, thunk.fn, args...)
+@inline (thunk::CombinedAdjointThunk{F, RT, TT, DF})(args...) where {F, DF, RT, TT} =
+   enzyme_call(thunk.adjoint, CombinedAdjointThunk, TT, RT, thunk.fn, thunk.dfn, args...)
 
-@inline (thunk::AdjointThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.adjoint, AdjointThunk, TT, RT, thunk.fn, args...)
+@inline (thunk::AdjointThunk{F, RT, TT, DF})(args...) where {F, DF, RT, TT} =
+   enzyme_call(thunk.adjoint, AdjointThunk, TT, RT, thunk.fn, thunk.dfn, args...)
 
-@inline (thunk::AugmentedForwardThunk{F, RT, TT})(args...) where {F, RT, TT} =
-   enzyme_call(thunk.primal, AugmentedForwardThunk, TT, RT, thunk.fn, args...)
+@inline (thunk::AugmentedForwardThunk{F, RT, TT, DF})(args...) where {F, DF, RT, TT} =
+   enzyme_call(thunk.primal, AugmentedForwardThunk, TT, RT, thunk.fn, thunk.dfn, args...)
 
 @generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, tt::Type{T},
-                                rt::Type{RT}, f::F, args::Vararg{Any, N}) where {F, T, RT, N, CC}
+                                rt::Type{RT}, f::F, df::DF, args::Vararg{Any, N}) where {F, T, RT, DF, N, CC}
 
     is_forward = CC <: AugmentedForwardThunk
     is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
@@ -2071,6 +2208,7 @@ end
     elseif rettype <: Const
         @assert length(argtypes)              + needs_tape == length(argexprs)
     else
+        ccall(:jl_, Cvoid, (Any,), (f, df, rettype))
         error("Duplicated returns not handled.")
     end
 
@@ -2094,6 +2232,15 @@ end
         end
 
         push!(ccexprs, argexpr)
+        if DF != Nothing
+            argexpr = :(df)
+            if isboxed
+                push!(types, Any)
+            else
+                push!(types, F)
+            end
+            push!(ccexprs, argexpr)
+        end
     end
 
     for (i, T) in enumerate(argtypes)
@@ -2273,7 +2420,7 @@ end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
-function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F, A<:Annotation, TT<:Type, Split}
+function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F, DF, A<:Annotation, TT<:Type, Split}
     primal, adjoint = fspec(f, tt)
 
     if A isa UnionAll
@@ -2298,25 +2445,25 @@ function thunk(f::F,::Type{A}, tt::TT=Tuple{},::Val{Split}=Val(false)) where {F,
     local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, hash(rt, UInt64(Split))))
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Split, rt, true)
+    params = Compiler.EnzymeCompilerParams(adjoint, Split, rt, true, DF != Nothing)
     job    = Compiler.CompilerJob(target, primal, params)
 
     thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
     if Split
-        augmented = AugmentedForwardThunk{F, rt, adjoint.tt}(f, thunk.primal)
-        adjoint  = AdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        augmented = AugmentedForwardThunk{F, rt, adjoint.tt, DF}(f, thunk.primal, df)
+        adjoint  = AdjointThunk{F, rt, adjoint.tt, DF}(f, thunk.adjoint, df)
         return (augmented, adjoint)
     else
-        return CombinedAdjointThunk{F, rt, adjoint.tt}(f, thunk.adjoint)
+        return CombinedAdjointThunk{F, rt, adjoint.tt, DF}(f, thunk.adjoint, df)
     end
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}) where {f,tt, rt}
+@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure}=Val(false)) where {f,tt, rt, DupClosure}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, false, rt, true)
+    params = EnzymeCompilerParams(adjoint, false, rt, true, DupClosure)
     job    = CompilerJob(target, primal, params)
 
     addr = get_trampoline(job)
