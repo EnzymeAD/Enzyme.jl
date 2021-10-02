@@ -168,13 +168,16 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     tt′    = Tuple{map(Core.Typeof, args′)...}
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = eltype(A)
+        rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt)
             forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(true))
             res = forward(args′...)
             tape = res[1]
-            @assert res[3] isa Base.RefValue
-            res[3][] += one(eltype(typeof(res[3])))
+            if res[3] isa Base.RefValue
+                res[3][] += one(eltype(typeof(res[3])))
+            else
+                res[3] += one(eltype(typeof(res[3])))
+            end
             return adjoint(args′..., tape)
         end
     end
