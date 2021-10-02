@@ -448,3 +448,8 @@ end
     end
     @test 1.0 ≈ autodiff(f, Active(0.1))[1]
 end
+
+@testset "No inference" begin
+    c = 5.0
+    @test 5.0 ≈ a autodiff((A,)->c * A, Active, Active(2.0))
+end

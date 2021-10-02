@@ -166,9 +166,21 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
 @inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(false))
     if A <: Active
-        rt = eltype(Compiler.return_type(thunk))
+        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = eltype(A)
+        if !allocatedinline(rt)
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(true))
+            res = forward(args′...)
+            tape = res[1]
+            @assert res[3] isa Base.RefValue
+            res[3][] += one(eltype(typeof(res[3])))
+            return adjoint(args′..., tape)
+        end
+    end
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(false))
+    rt = eltype(Compiler.return_type(thunk))
+    if A <: Active
         args′ = (args′..., one(rt))
     end
     thunk(args′...)
