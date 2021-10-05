@@ -276,8 +276,13 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(true))
 
     res = forward(args...)
-    origRet = res[2]
-    resT = typeof(origRet)
+    if length(res) > 1
+        origRet = res[2]
+        resT = typeof(origRet)
+    else
+        origRet = nothing
+        resT = Nothing
+    end
     Base.unsafe_store!(ret_ptr, origRet, 1)
 
     if annotation <: Active
@@ -1914,6 +1919,10 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
             end
         end
         res = call!(builder, entry_f, wrapper_args)
+
+        if LLVM.get_subprogram(entry_f) !== nothing
+            metadata(res)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(entry_f) )
+        end
 
         if sret
             ret!(builder, load!(builder, sretPtr))
