@@ -251,6 +251,16 @@ end
     @test 5.0 ≈ Enzyme.autodiff(tasktest, Duplicated(R, dR), Active(2.0))[1]
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
+
+    function tasktest2(M, x)
+        task = Threads.@spawn begin
+           return
+        end
+        Base.wait(task)
+        nothing
+    end
+    # The empty return previously resulted in an illegal instruction error
+    @test 0.0 ≈ Enzyme.autodiff(tasktest2, Duplicated(R, dR), Active(2.0))[1]
 end
 
 @testset "DiffTest" begin

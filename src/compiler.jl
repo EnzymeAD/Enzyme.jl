@@ -222,7 +222,11 @@ function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ss
     function fclosure()
         res = forward()
         taperef[] = res[1]
-        return res[2]
+        if length(res) > 1
+            return res[2]
+        else
+            return nothing
+        end
     end
 
     ftask = ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
@@ -1923,6 +1927,8 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         if LLVM.get_subprogram(entry_f) !== nothing
             metadata(res)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(entry_f) )
         end
+    
+        LLVM.API.LLVMSetInstructionCallConv(res, LLVM.callconv(entry_f))
 
         if sret
             ret!(builder, load!(builder, sretPtr))
@@ -2043,14 +2049,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         if func == Base.enq_work
             attributes = function_attributes(llvmfn)
-            push!(custom, llvmfn)
+            push!(custom, k.specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
             continue
         end
         if func == Base.wait || func == Base._wait
             attributes = function_attributes(llvmfn)
-            push!(custom, llvmfn)
+            push!(custom, k.specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
             continue
@@ -2067,7 +2073,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
-        push!(custom, llvmfn)
+        push!(custom, k.specfunc)
 
         attributes = function_attributes(llvmfn)
         push!(attributes, EnumAttribute("noinline", 0; ctx))
@@ -2140,7 +2146,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf = nothing
     end
 
-    for f in custom
+    for fname in custom
+        haskey(functions(mod), fname) || continue
+        f = functions(mod)[fname]
+
         iter = function_attributes(f)
         elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
         LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
@@ -2191,6 +2200,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
+    
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
