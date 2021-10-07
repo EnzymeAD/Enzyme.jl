@@ -4,7 +4,7 @@ using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module, map)
-    i64 = LLVM.IntType(64; ctx=context(mod))
+    i64 = LLVM.IntType(64; ctx=LLVM.context(mod))
     for (k, v) in map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
@@ -30,7 +30,7 @@ function check_ir!(job, errors, mod::LLVM.Module, known_fns)
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
         name!(f, "")
-        ctx = context(mod)
+        ctx = LLVM.context(mod)
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
 
         prev_ft = eltype(llvmtype(f)::LLVM.PointerType)::LLVM.FunctionType
@@ -78,7 +78,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
         elseif fn == "gpu_malloc"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
+            ctx = LLVM.context(mod)
 
             b = Builder(ctx)
             position!(b, inst)
@@ -95,7 +95,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
         elseif fn == "jl_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
+            ctx = LLVM.context(mod)
 
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
             if isa(flib, LLVM.ConstantExpr)
@@ -132,7 +132,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
         elseif fn == "jl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
+            ctx = LLVM.context(mod)
 
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
             if isa(flib, LLVM.LoadInst)
@@ -149,6 +149,39 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                     end
                 end
             end
+            if isa(flib, LLVM.CallInst)
+                dest = called_value(flib)
+                if isa(dest, LLVM.ConstantExpr)
+                    op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
+                    if isa(op, LLVM.Function)
+                        if LLVM.name(op) == "jl_apply_generic"
+                            ops = collect(operands(flib))
+                            if length(ops) == 2
+                                @show ops[1]
+                
+                                if isa(ops[1], LLVM.ConstantExpr)
+                                    op1 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(ops[1], 0))
+                                    @show op1
+                                    if isa(op1, LLVM.ConstantExpr)
+                                        op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
+                                        @show op2
+                                        flush(stdout)
+                                        if isa(op2, ConstantInt)
+                                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2))
+                                            # @show ccall(:jl_, Any, (Ptr{Cvoid},), rep)
+                                            # flush(stdout)
+                                            # flibfn = Base.unsafe_pointer_to_objref(rep)
+                                            # @show flibfn
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                @show flib, dest
+                flush(stdout)
+            end
 
             fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
             if isa(fname, LLVM.ConstantExpr)
@@ -162,10 +195,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
             end
 
             if !isa(fname, String) || !isa(flib, String)
-                push!(errors, ("jl_lazy_load_and_lookup", bt, nothing))
+                @show fname, flib, inst
+                flush(stdout)
                 return
             end
 
+            
             data = open(flib, "r") do io
                 lib = readmeta(io)
                 sections = Sections(lib)
@@ -175,7 +210,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                 llvmbc = read(findfirst(sections, ".llvmbc"))
                 return llvmbc
             end
-
             found = false
             if data !== nothing
                 inmod = parse(LLVM.Module, data; ctx)

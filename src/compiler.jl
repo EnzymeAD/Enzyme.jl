@@ -45,7 +45,7 @@ function get_function!(builderF, mod, name)
     if haskey(functions(mod), name)
         return functions(mod)[name]
     else
-        return builderF(mod, context(mod), name)
+        return builderF(mod, LLVM.context(mod), name)
     end
 end
 
@@ -82,7 +82,7 @@ end
 
 function reinsert_gcmarker!(func)
     if get_ptls(func) === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = Builder(LLVM.context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         position!(B, first(instructions(entry_bb)))
         emit_ptls!(B)
@@ -122,7 +122,7 @@ end
 
 function reinsert_gcmarker!(func)
     if get_pgcstack(func) === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = Builder(LLVM.context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         position!(B, first(instructions(entry_bb)))
         emit_pgcstack(B)
@@ -577,7 +577,7 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
 
     func = get_function!(mod, "llvm.julia.gc_preserve_end") do mod, ctx, name
         funcT = LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)])
@@ -809,7 +809,7 @@ function emit_error(B::LLVM.Builder, string)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
 
     # 1. get the error function
     func = get_function!(mod, "jl_error") do mod, ctx, name
@@ -1316,7 +1316,7 @@ const inactivefns = Set((
 ))
 
 function annotate!(mod)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     fns = functions(mod)
 
@@ -1447,9 +1447,9 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure)
+function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure, rules)
     rt  = job.params.rt
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     dl  = string(LLVM.datalayout(mod))
     F   = typeof(adjoint.f)
 
@@ -1538,42 +1538,6 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dup
     else
         error("Unhandled return type $rt")
     end
-
-    rules = Dict{String, API.CustomRuleType}(
-        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_array_copy" => @cfunction(inout_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "julia.pointer_from_objref" => @cfunction(inout_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_wait" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_enq_work" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
-    )
 
     TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
@@ -1859,7 +1823,7 @@ end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
@@ -1980,6 +1944,8 @@ function adim(::Array{T, N}) where {T, N}
     return N
 end
 
+using CUDA
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -2001,7 +1967,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     known_fns = check_ir(job, mod)
 
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     custom = []
     must_wrap = false
 
@@ -2018,26 +1984,67 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.FastMath.tanh_fast => (:tanh, 1)
     )
     actualRetType = nothing
-    for (mi, k) in meta.compiled
-        haskey(functions(mod), k.specfunc) || continue
+    
+    rules = Dict{String, API.CustomRuleType}(
+        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_float32" => @cfunction(f32_box_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_int64" => @cfunction(i64_box_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_uint64" => @cfunction(i64_box_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_array_copy" => @cfunction(inout_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_1d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_2d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_3d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "julia.pointer_from_objref" => @cfunction(inout_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_wait" => @cfunction(noop_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_enq_work" => @cfunction(noop_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+    )
 
-        llvmfn = functions(mod)[k.specfunc]
-        if llvmfn == primalf
-            actualRetType = k.ci.rettype
-        end
+    for (mi, k) in meta.compiled
 
         meth = mi.def
         name = meth.name
         jlmod  = meth.module
 
+        specfunc = GPUCompiler.safe_name(k.specfunc)
+        
+        haskey(functions(mod), specfunc) || continue
+
+        llvmfn = functions(mod)[specfunc]
+        if llvmfn == primalf
+            actualRetType = k.ci.rettype
+        end
+
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
-
-
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
-
-        if func == Base.println
+        
+        if func == Base.println || func == CUDA.context || func == CUDA.context! || func == CUDA.capability
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
+            rules[specfunc] = @cfunction(noop_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
             continue
         end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
@@ -2049,18 +2056,26 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         if func == Base.enq_work
             attributes = function_attributes(llvmfn)
-            push!(custom, k.specfunc)
+            push!(custom, specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
             continue
         end
         if func == Base.wait || func == Base._wait
             attributes = function_attributes(llvmfn)
-            push!(custom, k.specfunc)
+            push!(custom, specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
             continue
         end
+        if func == CUDA.cuLaunchHostFunc
+            attributes = function_attributes(llvmfn)
+            push!(custom, specfunc)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_math", "jl_cu_launch_host"; ctx))
+            continue
+        end
+
 
         func ∈ keys(known_ops) || continue
 
@@ -2073,7 +2088,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
-        push!(custom, k.specfunc)
+        push!(custom, specfunc)
 
         attributes = function_attributes(llvmfn)
         push!(attributes, EnumAttribute("noinline", 0; ctx))
@@ -2140,7 +2155,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dupClosure, rules)
     else
         adjointf = primalf
         augmented_primalf = nothing
@@ -2189,7 +2204,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     adjointf = functions(mod)[adjointf_name]
-    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
+    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=LLVM.context(mod)))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
     end
