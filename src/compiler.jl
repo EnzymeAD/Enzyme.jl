@@ -1168,13 +1168,45 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel)
     return adjointf, augmented_primalf
 end
 
+function fixup_metadata!(f::LLVM.Function)
+    for param in parameters(f)
+        if isa(llvmtype(param), LLVM.PointerType)
+            # collect all uses of the pointer
+            worklist = Vector{LLVM.Instruction}(user.(collect(uses(param))))
+            while !isempty(worklist)
+                value = popfirst!(worklist)
+
+                # remove the invariant.load attribute
+                md = metadata(value)
+                if haskey(md, LLVM.MD_invariant_load)
+                    delete!(md, LLVM.MD_invariant_load)
+                end
+                if haskey(md, LLVM.MD_tbaa)
+                    delete!(md, LLVM.MD_tbaa)
+                end
+
+                # recurse on the output of some instructions
+                if isa(value, LLVM.BitCastInst) ||
+                   isa(value, LLVM.GetElementPtrInst) ||
+                   isa(value, LLVM.AddrSpaceCastInst)
+                    append!(worklist, user.(collect(uses(value))))
+                end
+
+                # IMPORTANT NOTE: if we ever want to inline functions at the LLVM level,
+                # we need to recurse into call instructions here, and strip metadata from
+                # called functions (see CUDAnative.jl#238).
+            end
+        end
+    end
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
-    args = GPUCompiler.classify_arguments(job, entry_f)
+    args = GPUCompiler.classify_arguments(job, entry_ft)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
@@ -1256,7 +1288,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         LLVM.set_subprogram!(wrapper_f, sp)
     end
 
-    GPUCompiler.fixup_metadata!(entry_f)
+    fixup_metadata!(entry_f)
     ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
