@@ -10,8 +10,19 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.LLJIT
-    lctm::LLVM.LazyCallThroughManager
-    ism::LLVM.IndirectStubsManager
+    lctm::Union{LLVM.LazyCallThroughManager, Nothing}
+    ism::Union{LLVM.IndirectStubsManager, Nothing}
+end
+
+function LLVM.dispose(ci::CompilerInstance)
+    dispose(ci.jit)
+    if ci.lctm !== nothing
+        dispose(ci.lctm)
+    end
+    if ci.ism !== nothing
+        dispose(ci.ism)
+    end
+    return nothing
 end
 
 const jit = Ref{CompilerInstance}()
@@ -61,16 +72,18 @@ function __init__()
     LLVM.add!(jd_main, dg)
 
     es = ExecutionSession(lljit)
+    try
+        lctm = LLVM.LocalLazyCallThroughManager(triple(lljit), es)
+        ism = LLVM.LocalIndirectStubsManager(triple(lljit))
+        jit[] = CompilerInstance(lljit, lctm, ism)
+    catch err
+        @warn "OrcV2 initialization failed with" err
+        jit[] = CompilerInstance(lljit, nothing, nothing)
+    end
 
-    lctm = LLVM.LocalLazyCallThroughManager(triple(lljit), es)
-    ism = LLVM.LocalIndirectStubsManager(triple(lljit))
-
-    jit[] = CompilerInstance(lljit, lctm, ism)
     atexit() do
         ci = jit[]
-        dispose(ci.ism)
-        dispose(ci.lctm)
-        dispose(ci.jit)
+        dispose(ci)
         dispose(tm[])
     end
 end
@@ -93,6 +106,10 @@ function get_trampoline(job)
     lljit = compiler.jit
     lctm  = compiler.lctm
     ism   = compiler.ism
+
+    if lctm === nothing || ism === nothing
+        error("Delayed compilation not available.")
+    end
 
     # We could also use one dylib per job
     jd = JITDylib(lljit)
