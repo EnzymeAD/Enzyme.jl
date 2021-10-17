@@ -1,3 +1,5 @@
+pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..")) # add Enzyme to environment stack
+
 using Enzyme
 using Documenter
 
@@ -11,7 +13,12 @@ makedocs(;
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
         canonical="https://enzyme.mit.edu/julia/",
-        assets=String[],
+        assets = [
+            asset("https://plausible.io/js/plausible.js",
+                    class=:js,
+                    attributes=Dict(Symbol("data-domain") => "enzyme.mit.edu", :defer => "")
+                )
+	    ],
     ),
     pages = [
         "Home" => "index.md",
