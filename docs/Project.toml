@@ -1,3 +1,5 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+
+[compat]
+Documenter = "0.27.8"
