@@ -31,3 +31,9 @@ makedocs(;
     linkcheck = true,
     strict = true,
 )
+
+deploydocs(;
+    repo="github.com/wsmoses/Enzyme.jl",
+    devbranch = "master",
+    push_preview = true,
+)
