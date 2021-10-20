@@ -1214,7 +1214,7 @@ function annotate!(mod)
         end
     end
 
-    for boxfn in ("jl_box_int64", "julia.gc_alloc_obj", "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d")
+    for boxfn in ("jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64", "julia.gc_alloc_obj", "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
@@ -1268,6 +1268,17 @@ end
 
 function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
+    only!(TT, -1)
+    API.EnzymeSetTypeTree(unsafe_load(args), TT)
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
+    shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
+    API.EnzymeSetTypeTree(ret, TT)
+    return UInt8(false)
+end
+
+
+function f32_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    TT = TypeTree(API.DT_Float, LLVM.context(LLVM.Value(val)))
     only!(TT, -1)
     API.EnzymeSetTypeTree(unsafe_load(args), TT)
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
@@ -1398,6 +1409,9 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType)
 
     rules = Dict{String, API.CustomRuleType}(
         "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_box_float32" => @cfunction(f32_box_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_int64" => @cfunction(i64_box_rule,
