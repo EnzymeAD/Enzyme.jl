@@ -180,6 +180,8 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
             end
             return adjoint(args′..., tape)
         end
+    elseif A <: Duplicated
+        throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(false))
     rt = eltype(Compiler.return_type(thunk))
@@ -250,6 +252,8 @@ code, as well as high-order differentiation.
     thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
+    elseif A <: Duplicated
+        throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk(args′...)
 end

@@ -461,5 +461,5 @@ end
 
 @testset "No inference" begin
     c = 5.0
-    @test 5.0 ≈ a autodiff((A,)->c * A, Active, Active(2.0))
+    @test 5.0 ≈ autodiff((A,)->c * A, Active, Active(2.0))[1]
 end
