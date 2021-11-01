@@ -166,7 +166,18 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
 @inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    thunk = Enzyme.Compiler.thunk(f, A, tt′, #=Split=# Val(false))
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(false))
+    if A <: Active
+        rt = eltype(Compiler.return_type(thunk))
+        args′ = (args′..., one(rt))
+    end
+    thunk(args′...)
+end
+
+@inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(false))
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
@@ -186,6 +197,15 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
     rt    = Core.Compiler.return_type(f, tt)
     A     = guess_activity(rt)
     autodiff(f, A, args′...)
+end
+
+@inline function autodiff(dupf::Duplicated{F}, args...) where {F}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(dupf.val, tt)
+    A     = guess_activity(rt)
+    autodiff(dupf, A, args′...)
 end
 
 
@@ -212,7 +232,7 @@ code, as well as high-order differentiation.
     end
 
     ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     end
@@ -230,12 +250,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     rt    = guess_activity(rt)
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′}(f, ptr)
-    if rt <: Active
-        args′ = (args′..., one(eltype(rt)))
-    end
-    thunk(args′...)
+    autodiff_deferred(f, rt, args′...) 
 end
 
 using Adapt
