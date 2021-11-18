@@ -1,6 +1,6 @@
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
-                 split::Bool=false)
+                 split::Bool=false, dupClosure::Bool=false,)
 
     primal, adjoint = fspec(func, types)
 
@@ -8,7 +8,7 @@ function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     rt = A{rt}
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, split, rt, run_enzyme)
+    params = Compiler.EnzymeCompilerParams(adjoint, split, rt, run_enzyme, dupClosure)
     job    = Compiler.CompilerJob(target, primal, params)
 
     # Codegen the primal function and all its dependency in one module
