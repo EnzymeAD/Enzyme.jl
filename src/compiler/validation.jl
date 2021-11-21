@@ -157,21 +157,29 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                         if LLVM.name(op) == "jl_apply_generic"
                             ops = collect(operands(flib))
                             if length(ops) == 2
-                                @show ops[1]
+                                # @show ops[1]
                 
                                 if isa(ops[1], LLVM.ConstantExpr)
                                     op1 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(ops[1], 0))
-                                    @show op1
+                                    # @show op1
                                     if isa(op1, LLVM.ConstantExpr)
                                         op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
-                                        @show op2
-                                        flush(stdout)
+                                        # @show op2
+                                        # flush(stdout)
                                         if isa(op2, ConstantInt)
                                             rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2))
-                                            # @show ccall(:jl_, Any, (Ptr{Cvoid},), rep)
+                                            # @show rep
+
+                                            # @show ccall(:jl_, Cvoid, (Ptr{Cvoid},), rep)
+
                                             # flush(stdout)
-                                            # flibfn = Base.unsafe_pointer_to_objref(rep)
+                                            
+                                            flibfn = Base.unsafe_pointer_to_objref(rep)
                                             # @show flibfn
+                                            # flush(stdout)
+                                            if flibfn == CUDA.libcuda
+                                                flib = flibfn()
+                                            end
                                         end
                                     end
                                 end
@@ -179,8 +187,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                         end
                     end
                 end
-                @show flib, dest
-                flush(stdout)
+                # @show flib, dest
+                # flush(stdout)
             end
 
             fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
@@ -200,20 +208,24 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                 return
             end
 
-            
-            data = open(flib, "r") do io
-                lib = readmeta(io)
-                sections = Sections(lib)
-                if !(".llvmbc" in sections)
-                    return nothing
-                end
-                llvmbc = read(findfirst(sections, ".llvmbc"))
-                return llvmbc
-            end
+             
             found = false
-            if data !== nothing
-                inmod = parse(LLVM.Module, data; ctx)
-                found = haskey(functions(inmod), fname)
+            
+            try
+                data = open(flib, "r") do io
+                    lib = readmeta(io)
+                    sections = Sections(lib)
+                    if !(".llvmbc" in sections)
+                        return nothing
+                    end
+                    llvmbc = read(findfirst(sections, ".llvmbc"))
+                    return llvmbc
+                end
+                if data !== nothing
+                    inmod = parse(LLVM.Module, data; ctx)
+                    found = haskey(functions(inmod), fname)
+                end
+            catch e
             end
 
             if found

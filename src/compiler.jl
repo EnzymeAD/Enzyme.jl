@@ -4,7 +4,7 @@ import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_
 import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
                  TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
-using LLVM, GPUCompiler, Libdl
+using LLVM, GPUCompiler, Libdl, CUDA
 import Enzyme_jll
 
 import GPUCompiler: CompilerJob, FunctionSpec, codegen
@@ -1109,6 +1109,49 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
     return nothing
 end
 
+const NameToMethod = Dict{String, Any}()
+
+function cuarrInner(::Type{CUDA.CuArray{T,N,B}}) where {T,N,B}
+    return T
+end
+function cuarrInner(::Type{Core.AbstractArray{T,N}}) where {T,N}
+    return T
+end
+
+function cucopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))[1:end]
+    func = ops[end]::LLVM.Function
+    mi = NameToMethod[LLVM.name(func)]
+    sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
+    @show sparam_vals
+    flush(stdout)
+    flush(stderr)
+    T1 = cuarrInner(sparam_vals[1])
+    T2 = cuarrInner(sparam_vals[3])
+    @assert T1 == T2
+    @assert T1 <: AbstractFloat
+    return nothing
+end
+
+function cucopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    @show orig
+    ops = collect(operands(orig))[1:end]
+    func = ops[end]::LLVM.Function
+    @show func
+    mi = NameToMethod[LLVM.name(func)]
+    @show mi
+    sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
+    @show sparam_vals
+    T1 = cuarrInner(sparam_vals[1])
+    T2 = cuarrInner(sparam_vals[3])
+    @assert T1 == T2
+    @assert T1 <: AbstractFloat
+    error("CUCopy not handled")
+    return nothing
+end
+
 
 function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_f_setfield")
@@ -1207,6 +1250,11 @@ function __init__()
         ("llvm.julia.gc_preserve_end",),
         @cfunction(gcpreserve_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    register_handler!(
+        ("jl_cucopy",),
+        @cfunction(cucopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(cucopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
         ("jl_f_setfield",),
@@ -1366,6 +1414,11 @@ function annotate!(mod)
 end
 
 function noop_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    return UInt8(false)
+end
+
+function copy_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    @show LLVM.Instruction(val)
     return UInt8(false)
 end
 
@@ -1539,6 +1592,9 @@ function enzyme!(job, mod, primalf, adjoint, split, parallel, actualRetType, dup
         error("Unhandled return type $rt")
     end
 
+    @show mod
+    flush(stdout)
+    flush(stderr)
     TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
 
@@ -1944,8 +2000,6 @@ function adim(::Array{T, N}) where {T, N}
     return N
 end
 
-using CUDA
-
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -2018,6 +2072,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_enq_work" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_yield" => @cfunction(noop_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     )
 
@@ -2047,6 +2104,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
             continue
         end
+        if func == Base.unsafe_copyto! && any(x-> x <: CUDA.CuArray , sparam_vals)
+            @show func
+            NameToMethod[specfunc] = mi
+            attributes = function_attributes(llvmfn)
+            rules[specfunc] = @cfunction(copy_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+            push!(custom, specfunc)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_math", "jl_cucopy"; ctx))
+        end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
             AT = first(sparam_vals)
             T = eltype(AT)
@@ -2059,6 +2127,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(custom, specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
+            continue
+        end
+        if func == Base.yield
+            attributes = function_attributes(llvmfn)
+            push!(custom, specfunc)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_math", "jl_yield"; ctx))
             continue
         end
         if func == Base.wait || func == Base._wait
@@ -2160,6 +2235,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
+    NameToMethod.clear()
 
     for fname in custom
         haskey(functions(mod), fname) || continue
@@ -2180,7 +2256,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
-    adjointf_name = name(adjointf)
+    adjointf_name = LLVM.name(adjointf)
 
     if augmented_primalf !== nothing
         linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
@@ -2501,10 +2577,10 @@ function _thunk(job)
 
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
-    adjoint_name = name(adjointf)
+    adjoint_name = LLVM.name(adjointf)
 
     if augmented_primalf !== nothing
-        primal_name = name(augmented_primalf)
+        primal_name = LLVM.name(augmented_primalf)
     else
         primal_name = nothing
     end
