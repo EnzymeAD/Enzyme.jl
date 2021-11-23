@@ -251,6 +251,11 @@ struct Tape
 end
 
 function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+	@show "runtime_generic_fwd"
+	flush(stdout)
+	@show fn
+	flush(stdout)
+
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -277,6 +282,8 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
+	@show args, annotation, tt′, fn
+	flush(stdout)
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(true))
 
     res = forward(args...)
@@ -292,6 +299,7 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     if annotation <: Active
         # This assumes that we have an Immutable object here that got passed as a boxed value
         shadow_return = Ref(zero(resT))
+		@show "shadow ret", shadow_return
         Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
     elseif annotation <: Const
         Base.unsafe_store!(ret_ptr, origRet, 2)
@@ -310,8 +318,16 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 end
 
 function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+	@show "runtime_generic_rev"
+	flush(stdout)
+	@show fn
+	flush(stdout)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
+	
+	@show __activity
+	flush(stdout)
+    
+	args = []
     actives = []
     for i in 1:arg_size
         p = Base.unsafe_load(arg_ptr, i)
@@ -328,6 +344,7 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         end
     end
 
+
     tape = tape::Tape
 
     if tape.shadow_return !== nothing
@@ -341,10 +358,14 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         push!(args, tape.internal_tape)
     end
 
+	@show "t rev args", args, actives
+	flush(stdout)
+
     tup = tape.thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
         a = unsafe_load(s, i)
+		@show a, d
         # While `RefValue{T}` and boxed T for immutable are bitwise compatible
         # they are not idempotent on the Julia level. We could "force" `a` to be
         # a boxed T, but would lose the mutable memory semantics that Enzyme requires
@@ -357,6 +378,8 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
         end
     end
     
+	@show "done runtime_generic_rev"
+	flush(stdout)
     return nothing
 end
 
@@ -605,7 +628,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     # TODO: Optimization by emitting liverange
-    ret = LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
+    ret = numRet == 0 ? LLVM.null(T_pprjlvalue) : LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
     primal = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
     shadow = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
     activity = LLVM.array_alloca!(EB, T_int8, llnum)
@@ -621,7 +644,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     end
     vals = LLVM.Value[LLVM.Value(jl_fn), ret, primal, shadow, activity, llnum]
 
-    to_preserve = LLVM.Value[]
+    to_preserve = LLVM.Value[primal, shadow]
 
     for (i, op) in enumerate(ops)
         idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
@@ -638,12 +661,12 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
 
         if active
             shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
-            push!(to_preserve, shadow_val)
-            inverted = API.EnzymeGradientUtilsInvertPointer(gutils, op, B)
+            inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
             if lookup
-                inverted = API.EnzymeGradientUtilsLookup(gutils, inverted, B)
+                inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
             end
-            LLVM.store!(B, LLVM.Value(inverted),
+            push!(to_preserve, inverted)
+            LLVM.store!(B, inverted,
                         LLVM.inbounds_gep!(B, shadow, idx))
         else
             LLVM.store!(B, LLVM.null(llvmtype(op)),
@@ -651,13 +674,14 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         end
     end
 
-    token = emit_gc_preserve_begin(B, to_preserve)
 
     T_args = LLVM.LLVMType[T_prjlvalue, T_pprjlvalue, T_pprjlvalue, T_pprjlvalue, T_pint8, T_int32]
     if tape != C_NULL
         push!(T_args, T_prjlvalue)
         push!(vals, LLVM.Value(tape))
+        push!(to_preserve, LLVM.Value(tape))
     end
+    token = emit_gc_preserve_begin(B, to_preserve)
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     LLVM.call!(B, rtfn, vals)
@@ -1858,7 +1882,7 @@ function fixup_metadata!(f::LLVM.Function)
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
+function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function, actualRetType)
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
@@ -1875,6 +1899,8 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = true
     end
+
+	rettype = actualRetType
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
@@ -1998,7 +2024,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
@@ -2126,7 +2151,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    primalf = lower_convention(job, mod, primalf)
+    primalf = lower_convention(job, mod, primalf, actualRetType)
 
     # annotate
     annotate!(mod)
@@ -2200,6 +2225,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
+	@show mod
+	flush(stdout)
     
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
@@ -2501,6 +2528,8 @@ function _thunk(job)
 
     # Run post optimization pipeline
     post_optimze!(mod, JIT.get_tm())
+	@show mod
+	flush(stdout)
 
     return (mod, adjoint_name, primal_name)
 end
