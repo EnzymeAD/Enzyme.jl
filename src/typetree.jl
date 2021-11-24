@@ -119,7 +119,7 @@ else
 end
 
 function typetree(@nospecialize(T), ctx, dl)
-    if T isa UnionAll || T isa Union || T == Union{}
+    if T isa UnionAll || T isa Union || T == Union{} || T isa AbstractString
         return TypeTree()
     end
 

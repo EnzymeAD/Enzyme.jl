@@ -252,6 +252,19 @@ end
 
 function runtime_generic_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
 
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+
+        args = Any[]
+        for i in 1:arg_size
+            push!(args, Base.unsafe_load(arg_ptr, i))
+        end
+
+        res = fn(args...)
+        Base.unsafe_store!(ret_ptr, res, 1)
+        Base.unsafe_store!(ret_ptr, res, 2)
+        return nothing
+    end
+
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -311,6 +324,19 @@ function runtime_generic_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shad
 end
 
 function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        args = Any[]
+        for i in 1:arg_size
+            push!(args, Base.unsafe_load(arg_ptr, i))
+        end
+
+        res = fn(args...)
+        Base.unsafe_store!(ret_ptr, res, 1)
+        Base.unsafe_store!(ret_ptr, res, 2)
+        return nothing
+    end
+
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
@@ -382,9 +408,13 @@ function runtime_invoke_fwd(ret_ptr::Ptr{Any}, mi::Any, arg_ptr::Ptr{Any}, shado
         end
     end
 
-    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
     res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
 
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        return nothing
+    end
+
+    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
     Base.unsafe_store!(ret_ptr, res, 1)
 
     tape::Any = nothing
@@ -411,6 +441,11 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
+
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        return nothing
+    end
+
     args = []
     actives = []
     for i in 2:arg_size
@@ -1334,7 +1369,8 @@ const inactivefns = Set((
     "jl_f_fieldtype",
     "jl_symbol_n",
     # BIG TODO
-    "jl_gc_add_finalizer_th"
+    "jl_gc_add_finalizer_th",
+    "jl_"
 ))
 
 function annotate!(mod)
@@ -2061,7 +2097,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
-        if func == Base.println
+        if func == Base.println || func == Base.print || func == Base.show || func == Base.flush
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             continue
         end
