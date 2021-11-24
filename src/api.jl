@@ -260,4 +260,8 @@ function moveBefore(i1, i2)
     ccall((:EnzymeMoveBefore, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef), i1, i2)
 end
 
+function SetMustCache!(i1)
+    ccall((:EnzymeSetMustCache, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
+end
+
 end

@@ -447,6 +447,30 @@ end
     @test 1.0 ≈ autodiff(foo, false, Active(2.14))[1]
 end
 
+@testset "Return GC error" begin
+	t = 0.0
+
+	function tobedifferentiated(cond, a)::Float64
+		if cond
+			t + t
+		else
+			0.0
+		end
+	end
+
+	@test 0.0 ≈ autodiff(tobedifferentiated, true, Active(2.1))[1]
+	
+	function tobedifferentiated2(cond, a)::Float64
+		if cond
+			a + t
+		else
+			0.0
+		end
+	end
+
+	@test 1.0 ≈ autodiff(tobedifferentiated2, true, Active(2.1))[1]
+end
+
 @testset "Split GC" begin
     @noinline function bmat(x)
         data = [x]

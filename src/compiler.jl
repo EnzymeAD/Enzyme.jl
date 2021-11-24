@@ -250,7 +250,8 @@ struct Tape
     resT::DataType
 end
 
-function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_generic_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -309,7 +310,7 @@ function runtime_generic_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
     return nothing
 end
 
-function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
@@ -327,6 +328,7 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
             push!(args, Const(p))
         end
     end
+
 
     tape = tape::Tape
 
@@ -361,7 +363,7 @@ function runtime_generic_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shad
 end
 
 
-function runtime_invoke_fwd(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_invoke_fwd(ret_ptr::Ptr{Any}, mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
@@ -405,7 +407,7 @@ function runtime_invoke_fwd(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
     return nothing
 end
 
-function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
@@ -456,7 +458,7 @@ function runtime_invoke_rev(mi::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shado
     return nothing
 end
 
-function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_apply_latest_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -507,7 +509,7 @@ function runtime_apply_latest_fwd(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any},
     return nothing
 end
 
-function runtime_apply_latest_rev(fn::Any, ret_ptr::Ptr{Any}, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
@@ -605,7 +607,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     # TODO: Optimization by emitting liverange
-    ret = LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
+    ret = numRet == 0 ? LLVM.null(T_pprjlvalue) : LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
     primal = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
     shadow = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
     activity = LLVM.array_alloca!(EB, T_int8, llnum)
@@ -619,9 +621,12 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     if lookup
         jl_fn = API.EnzymeGradientUtilsLookup(gutils, jl_fn, B)
     end
-    vals = LLVM.Value[LLVM.Value(jl_fn), ret, primal, shadow, activity, llnum]
+    vals = LLVM.Value[LLVM.Value(jl_fn), primal, shadow, activity, llnum]
+    if numRet != 0
+        pushfirst!(vals, ret)
+    end
 
-    to_preserve = LLVM.Value[]
+    to_preserve = LLVM.Value[primal, shadow]
 
     for (i, op) in enumerate(ops)
         idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
@@ -638,12 +643,12 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
 
         if active
             shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
-            push!(to_preserve, shadow_val)
-            inverted = API.EnzymeGradientUtilsInvertPointer(gutils, op, B)
+            inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
             if lookup
-                inverted = API.EnzymeGradientUtilsLookup(gutils, inverted, B)
+                inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
             end
-            LLVM.store!(B, LLVM.Value(inverted),
+            push!(to_preserve, inverted)
+            LLVM.store!(B, inverted,
                         LLVM.inbounds_gep!(B, shadow, idx))
         else
             LLVM.store!(B, LLVM.null(llvmtype(op)),
@@ -651,16 +656,24 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         end
     end
 
-    token = emit_gc_preserve_begin(B, to_preserve)
 
-    T_args = LLVM.LLVMType[T_prjlvalue, T_pprjlvalue, T_pprjlvalue, T_pprjlvalue, T_pint8, T_int32]
+    T_args = LLVM.LLVMType[T_prjlvalue, T_pprjlvalue, T_pprjlvalue, T_pint8, T_int32]
     if tape != C_NULL
         push!(T_args, T_prjlvalue)
         push!(vals, LLVM.Value(tape))
+        push!(to_preserve, LLVM.Value(tape))
     end
+    if numRet != 0
+        pushfirst!(T_args, T_pprjlvalue)
+        push!(to_preserve, ret)
+    end
+    token = emit_gc_preserve_begin(B, to_preserve)
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
-    LLVM.call!(B, rtfn, vals)
+    cal = LLVM.call!(B, rtfn, vals)
+    if numRet != 0
+        LLVM.API.LLVMAddCallSiteAttribute(cal, 1, EnumAttribute("sret"; ctx))
+    end
 
     # TODO: GC, ret
     return ret, token
@@ -679,19 +692,22 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        API.SetMustCache!(shadow)
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        API.SetMustCache!(normal)
         unsafe_store!(normalR, normal.ref)
     end
 
     tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    API.SetMustCache!(tape)
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -706,7 +722,7 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     B = LLVM.Builder(B)
 
-    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -726,19 +742,22 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        API.SetMustCache!(shadow)
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        API.SetMustCache!(normal)
         unsafe_store!(normalR, normal.ref)
     end
 
     tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    API.SetMustCache!(tape)
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -753,7 +772,7 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     B = LLVM.Builder(B)
 
-    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -773,19 +792,22 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
+    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        API.SetMustCache!(shadow)
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        API.SetMustCache!(normal)
         unsafe_store!(normalR, normal.ref)
     end
 
     tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
+    API.SetMustCache!(tape)
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -799,7 +821,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -1858,7 +1880,7 @@ function fixup_metadata!(f::LLVM.Function)
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function)
+function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function, actualRetType)
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
@@ -1875,6 +1897,10 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = true
     end
+
+    # TODO use rettype for sret calculation instead
+    rettype = actualRetType
+    
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
@@ -1998,7 +2024,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
@@ -2126,7 +2151,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    primalf = lower_convention(job, mod, primalf)
+    primalf = lower_convention(job, mod, primalf, actualRetType)
 
     # annotate
     annotate!(mod)
@@ -2200,7 +2225,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
-    
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
@@ -2501,7 +2525,6 @@ function _thunk(job)
 
     # Run post optimization pipeline
     post_optimze!(mod, JIT.get_tm())
-
     return (mod, adjoint_name, primal_name)
 end
 
