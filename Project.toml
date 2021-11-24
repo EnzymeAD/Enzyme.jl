@@ -16,7 +16,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
-Enzyme_jll = "~0.0.21"
+Enzyme_jll = "~0.0.22"
 GPUCompiler = "0.13"
 LLVM = "4.1"
 ObjectFile = "0.3"
