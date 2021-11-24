@@ -469,7 +469,38 @@ end
 	end
 
 	@test 1.0 ≈ autodiff(tobedifferentiated2, true, Active(2.1))[1]
+
+    @noinline function copy(dest, p1, cond)
+        bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(p1))
+
+        if cond
+            return nothing
+        end
+
+        bc2 = Broadcast.preprocess(dest, bc)
+        @inbounds    dest[1] = bc2[1]
+
+        nothing
+    end
+
+    function mer(F, F_H, cond)
+        p1 = Base.broadcasted(Base.identity, F_H)
+        copy(F, p1, cond)
+
+        # Force an apply generic
+        flush(stdout)
+        nothing
+    end
+
+    L_H = Array{Float64, 1}(undef, 2)
+    L = Array{Float64, 1}(undef, 2)
+
+    F_H = [1.0, 0.0]
+    F = [1.0, 0.0]
+
+    autodiff(mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
 end
+
 
 @testset "Split GC" begin
     @noinline function bmat(x)
