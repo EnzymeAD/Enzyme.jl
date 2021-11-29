@@ -252,6 +252,20 @@ end
 
 function runtime_generic_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
 
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+
+        args = Any[]
+        for i in 1:arg_size
+            push!(args, Base.unsafe_load(arg_ptr, i))
+        end
+
+        res = fn(args...)
+        Base.unsafe_store!(ret_ptr, res, 1)
+        Base.unsafe_store!(ret_ptr, res, 2)
+        Base.unsafe_store!(ret_ptr, nothing, 3)
+        return nothing
+    end
+
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -311,6 +325,16 @@ function runtime_generic_fwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, shad
 end
 
 function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        args = Any[]
+        for i in 1:arg_size
+            push!(args, Base.unsafe_load(arg_ptr, i))
+        end
+
+        res = fn(args...)
+        return nothing
+    end
+
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
@@ -382,9 +406,16 @@ function runtime_invoke_fwd(ret_ptr::Ptr{Any}, mi::Any, arg_ptr::Ptr{Any}, shado
         end
     end
 
-    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
     res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
 
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        Base.unsafe_store!(ret_ptr, res, 1)
+        Base.unsafe_store!(ret_ptr, res, 2)
+        Base.unsafe_store!(ret_ptr, nothing, 3)
+        return nothing
+    end
+
+    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
     Base.unsafe_store!(ret_ptr, res, 1)
 
     tape::Any = nothing
@@ -411,6 +442,11 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
+
+    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        return nothing
+    end
+
     args = []
     actives = []
     for i in 2:arg_size
@@ -607,13 +643,13 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     # TODO: Optimization by emitting liverange
-    ret = numRet == 0 ? LLVM.null(T_pprjlvalue) : LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(numRet; ctx))
-    primal = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
-    shadow = LLVM.array_alloca!(EB, T_prjlvalue, llnum)
-    activity = LLVM.array_alloca!(EB, T_int8, llnum)
+    ret = numRet == 0 ? LLVM.null(T_pprjlvalue) : LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, numRet))
+    primal = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
+    shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
+    activity = LLVM.alloca!(EB, LLVM.ArrayType(T_int8, num))
 
     for i in 1:numRet
-        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
+        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
         LLVM.store!(B, LLVM.null(T_prjlvalue), LLVM.inbounds_gep!(B, ret, idx))
     end
 
@@ -629,7 +665,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     to_preserve = LLVM.Value[primal, shadow]
 
     for (i, op) in enumerate(ops)
-        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
+        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if lookup
             val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
@@ -642,7 +678,6 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         LLVM.store!(B, activeC, LLVM.inbounds_gep!(B, activity, idx))
 
         if active
-            shadow_val = LLVM.inbounds_gep!(B, shadow, idx)
             inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
             if lookup
                 inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
@@ -657,14 +692,14 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     end
 
 
-    T_args = LLVM.LLVMType[T_prjlvalue, T_pprjlvalue, T_pprjlvalue, T_pint8, T_int32]
+    T_args = LLVM.LLVMType[T_prjlvalue, LLVM.llvmtype(primal), LLVM.llvmtype(shadow), LLVM.llvmtype(activity), T_int32]
     if tape != C_NULL
         push!(T_args, T_prjlvalue)
         push!(vals, LLVM.Value(tape))
         push!(to_preserve, LLVM.Value(tape))
     end
     if numRet != 0
-        pushfirst!(T_args, T_pprjlvalue)
+        pushfirst!(T_args, LLVM.llvmtype(ret))
         push!(to_preserve, ret)
     end
     token = emit_gc_preserve_begin(B, to_preserve)
@@ -695,19 +730,16 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
-        API.SetMustCache!(shadow)
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
-        API.SetMustCache!(normal)
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
-    API.SetMustCache!(tape)
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -745,19 +777,16 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
-        API.SetMustCache!(shadow)
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
-        API.SetMustCache!(normal)
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
-    API.SetMustCache!(tape)
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -795,19 +824,16 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false, C_NULL)
 
     if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
-        API.SetMustCache!(shadow)
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
-        API.SetMustCache!(normal)
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(2; ctx)]))
-    API.SetMustCache!(tape)
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
@@ -1334,7 +1360,8 @@ const inactivefns = Set((
     "jl_f_fieldtype",
     "jl_symbol_n",
     # BIG TODO
-    "jl_gc_add_finalizer_th"
+    "jl_gc_add_finalizer_th",
+    "jl_"
 ))
 
 function annotate!(mod)
@@ -2061,7 +2088,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
-        if func == Base.println
+        if func == Base.println || func == Base.print || func == Base.show || func == Base.flush
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             continue
         end
