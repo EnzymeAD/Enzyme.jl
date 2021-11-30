@@ -514,6 +514,22 @@ end
     @test 1.0 ≈ autodiff(f, Active(0.1))[1]
 end
 
+@testset "Array Copy" begin
+	F = [2.0, 3.0]
+
+	dF = [0.0, 0.0]
+
+	function copytest(F)
+		F2 = copy(F)
+		@inbounds F[1] = 1.234
+		@inbounds F[2] = 5.678
+		@inbounds F2[1] * F2[2]
+	end
+	autodiff(copytest, Duplicated(F, dF))
+	@test F ≈ [1.234, 5.678] 
+	@test dF ≈ [3.0, 2.0]
+end
+
 @testset "No inference" begin
     c = 5.0
     @test 5.0 ≈ autodiff((A,)->c * A, Active, Active(2.0))[1]
