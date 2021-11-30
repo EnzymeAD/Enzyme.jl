@@ -1036,16 +1036,6 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     ctx = LLVM.context(orig)
     secretty = API.EnzymeConcreteTypeIsFloat(ct, ctx)
 
-    # arLenFn = get_function!(mod, "jl_array_len") do mod, ctx, name
-    # 	funcT = LLVM.FunctionType(LLVM.IntType(8*sizeof(Csize_t); ctx), [LLVM.llvmtype(orig)])
-    #     LLVM.Function(mod, name, funcT)
-    # end
-    
-	# printF = get_function!(mod, "printf") do mod, ctx, name
-    # 	funcT = LLVM.FunctionType(LLVM.IntType(8*sizeof(Cint); ctx), LLVM.LLVMType[]; vararg=true)
-    #     LLVM.Function(mod, name, funcT)
-    # end
-
     off = sizeof(Cstring)
     if true # STORE_ARRAY_LEN
         off += sizeof(Csize_t)
@@ -1061,10 +1051,9 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
         position!(B0, first(instructions(LLVM.BasicBlock(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.entry(LLVM.parent(LLVM.parent(orig))))))))
     else
         B0 = LLVM.Builder(ctx)
-        position!(B0, LLVM.parent(actualOp))
+        position!(B0, LLVM.API.LLVMGetNextInstruction(actualOp))
     end
     
-    # elSize = pointercast!(B0, actualOp, LLVM.PointerType(LLVM.IntType(8; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
     actualOp = pointercast!(B0, actualOp, LLVM.PointerType(LLVM.IntType(8; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
 
     elSize = gep!(B0, actualOp, [LLVM.ConstantInt(LLVM.IntType(64; ctx), off)])
@@ -1076,22 +1065,25 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     len = pointercast!(B0, len, LLVM.PointerType(LLVM.IntType(8*sizeof(Csize_t); ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
     len = LLVM.load!(B0, len)
 
-	# length = LLVM.mul!(B0, call!(B0, arLenFn, [actualOp]), elSize)
-	length = LLVM.mul!(B0, len, elSize)
-	# LLVM.call!(B0, printF, [globalstring!(B0, "elSize=%d len=%d length=%d\n"), elSize, len, length])
-
-	isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
+    length = LLVM.mul!(B0, len, elSize)
+    isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
 
     # forward pass copy already done by underlying call
-	allowForward = false
-	intrinsic = LLVM.Intrinsic("llvm.memcpy").id
+    allowForward = false
+    intrinsic = LLVM.Intrinsic("llvm.memcpy").id
 
-	shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
-	shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
-	shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origArg, B))
-	shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
+    shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
+    if !fwd
+        shadowdst = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowdst, B))
+    end
+    shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
+    shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origArg, B))
+    if !fwd
+        shadowsrc = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowsrc, B))
+    end
+    shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
 
-	API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward)
+    API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward)
 
     return nothing
 end
