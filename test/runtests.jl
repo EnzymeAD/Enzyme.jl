@@ -388,7 +388,7 @@ end
     A = rand(10,10); B = rand(10, 10)
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
-    @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+    autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end
 
 
@@ -512,6 +512,22 @@ end
         @inbounds return bmat(x)[1]
     end
     @test 1.0 ≈ autodiff(f, Active(0.1))[1]
+end
+
+@testset "Array Copy" begin
+	F = [2.0, 3.0]
+
+	dF = [0.0, 0.0]
+
+	function copytest(F)
+		F2 = copy(F)
+		@inbounds F[1] = 1.234
+		@inbounds F[2] = 5.678
+		@inbounds F2[1] * F2[2]
+	end
+	autodiff(copytest, Duplicated(F, dF))
+	@test F ≈ [1.234, 5.678] 
+	@test dF ≈ [3.0, 2.0]
 end
 
 @testset "No inference" begin

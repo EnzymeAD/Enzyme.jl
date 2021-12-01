@@ -1012,19 +1012,101 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
-function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented forward for jl_array_copy")
+function arraycopy_common(fwd, B, orig, origArg, gutils)
+    # size_t len = jl_array_len(ary);
+    # size_t elsz = ary->elsize;
+    # memcpy(new_ary->data, ary->data, len * elsz);
+	# JL_EXTENSION typedef struct {
+	# 	JL_DATA_TYPE
+	# 	void *data;
+	# #ifdef STORE_ARRAY_LEN
+	# 	size_t length;
+	# #endif
+	# 	jl_array_flags_t flags;
+	# 	uint16_t elsize;  // element size including alignment (dim 1 memory stride)
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+	tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+	dl = string(LLVM.datalayout(mod))
+	API.EnzymeTypeTreeLookupEq(tt, 1, dl)
+	data0!(tt)
+    ct = API.EnzymeTypeTreeInner0(tt)
+
+    @assert ct != API.DT_Unknown
+    ctx = LLVM.context(orig)
+    secretty = API.EnzymeConcreteTypeIsFloat(ct, ctx)
+
+    off = sizeof(Cstring)
+    if true # STORE_ARRAY_LEN
+        off += sizeof(Csize_t)
     end
+    #jl_array_flags_t
+    off += 2
+
+    actualOp = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origArg))
+    if fwd
+        B0 = B
+    elseif typeof(actualOp) <: LLVM.Argument
+        B0 = LLVM.Builder(ctx)
+        position!(B0, first(instructions(LLVM.BasicBlock(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.entry(LLVM.parent(LLVM.parent(orig))))))))
+    else
+        B0 = LLVM.Builder(ctx)
+        position!(B0, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(actualOp)))
+    end
+    
+    actualOp = pointercast!(B0, actualOp, LLVM.PointerType(LLVM.IntType(8; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
+
+    elSize = gep!(B0, actualOp, [LLVM.ConstantInt(LLVM.IntType(64; ctx), off)])
+    elSize = pointercast!(B0, elSize, LLVM.PointerType(LLVM.IntType(16; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
+    elSize = LLVM.load!(B0, elSize)
+    elSize = LLVM.zext!(B0, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
+
+    len = gep!(B0, actualOp, [LLVM.ConstantInt(LLVM.IntType(64; ctx), sizeof(Cstring))])
+    len = pointercast!(B0, len, LLVM.PointerType(LLVM.IntType(8*sizeof(Csize_t); ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
+    len = LLVM.load!(B0, len)
+
+    length = LLVM.mul!(B0, len, elSize)
+    isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
+
+    # forward pass copy already done by underlying call
+    allowForward = false
+    intrinsic = LLVM.Intrinsic("llvm.memcpy").id
+
+    shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
+    if !fwd
+        shadowdst = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowdst, B))
+    end
+    shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
+    shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origArg, B))
+    if !fwd
+        shadowsrc = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowsrc, B))
+    end
+    shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
+
+    API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward)
 
     return nothing
 end
 
+function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+
+    shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
+    shadowres = LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), [shadowin])
+ 
+    unsafe_store!(shadowR, shadowres.ref)
+
+    arraycopy_common(#=fwd=#true, LLVM.Builder(B), orig, origops[1], gutils)
+	
+	return nothing
+end
+
 function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for jl_array_copy")
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+    arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils)
     return nothing
 end
 
