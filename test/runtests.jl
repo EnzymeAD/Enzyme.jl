@@ -388,7 +388,7 @@ end
     A = rand(10,10); B = rand(10, 10)
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
-    @test_throws ErrorException autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+    autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 end
 
 

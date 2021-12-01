@@ -1051,7 +1051,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
         position!(B0, first(instructions(LLVM.BasicBlock(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.entry(LLVM.parent(LLVM.parent(orig))))))))
     else
         B0 = LLVM.Builder(ctx)
-        position!(B0, LLVM.API.LLVMGetNextInstruction(actualOp))
+        position!(B0, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(actualOp)))
     end
     
     actualOp = pointercast!(B0, actualOp, LLVM.PointerType(LLVM.IntType(8; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
