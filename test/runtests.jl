@@ -534,3 +534,33 @@ end
     c = 5.0
     @test 5.0 ≈ autodiff((A,)->c * A, Active, Active(2.0))[1]
 end
+
+@testset "Type-instable capture" begin
+    L = Array{Float64, 1}(undef, 2)
+
+    F = [1.0, 0.0]
+
+    function main()
+        t = 0.0
+
+        function cap(m)
+            t = m
+        end
+
+        @noinline function inner(F, cond)
+            if cond
+                genericcall(F)
+            end
+        end
+
+        function tobedifferentiated(F, cond)
+            inner(F, cond)
+            # Force an apply generic
+            -t
+            nothing
+        end
+        autodiff(tobedifferentiated, Duplicated(F, L), false)
+    end
+
+    main()
+end
