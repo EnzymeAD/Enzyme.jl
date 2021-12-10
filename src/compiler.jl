@@ -662,7 +662,9 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         pushfirst!(vals, ret)
     end
 
-    to_preserve = LLVM.Value[primal, shadow]
+    # to_preserve = LLVM.Value[primal, shadow]
+    to_preserve = LLVM.Value[]
+
 
     for (i, op) in enumerate(ops)
         idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
@@ -1953,6 +1955,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         ret!(builder)
     end
 
+    # make sure that arguments are rooted if necessary
+    reinsert_gcmarker!(llvm_f)
+
     return llvm_f
 end
 
@@ -2223,7 +2228,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         llvmfn = primalf
         FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
 
-        wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"wrap", FT)
+        wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"mustwrap", FT)
 
         let builder = Builder(ctx)
             entry = BasicBlock(wrapper_f, "entry"; ctx)

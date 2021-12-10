@@ -224,6 +224,11 @@ function EnzymeGetCLBool(name)
 end
 # void EnzymeSetCLInteger(void *, int64_t);
 
+function zcache!(val)
+    ptr = cglobal((:EnzymeZeroCache, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function printperf!(val)
     ptr = cglobal((:EnzymePrintPerf, libEnzyme))
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
@@ -276,6 +281,7 @@ function __init__()
     ptr = cglobal((:EnzymeJuliaAddrLoad, libEnzyme))
     val = true
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+    zcache!(true)
 end
 
 function moveBefore(i1, i2)

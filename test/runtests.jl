@@ -534,3 +534,56 @@ end
     c = 5.0
     @test 5.0 ≈ autodiff((A,)->c * A, Active, Active(2.0))[1]
 end
+
+@testset "Type-instable capture" begin
+    L = Array{Float64, 1}(undef, 2)
+
+    F = [1.0, 0.0]
+
+    function main()
+        t = 0.0
+
+        function cap(m)
+            t = m
+        end
+
+        @noinline function inner(F, cond)
+            if cond
+                genericcall(F)
+            end
+        end
+
+        function tobedifferentiated(F, cond)
+            inner(F, cond)
+            # Force an apply generic
+            -t
+            nothing
+        end
+        autodiff(tobedifferentiated, Duplicated(F, L), false)
+    end
+
+    main()
+end
+
+@testset "Arrays are double pointers" begin
+    @noinline function func_scalar(X)
+        return X
+    end
+
+    function timsteploop_scalar(FH1)
+        G = Float64[FH1]
+        k1 = @inbounds func_scalar(G[1])
+        return k1
+    end
+    @test Enzyme.autodiff(timsteploop_scalar, Active(2.0))[1] ≈ 1.0
+
+    @noinline function func(X)
+        return @inbounds X[1]
+    end
+    function timsteploop(FH1)
+        G = Float64[FH1]
+        k1 = func(G)
+        return k1
+    end
+    @test Enzyme.autodiff(timsteploop, Active(2.0))[1] ≈ 1.0
+end
