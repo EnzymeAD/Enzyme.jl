@@ -564,3 +564,26 @@ end
 
     main()
 end
+
+@testset "Arrays are double pointers" begin
+    @noinline function func_scalar(X)
+        return X
+    end
+
+    function timsteploop_scalar(FH1)
+        G = Float64[FH1]
+        k1 = @inbounds func_scalar(G[1])
+        return k1
+    end
+    @test Enzyme.autodiff(timsteploop_scalar, Active(2.0))[1] ≈ 1.0
+
+    @noinline function func(X)
+        return @inbounds X[1]
+    end
+    function timsteploop(FH1)
+        G = Float64[FH1]
+        k1 = func(G)
+        return k1
+    end
+    @test Enzyme.autodiff(timsteploop, Active(2.0))[1] ≈ 1.0
+end
