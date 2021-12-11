@@ -2040,7 +2040,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         wrapper_args = Vector{LLVM.Value}()
 
         if sret
-            sretPtr = alloca!(builder, llvmtype(parameters(wrapper_f)[1]))
+            sretPtr = alloca!(builder, eltype(llvmtype(parameters(entry_f)[1])))
             push!(wrapper_args, sretPtr)
         end
 
