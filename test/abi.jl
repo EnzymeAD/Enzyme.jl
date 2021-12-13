@@ -8,39 +8,57 @@ using Test
     # GhostType -> Nothing
     res = autodiff(f, Const, Const(nothing))
     @test res === ()
+    
+    @test () === fwddiff(f, Const, Const(nothing))
 
     res = autodiff(f, Const(nothing))
     @test res === ()
+    
+    @test () === fwddiff(f, Const(nothing))
 
     res = Enzyme.autodiff_deferred(f, Const(nothing))
     @test res === ()
+    @test () === fwddiff_deferred(f, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(f, Const, Const(Int))
     @test res === ()
+    @test () === fwddiff(f, Const, Const(Inr))
 
     res = autodiff(f, Const(Int))
     @test res === ()
+    @test () === fwddiff(f, Const(Int))
 
     res = Enzyme.autodiff_deferred(f, Const(Int))
     @test res === ()
+    @test () === fwddiff_deferred(f, Const(Int))
 
     # Complex numbers
     cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
+    cres,  = Enzyme.fwddiff(f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0))
+    @test cres ≈ 1.0 + 0.0im
 
     cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
+    cres,  = Enzyme.fwddiff(f, Duplicated(1.5 + 0.7im, 1.0))
+    @test cres ≈ 1.0 + 0.0im
 
     cres, = Enzyme.autodiff_deferred(f, Active(1.5 + 0.7im))
+    @test cres ≈ 1.0 + 0.0im
+    cres,  = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
     unused(_, y) = y
     res0, = autodiff(unused, Active, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
+    res0, = autodiff(unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
+    @test res0 ≈ 1.0
 
     res0, = autodiff(unused, Const(nothing), Active(2.0))
+    @test res0 ≈ 1.0
+    res0, = fwddiff(unused, Const(nothing), Duplicated(2.9, 1.0))
     @test res0 ≈ 1.0
 
     # returning an Array, with Const
@@ -52,11 +70,13 @@ using Test
     dx = [1.2]
     autodiff(squareRetArray, Const, Duplicated(x, dx))
     @test dx[1] ≈ 2.4
+    @test 2.4 ≈ first(fwddiff(squareRetArray, Const, Duplicated(x, [1.2])))
 
     x = [0.0]
     dx = [1.2]
     autodiff_deferred(squareRetArray, Const, Duplicated(x, dx))
     @test dx[1] ≈ 2.4
+    @test 2.4 ≈ first(fwddiff_deferred(squareRetArray, Const, Duplicated(x, [1.2])))
 
     # Multi arg => sret
     mul(x, y) = x * y
