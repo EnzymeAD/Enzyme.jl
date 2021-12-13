@@ -1759,7 +1759,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     elseif mode == API.DEM_ForwardMode
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#true, #=dretUsed=#true, #=mode=#API.DEM_ForwardMode,
+            #=returnValue=#rt <: Duplicated, #=dretUsed=#true, #=mode=#API.DEM_ForwardMode,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=postOpt=#false))
         augmented_primalf = nothing
@@ -1866,7 +1866,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if returnUsed
             isboxed = GPUCompiler.deserves_argbox(actualRetType)
             llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
-            push!(T_JuliaSRet, llvmT)
+            if rettype <: Duplicated
+                push!(T_JuliaSRet, llvmT)
+            end
             if !(rettype <: Const)
                 push!(T_JuliaSRet, llvmT)
             end
@@ -1969,7 +1971,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             end
         elseif Mode == API.DEM_ForwardMode
             returnNum = 0
-            if rettype <: Const
+            if !(rettype <: Duplicated)
                 store!(builder, val, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
                 returnNum += 1
             else
@@ -2524,7 +2526,9 @@ end
 
         returnUsed = !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
         if returnUsed
-            push!(sret_types, eltype(rettype))
+            if CC <: AugmentedForwardThunk || (CC <: ForwardModeThunk && rettype <: Duplicated)
+                push!(sret_types, eltype(rettype))
+            end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
                 push!(sret_types, eltype(rettype))
             end

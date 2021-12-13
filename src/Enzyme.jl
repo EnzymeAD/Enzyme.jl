@@ -73,7 +73,7 @@ Base.eltype(::Type{<:Annotation{T}}) where T = T
 function guess_activity(T, Mode=API.DEM_ReverseModeCombined)
     if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
         if Mode == API.DEM_ForwardMode
-            return Duplicated{T}
+            return DuplicatedNoNeed{T}
         else
             return Active{T}
         end
