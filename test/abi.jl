@@ -23,7 +23,7 @@ using Test
     # ConstType -> Type{Int}
     res = autodiff(f, Const, Const(Int))
     @test res === ()
-    @test () === fwddiff(f, Const, Const(Inr))
+    @test () === fwddiff(f, Const, Const(Int))
 
     res = autodiff(f, Const(Int))
     @test res === ()
@@ -36,25 +36,27 @@ using Test
     # Complex numbers
     cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff(f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0))
+    cres,  = Enzyme.fwddiff(f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
     cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff(f, Duplicated(1.5 + 0.7im, 1.0))
+    cres,  = Enzyme.fwddiff(f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
     cres, = Enzyme.autodiff_deferred(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0))
+    cres,  = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
     unused(_, y) = y
     res0, = autodiff(unused, Active, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
-    res0, = autodiff(unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
+    res0, = fwddiff(unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
+    res0, = fwddiff(unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
+    @test_broken res0 ≈ 1.0
 
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
@@ -70,13 +72,18 @@ using Test
     dx = [1.2]
     autodiff(squareRetArray, Const, Duplicated(x, dx))
     @test dx[1] ≈ 2.4
-    @test 2.4 ≈ first(fwddiff(squareRetArray, Const, Duplicated(x, [1.2])))
+
+    dx = [1.2]
+    @test () === fwddiff(squareRetArray, Const, Duplicated(x, dx))
+    @test dx[1] ≈ 2.4
 
     x = [0.0]
     dx = [1.2]
     autodiff_deferred(squareRetArray, Const, Duplicated(x, dx))
+
+    dx = [1.2]
+    @test () === fwddiff(squareRetArray, Const, Duplicated(x, dx))
     @test dx[1] ≈ 2.4
-    @test 2.4 ≈ first(fwddiff_deferred(squareRetArray, Const, Duplicated(x, [1.2])))
 
     # Multi arg => sret
     mul(x, y) = x * y
@@ -92,6 +99,20 @@ using Test
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
+    # Multi output
+    # TODO broken arg convention?
+    # tup(x) = (x, x*2)
+    # pair = first(fwddiff(tup, DuplicatedNoNeed, Duplicated(3.14, 1.0)))
+    # @test pair[1] ≈ 1.0
+    # @test pair[2] ≈ 2.0
+    # pair = first(fwddiff(tup, Duplicated(3.14, 1.0)))
+    # @test pair[1] ≈ 1.0
+    # @test pair[2] ≈ 2.0
+    # pair = first(fwddiff_deferred(tup, Duplicated(3.14, 1.0)))
+    # @test pair[1] ≈ 1.0
+    # @test pair[2] ≈ 2.0
+
+
     # SequentialType
     struct Foo
         baz::Int
@@ -102,30 +123,48 @@ using Test
     res2,  = autodiff(g, Active, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
 
+    @test 1.0≈ first(fwddiff(g, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+
     res2,  = autodiff(g, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
+
+    @test 1.0≈ first(fwddiff(g, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     unused2(_, y) = y.qux
     resF, = autodiff(unused2, Active, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
 
+    @test 1.0≈ first(fwddiff(unused2, DuplicatedNoNeed, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+
     resF, = autodiff(unused2, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
+
+    @test 1.0≈ first(fwddiff(unused2, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     h(x, y) = x.qux * y.qux
     res3 = autodiff(h, Active, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
+    @test 7*3.4 + 9 * 1.2 ≈ first(fwddiff(h, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
+
     res3 = autodiff(h, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
+
+    @test 7*3.4 + 9 * 1.2 ≈ first(fwddiff(h, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
 
     caller(f, x) = f(x)
     res4, = autodiff(caller, Active, (x)->x, Active(3.0))
     @test res4 ≈ 1.0
 
+    res4, = fwddiff(caller, DuplicatedNoNeed, (x)->x, Duplicated(3.0, 1.0))
+    @test res4 ≈ 1.0
+
     res4, = autodiff(caller, (x)->x, Active(3.0))
+    @test res4 ≈ 1.0
+
+    res4, = fwddiff(caller, (x)->x, Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
     struct LList
@@ -148,6 +187,8 @@ using Test
     @test ad === ()
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
 
+    @test 2.0 ≈ first(fwddiff(sumlist, DuplicatedNoNeed, Duplicated(regular, shadow)))
+
     mulr(x, y) = x[] * y[]
     x = Ref(2.0)
     y = Ref(3.0)
@@ -158,11 +199,24 @@ using Test
     @test dx[] ≈ 3.0
     @test dy[] ≈ 2.0
 
+    x = Ref(2.0)
+    y = Ref(3.0)
+    dx = Ref(5.0)
+    dy = Ref(7.0)
+    @test 5.0*3.0 + 2.0*7.0≈ first(fwddiff(mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
+
     mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))
     @test mid ≈ 4.0
 
     mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))
     @test mid ≈ 4.0
+
+    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, (x->x*x,), Duplicated(2.0, 1.0))
+    @test mid ≈ 4.0
+
+    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, [x->x*x], Duplicated(2.0, 1.0))
+    @test mid ≈ 4.0
+
 
     # deserves_argbox yes and no
     struct Bar
@@ -184,10 +238,14 @@ end
     end
     f = clo2(2.0)
     @test 2.0 ≈ Enzyme.autodiff(f, Active(3.0))[1]
+
+    @test 2.0 ≈ Enzyme.fwddiff(f, Duplicated(3.0, 1.0))[1]
     
     df = clo2(0.0)
     @test 2.0 ≈ Enzyme.autodiff(Duplicated(f, df), Active(3.0))[1]
     @test 3.0 ≈ df.V[1] 
+
+    @test 2.0 * 7.0 + 3.0 * 5.0 ≈ first(Enzyme.fwddiff(Duplicated(f, df), Duplicated(5.0, 7.0)))
 end
 
 @testset "Callable ABI" begin
@@ -206,6 +264,9 @@ end
     @test Enzyme.autodiff(method, Active, AFoo(2.0), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(AFoo(2.0), Active, Active(3.0))[1]≈ 2.0
 
+    @test Enzyme.fwddiff(method, DuplicatedNoNeed, AFoo(2.0), Duplicated(3.0, 1.0))[1]≈ 2.0
+    @test Enzyme.fwddiff(AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1]≈ 2.0
+
     struct ABar
     end
 
@@ -215,4 +276,7 @@ end
 
     @test Enzyme.autodiff(method, Active, ABar(), Active(3.0))[1]≈ 2.0
     @test Enzyme.autodiff(ABar(), Active, Active(3.0))[1]≈ 2.0
+
+    @test Enzyme.fwddiff(method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1]≈ 2.0
+    @test Enzyme.fwddiff(ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1]≈ 2.0
 end

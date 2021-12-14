@@ -1970,17 +1970,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 end
             end
         elseif Mode == API.DEM_ForwardMode
-            returnNum = 0
-            if !(rettype <: Duplicated)
-                store!(builder, val, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
-                returnNum += 1
-            else
-                eval = extract_value!(builder, val, 0)
+            for returnNum in 0:(length(T_JuliaSRet)-1)
+                eval = val
+                if length(T_JuliaSRet) > 1
+                    eval = extract_value!(builder, val, returnNum)
+                end
                 store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
-                returnNum += 1
-                eval = extract_value!(builder, val, 1)
-                store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
-                returnNum += 1
             end
         else
             activeNum = 0
@@ -2722,6 +2717,7 @@ function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Mode}=Val(API.DEM_Re
     local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, hash(rt, UInt64(Mode))))
 
     target = Compiler.EnzymeTarget()
+
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, rt, true, DF != Nothing)
     job    = Compiler.CompilerJob(target, primal, params)
 
@@ -2741,10 +2737,10 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure}=Val(false)) where {f,tt, rt, DupClosure}
+@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure}=Val(false),::Val{Mode}=Val(API.DEM_ReverseModeCombined)) where {f,tt, rt, DupClosure, Mode}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, API.DEM_ReverseModeCombined, rt, true, DupClosure)
+    params = EnzymeCompilerParams(adjoint, Mode, rt, true, DupClosure)
     job    = CompilerJob(target, primal, params)
 
     addr = get_trampoline(job)

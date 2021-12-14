@@ -1,6 +1,6 @@
 module Enzyme
 
-export autodiff, autodiff_deferred
+export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred
 export Const, Active, Duplicated, DuplicatedNoNeed
 
 """
@@ -322,5 +322,50 @@ end
     rt    = Core.Compiler.return_type(dupf.val, tt)
     A     = guess_activity(rt, API.DEM_ForwardMode)
     fwddiff(dupf, A, args′...)
+end
+
+"""
+    fwddiff_deferred(f, Activity, args...)
+
+Same as [`fwddiff`](@ref) but uses deferred compilation to support usage in GPU
+code, as well as high-order differentiation.
+"""
+@inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+
+    if A isa UnionAll
+        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = Core.Compiler.return_type(f, tt)
+        rt = A{rt}
+    else
+        @assert A isa DataType
+        rt = A
+    end
+
+    if eltype(rt) == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode))
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    thunk(args′...)
+end
+
+"""
+    fwddiff_deferred(f, args...)
+
+Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function fwddiff_deferred(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    rt    = guess_activity(rt, API.DEM_ForwardMode)
+    fwddiff_deferred(f, rt, args′...)
 end
 end # module

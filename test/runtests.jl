@@ -9,7 +9,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     ∂x, = autodiff(f, Active, Active(x))
     @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
     
-    ∂x, = fwddiff(f, Duplicated(x, one(typeof(x)))
+    ∂x, = fwddiff(f, Duplicated(x, one(typeof(x))))
     @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
 end
 
@@ -27,7 +27,7 @@ include("abi.jl")
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(true))
+    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -37,7 +37,7 @@ end
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 
-#     thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
+#     thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(Enzyme.API.DEM_ReverseModeGradient))
 #     @test thunk_split.primal !== C_NULL
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
@@ -129,7 +129,7 @@ end
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
     
-    @test fwddiff(arsum, Duplicated(inp, dinp))[1] ≈ 2.0 
+    @test fwddiff(arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
 @testset "Bithacks" begin
@@ -140,7 +140,8 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(fneg, Active, Active(2.0))[1] ≈ -1.0
-    @test fwddiff(fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
+    # TODO https://github.com/wsmoses/Enzyme/issues/392
+    @test_broken fwddiff(fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
         y = UInt64(4607182418800017408)
@@ -148,7 +149,8 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(expor, Active, Active(0.42))[1] ≈ 4.0
-    @test fwddiff(expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
+    # TODO https://github.com/wsmoses/Enzyme/issues/392
+    @test_broken fwddiff(expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
 @testset "GC" begin
@@ -160,7 +162,8 @@ end
         return mean(a)
     end
     @test autodiff(gc_alloc, Active, Active(5.0))[1] ≈ 10
-    @test fwddiff(gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
+    # TODO(wsmoses): https://github.com/wsmoses/Enzyme/issues/393
+    # @test fwddiff(gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
 
     # TODO (after BLAS)
     # A = Vector[2.0, 3.0]
@@ -176,8 +179,9 @@ end
         end
         return mean(a)
     end
-    # TODO(wsmoses): Illegal update analysis
+    # TODO(wsmoses): Assertion failed: (pp->getNumUses() == 0), function eraseFictiousPHIs
     # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
+    # TODO: https://github.com/wsmoses/Enzyme/issues/393
     # @test Enzyme.fwddiff(gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
@@ -217,11 +221,12 @@ end
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ first(autodiff(foo, Active, Active(x)))
-    @test fd ≈ first(fwddiff(foo, Duplicated(x, 1.0)))
+    # They do matter for duplicated, which can't be auto promoted
+    # @test fd ≈ first(fwddiff(foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
     @test √3 ≈ first(autodiff(f74, Active, Active(2), 3))
-    @test √3 ≈ first(fwddiff(f74, Duplicated(2), 3))
+    @test √3 ≈ first(fwddiff(f74, Duplicated(2.0, 1.0), 3))
 end
 
 """
