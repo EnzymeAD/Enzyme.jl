@@ -1768,6 +1768,7 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
 end
 
+include("compiler/interpreter.jl")
 ## job
 
 # TODO: We shouldn't blanket opt-out
@@ -1780,6 +1781,10 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+
+# provide a specific interpreter to use.
+GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    EnzymeInterpeter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world)
 
 include("compiler/optimize.jl")
 
