@@ -227,7 +227,7 @@ function runtime_newtask_fwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ss
     args = ()
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(true))
+    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal))
 
     taperef = Ref{Ptr{Cvoid}}(C_NULL)
 
