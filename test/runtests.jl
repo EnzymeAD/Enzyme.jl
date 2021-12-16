@@ -48,6 +48,8 @@ end
     @test autodiff(tanh, Active, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
+
+    @test autodiff(x->log(x), Active(2.0)) == (0.5,)
 end
 
 @testset "Duplicated" begin

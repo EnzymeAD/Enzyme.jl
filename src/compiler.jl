@@ -355,6 +355,7 @@ function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
 
 
     tape = tape::Tape
+    @show tape
 
     if tape.shadow_return !== nothing
         val = tape.shadow_return
@@ -1412,6 +1413,21 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+
+# use an overlay method table
+Base.Experimental.@MethodTable(method_table)
+GPUCompiler.method_table(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = method_table
+
+macro enzyme_override(ex)
+    code = quote
+        $GPUCompiler.@override($method_table, $ex)
+    end
+    return esc(code)
+end
+
+# # provide a specific interpreter to use.
+# GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+#     EnzymeInterpeter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world)
 
 include("compiler/optimize.jl")
 

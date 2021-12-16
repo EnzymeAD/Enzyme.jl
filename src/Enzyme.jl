@@ -278,4 +278,7 @@ Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.va
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
+import .Compiler: @enzyme_override
+@enzyme_override Base.log(x::Float64) = ccall("llvm.log.f64", llvmcall, Float64, (Float64,), x)
+
 end # module
