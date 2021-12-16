@@ -165,8 +165,7 @@ end
         return mean(a)
     end
     @test autodiff(gc_alloc, Active, Active(5.0))[1] ≈ 10
-    # TODO(wsmoses): https://github.com/wsmoses/Enzyme/issues/393
-    # @test fwddiff(gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
+    @test fwddiff(gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
 
     # TODO (after BLAS)
     # A = Vector[2.0, 3.0]
@@ -249,17 +248,16 @@ end
 mybesselj0(z) = mybesselj(0, z)
 mybesselj1(z) = mybesselj(1, z)
 
-# @testset "Bessel" begin
-#     autodiff(mybesselj, Active, Const(0), Active(1.0))
-#     autodiff(mybesselj, Active, 0, Active(1.0))
-#     fwddiff(mybesselj, Const(0), Duplicated(1.0, 1.0))
-#     fwddiff(mybesselj, 0, Duplicated(1.0, 1.0))
-#     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-#         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
-#         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
-#     end
-# 
-# end
+@testset "Bessel" begin
+    autodiff(mybesselj, Active, Const(0), Active(1.0))
+    autodiff(mybesselj, Active, 0, Active(1.0))
+    fwddiff(mybesselj, Const(0), Duplicated(1.0, 1.0))
+    fwddiff(mybesselj, 0, Duplicated(1.0, 1.0))
+    @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
+        test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
+        test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
+    end
+end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
@@ -285,9 +283,8 @@ end
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
     
-    #TODO 
-    # Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
-    # @test Float64[1.0, 1.0] ≈ dR
+    Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
+    @test Float64[1.0, 1.0] ≈ dR
 
     function tasktest2(M, x)
         task = Threads.@spawn begin
@@ -298,6 +295,7 @@ end
     end
     # The empty return previously resulted in an illegal instruction error
     @test 0.0 ≈ Enzyme.autodiff(tasktest2, Duplicated(R, dR), Active(2.0))[1]
+    @test () === Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
 
 @testset "DiffTest" begin
@@ -435,10 +433,13 @@ end
 
 
 @testset "DuplicatedReturn" begin
-    moo(x) = fill(x, 10, 10)
+    moo(x) = fill(x, 10)
 
     @test_throws ErrorException autodiff(moo, Active(2.1))
-    @test [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] ≈ fwddiff(moo, Duplicated(2.1, 1.0))
+    fo, = fwddiff(moo, Duplicated(2.1, 1.0))
+    for i in 1:10
+        @test 1.0 ≈ fo[i]
+    end
 end
 
 @testset "GCPreserve" begin
@@ -471,7 +472,7 @@ end
     
     fwddiff(f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
     
-    @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
+    @test shadow_a_in ≈ Float64[1.0, 1.0, 2.0, 2.0]
     @test shadow_a_out ≈ Float64[1.0, 1.0, 2.0, 2.0]
 end
 
@@ -586,7 +587,7 @@ end
 	@test F ≈ [1.234, 5.678] 
 	@test dF ≈ [3.0, 2.0]
 	
-    @test 35.0 ≈ fwddiff(copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))
+    @test 31.0 ≈ fwddiff(copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
 end
 
 @testset "No inference" begin

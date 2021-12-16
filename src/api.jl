@@ -170,9 +170,11 @@ const CustomShadowFree = Ptr{Cvoid}
 EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall((:EnzymeRegisterAllocationHandler, libEnzyme), Cvoid, (Cstring, CustomShadowAlloc, CustomShadowFree), name, ahandle, fhandle)
 
 
+const CustomAugmentedForwardPass = Ptr{Cvoid}
 const CustomForwardPass = Ptr{Cvoid}
 const CustomReversePass = Ptr{Cvoid}
-EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass, CustomReversePass), name, fwdhandle, revhandle)
+EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomAugmentedForwardPass, CustomReversePass), name, fwdhandle, revhandle)
+EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall((:EnzymeRegisterFwdCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass), name, fwdhandle)
 
 const EnzymeGradientUtilsRef = Ptr{Cvoid}
 

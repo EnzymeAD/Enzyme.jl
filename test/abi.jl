@@ -56,7 +56,7 @@ using Test
     res0, = fwddiff(unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
     res0, = fwddiff(unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
-    @test_broken res0 ≈ 1.0
+    @test res0 ≈ 1.0
 
     res0, = autodiff(unused, Const(nothing), Active(2.0))
     @test res0 ≈ 1.0
