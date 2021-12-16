@@ -50,7 +50,11 @@ end
 
 Core.Compiler.may_optimize(interp::EnzymeInterpeter) = true
 Core.Compiler.may_compress(interp::EnzymeInterpeter) = true
-Core.Compiler.may_discard_trees(interp::EnzymeInterpeter) = true
+# From @aviatesk:
+#     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
+#      but as far as I understand Enzyme wants "always inlining, except special cased functions",
+#      so I guess we really don't want to discard sources?
+Core.Compiler.may_discard_trees(interp::EnzymeInterpeter) = false
 if VERSION >= v"1.7.0-DEV.577"
 Core.Compiler.verbose_stmt_info(interp::EnzymeInterpeter) = false
 end
@@ -62,3 +66,55 @@ else
 Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     GPUCompiler.WorldOverlayMethodTable(interp.world)
 end
+
+function is_primitive_func(@nospecialize(TT))
+    isa(TT, DataType) || return false
+    ft = TT.parameters[1]
+    if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
+       ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.log) ||
+       ft === typeof(Base.asin) || ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast)
+
+        if TT <: Tuple{ft, Float32} || TT <: Tuple{ft, Float64}
+            return true
+        end
+    end
+    # FIXME(@wsmoses): For which types should we not inline?
+    if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work)
+        return true
+    end
+    return false
+end
+
+
+# branch on https://github.com/JuliaLang/julia/pull/41328
+@static if isdefined(Core.Compiler, :is_stmt_inline)
+
+function Core.Compiler.inlining_policy(
+    interp::EnzymeInterpeter, @nospecialize(src), stmt_flag::UInt8,
+    mi::MethodInstance, argtypes::Vector{Any})
+
+    if is_primitive_func(mi.specTypes)
+        return nothing
+    end
+
+    return Base.@invoke Core.Compiler.inlining_policy(
+        interp::AbstractInterpreter, src::Any, stmt_flag::UInt8,
+        mi::MethodInstance, argtypes::Vector{Any})
+end
+
+elseif isdefined(Core.Compiler, :inlining_policy)
+
+import Core.Compiler: InliningTodo, InliningState
+enzyme_inlining_policy(@nospecialize(src)) = Core.Compiler.default_inlining_policy(src)
+Core.Compiler.inlining_policy(::EnzymeInterpeter) = enzyme_inlining_policy
+function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:typeof(enzyme_inlining_policy)}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
+    mi = todo.mi
+    if is_primitive_func(mi.specTypes)
+        return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+    end
+
+    return Base.@invoke Core.Compiler.resolve_todo(
+        todo::InliningTodo, state::InliningState)
+end
+
+end # @static if isdefined(Core.Compiler, :is_stmt_inline)
