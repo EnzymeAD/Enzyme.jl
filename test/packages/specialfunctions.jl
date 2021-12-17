@@ -3,11 +3,8 @@ using SpecialFunctions
 # From https://github.com/JuliaDiff/ChainRules.jl/blob/02e7857e34b5c01067a288262f69cfcb9fce069b/test/rulesets/packages/SpecialFunctions.jl#L1
 
 @testset "SpecialFunctions" for x in (1, -1, 0, 0.5, 10, -17.1, 1.5 + 0.7im)
-    # TODO handle complex
-    if x isa Real
-        test_scalar(SpecialFunctions.erf, x)
-        test_scalar(SpecialFunctions.erfc, x)
-    end
+    test_scalar(SpecialFunctions.erf, x)
+    test_scalar(SpecialFunctions.erfc, x)
 
     # Handled by openspec non defaultly done
     # test_scalar(SpecialFunctions.erfi, x)

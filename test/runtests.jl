@@ -7,13 +7,21 @@ using Statistics
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(f, Active, Active(x))
-    @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
-   
+    if typeof(x) <: Complex
+    else
+      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    end
+  
+    rm = ∂x 
     if typeof(x) <: Integer
         x = Float64(x)
     end
     ∂x, = fwddiff(f, Duplicated(x, one(typeof(x))))
-    @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    if typeof(x) <: Complex
+      @test ∂x ≈ rm
+    else
+      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    end
 end
 
 include("abi.jl")
