@@ -10,7 +10,10 @@ function optimize!(mod::LLVM.Module, tm)
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
-        # TODO: DCE (doesn't exist in llvm-c)
+        dce!(pm)
+@static if isdefined(GPUCompiler, :cpu_features!)
+        GPUCompiler.cpu_features!(pm)
+end
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
