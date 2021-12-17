@@ -151,8 +151,7 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(fneg, Active, Active(2.0))[1] ≈ -1.0
-    # TODO https://github.com/wsmoses/Enzyme/issues/392
-    @test_broken fwddiff(fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
+    @test fwddiff(fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
         y = UInt64(4607182418800017408)
@@ -160,8 +159,7 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(expor, Active, Active(0.42))[1] ≈ 4.0
-    # TODO https://github.com/wsmoses/Enzyme/issues/392
-    @test_broken fwddiff(expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
+    @test fwddiff(expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
 @testset "GC" begin
