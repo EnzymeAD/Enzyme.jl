@@ -12,11 +12,11 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
+Enzyme_jll = "~0.0.26"
 GPUCompiler = "0.13"
 LLVM = "4.1"
 ObjectFile = "0.3"
