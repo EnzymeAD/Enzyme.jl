@@ -7,7 +7,21 @@ using Statistics
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(f, Active, Active(x))
-    @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    if typeof(x) <: Complex
+    else
+      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    end
+  
+    rm = ∂x 
+    if typeof(x) <: Integer
+        x = Float64(x)
+    end
+    ∂x, = fwddiff(f, Duplicated(x, one(typeof(x))))
+    if typeof(x) <: Complex
+      @test ∂x ≈ rm
+    else
+      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+    end
 end
 
 include("abi.jl")
@@ -24,7 +38,7 @@ include("abi.jl")
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(true))
+    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -34,7 +48,7 @@ end
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 
-#     thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(true))
+#     thunk_split = Enzyme.Compiler.thunk(f, Tuple{Duplicated{Array{Float64,1}}}, Val(Enzyme.API.DEM_ReverseModeGradient))
 #     @test thunk_split.primal !== C_NULL
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
@@ -43,9 +57,14 @@ end
     f1(x) = 1.0 + x
     f2(x) = x*x
     @test autodiff(f1, Active, Active(1.0))[1] ≈ 1.0
+    @test fwddiff(f1, DuplicatedNoNeed, Duplicated(1.0, 1.0))[1] ≈ 1.0
+    @test fwddiff(f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
     @test autodiff(f2, Active, Active(1.0))[1] ≈ 2.0
+    @test fwddiff(f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
     @test autodiff(tanh, Active, Active(1.0))[1] ≈ 0.41997434161402606939
+    @test fwddiff(tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(tanh, Active, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
+    @test fwddiff(tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
 end
@@ -66,7 +85,9 @@ end
 @testset "Simple tests" begin
     g(x) = real((x + im)*(1 - im*x))
     @test first(autodiff(g, Active, Active(2.0))) ≈ 2.0
+    @test first(fwddiff(g, Duplicated(2.0, 1.0))) ≈ 2.0
     @test first(autodiff(g, Active, Active(3.0))) ≈ 2.0
+    @test first(fwddiff(g, Duplicated(3.0, 1.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
 end
@@ -105,6 +126,8 @@ end
     autodiff(arsum, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
+    
+    @test fwddiff(arsum, Duplicated(inp, dinp))[1] ≈ 2.0 
 end
 
 @testset "Advanced array tests" begin
@@ -116,6 +139,8 @@ end
     autodiff(arsum2, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
+    
+    @test fwddiff(arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
 @testset "Bithacks" begin
@@ -126,6 +151,7 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(fneg, Active, Active(2.0))[1] ≈ -1.0
+    @test fwddiff(fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
         y = UInt64(4607182418800017408)
@@ -133,6 +159,7 @@ end
         return reinterpret(Float64, out)
     end
     @test autodiff(expor, Active, Active(0.42))[1] ≈ 4.0
+    @test fwddiff(expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
 @testset "GC" begin
@@ -144,6 +171,7 @@ end
         return mean(a)
     end
     @test autodiff(gc_alloc, Active, Active(5.0))[1] ≈ 10
+    @test fwddiff(gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
 
     # TODO (after BLAS)
     # A = Vector[2.0, 3.0]
@@ -159,8 +187,10 @@ end
         end
         return mean(a)
     end
-    # TODO(wsmoses): Illegal update analysis
+    # TODO(wsmoses): Assertion failed: (pp->getNumUses() == 0), function eraseFictiousPHIs
     # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
+    # TODO: https://github.com/wsmoses/Enzyme/issues/393
+    # @test Enzyme.fwddiff(gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
 
@@ -170,12 +200,14 @@ end
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
     @test fd ≈ first(autodiff(sin, Active, Active(x)))
+    @test fd ≈ first(fwddiff(sin, Duplicated(x, 1.0)))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
     @test fd ≈ first(autodiff(asin, Active, Active(x)))
+    @test fd ≈ first(fwddiff(asin, Duplicated(x, 1.0)))
     test_scalar(asin, x)
 
     function foo(x)
@@ -190,15 +222,19 @@ end
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ first(autodiff(foo, Active, Active(x)))
+    @test fd ≈ first(fwddiff(foo, Duplicated(x, 1.0)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ first(autodiff(foo, Active, Active(x)))
+    # They do matter for duplicated, which can't be auto promoted
+    # @test fd ≈ first(fwddiff(foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
     @test √3 ≈ first(autodiff(f74, Active, Active(2), 3))
+    @test √3 ≈ first(fwddiff(f74, Duplicated(2.0, 1.0), 3))
 end
 
 """
@@ -221,11 +257,12 @@ mybesselj1(z) = mybesselj(1, z)
 @testset "Bessel" begin
     autodiff(mybesselj, Active, Const(0), Active(1.0))
     autodiff(mybesselj, Active, 0, Active(1.0))
+    fwddiff(mybesselj, Const(0), Duplicated(1.0, 1.0))
+    fwddiff(mybesselj, 0, Duplicated(1.0, 1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
     end
-
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
@@ -251,6 +288,9 @@ end
     @test 5.0 ≈ Enzyme.autodiff(tasktest, Duplicated(R, dR), Active(2.0))[1]
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
+    
+    Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
+    @test Float64[1.0, 1.0] ≈ dR
 
     function tasktest2(M, x)
         task = Threads.@spawn begin
@@ -261,6 +301,7 @@ end
     end
     # The empty return previously resulted in an illegal instruction error
     @test 0.0 ≈ Enzyme.autodiff(tasktest2, Duplicated(R, dR), Active(2.0))[1]
+    @test () === Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
 
 @testset "DiffTest" begin
@@ -326,7 +367,8 @@ end
         x*x
     end
 
-    autodiff(printsq, Active, Active(2.3))
+    @test 4.6 ≈ first(autodiff(printsq, Active, Active(2.3)))
+    @test 4.6 ≈ first(fwddiff(printsq, Duplicated(2.3, 1.0)))
 end
 
 @testset "hmlstm" begin
@@ -363,12 +405,16 @@ end
     # autodiff(broadcast_hmlstm, Const,
     #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
+    # fwddiff(broadcast_hmlstm, Const,
+    #          Const(zeros(Float32, N, N)), Const(Z), Const(Zb),
+    #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
 
 
 @testset "generic" begin
     genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
     @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active, Active(2.0))[1]
+    @test -0.4161468365471424 ≈ Enzyme.fwddiff(genlatestsin, Duplicated(2.0, 1.0))[1]
 end
 
 @testset "broadcast" begin
@@ -393,9 +439,13 @@ end
 
 
 @testset "DuplicatedReturn" begin
-    moo(x) = fill(x, 10, 10)
+    moo(x) = fill(x, 10)
 
     @test_throws ErrorException autodiff(moo, Active(2.1))
+    fo, = fwddiff(moo, Duplicated(2.1, 1.0))
+    for i in 1:10
+        @test 1.0 ≈ fo[i]
+    end
 end
 
 @testset "GCPreserve" begin
@@ -407,6 +457,7 @@ end
         nothing
     end
     autodiff(f, Duplicated([1.0], [0.0]), Duplicated([1.0], [0.0]))
+    fwddiff(f, Duplicated([1.0], [0.0]), Duplicated([1.0], [0.0]))
 end
 
 @testset "GCPreserve2" begin
@@ -424,6 +475,11 @@ end
     
     @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
     @test shadow_a_out ≈ Float64[0.0, 1.0, 1.0, 2.0]
+    
+    fwddiff(f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
+    
+    @test shadow_a_in ≈ Float64[1.0, 1.0, 2.0, 2.0]
+    @test shadow_a_out ≈ Float64[1.0, 1.0, 2.0, 2.0]
 end
 
 @testset "UndefVar" begin
@@ -435,6 +491,9 @@ end
     end
     @test 1.0 ≈ autodiff(f, false, Active(2.14))[1]
     @test_throws Base.UndefVarError autodiff(f, true, Active(2.14))
+    
+    @test 1.0 ≈ fwddiff(f, false, Duplicated(2.14, 1.0))[1]
+    @test_throws Base.UndefVarError fwddiff(f, true, Duplicated(2.14, 1.0))
 
     function foo(x, y)
         if x
@@ -445,6 +504,7 @@ end
         y
     end
     @test 1.0 ≈ autodiff(foo, false, Active(2.14))[1]
+    @test 1.0 ≈ fwddiff(foo, false, Duplicated(2.14, 1.0))[1]
 end
 
 @testset "Return GC error" begin
@@ -459,6 +519,7 @@ end
 	end
 
 	@test 0.0 ≈ autodiff(tobedifferentiated, true, Active(2.1))[1]
+	@test 0.0 ≈ fwddiff(tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
 	
 	function tobedifferentiated2(cond, a)::Float64
 		if cond
@@ -469,6 +530,7 @@ end
 	end
 
 	@test 1.0 ≈ autodiff(tobedifferentiated2, true, Active(2.1))[1]
+	@test 1.0 ≈ fwddiff(tobedifferentiated2, true, Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)
         bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(p1))
@@ -499,6 +561,7 @@ end
     F = [1.0, 0.0]
 
     autodiff(mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
+    fwddiff(mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
 end
 
 
@@ -512,6 +575,7 @@ end
         @inbounds return bmat(x)[1]
     end
     @test 1.0 ≈ autodiff(f, Active(0.1))[1]
+    @test 1.0 ≈ fwddiff(f, Duplicated(0.1, 1.0))[1]
 end
 
 @testset "Array Copy" begin
@@ -528,11 +592,14 @@ end
 	autodiff(copytest, Duplicated(F, dF))
 	@test F ≈ [1.234, 5.678] 
 	@test dF ≈ [3.0, 2.0]
+	
+    @test 31.0 ≈ fwddiff(copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
 end
 
 @testset "No inference" begin
     c = 5.0
     @test 5.0 ≈ autodiff((A,)->c * A, Active, Active(2.0))[1]
+    @test 5.0 ≈ fwddiff((A,)->c * A, Duplicated(2.0, 1.0))[1]
 end
 
 @testset "Type-instable capture" begin
@@ -560,6 +627,7 @@ end
             nothing
         end
         autodiff(tobedifferentiated, Duplicated(F, L), false)
+        fwddiff(tobedifferentiated, Duplicated(F, L), false)
     end
 
     main()
@@ -576,6 +644,7 @@ end
         return k1
     end
     @test Enzyme.autodiff(timsteploop_scalar, Active(2.0))[1] ≈ 1.0
+    @test Enzyme.fwddiff(timsteploop_scalar, Duplicated(2.0, 1.0))[1] ≈ 1.0
 
     @noinline function func(X)
         return @inbounds X[1]
@@ -586,4 +655,5 @@ end
         return k1
     end
     @test Enzyme.autodiff(timsteploop, Active(2.0))[1] ≈ 1.0
+    @test Enzyme.fwddiff(timsteploop, Duplicated(2.0, 1.0))[1] ≈ 1.0
 end

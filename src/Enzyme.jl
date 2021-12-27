@@ -1,6 +1,6 @@
 module Enzyme
 
-export autodiff, autodiff_deferred
+export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred
 export Const, Active, Duplicated, DuplicatedNoNeed
 
 """
@@ -70,11 +70,19 @@ end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
-function guess_activity(T)
+function guess_activity(T, Mode=API.DEM_ReverseModeCombined)
     if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
-        return Active{T}
+        if Mode == API.DEM_ForwardMode
+            return DuplicatedNoNeed{T}
+        else
+            return Active{T}
+        end
     elseif T <: AbstractArray
-        return Duplicated{T}
+        if Mode == API.DEM_ForwardMode
+            return DuplicatedNoNeed{T}
+        else
+            return Duplicated{T}
+        end
     else
         return Const{T}
     end
@@ -170,7 +178,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt)
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(true))
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient))
             res = forward(args′...)
             tape = res[1]
             if res[3] isa Base.RefValue
@@ -183,7 +191,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     elseif A <: Duplicated
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(false))
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined))
     rt = eltype(Compiler.return_type(thunk))
     if A <: Active
         args′ = (args′..., one(rt))
@@ -194,7 +202,7 @@ end
 @inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(false))
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined))
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
@@ -278,4 +286,90 @@ Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.va
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
+
+@inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode))
+    thunk(args′...)
+end
+
+@inline function fwddiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode))
+    thunk(args′...)
+end
+
+"""
+    fwddiff(f, args...)
+
+Like [`fwddiff`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function fwddiff(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    A     = guess_activity(rt, API.DEM_ForwardMode)
+    fwddiff(f, A, args′...)
+end
+
+@inline function fwddiff(dupf::Duplicated{F}, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(dupf.val, tt)
+    A     = guess_activity(rt, API.DEM_ForwardMode)
+    fwddiff(dupf, A, args′...)
+end
+
+"""
+    fwddiff_deferred(f, Activity, args...)
+
+Same as [`fwddiff`](@ref) but uses deferred compilation to support usage in GPU
+code, as well as high-order differentiation.
+"""
+@inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+
+    if A isa UnionAll
+        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = Core.Compiler.return_type(f, tt)
+        rt = A{rt}
+    else
+        @assert A isa DataType
+        rt = A
+    end
+
+    if eltype(rt) == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode))
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    thunk(args′...)
+end
+
+"""
+    fwddiff_deferred(f, args...)
+
+Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function fwddiff_deferred(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    rt    = guess_activity(rt, API.DEM_ForwardMode)
+    fwddiff_deferred(f, rt, args′...)
+end
 end # module
