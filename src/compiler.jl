@@ -2994,7 +2994,6 @@ end
 function _link(job, (mod, adjoint_name, primal_name))
     params = job.params
     adjoint = params.adjoint
-    # split = params.split
 
     primal = job.source
     rt = Core.Compiler.return_type(primal.f, primal.tt)
@@ -3087,7 +3086,7 @@ function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Mode}=Val(API.DEM_Re
     elseif Mode == API.DEM_ForwardMode
         return ForwardModeThunk{F, rt, adjoint.tt, DF}(f, thunk.adjoint, df)
     else
-        @assert False
+        @assert false
     end
 end
 
