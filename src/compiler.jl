@@ -709,7 +709,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     cal = LLVM.call!(B, rtfn, vals)
     if numRet != 0
-        LLVM.API.LLVMAddCallSiteAttribute(cal, 1, EnumAttribute("sret"; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), EnumAttribute("sret"; ctx))
     end
 
     # TODO: GC, ret
@@ -2040,7 +2040,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         wrapper_args = Vector{LLVM.Value}()
 
         if sret
-            sretPtr = alloca!(builder, llvmtype(parameters(wrapper_f)[1]))
+            sretPtr = alloca!(builder, eltype(llvmtype(parameters(entry_f)[1])))
             push!(wrapper_args, sretPtr)
         end
 
