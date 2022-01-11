@@ -870,7 +870,7 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     cal = LLVM.call!(B, rtfn, vals)
     if numRet != 0
-        LLVM.API.LLVMAddCallSiteAttribute(cal, 1, EnumAttribute("sret"; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), EnumAttribute("sret"; ctx))
     end
 
     # TODO: GC, ret

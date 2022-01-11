@@ -143,6 +143,29 @@ end
     @test fwddiff(arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
+function grad_closure(f, x)
+    function noretval(x,res)
+        y = f(x)
+        copyto!(res,y)
+        return nothing
+    end
+    n = length(x)
+    dx = zeros(n)
+    y  = zeros(n)
+    dy = zeros(n)
+    dy[1] = 1.0
+
+    autodiff(noretval, Duplicated(x,dx), Duplicated(y, dy))
+    return dx
+end
+
+@testset "Closure" begin
+    x = [2.0,6.0]
+    dx = grad_closure(x->[x[1], x[2]], x)
+    @test dx == [1.0, 0.0]
+end
+
+
 @testset "Bithacks" begin
     function fneg(x::Float64)
         xptr = reinterpret(Int64, x)
