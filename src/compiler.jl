@@ -1768,6 +1768,7 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
 end
 
+include("compiler/interpreter.jl")
 ## job
 
 # TODO: We shouldn't blanket opt-out
@@ -1780,6 +1781,10 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+
+# provide a specific interpreter to use.
+GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    EnzymeInterpeter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world)
 
 include("compiler/optimize.jl")
 
@@ -2583,7 +2588,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             bitsunion = Base.isbitsunion(T)
             error("jl_copy unhandled")
         end
-        if func == Base.enq_work
+        if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
             attributes = function_attributes(llvmfn)
             push!(custom, k.specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
@@ -2591,10 +2596,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Base.wait || func == Base._wait
-            attributes = function_attributes(llvmfn)
-            push!(custom, k.specfunc)
-            push!(attributes, EnumAttribute("noinline", 0; ctx))
-            push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
+            if length(sparam_vals) == 0 || 
+                (length(sparam_vals) == 1 && first(sparam_vals) <: Task)
+                attributes = function_attributes(llvmfn)
+                push!(custom, k.specfunc)
+                push!(attributes, EnumAttribute("noinline", 0; ctx))
+                push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
+            end
             continue
         end
 
