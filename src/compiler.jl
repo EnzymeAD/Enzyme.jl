@@ -757,7 +757,7 @@ function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     return nothing
 end
 
-function emit_gc_preserve_begin(B::LLVM.Builder, args)
+function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1548,7 +1548,9 @@ function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         mod = LLVM.parent(f)
         ctx = LLVM.context(mod)
 
-        token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
+        
+        token = emit_gc_preserve_begin(LLVM.Builder(B))
+        # token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
         GCToks[orig] = token
     end
     emit_gc_preserve_end(builder, token)
