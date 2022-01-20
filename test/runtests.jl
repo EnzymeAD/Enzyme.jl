@@ -1,3 +1,11 @@
+# HACK: work around Pkg.jl#2500
+test_project = Base.active_project()
+preferences_file = joinpath(dirname(@__DIR__), "LocalPreferences.toml")
+test_preferences_file = joinpath(dirname(test_project), "LocalPreferences.toml")
+if isfile(preferences_file) && !isfile(test_preferences_file)
+    cp(preferences_file, test_preferences_file)
+end
+
 using Enzyme
 using Test
 using FiniteDifferences
