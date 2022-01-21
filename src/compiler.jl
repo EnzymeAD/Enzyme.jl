@@ -2556,6 +2556,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.log => (:log, 1),
         Base.asin => (:asin, 1),
         Base.tanh => (:tanh, 1),
+        Base.ldexp => (:ldexp, 2),
         Base.FastMath.tanh_fast => (:tanh, 1)
     )
     actualRetType = nothing
@@ -2613,7 +2614,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
-        T ∈ (Float32, Float64) && all(==(T), sparam_vals) || continue
+        isfloat = T ∈ (Float32, Float64)
+        if name == :ldexp
+           isfloat && sparam_vals[2] <: Integer || continue
+        else
+           isfloat && all(==(T), sparam_vals) || continue
+        end
+
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
