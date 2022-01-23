@@ -1,6 +1,5 @@
-function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-                 optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
-                 split::Bool=false, dupClosure::Bool=false,)
+function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
+                 run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, kwargs...)
 
     primal, adjoint = fspec(func, types)
 
@@ -42,3 +41,8 @@ function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nosp
     print(io, str)
 end
 enzyme_code_native(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_native(stdout, func, A, types; kwargs...)
+
+function enzyme_code_typed(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...)
+    job = get_job(func, A, types; kwargs...)
+    GPUCompiler.code_typed(job; kwargs...)
+end
