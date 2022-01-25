@@ -102,26 +102,26 @@ end
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, dretUsed, mode, additionalArg, typeInfo,
+                                       returnValue, dretUsed, mode, width, additionalArg, typeInfo,
                                        uncacheable_args, augmented, atomicAdd, postOpt)
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd, postOpt)
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, dretUsed, mode, additionalArg, typeInfo,
+                                       returnValue, dretUsed, mode, width, additionalArg, typeInfo,
                                        uncacheable_args, postOpt)
     ccall((:EnzymeCreateForwardDiff, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, with, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         postOpt)
 end
 
