@@ -12,6 +12,9 @@ using FiniteDifferences
 using ForwardDiff
 using Statistics
 
+using Enzyme_jll
+@info "Testing against" Enzyme_jll.libEnzyme
+
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(f, Active, Active(x))
