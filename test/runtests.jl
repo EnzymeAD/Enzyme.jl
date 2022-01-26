@@ -1,8 +1,19 @@
+# HACK: work around Pkg.jl#2500
+test_project = Base.active_project()
+preferences_file = joinpath(dirname(@__DIR__), "LocalPreferences.toml")
+test_preferences_file = joinpath(dirname(test_project), "LocalPreferences.toml")
+if isfile(preferences_file) && !isfile(test_preferences_file)
+    cp(preferences_file, test_preferences_file)
+end
+
 using Enzyme
 using Test
 using FiniteDifferences
 using ForwardDiff
 using Statistics
+
+using Enzyme_jll
+@info "Testing against" Enzyme_jll.libEnzyme
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
@@ -42,6 +53,20 @@ include("abi.jl")
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
+end
+
+@testset "Reflection" begin
+    Enzyme.Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
+        x ^ 2
+    end
+    f(x) = 1.0 + x
+    sprint() do io
+        Enzyme.Compiler.enzyme_code_native(io, f, Active, Tuple{Active{Float64}})
+    end
+
+    sprint() do io
+        Enzyme.Compiler.enzyme_code_llvm(io, f, Active, Tuple{Active{Float64}})
+    end
 end
 
 
