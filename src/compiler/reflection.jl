@@ -12,7 +12,8 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 end
 
 
-function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types); second_stage::Bool=true, kwargs...)
+function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
+                 optimize::Bool=true, second_stage::Bool=true, kwargs...)
 
     job = get_job(func, A, types; kwargs...)
     # Codegen the primal function and all its dependency in one module
