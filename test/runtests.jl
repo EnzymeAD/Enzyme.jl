@@ -52,6 +52,20 @@ include("abi.jl")
     # @test thunk_a.adjoint !== thunk_split.adjoint
 end
 
+@testset "Reflection" begin
+    Enzyme.Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
+        x ^ 2
+    end
+    f(x) = 1.0 + x
+    sprint() do io
+        Enzyme.Compiler.enzyme_code_native(io, f, Active, Tuple{Active{Float64}})
+    end
+
+    sprint() do io
+        Enzyme.Compiler.enzyme_code_llvm(io, f, Active, Tuple{Active{Float64}})
+    end
+end
+
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
