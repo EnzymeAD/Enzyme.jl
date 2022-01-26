@@ -121,7 +121,7 @@ function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA,
          EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, with, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         postOpt)
 end
 
