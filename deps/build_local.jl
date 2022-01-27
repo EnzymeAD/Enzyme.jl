@@ -29,7 +29,7 @@ LLVM_DIR = joinpath(LLVM.artifact_dir, "lib", "cmake", "llvm")
 scratch_dir = get_scratch!(Enzyme_jll, "build")
 isdir(scratch_dir) && rm(scratch_dir; recursive=true)
 if length(ARGS) == 1
-    scratch_dir = ARGS[1]
+    source_dir = ARGS[1]
 else
     scratch_src_dir = get_scratch!(Enzyme_jll, "src")
     cd(scratch_src_dir) do
