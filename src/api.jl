@@ -114,14 +114,14 @@ function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, dretUsed, mode, width, additionalArg, typeInfo,
+                                       returnValue, mode, width, additionalArg, typeInfo,
                                        uncacheable_args, postOpt)
     ccall((:EnzymeCreateForwardDiff, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         postOpt)
 end
 

@@ -2120,7 +2120,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     elseif mode == API.DEM_ForwardMode
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#rt <: Duplicated, #=dretUsed=#true, #=mode=#API.DEM_ForwardMode, 1,
+            #=returnValue=#rt <: Duplicated, #=mode=#API.DEM_ForwardMode, 1,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=postOpt=#false))
         augmented_primalf = nothing
