@@ -162,6 +162,14 @@ end
     end
 end
 
+@inline function guess_activity(::Type{Any}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{Any}
+    else
+        return Duplicated{Any}
+    end
+end
+
 
 include("logic.jl")
 include("typeanalysis.jl")
