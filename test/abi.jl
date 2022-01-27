@@ -169,7 +169,7 @@ end
     orig   = [MStruct(0.0)]
     shadow = [MStruct(17.0)]
     # Test that this doesn't throw
-    Enzyme.autodiff(sqMStruct, Duplicated(orig, shadow), Duplicated(Float32(3.14), Float32(1.0)))
+    Enzyme.autodiff(sqMStruct, Duplicated(orig, shadow), Active(3.14f0))
 end
 
 @testset "Closure ABI" begin
