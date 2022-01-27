@@ -1407,7 +1407,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     end
     shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
 
-    API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward)
+    API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
 
     return nothing
 end
@@ -2105,14 +2105,14 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
 
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient,
+            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, 1,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel, #=postOpt=#false))
         adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure)
     elseif mode == API.DEM_ReverseModeCombined
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined,
+            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, 1,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
         augmented_primalf = nothing
@@ -2120,7 +2120,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     elseif mode == API.DEM_ForwardMode
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#rt <: Duplicated, #=dretUsed=#true, #=mode=#API.DEM_ForwardMode,
+            #=returnValue=#rt <: Duplicated, #=mode=#API.DEM_ForwardMode, 1,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=postOpt=#false))
         augmented_primalf = nothing
