@@ -277,6 +277,16 @@ function looseTypeAnalysis!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function strictAliasing!(val)
+    ptr = cglobal((:EnzymeStrictAliasing, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function typeWarning!(val)
+    ptr = cglobal((:EnzymeTypeWarning, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function instname!(val)
     ptr = cglobal((:EnzymeNameInstructions, libEnzyme))
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
