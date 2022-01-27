@@ -96,6 +96,10 @@ function typetree(::Type{<:Array{T}}, ctx, dl) where T
     offset = 0
 
     tt = typetree(T, ctx, dl)
+    if !allocatedinline(T)
+        merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, 0)
+    end
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, offset)
 
