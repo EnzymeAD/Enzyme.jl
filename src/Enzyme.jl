@@ -391,7 +391,11 @@ end
 @inline function markType(data::Array{T}) where T
     GC.@preserve data markType(pointer(data))
 end
-@inline markType(data::SubArray) = markType(parent(data))
+
+# TODO(WM): We record the type of a single index here, we could give it a range
+@inline function markType(data::SubArray)
+    GC.@preserve data markType(pointer(data))
+end
 
 @inline function markType(data::Ptr{Float32})
     Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, data)
