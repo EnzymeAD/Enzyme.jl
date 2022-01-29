@@ -725,3 +725,10 @@ end
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
 end
+
+@testset "BLAS" begin
+    f(x) = x'*x
+    y = [1.0, 2.0]
+    f_x = zero.(y)
+    @test_throws ErrorException autodiff(f, Duplicated(y, f_x))
+end
