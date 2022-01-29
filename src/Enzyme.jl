@@ -1,6 +1,6 @@
 module Enzyme
 
-export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred
+export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
 export Const, Active, Duplicated, DuplicatedNoNeed
 
 """
@@ -372,4 +372,15 @@ Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return
     rt    = guess_activity(rt, API.DEM_ForwardMode)
     fwddiff_deferred(f, rt, args′...)
 end
+
+@inline function markType(::Type{Float32}, ptr)
+    Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Cvoid}}, ptr)
+    nothing
+end
+
+@inline function markType(::Type{Float64}, ptr)
+    Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Cvoid}}, ptr)
+    nothing
+end
+
 end # module

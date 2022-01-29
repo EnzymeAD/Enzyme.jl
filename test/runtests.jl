@@ -707,3 +707,21 @@ end
     @test Enzyme.autodiff(timsteploop, Active(2.0))[1] ≈ 1.0
     @test Enzyme.fwddiff(timsteploop, Duplicated(2.0, 1.0))[1] ≈ 1.0
 end
+
+@testset "Type" begin
+    function foo(in::Ptr{Cvoid}, out::Ptr{Cvoid})
+        markType(Float64, in)
+        ccall(:memcpy,Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), out, in, 8)
+    end
+
+    x = [2.0]
+    y = [3.0]
+    dx = [5.0]
+    dy = [7.0]
+
+    GC.@preserve x y dx dy begin
+      autodiff(foo,
+                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)), 
+                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
+    end
+end

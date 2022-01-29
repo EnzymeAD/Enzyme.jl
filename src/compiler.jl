@@ -2714,6 +2714,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
     end
+    for fname in ["__enzyme_float", "__enzyme_double", "__enzyme_integer", "__enzyme_pointer"]
+        haskey(functions(mod), fname) || continue
+        f = functions(mod)[fname]
+        for u in uses(f)
+            st = LLVM.user(u)
+            LLVM.API.LLVMInstructionEraseFromParent(st)
+        end
+        LLVM.unsafe_delete!(mod, f)
+    end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
     adjointf_name = name(adjointf)
