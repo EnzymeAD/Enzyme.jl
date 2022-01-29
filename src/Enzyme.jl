@@ -384,13 +384,22 @@ Base.@ccallable function __enzyme_double(x::Ptr{Cvoid})::Cvoid
     return nothing
 end
 
-@inline function markType(::Type{Float32}, ptr)
-    Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Cvoid}}, ptr)
+@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where T
+    markType(Base.unsafe_convert(Ptr{T}, ptr))
+end
+
+@inline function markType(data::Array{T}) where T
+    GC.@preserve data markType(pointer(data))
+end
+@inline markType(data::SubArray) = markType(parent(data))
+
+@inline function markType(data::Ptr{Float32})
+    Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, data)
     nothing
 end
 
-@inline function markType(::Type{Float64}, ptr)
-    Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Cvoid}}, ptr)
+@inline function markType(data::Ptr{Float64})
+    Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, data)
     nothing
 end
 
