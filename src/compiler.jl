@@ -1638,8 +1638,16 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=no
     end
 end
 
+struct CompilationException <: Base.Exception
+    msg::String
+end
+function Base.showerror(io::IO, ece::CompilationException)
+    print(io, "Enzyme compilation failed with: ")
+    print(io, pmi.message)
+end
+
 function julia_error(cstr::Cstring)
-    error(Base.unsafe_string(cstr))
+    throw(CompilationException(Base.unsafe_string(cstr)))
 end
 
 function __init__()

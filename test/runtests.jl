@@ -726,9 +726,9 @@ end
     end
 end
 
-@testset "BLAS" begin
+@testset "Exception" begin
     f(x) = x'*x
     y = [1.0, 2.0]
     f_x = zero.(y)
-    @test_throws ErrorException autodiff(f, Duplicated(y, f_x))
+    @test_throws Enzyme.CompilationException autodiff(f, Duplicated(y, f_x))
 end

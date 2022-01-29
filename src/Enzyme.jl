@@ -97,6 +97,8 @@ include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
 
+import .Compiler: CompilationException
+
 # @inline annotate() = ()
 # @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
 # @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
