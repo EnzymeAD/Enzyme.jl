@@ -757,7 +757,7 @@ function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     return nothing
 end
 
-function emit_gc_preserve_begin(B::LLVM.Builder, args)
+function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -870,7 +870,12 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     cal = LLVM.call!(B, rtfn, vals)
     if numRet != 0
-        LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), EnumAttribute("sret"; ctx))
+        @static if VERSION >= v"1.7.0" # LLVM12+
+            sret_attr = TypeAttribute("sret", LLVM.llvmtype(ret); ctx)
+        else
+            sret_attr = EnumAttribute("sret"; ctx)
+        end
+        LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), sret_attr)
     end
 
     # TODO: GC, ret
@@ -1543,7 +1548,9 @@ function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         mod = LLVM.parent(f)
         ctx = LLVM.context(mod)
 
-        token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
+        
+        token = emit_gc_preserve_begin(LLVM.Builder(B))
+        # token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
         GCToks[orig] = token
     end
     emit_gc_preserve_end(builder, token)
@@ -2423,6 +2430,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     wrapper_types = LLVM.LLVMType[]
     sret = false
     if !isempty(parameters(entry_f)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(entry_f, 1))))
+        # TODO sret is now TypeAttribute
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = true
     end
