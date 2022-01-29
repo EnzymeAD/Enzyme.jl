@@ -1638,7 +1638,20 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=no
     end
 end
 
+struct CompilationException <: Base.Exception
+    msg::String
+end
+function Base.showerror(io::IO, ece::CompilationException)
+    print(io, "Enzyme compilation failed with: ")
+    print(io, pmi.message)
+end
+
+function julia_error(cstr::Cstring)
+    throw(CompilationException(Base.unsafe_string(cstr)))
+end
+
 function __init__()
+    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring,)))
     API.EnzymeRegisterAllocationHandler(
         "jl_alloc_array_1d",
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),

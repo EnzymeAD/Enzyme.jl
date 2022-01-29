@@ -300,6 +300,11 @@ function EnzymeAddAttributorLegacyPass(PM)
     ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
 end
 
+function EnzymeSetHandler(handler)
+    ptr = cglobal((:CustomErrorHandler, libEnzyme))
+    unsafe_store!(convert(Ptr{Ptr{Cvoid}}, ptr), handler)
+end
+
 function __init__()
     ptr = cglobal((:EnzymeJuliaAddrLoad, libEnzyme))
     val = true
