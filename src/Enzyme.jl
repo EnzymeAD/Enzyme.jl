@@ -388,13 +388,18 @@ end
     markType(T, data)
 end
 @inline markType(data::SubArray) = markType(parent(data))
+@inline markType(ptr::Ptr{T}) where T = markType(T, ptr)
 
-@inline function markType(::Type{Float32}, ptr)
+@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where T
+    markType(T, Base.unsafe_convert(Ptr{T}, ptr))
+end
+
+@inline function markType(::Type{Float32}, data)
     Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, ptr)
     nothing
 end
 
-@inline function markType(::Type{Float64}, ptr)
+@inline function markType(::Type{Float64}, data)
     Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, ptr)
     nothing
 end
