@@ -375,6 +375,15 @@ Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return
     fwddiff_deferred(f, rt, args′...)
 end
 
+# White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
+Base.@ccallable function __enzyme_float(x::Ptr{Cvoid})::Cvoid
+    return nothing
+end
+
+Base.@ccallable function __enzyme_double(x::Ptr{Cvoid})::Cvoid
+    return nothing
+end
+
 @inline function markType(::Type{Float32}, ptr)
     Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Cvoid}}, ptr)
     nothing

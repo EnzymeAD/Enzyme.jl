@@ -719,6 +719,10 @@ end
     dx = [5.0]
     dy = [7.0]
 
+    GC.@preserve x y begin
+        foo(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, y))
+    end
+
     GC.@preserve x y dx dy begin
       autodiff(foo,
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)), 
