@@ -1889,6 +1889,14 @@ function annotate!(mod, mode)
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
         end
     end
+
+    for rfn in ("jl_in_threaded_region_", "jl_in_threaded_region")
+        if haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+        end
+    end
 end
 
 function noop_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
