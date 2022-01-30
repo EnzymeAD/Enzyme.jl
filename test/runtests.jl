@@ -321,37 +321,10 @@ if !Sys.iswindows()
 end
 
 @testset "Threads" begin
-
-    function tasktest(M, x)
-        xr = Ref(x)
-        task = Threads.@spawn begin
-            @inbounds M[1] = xr[]
-        end
-        @inbounds M[2] = x
-        wait(task)
-        nothing
-    end
-
-    R = Float64[0., 0.]
-    dR = Float64[2., 3.]
-
-    @test 5.0 ≈ Enzyme.autodiff(tasktest, Duplicated(R, dR), Active(2.0))[1]
-    @test Float64[2.0, 2.0] ≈ R
-    @test Float64[0.0, 0.0] ≈ dR
-    
-    Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
-    @test Float64[1.0, 1.0] ≈ dR
-
-    function tasktest2(M, x)
-        task = Threads.@spawn begin
-           return
-        end
-        Base.wait(task)
-        nothing
-    end
-    # The empty return previously resulted in an illegal instruction error
-    @test 0.0 ≈ Enzyme.autodiff(tasktest2, Duplicated(R, dR), Active(2.0))[1]
-    @test () === Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
+    cmd = `$(Base.julia_cmd()) --threads=1 --startup-file=no threads.jl`
+   	@test success(pipeline(cmd, stderr=stderr, stdout=stdout))
+    cmd = `$(Base.julia_cmd()) --threads=2 --startup-file=no threads.jl`
+   	@test success(pipeline(cmd, stderr=stderr, stdout=stdout))
 end
 
 @testset "DiffTest" begin
@@ -460,17 +433,26 @@ end
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
 
+genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
+function genlatestsinx(xp)
+    x = @inbounds xp[1]
+    @inbounds xp[1] = 0.0
+    Base.invokelatest(sin, x)::Float64 + 1
+end
+
+function loadsin(xp)
+    x = @inbounds xp[1]
+    @inbounds xp[1] = 0.0
+    sin(x)
+end
+function invsin(xp)
+    xp = Base.invokelatest(convert, Vector{Float64}, xp)
+    loadsin(xp)
+end
 
 @testset "generic" begin
-    genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
     @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active, Active(2.0))[1]
     @test -0.4161468365471424 ≈ Enzyme.fwddiff(genlatestsin, Duplicated(2.0, 1.0))[1]
-
-    function genlatestsinx(xp)
-        x = @inbounds xp[1]
-        @inbounds xp[1] = 0.0
-        Base.invokelatest(sin, x)::Float64 + 1
-    end
 
     x = [2.0]
     dx = [0.0]
@@ -478,15 +460,6 @@ end
     @test 0 ≈ x[1]
     @test -0.4161468365471424 ≈ dx[1]
 
-    function loadsin(xp)
-        x = @inbounds xp[1]
-        @inbounds xp[1] = 0.0
-        sin(x)
-    end
-    function invsin(xp)
-        xp = Base.invokelatest(convert, Vector{Float64}, xp)
-        loadsin(xp)
-    end
     x = [2.0]
     dx = [0.0]
     Enzyme.autodiff(invsin, Active, Duplicated(x, dx))
@@ -497,18 +470,18 @@ end
 @testset "invoke" begin
     @noinline apply(@nospecialize(func)) = func()
 
-    function test(arr)
-          function f()
-             arr[1] *= 5.0
-             nothing
-          end
-          apply(f)
+    function invtest(arr)
+        function f()
+           arr[1] *= 5.0
+           nothing
+        end
+        apply(f)
     end
 
     x  = [2.0]
     dx = [1.0]
 
-    Enzyme.autodiff(test, Duplicated(x, dx))
+    Enzyme.autodiff(invtest, Duplicated(x, dx))
     
     @test 10.0 ≈ x[1]
     @test 5.0 ≈ dx[1]

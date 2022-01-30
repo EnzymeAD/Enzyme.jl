@@ -93,11 +93,14 @@ function get_ptls(func)
 end
 
 function reinsert_gcmarker!(func)
-    if get_ptls(func) === nothing
+	ptls = get_ptls(func) 
+    if ptls === nothing
         B = Builder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         position!(B, first(instructions(entry_bb)))
         emit_ptls!(B)
+	else
+		ptls
     end
 end
 
@@ -133,15 +136,51 @@ function get_pgcstack(func)
 end
 
 function reinsert_gcmarker!(func)
-    if get_pgcstack(func) === nothing
+	pgs = get_pgcstack(func)
+    if pgs === nothing
         B = Builder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         position!(B, first(instructions(entry_bb)))
         emit_pgcstack(B)
+	else
+		pgs
     end
 end
 
 end
+
+declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, name
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    
+	T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
+
+	#TODO make size_t > 32 => 64, else 32
+	T_size = LLVM.IntType((sizeof(Csize_t)*8) > 32 ? 64 : 32; ctx)
+    funcT = LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
+    LLVM.Function(mod, name, funcT)
+end
+function emit_allocobj!(B, T)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+	ctx = context(mod)
+    func = declare_allocobj!(mod)
+	
+	T_size = parameters(eltype(llvmtype(func)))[2]
+    
+	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+
+	ty = inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(T)); ctx), LLVM.PointerType(T_jlvalue))
+	ty = addrspacecast!(B, ty, T_prjlvalue)
+	size = LLVM.ConstantInt(T_size, sizeof(T))
+    args = [reinsert_gcmarker!(fn), size, ty]
+	args[1] = bitcast!(B, args[1], parameters(eltype(llvmtype(func)))[1])
+    return call!(B, func, args)
+end
+
 
 function array_inner(::Type{<:Array{T}}) where T
     return T
@@ -625,7 +664,6 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
         if !(val isa tape.resT)
             val = tape.shadow_return[]
         end
-        @show tape.shadow_return, val
         push!(args, val)
     end
     if tape.internal_tape !== nothing
@@ -1170,6 +1208,183 @@ function emit_error(B::LLVM.Builder, string)
     # 3. Change insertion point so that we don't stumble later
     # after_error = BasicBlock(fn, "after_error"; ctx)
     # position!(B, after_error)
+end
+
+function noop_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    return nothing
+end
+
+function noop_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    return nothing
+end
+
+function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    newg = API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)
+    
+    B = LLVM.Builder(B)
+
+    real_ops = collect(operands(orig))
+    ops = [LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, o), B)) for o in real_ops]
+    call!(B, ops[end], ops[1:end-1])
+    return nothing
+end
+
+function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    fun = @cfunction(runtime_newtask_fwd, Any, (Any, Any, Any, Int))
+
+    B = LLVM.Builder(B)
+    emit_error("fast pfor not implemented");
+    return nothing
+end
+
+const leaked_objs = Base.IdDict{Any, Any}()
+
+function runtime_pfor_augfwd(func, dfunc)::Any
+    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+	# tape = vec{Any}(numthreads())
+	# pfor threads tape[i] = aug(func, dfunc)
+    
+	tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal))
+
+	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
+    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
+	function fwd()
+		tapes[Base.Threads.threadid()] = forward()[1]
+	end
+	adj = () -> adjoint(tapes[Base.Threads.threadid()])
+	Base.Threads.threading_run(fwd)
+    tape = Base.inferencebarrier(adj)
+    leaked_objs[tape] = tape
+    return tape
+end
+
+function runtime_pfor_rev(tape::Any)
+    delete!(leaked_objs, tape)
+	Base.Threads.threading_run(tape)
+    return nothing
+end
+
+function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    llvmfn = LLVM.called_value(orig)
+    mi = nothing
+    for fattr in collect(function_attributes(llvmfn))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_mi"
+                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                mi = Base.unsafe_pointer_to_objref(ptr)
+                break
+            end
+        end
+    end
+
+	funcT = mi.specTypes.parameters[2]
+
+
+    tt = Tuple{funcT, funcT} #annotate_tuple_type(mi.specTypes, activity)
+    funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
+
+    # 3) Use the MI to create the correct augmented fwd/reverse
+    # TODO:
+    #  - GPU support
+    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
+
+    target = GPUCompiler.NativeCompilerTarget()
+    params = Compiler.PrimalCompilerParams()
+    job    = CompilerJob(target, funcspec, params)  
+
+    otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
+    entry = name(meta.entry)
+
+    # 4) Link the corresponding module
+    LLVM.link!(mod, otherMod)
+
+    # 5) Call the function
+    entry = functions(mod)[entry]
+
+    B = LLVM.Builder(B)
+    
+    T_int64 = LLVM.Int64Type(ctx)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+
+    ops = collect(operands(orig))[1:end-1]
+
+
+	vals = LLVM.Value[]
+	# TODO check if ghost type
+	if length(ops) > 0
+		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
+			push!(vals, real)
+		end
+        to_preserve = LLVM.Value[vals[1], vals[2]]
+        T_args = LLVM.LLVMType[T_prjlvalue, T_prjlvalue]
+    else
+        to_preserve = LLVM.Value[]
+        T_args = LLVM.LLVMType[]
+	end
+    token = emit_gc_preserve_begin(B, to_preserve)
+    
+	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    fnT = LLVM.FunctionType(T_prjlvalue, T_args)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+
+    T_args = LLVM.LLVMType[T_prjlvalue,]
+    tape = LLVM.call!(B, entry, vals)
+    
+    emit_gc_preserve_end(B, token)
+
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+    end
+
+    unsafe_store!(tapeR, tape.ref)
+
+    return nothing
+end
+
+function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    tape = LLVM.Value(tape)
+    ctx = LLVM.context(orig)
+
+    fun = @cfunction(runtime_pfor_rev, Cvoid, (Any,))
+    
+	B = LLVM.Builder(B)
+    
+	vals = LLVM.Value[tape]
+    to_preserve = LLVM.Value[vals[1]]
+    token = emit_gc_preserve_begin(B, to_preserve)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+
+    T_args = LLVM.LLVMType[T_prjlvalue]
+    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
+    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+    LLVM.call!(B, rtfn, vals)
+    
+    emit_gc_preserve_end(B, token)
+    return nothing
 end
 
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -1732,6 +1947,12 @@ function __init__()
         @cfunction(apply_latest_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
+        ("jl_threadsfor",),
+        @cfunction(threadsfor_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(threadsfor_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(threadsfor_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
         ("jl_new_task", "ijl_new_task"),
         @cfunction(newtask_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(newtask_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
@@ -1748,6 +1969,12 @@ function __init__()
         @cfunction(wait_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(wait_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(wait_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
+        ("jl_","jl_breakpoint"),
+        @cfunction(noop_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(duplicate_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(noop_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
         ("jl_array_copy",),
@@ -1867,7 +2094,7 @@ end
 # Enzyme compiler step
 ##
 
-const inactivefns = Set((
+const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
@@ -1877,18 +2104,30 @@ const inactivefns = Set((
     "jl_symbol_n",
     # BIG TODO
     "jl_gc_add_finalizer_th",
-    "jl_"
+    # "jl_"
+))
+
+const activefns = Set{String}((
+    "jl_",
 ))
 
 function annotate!(mod, mode)
     ctx = context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+    active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
 
     for inactivefn in inactivefns
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
+        end
+    end
+
+    for activefn in activefns
+        if haskey(fns, activefn)
+            fn = fns[activefn]
+            push!(function_attributes(fn), active)
         end
     end
 
@@ -2648,6 +2887,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         if func == Base.println || func == Base.print || func == Base.show || func == Base.flush
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
+            must_wrap |= llvmfn == primalf
             continue
         end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
@@ -2662,6 +2902,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(custom, k.specfunc)
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
+            must_wrap |= llvmfn == primalf
             continue
         end
         if func == Base.Threads.threadid || func == Base.Threads.nthreads
@@ -2680,6 +2921,18 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 push!(custom, k.specfunc)
                 push!(attributes, EnumAttribute("noinline", 0; ctx))
                 push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
+                must_wrap |= llvmfn == primalf
+            end
+            continue
+        end
+        if func == Base.Threads.threading_run
+            if length(sparam_vals) == 1
+                attributes = function_attributes(llvmfn)
+                push!(custom, k.specfunc)
+                push!(attributes, EnumAttribute("noinline", 0; ctx))
+                push!(attributes, StringAttribute("enzyme_math", "jl_threadsfor"; ctx))
+                push!(attributes, StringAttribute("enzymejl_mi", string(convert(Int, pointer_from_objref(mi))); ctx))
+                must_wrap |= llvmfn == primalf
             end
             continue
         end
@@ -2712,7 +2965,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     @assert actualRetType != nothing
     
-
     if must_wrap
         llvmfn = primalf
         FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
