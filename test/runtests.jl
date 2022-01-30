@@ -465,6 +465,53 @@ end
     genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
     @test -0.4161468365471424 ≈ Enzyme.autodiff(genlatestsin, Active, Active(2.0))[1]
     @test -0.4161468365471424 ≈ Enzyme.fwddiff(genlatestsin, Duplicated(2.0, 1.0))[1]
+
+    function genlatestsinx(xp)
+        x = @inbounds xp[1]
+        @inbounds xp[1] = 0.0
+        Base.invokelatest(sin, x)::Float64 + 1
+    end
+
+    x = [2.0]
+    dx = [0.0]
+    Enzyme.autodiff(genlatestsinx, Active, Duplicated(x, dx))
+    @test 0 ≈ x[1]
+    @test -0.4161468365471424 ≈ dx[1]
+
+    function loadsin(xp)
+        x = @inbounds xp[1]
+        @inbounds xp[1] = 0.0
+        sin(x)
+    end
+    function invsin(xp)
+        xp = Base.invokelatest(convert, Vector{Float64}, xp)
+        loadsin(xp)
+    end
+    x = [2.0]
+    dx = [0.0]
+    Enzyme.autodiff(invsin, Active, Duplicated(x, dx))
+    @test 0 ≈ x[1]
+    @test -0.4161468365471424 ≈ dx[1]
+end
+
+@testset "invoke" begin
+    @noinline apply(@nospecialize(func)) = func()
+
+    function test(arr)
+          function f()
+             arr[1] *= 5.0
+             nothing
+          end
+          apply(f)
+    end
+
+    x  = [2.0]
+    dx = [1.0]
+
+    Enzyme.autodiff(test, Duplicated(x, dx))
+    
+    @test 10.0 ≈ x[1]
+    @test 5.0 ≈ dx[1]
 end
 
 @testset "broadcast" begin

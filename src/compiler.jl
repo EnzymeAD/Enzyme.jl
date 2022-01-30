@@ -489,6 +489,8 @@ function runtime_invoke_fwd(ret_ptr::Ptr{Any}, mi::Any, arg_ptr::Ptr{Any}, shado
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
     @assert F == typeof(fn)
+    @assert in(mi.def, methods(fn))
+    
     tt = Tuple{specTypes[2:end]...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
@@ -514,68 +516,96 @@ function runtime_invoke_augfwd(ret_ptr::Ptr{Any}, mi::Any, arg_ptr::Ptr{Any}, sh
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
-    args = []
-    for i in 2:arg_size
-        val = Base.unsafe_load(arg_ptr, i)
-        # TODO when split mode use the below
-        push!(args, val)
-        continue
-
-        if __activity[i] != 0
-            # TODO use only for non mutable
-            push!(args, Duplicated(val, Base.unsafe_load(shadow_ptr, i)))
-        else
-            push!(args, Const(val))
-        end
-    end
-
-    res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
-
+    
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
         Base.unsafe_store!(ret_ptr, res, 1)
         Base.unsafe_store!(ret_ptr, res, 2)
         Base.unsafe_store!(ret_ptr, nothing, 3)
         return nothing
     end
+    
+    # TODO actually use the mi rather than fn
+    @assert in(mi.def, methods(fn))
 
-    @warn "primal differentiating jl_invoke call without split mode", fn, mi, args
-    Base.unsafe_store!(ret_ptr, res, 1)
-
-    tape::Any = nothing
-    resT = typeof(res)
-
-    if resT <: AbstractFloat || resT <: Complex{<:AbstractFloat}
-        # This assumes that we have an Immutable object here that got passed as a boxed value
-        shadow_return = Ref(zero(resT))
-        # shadow_return = allocate_box(resT)
-        # Base.unsafe_store!(reinterpret(Ptr{resT}, shadow_return), zero(resT)) # set to zero
-        Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
-    else
-        shadow = res
-        Base.unsafe_store!(ret_ptr, shadow, 2)
+    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
+    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
+    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    args = Any[]
+    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
+        p = Base.unsafe_load(arg_ptr, i)
+        if __activity[i] != 0
+            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
+                push!(args, Active(p))
+            else
+                s = Base.unsafe_load(shadow_ptr, i)
+                push!(args, Duplicated(p, s))
+            end
+        else
+            push!(args, Const(p))
+        end
     end
 
-    Base.unsafe_store!(ret_ptr, tape, 3)
-    @warn "done primal differentiating jl_invoke call without split mode", fn, mi, args, res
+    # TODO: Annotation of return value
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
 
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal))
+
+    res = forward(args...)
+    if length(res) > 1
+        origRet = res[2]
+        resT = typeof(origRet)
+    else
+        origRet = nothing
+        resT = Nothing
+    end
+    Base.unsafe_store!(ret_ptr, origRet, 1)
+
+    if annotation <: Active
+        # This assumes that we have an Immutable object here that got passed as a boxed value
+        shadow_return = Ref(zero(resT))
+        Base.unsafe_store!(ret_ptr, shadow_return, 2) # due to this store we need typetag
+    elseif annotation <: Const
+        Base.unsafe_store!(ret_ptr, origRet, 2)
+        shadow_return = nothing
+    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
+        Base.unsafe_store!(ret_ptr, res[3], 2)
+        shadow_return = nothing
+    else
+        error("Unknown annotation")
+    end
+    internal_tape = res[1]
+
+    tape = Tape(adjoint, internal_tape, shadow_return, resT)
+    Base.unsafe_store!(ret_ptr, tape, 3)
     return nothing
 end
 
 function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
     fn = Base.unsafe_load(arg_ptr, 1)
-
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+        args = Any[]
+        for i in 1:arg_size
+            push!(args, Base.unsafe_load(arg_ptr, i))
+        end
+
+        res = fn(args...)
         return nothing
     end
+    
+    # TODO actually use the mi rather than fn
+    @assert in(mi.def, methods(fn))
 
+    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
-    for i in 2:arg_size
+    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
         p = Base.unsafe_load(arg_ptr, i)
         if __activity[i] != 0
-            # TODO generalize to if mutable type
             if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
                 push!(args, Active(p))
                 push!(actives, (shadow_ptr, i))
@@ -587,33 +617,37 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
             push!(args, Const(p))
         end
     end
+    
+    tape = tape::Tape
 
-    @warn "reverse differentiating jl_invoke call without split mode", fn, mi
-
-    # TODO handle active args
-
-    specTypes = mi.specTypes.parameters
-    F = specTypes[1]
-    @assert F == typeof(fn)
-
-    tt = Tuple{specTypes[2:end]...}
-    rt = Core.Compiler.return_type(fn, tt)
-    rt = guess_activity(rt)
-    if rt <: Active
-        push!(args, tape)
+    if tape.shadow_return !== nothing
+        val = tape.shadow_return
+        if !(val isa tape.resT)
+            val = tape.shadow_return[]
+        end
+        @show tape.shadow_return, val
+        push!(args, val)
+    end
+    if tape.internal_tape !== nothing
+        push!(args, tape.internal_tape)
     end
 
-    tt′   = Tuple{map(Core.Typeof, args)...}
-    ptr   = Compiler.deferred_codegen(Val(fn), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{typeof(fn), rt, tt′, Nothing}(fn, ptr, #=dfn=#nothing)
-    tup = thunk(args...)
+    tup = tape.thunk(args...)
 
     for (d, (s, i)) in zip(tup, actives)
         a = unsafe_load(s, i)
-        ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-        unsafe_store!(ref, d+a)
+        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
+        # they are not idempotent on the Julia level. We could "force" `a` to be
+        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+        if a isa Base.RefValue
+            @assert eltype(a) == typeof(d)
+            a[] += d
+        else
+            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
+            unsafe_store!(ref, d+a)
+        end
     end
-
+    
     return nothing
 end
 
@@ -695,6 +729,7 @@ function runtime_apply_latest_augfwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{An
         Base.unsafe_store!(ret_ptr, origRet, 2)
         shadow_return = nothing
     elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
+        shadow_return = nothing
         Base.unsafe_store!(ret_ptr, res[3], 2)
     else
         error("Unknown annotation")
@@ -1024,6 +1059,10 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     orig = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
+    
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    @assert conv == 38
 
     B = LLVM.Builder(B)
 
