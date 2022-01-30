@@ -1650,7 +1650,7 @@ struct CompilationException <: Base.Exception
 end
 function Base.showerror(io::IO, ece::CompilationException)
     print(io, "Enzyme compilation failed with: ")
-    print(io, pmi.message)
+    print(io, ece.msg)
 end
 
 function julia_error(cstr::Cstring)
