@@ -1832,13 +1832,12 @@ const inactivefns = Set((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region", "jl_object_id_", "jl_object_id",
-    "jl_breakpoint", "jl_set_task_tid",
+    "jl_breakpoint", "jl_set_task_tid", "jl_excstack_state", 
     "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
-    "jl_f_fieldtype",
-    "jl_symbol_n",
+    "jl_symbol_n", "jl_",
     # BIG TODO
     "jl_gc_add_finalizer_th",
-    "jl_"
+    "julia.except_enter",
 ))
 
 function annotate!(mod, mode)
