@@ -247,6 +247,17 @@ end
 
 end
 
+@testset "Thread helpers" begin
+    function timesID(x)
+        x * Threads.threadid()
+    end
+    function timesNum(x)
+        x * Threads.nthreads()
+    end
+    @test Threads.threadid() ≈ Enzyme.autodiff(timesID, Active(2.0))[1]
+    @test Threads.nthreads() ≈ Enzyme.autodiff(timesNum, Active(2.0))[1]
+end
+
 @testset "Closure ABI" begin
     function clo2(x)
         V = [x]

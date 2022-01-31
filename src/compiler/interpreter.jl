@@ -79,7 +79,8 @@ function is_primitive_func(@nospecialize(TT))
         end
     end
     # FIXME(@wsmoses): For which types should we not inline?
-    if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work)
+    if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work) ||
+       ft === typeof(Base.Threads.threadid) || ft == typeof(Base.Threads.nthreads)
         return true
     end
     return false
