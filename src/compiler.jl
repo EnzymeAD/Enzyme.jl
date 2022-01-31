@@ -2911,6 +2911,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             push!(attributes, EnumAttribute("readonly", 0; ctx))
             push!(attributes, EnumAttribute("inaccessiblememonly", 0; ctx))
+            push!(attributes, EnumAttribute("speculatable", 0; ctx))
+            # TODO
+            # push!(attributes, StringAttribute("enzyme_shouldrecompute", name; ctx))
             push!(attributes, StringAttribute("enzyme_inactive"; ctx))
             continue
         end
@@ -2959,6 +2962,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         attributes = function_attributes(llvmfn)
         push!(attributes, EnumAttribute("noinline", 0; ctx))
         push!(attributes, StringAttribute("enzyme_math", name; ctx))
+        push!(attributes, StringAttribute("enzyme_shouldrecompute", name; ctx))
+        push!(attributes, EnumAttribute("readnone", 0; ctx))
 
         # Need to wrap the code when outermost
         must_wrap |= llvmfn == primalf
