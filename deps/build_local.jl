@@ -41,10 +41,12 @@ else
     source_dir = joinpath(scratch_src_dir, "Enzyme", "enzyme")
 end
 
+LLVM_VER_MAJOR = Base.libllvm_version.major
+
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR
 run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
-run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS)`)
+run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
 
 # Discover built libraries
 built_libs = filter(readdir(joinpath(scratch_dir, "Enzyme"))) do file
