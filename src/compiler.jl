@@ -2625,6 +2625,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
             continue
         end
+        if func == Base.Threads.threadid || func == Base.Threads.nthreads
+            attributes = function_attributes(llvmfn)
+            push!(custom, k.specfunc)
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            push!(attributes, EnumAttribute("readonly", 0; ctx))
+            push!(attributes, EnumAttribute("inaccessiblememonly", 0; ctx))
+            push!(attributes, StringAttribute("enzyme_inactive"; ctx))
+            continue
+        end
         if func == Base.wait || func == Base._wait
             if length(sparam_vals) == 0 || 
                 (length(sparam_vals) == 1 && first(sparam_vals) <: Task)
