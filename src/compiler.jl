@@ -2579,6 +2579,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     known_ops = Dict(
         Base.cbrt => (:cbrt, 1),
         Base.sin => (:sin, 1),
+        Base.:^ => (:pow, 2),
         Base.cos => (:cos, 1),
         Base.tan => (:tan, 1),
         Base.exp => (:exp, 1),
@@ -2590,7 +2591,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     )
     actualRetType = nothing
     for (mi, k) in meta.compiled
+        @show mi, k.specfunc
         haskey(functions(mod), k.specfunc) || continue
+        @show k.specfunc
 
         llvmfn = functions(mod)[k.specfunc]
         if llvmfn == primalf
@@ -2603,7 +2606,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
-
+        @show func, mi
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
@@ -2645,18 +2648,33 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
+        @show func, sparam_vals
+
         func ∈ keys(known_ops) || continue
 
         name, arity = known_ops[func]
+
+        @show arity, name
 
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
         isfloat = T ∈ (Float32, Float64)
+        if !isfloat
+            continue
+        end
         if name == :ldexp
-           isfloat && sparam_vals[2] <: Integer || continue
+           sparam_vals[2] <: Integer || continue
+        elseif name == :pow
+            @show name, sparam_vals
+           if sparam_vals[2] <: Integer 
+              name = :powi
+           elseif sparam_vals[2] != T
+              @show sparam_vals[2], T
+              continue
+           end
         else
-           isfloat && all(==(T), sparam_vals) || continue
+           all(==(T), sparam_vals) || continue
         end
 
         name = string(name)
@@ -2726,6 +2744,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)
     end
+    @show mod
 
     if params.run_enzyme
         # Generate the adjoint
