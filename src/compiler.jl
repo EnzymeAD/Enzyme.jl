@@ -1244,9 +1244,12 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     return nothing
 end
 
-const leaked_objs = Base.IdDict{Any, Any}()
+let counter = Ref{Int64}(0)
+    global getid() = counter[] += 1
+end
+const leaked_objs = Base.Dict{Int64, Any}()
 
-function runtime_pfor_augfwd(func, dfunc)::Any
+function runtime_pfor_augfwd(func, dfunc)::Int64
     @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
@@ -1262,14 +1265,19 @@ function runtime_pfor_augfwd(func, dfunc)::Any
 		tapes[Base.Threads.threadid()] = forward()[1]
 	end
 	adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    id = getid()
+    leaked_objs[id] = adj
 	Base.Threads.threading_run(fwd)
-    tape = Base.inferencebarrier(adj)
-    leaked_objs[tape] = tape
-    return tape
+    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
+    #       directly returning here allocates a heap object whose pointer is then leaked
+    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
+    #       we stash the object in a global dict, and return the id of the object
+    return id
 end
 
-function runtime_pfor_rev(tape::Any)
-    delete!(leaked_objs, tape)
+function runtime_pfor_rev(id::Int64)
+    tape = leaked_objs[id]
+    delete!(leaked_objs, id)
 	Base.Threads.threading_run(tape)
     return nothing
 end
@@ -1341,12 +1349,8 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         T_args = LLVM.LLVMType[]
 	end
     token = emit_gc_preserve_begin(B, to_preserve)
-    
-	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    fnT = LLVM.FunctionType(T_prjlvalue, T_args)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
-    T_args = LLVM.LLVMType[T_prjlvalue,]
+    T_args = LLVM.LLVMType[T_int64,]
     tape = LLVM.call!(B, entry, vals)
     
     emit_gc_preserve_end(B, token)
@@ -1368,7 +1372,7 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     tape = LLVM.Value(tape)
     ctx = LLVM.context(orig)
 
-    fun = @cfunction(runtime_pfor_rev, Cvoid, (Any,))
+    fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,))
     
 	B = LLVM.Builder(B)
     
@@ -1377,8 +1381,9 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     token = emit_gc_preserve_begin(B, to_preserve)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_int64 = LLVM.Int64Type(ctx)
 
-    T_args = LLVM.LLVMType[T_prjlvalue]
+    T_args = LLVM.LLVMType[T_int64]
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     LLVM.call!(B, rtfn, vals)
