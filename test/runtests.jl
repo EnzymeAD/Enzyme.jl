@@ -36,6 +36,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
 end
 
 include("abi.jl")
+include("typetree.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
