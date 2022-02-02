@@ -10,7 +10,7 @@ const dl = string(LLVM.DataLayout(LLVM.JITTargetMachine()))
 tt(T) = string(typetree(T, ctx, dl))
 
 @testset "TypeTree" begin
-    @test tt(Float16) == "{[0]:Float@half}" # TODO(VC) inconsistent
+    @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
     @test tt(Float64) == "{[-1]:Float@double}"
     @test tt(Symbol) == "{}"
