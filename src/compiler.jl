@@ -2591,11 +2591,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     )
     actualRetType = nothing
     for (mi, k) in meta.compiled
-        @show mi, k.specfunc
-        haskey(functions(mod), k.specfunc) || continue
-        @show k.specfunc
+        k_name = GPUCompiler.safe_name(k.specfunc)
+        haskey(functions(mod), k_name) || continue
 
-        llvmfn = functions(mod)[k.specfunc]
+        llvmfn = functions(mod)[k_name]
         if llvmfn == primalf
             actualRetType = k.ci.rettype
         end
@@ -2606,7 +2605,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
-        @show func, mi
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
@@ -2648,14 +2646,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        @show func, sparam_vals
-
         func ∈ keys(known_ops) || continue
-
         name, arity = known_ops[func]
-
-        @show arity, name
-
         length(sparam_vals) == arity || continue
 
         T = first(sparam_vals)
@@ -2666,11 +2658,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if name == :ldexp
            sparam_vals[2] <: Integer || continue
         elseif name == :pow
-            @show name, sparam_vals
            if sparam_vals[2] <: Integer 
               name = :powi
            elseif sparam_vals[2] != T
-              @show sparam_vals[2], T
               continue
            end
         else
@@ -2689,8 +2679,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # Need to wrap the code when outermost
         must_wrap |= llvmfn == primalf
     end
-    @assert actualRetType != nothing
-    
+    @assert actualRetType !== nothing
 
     if must_wrap
         llvmfn = primalf

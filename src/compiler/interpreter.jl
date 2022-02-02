@@ -78,13 +78,11 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
-    if false && ft === typeof(Base.:^)
+    if ft === typeof(Base.:^)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
-            @show ft, TT, 1
             return true
         end
         if TT <: Tuple{ft, Float32, <:Integer} || TT <: Tuple{ft, Float64, <:Integer}
-            @show ft, TT, 2
             return true
         end
     end
