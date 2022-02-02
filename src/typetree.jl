@@ -62,7 +62,7 @@ function typetree(::Type{T}, ctx, dl) where T <: Integer
 end
 
 function typetree(::Type{Float16}, ctx, dl)
-    return TypeTree(API.DT_Half, 0, ctx)
+    return TypeTree(API.DT_Half, -1, ctx)
 end
 
 function typetree(::Type{Float32}, ctx, dl)
