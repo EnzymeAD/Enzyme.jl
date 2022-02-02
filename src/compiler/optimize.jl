@@ -23,6 +23,7 @@ end
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         instruction_combining!(pm)
         jump_threading!(pm)
+        correlated_value_propagation!(pm)
         instruction_combining!(pm)
         reassociate!(pm)
         early_cse!(pm)
@@ -52,6 +53,7 @@ end
         loop_idiom!(pm)
         loop_deletion!(pm)
         jump_threading!(pm)
+        correlated_value_propagation!(pm)
         # SLP_Vectorizer -- not for Enzyme
         aggressive_dce!(pm)
         instruction_combining!(pm)
@@ -107,6 +109,7 @@ function addOptimizationPasses!(pm)
     scalar_repl_aggregates!(pm)
     instruction_combining!(pm) # TODO: createInstSimplifyLegacy
     jump_threading!(pm)
+    correlated_value_propagation!(pm)
 
     reassociate!(pm)
 
