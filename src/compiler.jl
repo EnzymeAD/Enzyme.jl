@@ -2392,8 +2392,8 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
     )
 
-    TA = TypeAnalysis(triple(mod), rules)
     logic = Logic()
+    TA = TypeAnalysis(logic, rules)
 
     retTT = typetree(GPUCompiler.deserves_argbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
 
