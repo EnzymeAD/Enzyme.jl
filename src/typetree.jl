@@ -73,6 +73,11 @@ function typetree(::Type{Float64}, ctx, dl)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
+function typetree(::Type{T}, ctx, dl) where T<:AbstractFloat
+    @warn "Unknown floating point type" T
+    return TypeTree()
+end
+
 function typetree(::Type{<:DataType}, ctx, dl)
     return TypeTree()
 end
@@ -82,6 +87,10 @@ function typetree(::Type{Any}, ctx, dl)
 end
 
 function typetree(::Type{Symbol}, ctx, dl)
+    return TypeTree()
+end
+
+function typetree(::Type{<:AbstractString}, ctx, dl)
     return TypeTree()
 end
 
@@ -123,7 +132,14 @@ else
 end
 
 function typetree(@nospecialize(T), ctx, dl)
-    if T isa UnionAll || T isa Union || T == Union{} || T isa AbstractString
+    if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
+        return TypeTree()
+    end
+
+    try
+        fieldcount(T)
+    catch
+        @warn "Type does not have a definite number of fields" T
         return TypeTree()
     end
 
