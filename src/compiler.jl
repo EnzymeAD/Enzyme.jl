@@ -3035,7 +3035,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)
     end
-    @show mod
 
     if params.run_enzyme
         # Generate the adjoint
