@@ -131,7 +131,7 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
-function typetree(@nospecialize(T), ctx, dl, seen=Set{DataType}())
+function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
@@ -140,7 +140,11 @@ function typetree(@nospecialize(T), ctx, dl, seen=Set{DataType}())
         @warn "Recursive type" T
         return TypeTree()
     end
-    push!(seen, T)
+    if seen === nothing
+        seen = Set{DataType}(T)
+    else
+        push!(seen, T)
+    end
 
     try
         fieldcount(T)
