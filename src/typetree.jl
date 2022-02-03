@@ -136,7 +136,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
         return TypeTree()
     end
 
-    if T ∈ seen
+    if seen !== nothing && T ∈ seen
         @warn "Recursive type" T
         return TypeTree()
     end
