@@ -152,9 +152,9 @@ end
 #                                   size_t /*numArgs*/, LLVMValueRef);
 const CustomRuleType = Ptr{Cvoid}
 
-function CreateTypeAnalysis(triple, rulenames, rules)
+function CreateTypeAnalysis(logic, rulenames, rules)
     @assert length(rulenames) == length(rules)
-    ccall((:CreateTypeAnalysis, libEnzyme), EnzymeTypeAnalysisRef, (Cstring, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t), triple, rulenames, rules, length(rules))
+    ccall((:CreateTypeAnalysis, libEnzyme), EnzymeTypeAnalysisRef, (EnzymeLogicRef, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t), logic, rulenames, rules, length(rules))
 end
 
 function ClearTypeAnalysis(ta)
