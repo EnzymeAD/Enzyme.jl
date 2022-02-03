@@ -141,10 +141,9 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
         return TypeTree()
     end
     if seen === nothing
-        seen = Set{DataType}(T)
-    else
-        push!(seen, T)
+        seen = Set{DataType}()
     end
+    push!(seen, T)
 
     try
         fieldcount(T)
