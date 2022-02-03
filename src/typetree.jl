@@ -142,6 +142,8 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     end
     if seen === nothing
         seen = Set{DataType}()
+    else
+        seen = copy(seen) # need to copy otherwise we'll count siblings as recursive
     end
     push!(seen, T)
 
