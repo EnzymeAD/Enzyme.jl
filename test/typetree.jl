@@ -16,4 +16,5 @@ tt(T) = string(typetree(T, ctx, dl))
     @test tt(Symbol) == "{}"
     @test tt(String) ==  "{}"
     @test tt(AbstractChannel) == "{}"
+    @test tt(Base.ImmutableDict{Symbol, Any}) == "{[0]:Pointer, [8]:Pointer, [16]:Pointer}"
 end
