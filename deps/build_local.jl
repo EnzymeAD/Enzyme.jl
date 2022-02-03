@@ -1,12 +1,37 @@
 # Invoke with
-# `julia --project=deps deps/build_local.jl`
+# `julia --project=deps deps/build_local.jl [path-to-enzyme]`
 
 # the pre-built Enzyme_jll might not be loadable on this platform
 Enzyme_jll = Base.UUID("7cc45869-7501-5eee-bdea-0790c847d4ef")
 
 using Pkg, Scratch, Preferences, Libdl
 
-# 1. Ensure that an appropriate LLVM_full_jll is installed
+# 1. Get a scratch directory
+scratch_dir = get_scratch!(Enzyme_jll, "build")
+isdir(scratch_dir) && rm(scratch_dir; recursive=true)
+
+if length(ARGS) == 2 
+    @assert ARGS[1] == "--branch"
+    branch = ARGS[2]
+    source_dir = nothing
+elseif length(ARGS) == 1
+    source_dir = ARGS[1]
+    branch = "main"
+end
+
+if source_dir === nothing
+    scratch_src_dir = get_scratch!(Enzyme_jll, "src")
+    cd(scratch_src_dir) do
+        if !isdir("Enzyme")
+            run(`git clone https://github.com/wsmoses/Enzyme`)
+        end
+        run(`git -C Enzyme fetch`)
+        run(`git -C Enzyme checkout origin/$(branch)`)
+    end
+    source_dir = joinpath(scratch_src_dir, "Enzyme", "enzyme")
+end
+
+# 2. Ensure that an appropriate LLVM_full_jll is installed
 Pkg.activate(; temp=true)
 llvm_assertions = try
     cglobal((:_ZN4llvm24DisableABIBreakingChecksE, Base.libllvm_path()), Cvoid)
@@ -24,23 +49,6 @@ else
     LLVM_full_jll
 end
 LLVM_DIR = joinpath(LLVM.artifact_dir, "lib", "cmake", "llvm")
-
-# 2. Get a scratch directory
-scratch_dir = get_scratch!(Enzyme_jll, "build")
-isdir(scratch_dir) && rm(scratch_dir; recursive=true)
-if length(ARGS) == 1
-    source_dir = ARGS[1]
-else
-    scratch_src_dir = get_scratch!(Enzyme_jll, "src")
-    cd(scratch_src_dir) do
-        if !isdir("Enzyme")
-            run(`git clone https://github.com/wsmoses/Enzyme`)
-        end
-        run(`git -C Enzyme pull`)
-    end
-    source_dir = joinpath(scratch_src_dir, "Enzyme", "enzyme")
-end
-
 LLVM_VER_MAJOR = Base.libllvm_version.major
 
 # Build!
