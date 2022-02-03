@@ -2890,7 +2890,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
 
-        if func == Base.println || func == Base.print || func == Base.show || func == Base.flush
+        if func == Base.println || func == Base.print || func == Base.show || func == Base.flush || func == Base.string
             push!(function_attributes(llvmfn), StringAttribute("enzyme_inactive"; ctx))
             must_wrap |= llvmfn == primalf
             continue

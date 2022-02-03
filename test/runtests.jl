@@ -393,6 +393,14 @@ end
 
     @test 4.6 ≈ first(autodiff(printsq, Active, Active(2.3)))
     @test 4.6 ≈ first(fwddiff(printsq, Duplicated(2.3, 1.0)))
+
+    function tostring(x)
+        string(x)
+        x*x
+    end
+
+    @test 4.6 ≈ first(autodiff(tostring, Active, Active(2.3)))
+    @test 4.6 ≈ first(fwddiff(tostring, Duplicated(2.3, 1.0)))
 end
 
 @testset "hmlstm" begin
