@@ -2859,7 +2859,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     known_fns = check_ir(job, mod)
 
     ctx = context(mod)
-    custom = []
+    custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
 
     # Julia function to LLVM stem and arity
@@ -2893,14 +2893,25 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
 
+        function handleCustom(name, attrs=[])
+            attributes = function_attributes(llvmfn)
+            custom[k.specfunc] = linkage(llvmfn)
+            linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
+            for a in attrs
+                push!(attributes, a)
+            end
+            push!(attributes, StringAttribute("enzymejl_mi", string(convert(Int, pointer_from_objref(mi))); ctx))
+            push!(attributes, StringAttribute("enzyme_math", name; ctx))
+            push!(attributes, EnumAttribute("noinline", 0; ctx))
+            must_wrap |= llvmfn == primalf
+            nothing
+        end
+
+
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == Base.println || func == Base.print || func == Base.show ||
             func == Base.flush || func == Base.string || func == Base.print_to_string
-            attributes = function_attributes(llvmfn)
-            push!(attributes, StringAttribute("enzyme_inactive"; ctx))
-            push!(attributes, StringAttribute("enzyme_math", "enz_noop"; ctx))
-            push!(attributes, EnumAttribute("noinline", 0; ctx))
-            must_wrap |= llvmfn == primalf
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
         if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
@@ -2911,44 +2922,30 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             error("jl_copy unhandled")
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
-            attributes = function_attributes(llvmfn)
-            push!(custom, k.specfunc)
-            push!(attributes, EnumAttribute("noinline", 0; ctx))
-            push!(attributes, StringAttribute("enzyme_math", "jl_enq_work"; ctx))
-            must_wrap |= llvmfn == primalf
+            handleCustom("jl_enq_work")
             continue
         end
         if func == Base.Threads.threadid || func == Base.Threads.nthreads
-            attributes = function_attributes(llvmfn)
-            push!(custom, k.specfunc)
-            push!(attributes, EnumAttribute("noinline", 0; ctx))
-            push!(attributes, EnumAttribute("readonly", 0; ctx))
-            push!(attributes, EnumAttribute("inaccessiblememonly", 0; ctx))
-            push!(attributes, EnumAttribute("speculatable", 0; ctx))
-            # TODO
-            # push!(attributes, StringAttribute("enzyme_shouldrecompute", name; ctx))
-            push!(attributes, StringAttribute("enzyme_inactive"; ctx))
+            name = (func == Base.Threads.threadid) ? "jl_threadid" : "jl_nthreads"
+            handleCustom(name,
+                   [EnumAttribute("readonly", 0; ctx),
+                    EnumAttribute("inaccessiblememonly", 0; ctx),
+                    EnumAttribute("speculatable", 0; ctx),
+                    StringAttribute("enzyme_shouldrecompute"; ctx),
+                    StringAttribute("enzyme_inactive"; ctx),
+                                  ])
             continue
         end
         if func == Base.wait || func == Base._wait
             if length(sparam_vals) == 0 || 
                 (length(sparam_vals) == 1 && first(sparam_vals) <: Task)
-                attributes = function_attributes(llvmfn)
-                push!(custom, k.specfunc)
-                push!(attributes, EnumAttribute("noinline", 0; ctx))
-                push!(attributes, StringAttribute("enzyme_math", "jl_wait"; ctx))
-                must_wrap |= llvmfn == primalf
+                handleCustom("jl_wait")
             end
             continue
         end
         if func == Base.Threads.threading_run
             if length(sparam_vals) == 1
-                attributes = function_attributes(llvmfn)
-                push!(custom, k.specfunc)
-                push!(attributes, EnumAttribute("noinline", 0; ctx))
-                push!(attributes, StringAttribute("enzyme_math", "jl_threadsfor"; ctx))
-                push!(attributes, StringAttribute("enzymejl_mi", string(convert(Int, pointer_from_objref(mi))); ctx))
-                must_wrap |= llvmfn == primalf
+                handleCustom("jl_threadsfor")
             end
             continue
         end
@@ -2977,16 +2974,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
-        push!(custom, k.specfunc)
-
-        attributes = function_attributes(llvmfn)
-        push!(attributes, EnumAttribute("noinline", 0; ctx))
-        push!(attributes, StringAttribute("enzyme_math", name; ctx))
-        push!(attributes, StringAttribute("enzyme_shouldrecompute", name; ctx))
-        push!(attributes, EnumAttribute("readnone", 0; ctx))
-
-        # Need to wrap the code when outermost
-        must_wrap |= llvmfn == primalf
+        handleCustom(name, [EnumAttribute("readnone", 0; ctx),
+                    StringAttribute("enzyme_shouldrecompute"; ctx)])
     end
     @assert actualRetType !== nothing
 
@@ -3051,10 +3040,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf = nothing
     end
 
-    for fname in custom
+    for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
         f = functions(mod)[fname]
-
+        linkage!(f, lnk)
         iter = function_attributes(f)
         elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
         LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
