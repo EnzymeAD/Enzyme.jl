@@ -79,6 +79,14 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
+    if ft === typeof(Base.:^)
+        if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
+            return true
+        end
+        if TT <: Tuple{ft, Float32, <:Integer} || TT <: Tuple{ft, Float64, <:Integer}
+            return true
+        end
+    end
     # FIXME(@wsmoses): For which types should we not inline?
     if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work) ||
        ft === typeof(Base.Threads.threadid) || ft == typeof(Base.Threads.nthreads) ||
