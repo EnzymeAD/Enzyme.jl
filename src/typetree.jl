@@ -53,7 +53,7 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
-function typetree(::Type{T}, ctx, dl) where T <: Integer
+function typetree(::Type{T}, ctx, dl, seen=nothing) where T <: Integer
     tt = TypeTree()
     for i in 1:sizeof(T)
         merge!(tt, TypeTree(API.DT_Integer, i-1, ctx))
@@ -61,50 +61,50 @@ function typetree(::Type{T}, ctx, dl) where T <: Integer
     return tt
 end
 
-function typetree(::Type{Float16}, ctx, dl)
+function typetree(::Type{Float16}, ctx, dl, seen=nothing)
     return TypeTree(API.DT_Half, -1, ctx)
 end
 
-function typetree(::Type{Float32}, ctx, dl)
+function typetree(::Type{Float32}, ctx, dl, seen=nothing)
     return TypeTree(API.DT_Float, -1, ctx)
 end
 
-function typetree(::Type{Float64}, ctx, dl)
+function typetree(::Type{Float64}, ctx, dl, seen=nothing)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree(::Type{T}, ctx, dl) where T<:AbstractFloat
+function typetree(::Type{T}, ctx, dl, seen=nothing) where T<:AbstractFloat
     @warn "Unknown floating point type" T
     return TypeTree()
 end
 
-function typetree(::Type{<:DataType}, ctx, dl)
+function typetree(::Type{<:DataType}, ctx, dl, seen=nothing)
     return TypeTree()
 end
 
-function typetree(::Type{Any}, ctx, dl)
+function typetree(::Type{Any}, ctx, dl, seen=nothing)
     return TypeTree()
 end
 
-function typetree(::Type{Symbol}, ctx, dl)
+function typetree(::Type{Symbol}, ctx, dl, seen=nothing)
     return TypeTree()
 end
 
-function typetree(::Type{<:AbstractString}, ctx, dl)
+function typetree(::Type{<:AbstractString}, ctx, dl, seen=nothing)
     return TypeTree()
 end
 
-function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl) where T
-    tt = typetree(T, ctx, dl)
+function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl, seen=nothing) where T
+    tt = typetree(T, ctx, dl, seen)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt
 end
 
-function typetree(::Type{<:Array{T}}, ctx, dl) where T
+function typetree(::Type{<:Array{T}}, ctx, dl, seen=nothing) where T
     offset = 0
 
-    tt = typetree(T, ctx, dl)
+    tt = typetree(T, ctx, dl, seen)
     if !allocatedinline(T)
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
         only!(tt, 0)
@@ -131,10 +131,19 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
-function typetree(@nospecialize(T), ctx, dl)
+function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
+
+    if seen !== nothing && T ∈ seen
+        @warn "Recursive type" T
+        return TypeTree()
+    end
+    if seen === nothing
+        seen = Set{DataType}()
+    end
+    push!(seen, T)
 
     try
         fieldcount(T)
@@ -157,7 +166,7 @@ function typetree(@nospecialize(T), ctx, dl)
     for f in 1:fieldcount(T)
         offset  = fieldoffset(T, f)
         subT    = fieldtype(T, f)
-        subtree = typetree(subT, ctx, dl)
+        subtree = typetree(subT, ctx, dl, seen)
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
             continue
