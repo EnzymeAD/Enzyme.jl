@@ -10,12 +10,17 @@ using Pkg, Scratch, Preferences, Libdl
 scratch_dir = get_scratch!(Enzyme_jll, "build")
 isdir(scratch_dir) && rm(scratch_dir; recursive=true)
 
+source_dir = nothing
+branch = nothing
 if length(ARGS) == 2 
     @assert ARGS[1] == "--branch"
     branch = ARGS[2]
     source_dir = nothing
 elseif length(ARGS) == 1
     source_dir = ARGS[1]
+end
+
+if branch === nothing
     branch = "main"
 end
 
