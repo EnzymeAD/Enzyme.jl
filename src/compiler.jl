@@ -2136,6 +2136,14 @@ function annotate!(mod, mode)
         end
     end
 
+    for fname in ("julia.typeof",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
+        end
+    end
+
     for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
