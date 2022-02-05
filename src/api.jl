@@ -103,26 +103,25 @@ end
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
                                        returnValue, dretUsed, mode, width, additionalArg, typeInfo,
-                                       uncacheable_args, augmented, atomicAdd, postOpt)
+                                       uncacheable_args, augmented, atomicAdd)
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
          EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
-         Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8, UInt8),
+         Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
         dretUsed, mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
-        augmented, atomicAdd, postOpt)
+        augmented, atomicAdd)
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 
                                        returnValue, mode, width, additionalArg, typeInfo,
-                                       uncacheable_args, postOpt)
+                                       uncacheable_args)
     ccall((:EnzymeCreateForwardDiff, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
          EnzymeTypeAnalysisRef, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
-         Ptr{UInt8}, Csize_t, UInt8),
+         Ptr{UInt8}, Csize_t),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
-        postOpt)
+        mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args))
 end
 
 # Create an augmented forward pass.
@@ -137,13 +136,13 @@ end
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreateAugmentedPrimal(logic, todiff, retType, constant_args, TA,  returnUsed,
-                                     typeInfo, uncacheable_args, forceAnonymousTape, atomicAdd, postOpt)
+                                     typeInfo, uncacheable_args, forceAnonymousTape, atomicAdd)
     ccall((:EnzymeCreateAugmentedPrimal, libEnzyme), EnzymeAugmentedReturnPtr, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
          EnzymeTypeAnalysisRef, UInt8, 
-         CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, UInt8, UInt8),
+         CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA,  returnUsed,
-        typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, atomicAdd, postOpt)
+        typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, atomicAdd)
 end
 
 # typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
@@ -196,8 +195,8 @@ EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign
     ( EnzymeGradientUtilsRef, CDerivativeMode, LLVMTypeRef, UInt64, UInt64, UInt64, UInt64, UInt8, LLVMValueRef, UInt8, LLVMValueRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, UInt8, UInt8),
 	gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
 
-function CreateLogic()
-    ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, ())
+function CreateLogic(postOpt=false)
+    ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, (UInt8,), postOpt)
 end
 
 function ClearLogic(logic)
