@@ -2136,6 +2136,14 @@ function annotate!(mod, mode)
         end
     end
 
+    for fname in ("julia.typeof",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
+        end
+    end
+
     for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(fns, fname)
             fn = fns[fname]
@@ -2865,6 +2873,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     # Julia function to LLVM stem and arity
     known_ops = Dict(
         Base.cbrt => (:cbrt, 1),
+        Base.sqrt => (:sqrt, 1),
         Base.sin => (:sin, 1),
         Base.:^ => (:pow, 2),
         Base.cos => (:cos, 1),

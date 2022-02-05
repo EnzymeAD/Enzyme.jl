@@ -262,6 +262,11 @@ function printall!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function printunecessary!(val)
+    ptr = cglobal((:EnzymePrintUnnecessary, Enzyme.API.libEnzyme))
+    ccall((:EnzymeSetCLBool, Enzyme.API.libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function inlineall!(val)
     ptr = cglobal((:EnzymeInline, libEnzyme))
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
