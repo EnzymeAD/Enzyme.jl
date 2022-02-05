@@ -2415,7 +2415,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# true, #=atomicAdd=# parallel, #=postOpt=# false)
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# true, #=atomicAdd=# parallel)
 
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
@@ -2430,14 +2430,14 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, 1,
             #=additionalArg=#tape, typeInfo,
-            uncacheable_args, augmented, #=atomicAdd=# parallel, #=postOpt=#false))
+            uncacheable_args, augmented, #=atomicAdd=# parallel))
         adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure)
     elseif mode == API.DEM_ReverseModeCombined
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, 1,
             #=additionalArg=#C_NULL, typeInfo,
-            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel, #=postOpt=#false))
+            uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure)
     elseif mode == API.DEM_ForwardMode
@@ -2445,7 +2445,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#rt <: Duplicated, #=mode=#API.DEM_ForwardMode, 1,
             #=additionalArg=#C_NULL, typeInfo,
-            uncacheable_args, #=postOpt=#false))
+            uncacheable_args))
         augmented_primalf = nothing
         adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure)
     else
