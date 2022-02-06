@@ -70,11 +70,13 @@ end
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
+    if ft === typeof(Base.string) 
+       return true
+    end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
        ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.log) ||
        ft === typeof(Base.asin) || ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
-       ft === typeof(Base.string) || ft === typeof(Base.sqrt)
-
+       ft === typeof(Base.sqrt) || ft == typeof(Base.sincos)
         if TT <: Tuple{ft, Float32} || TT <: Tuple{ft, Float64} || TT <: Tuple{ft, Float16}
             return true
         end

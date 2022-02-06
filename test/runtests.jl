@@ -288,6 +288,14 @@ end
     @test √3 ≈ first(fwddiff(f74, Duplicated(2.0, 1.0), 3))
 end
 
+@testset "SinCos" begin
+	function sumsincos(theta)
+		a, b = sincos(theta)
+		return a + b
+	end
+    test_scalar(sumsincos, 1.0, rtol=1e-5, atol=1e-5)
+end
+
 """
     J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
 """
