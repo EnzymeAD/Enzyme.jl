@@ -129,7 +129,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
             end
             # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
             push!(errors, ("jl_load_and_lookup", bt, nothing))
-        elseif fn == "jl_lazy_load_and_lookup"
+        elseif fn == "jl_lazy_load_and_lookup" || fn == "ijl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
@@ -226,7 +226,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
-                res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+                if fn == "jl_lazy_load_and_lookup"
+                    res = ccall(:jl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+                else
+                    res = ccall(:ijl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
+                end
                 replaceWith = LLVM.ConstantInt(LLVM.IntType(64; ctx), reinterpret(UInt64, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)

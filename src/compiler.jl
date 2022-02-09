@@ -2240,6 +2240,13 @@ function f32_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTyp
     return UInt8(false)
 end
 
+function ptr_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    TT = TypeTree(API.DT_Pointer, LLVM.context(LLVM.Value(val)))
+    only!(TT, -1)
+    API.EnzymeSetTypeTree(ret, TT)
+    return UInt8(false)
+end
+
 function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     if (direction & API.UP) != 0
         API.EnzymeMergeTypeTree(unsafe_load(args), ret)
@@ -2365,6 +2372,12 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     end
 
     rules = Dict{String, API.CustomRuleType}(
+        "jl_apply_generic" => @cfunction(ptr_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_apply_generic" => @cfunction(ptr_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
