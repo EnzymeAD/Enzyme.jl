@@ -2794,10 +2794,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
         push!(wrapper_types, typ)
     end
-    # wrapper_fn = LLVM.name(entry_f)
-    # LLVM.name!(entry_f, wrapper_fn * ".inner")
+    wrapper_fn = LLVM.name(entry_f)
+    LLVM.name!(entry_f, wrapper_fn * ".inner")
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
-    wrapper_f = LLVM.Function(mod, LLVM.name(entry_f) * ".wrp", wrapper_ft)
+    wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
