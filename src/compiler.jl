@@ -2731,16 +2731,43 @@ function fixup_metadata!(f::LLVM.Function)
     end
 end
 
+# Modified from GPUCompiler classify_arguments
+function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret)
+    source_types = [source_sig.parameters...]
+    codegen_types = parameters(codegen_ft)
+
+    args = []
+    codegen_i = has_sret ? 2 : 1
+    for (source_i, source_typ) in enumerate(source_types)
+        if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            push!(args, (cc=GPUCompiler.GHOST, typ=source_typ))
+            continue
+        end
+        codegen_typ = codegen_types[codegen_i]
+        if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
+            push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ,
+                         codegen=(typ=codegen_typ, i=codegen_i)))
+        elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
+               !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
+            push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
+                         codegen=(typ=codegen_typ, i=codegen_i)))
+        else
+            push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ,
+                         codegen=(typ=codegen_typ, i=codegen_i)))
+        end
+        codegen_i += 1
+    end
+
+    return args
+end
+
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, entry_f::LLVM.Function, actualRetType)
+function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
     ctx = context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
-    args = GPUCompiler.classify_arguments(job, entry_ft)
-    filter!(args) do arg
-        arg.cc != GPUCompiler.GHOST
-    end
 
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
@@ -2749,6 +2776,11 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
         # TODO sret is now TypeAttribute
         RT = eltype(llvmtype(first(parameters(entry_f))))
         sret = true
+    end
+    
+	args = classify_arguments(functy, entry_ft, sret)
+    filter!(args) do arg
+        arg.cc != GPUCompiler.GHOST
     end
 
     # TODO use rettype for sret calculation instead
@@ -2765,7 +2797,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     wrapper_fn = LLVM.name(entry_f)
     LLVM.name!(entry_f, wrapper_fn * ".inner")
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
-    wrapper_f = LLVM.Function(mod, wrapper_fn, wrapper_ft)
+    wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
@@ -2773,6 +2805,23 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
 
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
+
+        toErase = LLVM.CallInst[]
+        for u in LLVM.uses(entry_f)
+            ci = LLVM.user(u)
+            if !isa(ci, LLVM.CallInst) || called_value(ci) != entry_f
+                continue
+            end
+            ops = collect(operands(ci))[1:end-1]
+            position!(builder, ci)
+            res = call!(builder, wrapper_f, ops[2:end])
+            store!(builder, res, ops[1])
+            push!(toErase, ci)
+        end
+        for e in toErase
+            LLVM.API.LLVMInstructionEraseFromParent(e)
+        end
+
         entry = BasicBlock(wrapper_f, "entry"; ctx)
         position!(builder, entry)
 
@@ -2788,16 +2837,20 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
             if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
                 # copy the argument value to a stack slot, and reference it.
                 ty = llvmtype(parm)
+                if !isa(ty, LLVM.PointerType)
+                    @show entry_f, args, parm, ty
+                end
+                @assert isa(ty, LLVM.PointerType)
                 ptr = alloca!(builder, eltype(ty))
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
-                store!(builder, parameters(wrapper_f)[arg.codegen.i], ptr)
+                store!(builder, parameters(wrapper_f)[arg.codegen.i-sret], ptr)
                 push!(wrapper_args, ptr)
             else
-                push!(wrapper_args, parameters(wrapper_f)[arg.codegen.i])
-                for attr in collect(parameter_attributes(entry_f, arg.codegen.i+sret))
-                    push!(parameter_attributes(wrapper_f, arg.codegen.i), attr)
+                push!(wrapper_args, parameters(wrapper_f)[arg.codegen.i-sret])
+                for attr in collect(parameter_attributes(entry_f, arg.codegen.i))
+                    push!(parameter_attributes(wrapper_f, arg.codegen.i-sret), attr)
                 end
             end
         end
@@ -2824,14 +2877,9 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
     push!(function_attributes(entry_f), EnumAttribute("alwaysinline", 0; ctx))
     linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
 
-    # copy debug info
-    sp = LLVM.get_subprogram(entry_f)
-    if sp !== nothing
-        LLVM.set_subprogram!(wrapper_f, sp)
-    end
-
     fixup_metadata!(entry_f)
-    ModulePassManager() do pm
+	
+	ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
     end
@@ -2852,6 +2900,7 @@ function lower_convention(@nospecialize(job::CompilerJob), mod::LLVM.Module, ent
             end
         end
     end
+    verify(wrapper_f)
     return wrapper_f
 end
 
@@ -2888,6 +2937,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.cbrt => (:cbrt, 1),
         Base.sqrt => (:sqrt, 1),
         Base.sin => (:sin, 1),
+        Base.sincos => (:__fd_sincos_1, 1),
         Base.:^ => (:pow, 2),
         Base.cos => (:cos, 1),
         Base.tan => (:tan, 1),
@@ -2917,7 +2967,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         function handleCustom(name, attrs=[])
             attributes = function_attributes(llvmfn)
-            custom[k.specfunc] = linkage(llvmfn)
+            custom[k_name] = linkage(llvmfn)
             linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
             for a in attrs
                 push!(attributes, a)
@@ -2993,12 +3043,19 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
            all(==(T), sparam_vals) || continue
         end
 
+        if name == :__fd_sincos_1
+          source_sig = Base.signature_type(func, sparam_vals)
+          llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+          k_name = LLVM.name(llvmfn)
+        end
+
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
         handleCustom(name, [EnumAttribute("readnone", 0; ctx),
                     StringAttribute("enzyme_shouldrecompute"; ctx)])
     end
+
     @assert actualRetType !== nothing
 
     if must_wrap
@@ -3042,7 +3099,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    primalf = lower_convention(job, mod, primalf, actualRetType)
+    source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
+    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
 
     # annotate
     annotate!(mod, mode)
