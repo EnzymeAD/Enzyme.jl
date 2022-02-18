@@ -67,7 +67,7 @@ end
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
-        # API.EnzymeAddAttributorLegacyPass(pm)
+        API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
     # @show "omod", mod
