@@ -1341,8 +1341,10 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
 @static if VERSION < v"1.8-"
     tt = Tuple{funcT, funcT} #annotate_tuple_type(mi.specTypes, activity)
+    extraArgs = 0
 else
     tt = Tuple{funcT, funcT, Bool}
+    extraArgs = 1
 end
     funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
 
@@ -1376,7 +1378,7 @@ end
 
 	vals = LLVM.Value[]
 	# TODO check if ghost type
-	if length(ops) > 0
+	if length(ops) > extraArgs
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
 			push!(vals, real)
 		end
@@ -1386,6 +1388,10 @@ end
         to_preserve = LLVM.Value[]
         T_args = LLVM.LLVMType[]
 	end
+@static if VERSION < v"1.8-"
+else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     T_args = LLVM.LLVMType[T_int64,]
@@ -1416,6 +1422,7 @@ else
 end
     
 	B = LLVM.Builder(B)
+    ops = collect(operands(orig))[1:end-1]
     
 	vals = LLVM.Value[tape]
     to_preserve = LLVM.Value[vals[1]]
@@ -1424,9 +1431,17 @@ end
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_int64 = LLVM.Int64Type(ctx)
 
+@static if VERSION < v"1.8-"
     T_args = LLVM.LLVMType[T_int64]
+else
+    T_args = LLVM.LLVMType[T_int64, LLVM.Int8Type(ctx)]
+end
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+@static if VERSION < v"1.8-"
+else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end]), B)))
+end
     LLVM.call!(B, rtfn, vals)
     
     emit_gc_preserve_end(B, token)
