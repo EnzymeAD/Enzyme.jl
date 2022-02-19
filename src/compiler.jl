@@ -1249,6 +1249,7 @@ let counter = Ref{Int64}(0)
 end
 const leaked_objs = Base.Dict{Int64, Any}()
 
+if VERSION < v"1.8-"
 function runtime_pfor_augfwd(func, dfunc)::Int64
     @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
@@ -1281,6 +1282,40 @@ function runtime_pfor_rev(id::Int64)
 	Base.Threads.threading_run(tape)
     return nothing
 end
+else 
+function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
+    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+	# tape = vec{Any}(numthreads())
+	# pfor threads tape[i] = aug(func, dfunc)
+    
+	tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal))
+
+	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
+    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
+	function fwd()
+		tapes[Base.Threads.threadid()] = forward()[1]
+	end
+	adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    id = getid()
+    leaked_objs[id] = adj
+	Base.Threads.threading_run(fwd, dynamic)
+    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
+    #       directly returning here allocates a heap object whose pointer is then leaked
+    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
+    #       we stash the object in a global dict, and return the id of the object
+    return id
+end
+
+function runtime_pfor_rev(id::Int64, dynamic)
+    tape = leaked_objs[id]
+    delete!(leaked_objs, id)
+	Base.Threads.threading_run(tape, dynamic)
+    return nothing
+end
+end
 
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
@@ -1304,8 +1339,11 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
 	funcT = mi.specTypes.parameters[2]
 
-
+@static if VERSION < v"1.8-"
     tt = Tuple{funcT, funcT} #annotate_tuple_type(mi.specTypes, activity)
+else
+    tt = Tuple{funcT, funcT, Bool}
+end
     funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
@@ -1371,8 +1409,11 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     tape = LLVM.Value(tape)
     ctx = LLVM.context(orig)
-
+@static if VERSION < v"1.8-"
     fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,))
+else
+    fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,Bool))
+end
     
 	B = LLVM.Builder(B)
     
@@ -3074,7 +3115,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Base.Threads.threading_run
-            if length(sparam_vals) == 1
+            if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom("jl_threadsfor")
             end
             continue
