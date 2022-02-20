@@ -1318,6 +1318,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     job    = CompilerJob(target, funcspec, params)  
 
     otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
+    strip_debuginfo!(otherMod)
     entry = name(meta.entry)
 
     # 4) Link the corresponding module
