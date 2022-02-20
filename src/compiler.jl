@@ -2928,7 +2928,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
     primalf = meta.entry
-    known_fns = check_ir(job, mod)
+    check_ir(job, mod)
 
     ctx = context(mod)
     custom = Dict{String, LLVM.API.LLVMLinkage}()
@@ -3157,7 +3157,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf_name = name(augmented_primalf)
     end
 
-    restore_lookups(mod, known_fns)
+    restore_lookups(mod)
 
     if parent_job !== nothing
         reinsert_gcmarker!(adjointf)

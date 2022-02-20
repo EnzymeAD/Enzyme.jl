@@ -771,9 +771,20 @@ end
     end
 end
 
+@testset "BLAS" begin
+    x = [2.0, 3.0]
+    dx = [0.2,0.3]
+    y = [5.0, 7.0]
+    dy = [0.5,0.7]
+    Enzyme.autodiff((x,y)->x' * v, Duplicated(x, dx), Duplicated(y, dy))
+    @show x, dx, y, dy
+    @test dx ≈ [5.2, 7.3]
+    @test dy ≈ [2.5, 3.7]
+end
+
 @testset "Exception" begin
-    f_exc(x) = x'*x
-    y = [1.0, 2.0]
+    f_exc(x) = sum(x*x)
+    y = [[1.0, 2.0],[3.0,4.0]]
     f_x = zero.(y)
     @test_throws Enzyme.CompilationException autodiff(f_exc, Duplicated(y, f_x))
 end

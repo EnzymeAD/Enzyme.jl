@@ -6,29 +6,26 @@ import GPUCompiler: IRError, InvalidIRError
 
 const ptr_map = Dict{Ptr{Cvoid},String}()
 
-function restore_lookups(mod::LLVM.Module, map)
+function restore_lookups(mod::LLVM.Module)
     i64 = LLVM.IntType(64; ctx=context(mod))
-    for (k, v) in map
+    for (v, k) in ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
-            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, v), llvmtype(f))))
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), llvmtype(f))))
             unsafe_delete!(mod, f)
         end
     end
 end
 
 function check_ir(job, mod::LLVM.Module)
-    known_fns = Dict{String, Int}()
-    errors = check_ir!(job, IRError[], mod, known_fns)
+    errors = check_ir!(job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
-
-    return known_fns
 end
 
-function check_ir!(job, errors, mod::LLVM.Module, known_fns)
+function check_ir!(job, errors, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -43,13 +40,13 @@ function check_ir!(job, errors, mod::LLVM.Module, known_fns)
         unsafe_delete!(mod, f)
     end
     for f in collect(functions(mod))
-        check_ir!(job, errors, imported, f, known_fns)
+        check_ir!(job, errors, imported, f)
     end
 
     return errors
 end
 
-function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
+function check_ir!(job, errors, imported, f::LLVM.Function)
     calls = []
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
@@ -59,7 +56,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(job, errors, imported, inst, known_fns, calls)
+        check_ir!(job, errors, imported, inst, calls)
     end
     return errors
 end
@@ -68,7 +65,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -323,41 +320,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                              "jl_symbol_n")
                     ptr_map[LLVM.find_symbol(name)] = name
                 end
-                # for pfx in ("ddot","sdot","dcopy","scopy","zcopy","ccopy","drot","srot","zdrot","csrot","zrot","crot","dscal","sscal","zscal","cscal","cblas_zdotc_sub","cblas_cdotc_sub","cblas_zdotu_sub","cblas_cdotu_sub",
-                #             "dnrm2","snrm2","dznrm2","scnrm2",
-                #             "dasum", "sasum", "dzasum", "scasum",
-                #             "daxpy","saxpy","zaxpy","caxpy",
-                #             "daxpby","zaxpby",
-                #             "idamax", "isamax", "izamax","icamax",
-                #             "dgemv","sgemv","zgemv","cgemv",
-                #             "dgbmv","sgbmv","zgbmv","cgbmv",
-                #             "dsymv","ssymv","zsymb","csymv",
-                #             "zhemv","chemv","zhpmv","chpmv",
-                #             "dsbmv","ssbmv",
-                #             "dspmv","sspmv",
-                #             "dspr","sspr",
-                #             "zhbmv","chbmv",
-                #             "dtrmv","strmv","ztrmv","ctrmv",
-                #             "dtrsv","strsv","ztrsv","ctrsv",
-                #             "dger","sger","zgerc","cgerc",
-                #             "dsyr","ssyr","zsyr","csyr",
-                #             "zher","cher",
-                #             "dgemm","sgemm","zgemm","cgemm",
-                #             "dsymm","ssymm","zsymm","csymm",
-                #             "zhemm","chemm",
-                #             "dsyrk","ssyrk","zsyrk","csyrk",
-                #             "zherk","cherk",
-                #             "dsyr2k","ssyr2k","zsyr2k","csyr2k",
-                #             "zher2k","cher2k",
-                #             "dtrmm","strmm","ztrmm","ctrmm"
-                #             )
-                #     ptr_map[LLVM.find_symbol("cblas_"*pfx*"64_")] = "cblas_"*pfx*"64_"
-                #     ptr_map[LLVM.find_symbol("cblas_"*pfx)] = "cblas_"*pfx
-                #     for sfx in ("","_", "_64_")
-                #         name = pfx*sfx
-                #         ptr_map[LLVM.find_symbol(name)] = name
-                #     end
-                # end
                 if libblastrampoline_jll.is_available()
                     for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
                         name = symbol_name(s)
@@ -382,7 +344,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                     else
                         lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
                     end
-                    known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
                 end
             end
