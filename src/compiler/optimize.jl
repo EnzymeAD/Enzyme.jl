@@ -225,6 +225,6 @@ function post_optimze!(mod, tm)
         run!(pm, mod)
     end
     @show "post_mod", mod
-    # flush(stdout)
-    # flush(stderr)
+    flush(stdout)
+    flush(stderr)
 end
