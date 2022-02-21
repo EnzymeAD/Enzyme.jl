@@ -3202,7 +3202,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
         post_optimze!(mod, target_machine)
-        @show "post optimizing"
     end
 
     adjointf = functions(mod)[adjointf_name]
@@ -3226,7 +3225,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
     
-    @show "postopt", mod
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 

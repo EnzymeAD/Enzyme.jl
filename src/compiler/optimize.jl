@@ -211,9 +211,9 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
 end
 
 function post_optimze!(mod, tm)
-    @show "pre_post", mod
-    flush(stdout)
-    flush(stderr)
+    # @show "pre_post", mod
+    # flush(stdout)
+    # flush(stderr)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm)
         addOptimizationPasses!(pm)
@@ -224,7 +224,7 @@ function post_optimze!(mod, tm)
         addMachinePasses!(pm)
         run!(pm, mod)
     end
-    @show "post_mod", mod
-    flush(stdout)
-    flush(stderr)
+    # @show "post_mod", mod
+    # flush(stdout)
+    # flush(stderr)
 end
