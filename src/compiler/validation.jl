@@ -48,9 +48,20 @@ end
 
 function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
     calls = []
+    isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
+        # remove illegal invariant.load and jtbaa_const invariants
+        elseif isInline && isa(inst, LLVM.LoadInst)
+            md = metadata(inst)
+            if haskey(md, LLVM.MD_tbaa)
+                modified = LLVM.Metadata(ccall((:EnzymeMakeNonConstTBAA, API.libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,), md[LLVM.MD_tbaa]))
+                setindex!(md, modified, LLVM.MD_tbaa)
+            end
+            if haskey(md, LLVM.MD_invariant_load)
+                delete!(md, LLVM.MD_invariant_load)
+            end
         end
     end
 
