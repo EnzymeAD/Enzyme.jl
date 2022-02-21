@@ -224,7 +224,7 @@ function post_optimze!(mod, tm)
         addMachinePasses!(pm)
         run!(pm, mod)
     end
-    # @show "post_mod", mod
+    @show "post_mod", mod
     # flush(stdout)
     # flush(stderr)
 end
