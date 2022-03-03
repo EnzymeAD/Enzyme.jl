@@ -2426,8 +2426,10 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
 
     if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
+        shadowReturnUSed = returnUsed && (retType == API.DFT_DUP_ARG || retType == API.DFT_DUP_NONEED)
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
+            #=shadowReturnUsed=#shadowReturnUsed,
             typeInfo, uncacheable_args, #=forceAnonymousTape=# true, #=atomicAdd=# parallel)
 
         # 2. get new_primalf and tape
