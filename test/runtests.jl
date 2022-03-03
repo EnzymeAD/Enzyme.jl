@@ -776,7 +776,7 @@ end
     dx = [0.2,0.3]
     y = [5.0, 7.0]
     dy = [0.5,0.7]
-    Enzyme.autodiff((x,y)->x' * v, Duplicated(x, dx), Duplicated(y, dy))
+    Enzyme.autodiff((x,y)->x' * y, Duplicated(x, dx), Duplicated(y, dy))
     @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
