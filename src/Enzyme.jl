@@ -375,6 +375,37 @@ Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return
     fwddiff_deferred(f, rt, args′...)
 end
 
+@inline function forward_back(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    forward, backward = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ReverseModeGradient))
+    forward(args′...), backward
+end
+
+@inline function forward_back(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    forward, backward = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ReverseModeGradient))
+    forward(args′...), backward
+end
+
+@inline function forward_back(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    A     = guess_activity(rt, API.DEM_ReverseModeGradient)
+    forward_back(f, A, args′...)
+end
+
+@inline function forward_back(dupf::Duplicated{F}, args...) where {F}
+    args′ = annotate(args...)
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(dupf.val, tt)
+    A     = guess_activity(rt, API.DEM_ReverseModeGradient)
+    forward_back(dupf, A, args′...)
+end
+
+
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
 Base.@ccallable function __enzyme_float(x::Ptr{Cvoid})::Cvoid
     return nothing
