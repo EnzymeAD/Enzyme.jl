@@ -310,29 +310,32 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
                 end
 
+                known_names = ("jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d","jl_new_array","jl_array_copy","jl_alloc_string",
+                                "jl_in_threaded_region","jl_enter_threaded_region","jl_exit_threaded_region","jl_set_task_tid","jl_new_task",
+                                "malloc","memmove","memcpy","jl_array_grow_beg","jl_array_grow_end","jl_array_grow_at","jl_array_del_beg",
+                                "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
+                                "jl_symbol_n")
                 fn = string(fn)
                 if length(fn) == 0
-                if length(ptr_map) == 0
-                for name in ("jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d","jl_new_array","jl_array_copy","jl_alloc_string",
-                             "jl_in_threaded_region","jl_enter_threaded_region","jl_exit_threaded_region","jl_set_task_tid","jl_new_task",
-                             "malloc","memmove","memcpy","jl_array_grow_beg","jl_array_grow_end","jl_array_grow_at","jl_array_del_beg",
-                             "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
-                             "jl_symbol_n")
-                    ptr_map[LLVM.find_symbol(name)] = name
-                end
-                if libblastrampoline_jll.is_available()
-                    for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
-                        name = symbol_name(s)
-                        if name != ""
-                            found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
-                            if found !== nothing
-                                ptr_map[found] = name
+                    if length(ptr_map) == 0
+                        for name in known_names
+                            ptr_map[LLVM.find_symbol(name)] = name
+                        end
+                        if libblastrampoline_jll.is_available()
+                            for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
+                                name = symbol_name(s)
+                                if name != ""
+                                    found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
+                                    if found !== nothing
+                                        ptr_map[found] = name
+                                    end
+                                end
                             end
                         end
                     end
-                end
-                end
-                fn = get(ptr_map, ptr, fn)
+                    fn = get(ptr_map, ptr, "")
+                else
+                    ptr_map[ptr] = fn
                 end
 
 
