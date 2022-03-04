@@ -104,12 +104,13 @@ end
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
                                        returnValue, dretUsed, mode, width, additionalArg, typeInfo,
                                        uncacheable_args, augmented, atomicAdd)
+    freeMemory = true
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, UInt8, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, width, freeMemory, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd)
 end
 
