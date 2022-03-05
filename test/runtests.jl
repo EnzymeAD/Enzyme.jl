@@ -784,7 +784,7 @@ end
 
 @testset "Exception" begin
     f_exc(x) = sum(x*x)
-    y = [[1.0, 2.0],[3.0,4.0]]
+    y = [[1.0, 2.0] [3.0,4.0]]
     f_x = zero.(y)
     @test_throws Enzyme.CompilationException autodiff(f_exc, Duplicated(y, f_x))
 end
