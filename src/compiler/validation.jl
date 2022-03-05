@@ -26,6 +26,7 @@ module FFI
                 ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
+                    BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
                     if !in(name, ignoreSymbols)
                         push!(symbols, name)
                     end
@@ -67,11 +68,11 @@ module FFI
             ptr = BLASSupport.lookup_blas_symbol(sym)
             if ptr !== nothing
                 if haskey(ptr_map, ptr)
-                    if ptr_map[ptr] == sym
-                        continue
+                    if ptr_map[ptr] != sym
+                        @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
                     end
+                    continue
                 end
-                @assert !haskey(ptr_map, ptr)
                 ptr_map[ptr] = sym
             end
         end
