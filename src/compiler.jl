@@ -3155,6 +3155,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
+        @show mod
+        flush(stdout)
+        flush(stderr)
         adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure)
     else
         adjointf = primalf
