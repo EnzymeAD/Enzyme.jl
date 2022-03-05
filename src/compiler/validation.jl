@@ -356,6 +356,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     fn = get(ptr_map, ptr, "")
                 else
                     if !haskey(ptr_map, ptr)
+                        @show "inserting", ptr, fn
                         ptr_map[ptr] = fn
                     else
                         @assert ptr_map[ptr] == fn
