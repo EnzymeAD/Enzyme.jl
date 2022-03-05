@@ -71,8 +71,8 @@ module FFI
                         continue
                     end
                 end
-                @assert !haskey(ptr_map, found)
-                ptr_map[found] = sym
+                @assert !haskey(ptr_map, ptr)
+                ptr_map[ptr] = sym
             end
         end
     end
