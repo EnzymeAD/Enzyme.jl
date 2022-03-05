@@ -335,7 +335,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     if !initialized_ptr[]
                         initialized_ptr[] = true
                         for name in known_names
-                            ptr_map[LLVM.find_symbol(name)] = name
+                            sym = LLVM.find_symbol(name)
+                            if haskey(ptr_map, sym)
+                                @show ptr_map, sym, name
+                            end
+                            assert !haskey(ptr_map, sym)
+                            ptr_map[sym] = name
                         end
                         if VERSION >= v"1.7.0"
                         if libblastrampoline_jll.is_available()
@@ -344,6 +349,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 if name != ""
                                     found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
                                     if found !== nothing
+                                        assert !haskey(ptr_map, found)
                                         ptr_map[found] = name
                                     end
                                 end
