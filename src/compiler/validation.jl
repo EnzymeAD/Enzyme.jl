@@ -350,6 +350,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             end
                         end
                         end
+                        @show ptr_map
+                        flush(stdout)
                     end
                     fn = get(ptr_map, ptr, "")
                 else
