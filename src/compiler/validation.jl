@@ -338,6 +338,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         initialized_ptr[] = true
                         for name in known_names
                             sym = LLVM.find_symbol(name)
+                            @show name, sym
+                        end
+                        for name in known_names
+                            sym = LLVM.find_symbol(name)
                             if haskey(ptr_map, sym)
                                 @show ptr_map, sym, name
                             end
