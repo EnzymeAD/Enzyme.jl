@@ -12,7 +12,6 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-libblastrampoline_jll = "8e850b90-86db-534c-a0d3-1478176c7d93"
 
 [compat]
 Adapt = "3.3"

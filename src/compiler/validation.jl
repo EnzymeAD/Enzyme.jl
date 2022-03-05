@@ -1,9 +1,12 @@
 using LLVM
 using ObjectFile
-using libblastrampoline_jll
+if VERSION >= v"1.7.0"
+const libblastrampoline_jll = require(PkgId(UUID((0x8e850b90_86db_534c, 0xa0d3_1478176c7d93)), "libblastrampoline_jll"))
+end
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
+const initialized_ptr = Ref(false)
 const ptr_map = Dict{Ptr{Cvoid},String}()
 
 function restore_lookups(mod::LLVM.Module)
@@ -317,10 +320,13 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 "jl_symbol_n")
                 fn = string(fn)
                 if length(fn) == 0
-                    if length(ptr_map) == 0
+                    global initialized_ptr
+                    if !initialized_ptr[]
+                        initialized_ptr[] = true
                         for name in known_names
                             ptr_map[LLVM.find_symbol(name)] = name
                         end
+                        if VERSION >= v"1.7.0"
                         if libblastrampoline_jll.is_available()
                             for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
                                 name = symbol_name(s)
@@ -331,6 +337,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                     end
                                 end
                             end
+                        end
                         end
                     end
                     fn = get(ptr_map, ptr, "")
