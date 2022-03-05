@@ -328,22 +328,41 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 "jl_in_threaded_region","jl_enter_threaded_region","jl_exit_threaded_region","jl_set_task_tid","jl_new_task",
                                 "malloc","memmove","memcpy","jl_array_grow_beg","jl_array_grow_end","jl_array_grow_at","jl_array_del_beg",
                                 "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
-                                "jl_symbol_n")
+                                "jl_symbol_n", "daxpy_64_", "daxpy_", "saxpy_64_", "saxpy_")
                 fn = string(fn)
-                if length(fn) == 0
+                    
                     global initialized_ptr
                     if !initialized_ptr[]
                         initialized_ptr[] = true
                         for name in known_names
-                            ptr_map[LLVM.find_symbol(name)] = name
+                            sym = LLVM.find_symbol(name)
+                            if sym == C_NULL
+                                continue
+                            end
+                            if haskey(ptr_map, sym)
+                                if name == "memcpy"
+                                    continue
+                                end
+                                @show ptr_map, sym, name
+                            end
+                            @assert !haskey(ptr_map, sym)
+                            ptr_map[sym] = name
                         end
                         if VERSION >= v"1.7.0"
                         if libblastrampoline_jll.is_available()
+                            ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
                             for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
                                 name = symbol_name(s)
-                                if name != ""
+                                if !in(name, ignoreSymbols)
                                     found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
                                     if found !== nothing
+                                        if haskey(ptr_map, found)
+                                            if ptr_map[found] == name
+                                                continue
+                                            end
+                                            @show ptr_map, found, name
+                                        end
+                                        @assert !haskey(ptr_map, found)
                                         ptr_map[found] = name
                                     end
                                 end
@@ -351,10 +370,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         end
                     end
-                    fn = get(ptr_map, ptr, "")
-                else
-                    ptr_map[ptr] = fn
-                end
+                    fn = get(ptr_map, ptr, fn)
+                    if !haskey(ptr_map, ptr)
+                        ptr_map[ptr] = fn
+                    else
+                        @assert ptr_map[ptr] == fn
+                    end
 
 
                 if length(fn) > 1 && fromC
