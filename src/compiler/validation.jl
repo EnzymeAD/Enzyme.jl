@@ -1,7 +1,7 @@
 using LLVM
 using ObjectFile
 if VERSION >= v"1.7.0"
-const libblastrampoline_jll = require(PkgId(UUID((0x8e850b90_86db_534c, 0xa0d3_1478176c7d93)), "libblastrampoline_jll"))
+const libblastrampoline_jll = Base.require(Base.PkgId(Base.UUID((0x8e850b90_86db_534c, 0xa0d3_1478176c7d93)), "libblastrampoline_jll"))
 end
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
