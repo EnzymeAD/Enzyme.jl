@@ -354,6 +354,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 if name != ""
                                     found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
                                     if found !== nothing
+                                        if haskey(ptr_map, found)
+                                            if ptr_map[found] == name
+                                                continue
+                                            end
+                                            @show ptr_map, found, name
+                                        end
                                         @assert !haskey(ptr_map, found)
                                         ptr_map[found] = name
                                     end
