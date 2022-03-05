@@ -336,6 +336,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         initialized_ptr[] = true
                         for name in known_names
                             sym = LLVM.find_symbol(name)
+                            if sym == C_NULL
+                                continue
+                            end
                             if haskey(ptr_map, sym)
                                 if name == "memcpy"
                                     continue
