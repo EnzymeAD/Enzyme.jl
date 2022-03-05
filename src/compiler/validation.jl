@@ -332,7 +332,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
                                 "jl_symbol_n")
                 fn = string(fn)
-                if length(fn) == 0
+                    
                     global initialized_ptr
                     if !initialized_ptr[]
                         initialized_ptr[] = true
@@ -361,15 +361,13 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         @show ptr_map
                         flush(stdout)
                     end
-                    fn = get(ptr_map, ptr, "")
-                else
+                    fn = get(ptr_map, ptr, fn)
                     if !haskey(ptr_map, ptr)
                         @show "inserting", ptr, fn
                         ptr_map[ptr] = fn
                     else
                         @assert ptr_map[ptr] == fn
                     end
-                end
 
 
                 if length(fn) > 1 && fromC
