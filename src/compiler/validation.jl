@@ -21,6 +21,8 @@ function restore_lookups(mod::LLVM.Module)
 end
 
 function check_ir(job, mod::LLVM.Module)
+    @show "premod", mod
+    flush(stdout)
     errors = check_ir!(job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
