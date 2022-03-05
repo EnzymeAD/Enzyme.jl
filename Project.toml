@@ -10,7 +10,6 @@ Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
-MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
