@@ -21,8 +21,6 @@ function restore_lookups(mod::LLVM.Module)
 end
 
 function check_ir(job, mod::LLVM.Module)
-    @show "premod", mod
-    flush(stdout)
     errors = check_ir!(job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
@@ -349,9 +347,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         if VERSION >= v"1.7.0"
                         if libblastrampoline_jll.is_available()
+                            ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
                             for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
                                 name = symbol_name(s)
-                                if name != ""
+                                if !in(name, ignoreSymbols)
                                     found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
                                     if found !== nothing
                                         if haskey(ptr_map, found)
@@ -367,12 +366,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             end
                         end
                         end
-                        @show ptr_map
-                        flush(stdout)
                     end
                     fn = get(ptr_map, ptr, fn)
                     if !haskey(ptr_map, ptr)
-                        @show "inserting", ptr, fn
                         ptr_map[ptr] = fn
                     else
                         @assert ptr_map[ptr] == fn
