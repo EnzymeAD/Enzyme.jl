@@ -341,7 +341,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             if haskey(ptr_map, sym)
                                 @show ptr_map, sym, name
                             end
-                            assert !haskey(ptr_map, sym)
+                            @assert !haskey(ptr_map, sym)
                             ptr_map[sym] = name
                         end
                         if VERSION >= v"1.7.0"
@@ -351,7 +351,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 if name != ""
                                     found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
                                     if found !== nothing
-                                        assert !haskey(ptr_map, found)
+                                        @assert !haskey(ptr_map, found)
                                         ptr_map[found] = name
                                     end
                                 end
