@@ -1,31 +1,31 @@
 using LLVM
 using ObjectFile
+using libblastrampoline_jll
 using Libdl
 import GPUCompiler: IRError, InvalidIRError
 
-function restore_lookups(mod::LLVM.Module, map)
+const ptr_map = Dict{Ptr{Cvoid},String}()
+
+function restore_lookups(mod::LLVM.Module)
     i64 = LLVM.IntType(64; ctx=context(mod))
-    for (k, v) in map
+    for (v, k) in ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
-            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, v), llvmtype(f))))
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), llvmtype(f))))
             unsafe_delete!(mod, f)
         end
     end
 end
 
 function check_ir(job, mod::LLVM.Module)
-    known_fns = Dict{String, Int}()
-    errors = check_ir!(job, IRError[], mod, known_fns)
+    errors = check_ir!(job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
-
-    return known_fns
 end
 
-function check_ir!(job, errors, mod::LLVM.Module, known_fns)
+function check_ir!(job, errors, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -40,13 +40,13 @@ function check_ir!(job, errors, mod::LLVM.Module, known_fns)
         unsafe_delete!(mod, f)
     end
     for f in collect(functions(mod))
-        check_ir!(job, errors, imported, f, known_fns)
+        check_ir!(job, errors, imported, f)
     end
 
     return errors
 end
 
-function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
+function check_ir!(job, errors, imported, f::LLVM.Function)
     calls = []
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
@@ -56,7 +56,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, known_fns)
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(job, errors, imported, inst, known_fns, calls)
+        check_ir!(job, errors, imported, inst, calls)
     end
     return errors
 end
@@ -65,7 +65,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
+function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
     bt = backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
@@ -310,79 +310,34 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
                 end
 
+                known_names = ("jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d","jl_new_array","jl_array_copy","jl_alloc_string",
+                                "jl_in_threaded_region","jl_enter_threaded_region","jl_exit_threaded_region","jl_set_task_tid","jl_new_task",
+                                "malloc","memmove","memcpy","jl_array_grow_beg","jl_array_grow_end","jl_array_grow_at","jl_array_del_beg",
+                                "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
+                                "jl_symbol_n")
                 fn = string(fn)
-                if ptr == cglobal(:jl_alloc_array_1d)
-                    fn = "jl_alloc_array_1d"
+                if length(fn) == 0
+                    if length(ptr_map) == 0
+                        for name in known_names
+                            ptr_map[LLVM.find_symbol(name)] = name
+                        end
+                        if libblastrampoline_jll.is_available()
+                            for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
+                                name = symbol_name(s)
+                                if name != ""
+                                    found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
+                                    if found !== nothing
+                                        ptr_map[found] = name
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    fn = get(ptr_map, ptr, "")
+                else
+                    ptr_map[ptr] = fn
                 end
-                if ptr == cglobal(:jl_alloc_array_2d)
-                    fn = "jl_alloc_array_2d"
-                end
-                if ptr == cglobal(:jl_alloc_array_3d)
-                    fn = "jl_alloc_array_3d"
-                end
-                if ptr == cglobal(:jl_new_array)
-                    fn = "jl_new_array"
-                end
-                if ptr == cglobal(:jl_array_copy)
-                    fn = "jl_array_copy"
-                end
-                if ptr == cglobal(:jl_alloc_string)
-                    fn = "jl_alloc_string"
-                end
-                if ptr == cglobal(:jl_in_threaded_region)
-                    fn = "jl_in_threaded_region"
-                end
-                if ptr == cglobal(:jl_enter_threaded_region)
-                    fn = "jl_enter_threaded_region"
-                end
-                if ptr == cglobal(:jl_exit_threaded_region)
-                    fn = "jl_exit_threaded_region"
-                end
-                if ptr == cglobal(:jl_set_task_tid)
-                    fn = "jl_set_task_tid"
-                end
-                if ptr == cglobal(:jl_new_task)
-                    fn = "jl_new_task"
-                end
-                if ptr == cglobal(:malloc)
-                    fn = "malloc"
-                end
-                if ptr == cglobal(:memmove)
-                    fn = "memmove"
-                end
-                if ptr == cglobal(:jl_array_grow_beg)
-                    fn = "jl_array_grow_beg"
-                end
-                if ptr == cglobal(:jl_array_grow_end)
-                    fn = "jl_array_grow_end"
-                end
-                if ptr == cglobal(:jl_array_grow_at)
-                    fn = "jl_array_grow_at"
-                end
-                if ptr == cglobal(:jl_array_del_beg)
-                    fn = "jl_array_del_beg"
-                end
-                if ptr == cglobal(:jl_array_del_end)
-                    fn = "jl_array_del_end"
-                end
-                if ptr == cglobal(:jl_array_del_at)
-                    fn = "jl_array_del_at"
-                end
-                if ptr == cglobal(:jl_array_ptr)
-                    fn = "jl_array_ptr"
-                end
-                if ptr == cglobal(:jl_value_ptr)
-                    fn = "jl_value_ptr"
-                end
-                if ptr == cglobal(:jl_get_ptls_states)
-                    fn = "jl_get_ptls_states"
-                end
-                if ptr == cglobal(:jl_gc_add_finalizer_th)
-                    fn = "jl_gc_add_finalizer_th"
-                end
-                if ptr == cglobal(:jl_symbol_n)
-                    fn = "jl_symbol_n"
-                end
+
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
@@ -392,7 +347,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, known_fns, calls)
                     else
                         lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
                     end
-                    known_fns[fn] = ptr_val
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
                 end
             end
