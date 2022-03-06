@@ -9,12 +9,15 @@ module FFI
         using ObjectFile
         using Libdl
         if VERSION >= v"1.7"
+            function __init__()
+                global blas_handle = Libdl.dlopen(BLAS.libblas)
+            end
             function get_blas_symbols()
                 BLAS.get_config().exported_symbols
             end
 
             function lookup_blas_symbol(name)
-                Libdl.dlsym(BLAS.libblastrampoline_handle, name; throw_error=false)
+                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
             end
         else
             function __init__()
