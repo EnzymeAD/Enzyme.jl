@@ -1,17 +1,109 @@
 using LLVM
 using ObjectFile
-if VERSION >= v"1.7.0"
-const libblastrampoline_jll = Base.require(Base.PkgId(Base.UUID((0x8e850b90_86db_534c, 0xa0d3_1478176c7d93)), "libblastrampoline_jll"))
-end
 using Libdl
-import GPUCompiler: IRError, InvalidIRError
 
-const initialized_ptr = Ref(false)
-const ptr_map = Dict{Ptr{Cvoid},String}()
+module FFI
+    using LLVM
+    module BLASSupport
+        # TODO: LAPACK handling
+        using LinearAlgebra
+        using ObjectFile
+        using Libdl
+        if VERSION >= v"1.7"
+            function __init__()
+                global blas_handle = Libdl.dlopen(BLAS.libblas)
+            end
+            function get_blas_symbols()
+                symbols = BLAS.get_config().exported_symbols
+                if BLAS.USE_BLAS64
+                    return map(n->n*"64_", symbols)
+                end
+                return symbols
+            end
+
+            function lookup_blas_symbol(name)
+                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
+            end
+        else
+            function __init__()
+                global blas_handle = Libdl.dlopen(BLAS.libblas)
+            end
+            function get_blas_symbols()
+                symbols = Set{String}()
+                path = Libdl.dlpath(BLAS.libblas)
+                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
+                for s in Symbols(readmeta(open(path, "r")))
+                    name = symbol_name(s)
+                    BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
+                    if !in(name, ignoreSymbols)
+                        push!(symbols, name)
+                    end
+                end
+                return collect(symbols)
+            end
+
+            function lookup_blas_symbol(name)
+                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
+            end
+        end
+    end
+
+    const ptr_map = Dict{Ptr{Cvoid},String}()
+
+    function __init__()
+        known_names = (
+            "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d", 
+            "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d", 
+            "jl_new_array", "jl_array_copy", "jl_alloc_string",
+            "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
+            "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
+            "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
+            "jl_symbol_n"
+        )
+        for name in known_names
+            sym = LLVM.find_symbol(name)
+            if sym == C_NULL
+                continue
+            end
+            if haskey(ptr_map, sym)
+                # On MacOS memcpy and memmove seem to collide?
+                if name == "memcpy"
+                    continue
+                end
+            end
+            @assert !haskey(ptr_map, sym)
+            ptr_map[sym] = name
+        end
+        for sym in BLASSupport.get_blas_symbols()
+            ptr = BLASSupport.lookup_blas_symbol(sym)
+            if ptr !== nothing
+                if haskey(ptr_map, ptr)
+                    if ptr_map[ptr] != sym
+                        @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
+                    end
+                    continue
+                end
+                ptr_map[ptr] = sym
+            end
+        end
+    end
+
+    function memoize!(ptr, fn)
+        fn = get(ptr_map, ptr, fn)
+        if !haskey(ptr_map, ptr)
+            ptr_map[ptr] = fn
+        else
+            @assert ptr_map[ptr] == fn
+        end
+        return fn
+    end
+end
+
+import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
     i64 = LLVM.IntType(64; ctx=context(mod))
-    for (v, k) in ptr_map
+    for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
             replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), llvmtype(f))))
@@ -324,59 +416,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
                 end
 
-                known_names = ("jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d","jl_new_array","jl_array_copy","jl_alloc_string",
-                                "jl_in_threaded_region","jl_enter_threaded_region","jl_exit_threaded_region","jl_set_task_tid","jl_new_task",
-                                "malloc","memmove","memcpy","jl_array_grow_beg","jl_array_grow_end","jl_array_grow_at","jl_array_del_beg",
-                                "jl_array_del_end","jl_array_del_at","jl_array_ptr","jl_value_ptr","jl_get_ptls_states","jl_gc_add_finalizer_th",
-                                "jl_symbol_n", "daxpy_64_", "daxpy_", "saxpy_64_", "saxpy_")
-                fn = string(fn)
-                    
-                    global initialized_ptr
-                    if !initialized_ptr[]
-                        initialized_ptr[] = true
-                        for name in known_names
-                            sym = LLVM.find_symbol(name)
-                            if sym == C_NULL
-                                continue
-                            end
-                            if haskey(ptr_map, sym)
-                                if name == "memcpy"
-                                    continue
-                                end
-                                @show ptr_map, sym, name
-                            end
-                            @assert !haskey(ptr_map, sym)
-                            ptr_map[sym] = name
-                        end
-                        if VERSION >= v"1.7.0"
-                        if libblastrampoline_jll.is_available()
-                            ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
-                            for s in Symbols(readmeta(open(libblastrampoline_jll.libblastrampoline_path,"r")))
-                                name = symbol_name(s)
-                                if !in(name, ignoreSymbols)
-                                    found = Libdl.dlsym(libblastrampoline_jll.libblastrampoline_handle,name; throw_error=false)
-                                    if found !== nothing
-                                        if haskey(ptr_map, found)
-                                            if ptr_map[found] == name
-                                                continue
-                                            end
-                                            @show ptr_map, found, name
-                                        end
-                                        @assert !haskey(ptr_map, found)
-                                        ptr_map[found] = name
-                                    end
-                                end
-                            end
-                        end
-                        end
-                    end
-                    fn = get(ptr_map, ptr, fn)
-                    if !haskey(ptr_map, ptr)
-                        ptr_map[ptr] = fn
-                    else
-                        @assert ptr_map[ptr] == fn
-                    end
-
+                # Remember pointer in our global map
+                fn = FFI.memoize!(ptr, string(fn))
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
