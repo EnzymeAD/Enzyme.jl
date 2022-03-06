@@ -5,6 +5,7 @@ using Libdl
 module FFI
     using LLVM
     module BLASSupport
+        # TODO: LAPACK handling
         using LinearAlgebra
         using ObjectFile
         using Libdl
@@ -13,7 +14,11 @@ module FFI
                 global blas_handle = Libdl.dlopen(BLAS.libblas)
             end
             function get_blas_symbols()
-                BLAS.get_config().exported_symbols
+                symbols = BLAS.get_config().exported_symbols
+                if BLAS.USE_BLAS64
+                    return map(n->n*"64_", symbols)
+                end
+                return symbols
             end
 
             function lookup_blas_symbol(name)
