@@ -1249,6 +1249,7 @@ let counter = Ref{Int64}(0)
 end
 const leaked_objs = Base.Dict{Int64, Any}()
 
+if VERSION < v"1.8-"
 function runtime_pfor_augfwd(func, dfunc)::Int64
     @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
@@ -1281,6 +1282,40 @@ function runtime_pfor_rev(id::Int64)
 	Base.Threads.threading_run(tape)
     return nothing
 end
+else 
+function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
+    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+	# tape = vec{Any}(numthreads())
+	# pfor threads tape[i] = aug(func, dfunc)
+    
+	tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal))
+
+	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
+    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
+	function fwd()
+		tapes[Base.Threads.threadid()] = forward()[1]
+	end
+	adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    id = getid()
+    leaked_objs[id] = adj
+	Base.Threads.threading_run(fwd, dynamic)
+    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
+    #       directly returning here allocates a heap object whose pointer is then leaked
+    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
+    #       we stash the object in a global dict, and return the id of the object
+    return id
+end
+
+function runtime_pfor_rev(id::Int64, dynamic)
+    tape = leaked_objs[id]
+    delete!(leaked_objs, id)
+	Base.Threads.threading_run(tape, dynamic)
+    return nothing
+end
+end
 
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
@@ -1304,8 +1339,13 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
 	funcT = mi.specTypes.parameters[2]
 
-
+@static if VERSION < v"1.8-"
     tt = Tuple{funcT, funcT} #annotate_tuple_type(mi.specTypes, activity)
+    extraArgs = 0
+else
+    tt = Tuple{funcT, funcT, Bool}
+    extraArgs = 1
+end
     funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
@@ -1338,7 +1378,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
 	vals = LLVM.Value[]
 	# TODO check if ghost type
-	if length(ops) > 0
+	if length(ops) > extraArgs
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
 			push!(vals, real)
 		end
@@ -1348,6 +1388,10 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         to_preserve = LLVM.Value[]
         T_args = LLVM.LLVMType[]
 	end
+@static if VERSION < v"1.8-"
+else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     T_args = LLVM.LLVMType[T_int64,]
@@ -1371,10 +1415,14 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     tape = LLVM.Value(tape)
     ctx = LLVM.context(orig)
-
+@static if VERSION < v"1.8-"
     fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,))
+else
+    fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,Bool))
+end
     
 	B = LLVM.Builder(B)
+    ops = collect(operands(orig))[1:end-1]
     
 	vals = LLVM.Value[tape]
     to_preserve = LLVM.Value[vals[1]]
@@ -1383,9 +1431,17 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_int64 = LLVM.Int64Type(ctx)
 
+@static if VERSION < v"1.8-"
     T_args = LLVM.LLVMType[T_int64]
+else
+    T_args = LLVM.LLVMType[T_int64, LLVM.Int8Type(ctx)]
+end
     fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+@static if VERSION < v"1.8-"
+else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end]), B)))
+end
     LLVM.call!(B, rtfn, vals)
     
     emit_gc_preserve_end(B, token)
@@ -3075,7 +3131,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Base.Threads.threading_run
-            if length(sparam_vals) == 1
+            if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom("jl_threadsfor")
             end
             continue
