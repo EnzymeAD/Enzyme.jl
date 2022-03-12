@@ -2154,6 +2154,7 @@ const inactivefns = Set{String}((
     "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
     "jl_f_fieldtype",
     "jl_symbol_n",
+    "jl_stored_inline", "ijl_stored_inline"
     # "jl_"
 ))
 
