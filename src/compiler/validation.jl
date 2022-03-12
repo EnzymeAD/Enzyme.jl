@@ -11,7 +11,11 @@ module FFI
         using Libdl
         if VERSION >= v"1.7"
             function __init__()
-                global blas_handle = Libdl.dlopen(BLAS.libblas)
+                if VERSION > v"1.8"
+                  global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
+                else
+                  global blas_handle = Libdl.dlopen(BLAS.libblas)
+                end
             end
             function get_blas_symbols()
                 symbols = BLAS.get_config().exported_symbols
