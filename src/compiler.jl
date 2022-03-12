@@ -1939,6 +1939,12 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=no
     end
 end
 
+function register_alloc_handler!(variants, alloc_handler, free_handler)
+    for variant in variants
+        API.EnzymeRegisterAllocationHandler(variant, alloc_handler, free_handler)
+    end
+end
+
 struct CompilationException <: Base.Exception
     msg::String
 end
@@ -1953,17 +1959,17 @@ end
 
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring,)))
-    register_handler!(
+    register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
     )
-    register_handler!(
+    register_alloc_handler!(
         ("jl_alloc_array_2d", "ijl_alloc_array_2d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
     )
-    register_handler!(
+    register_alloc_handler!(
         ("jl_alloc_array_3d", "ijl_alloc_array_3d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
@@ -2017,7 +2023,7 @@ function __init__()
         @cfunction(noop_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_array_copy",),
+        ("jl_array_copy","ijl_array_copy"),
         @cfunction(arraycopy_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
