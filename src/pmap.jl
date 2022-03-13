@@ -11,16 +11,18 @@ end
     ctx = LLVM.Context()
     Pvoid = convert(LLVMType, Ptr{Cvoid}; ctx)
     llvmtys = LLVMType[convert(LLVMType, Int; ctx)]
-    realargs = [:($(ptr))]
-    for a in args
+    realargs = Any[:ptr]
+    realtypes = [ptr]
+    for (i, a) in enumerate(args)
         if GPUCompiler.isghosttype(a) || Core.Compiler.isconstType(a)
             continue
         end
         push!(llvmtys, convert(LLVMType, a; ctx, allow_boxed=true))
-        push!(realargs, :($(a)))
+        push!(realargs, :(args[$i]))
+        push!(realtypes, a)
     end
     llvm_f, _ = LLVM.Interop.create_function(Pvoid, llvmtys)
-    @show realargs
+    @show realargs, realtypes
 
 	LLVM.Builder(ctx) do builder
 		entry = BasicBlock(llvm_f, "entry"; ctx)
@@ -38,10 +40,12 @@ end
 	ir = string(mod)
 	fn = LLVM.name(llvm_f)
 
-    return quote
+    mac = quote
         Base.@_inline_meta
-		Base.llvmcall(($ir, $fn), Ptr{Cvoid}, $(Tuple{realargs...}), $(realargs...))
+		Base.llvmcall(($ir, $fn), Ptr{Cvoid}, $(Tuple{realtypes...}), $(realargs...))
 	end
+    @show mac
+    mac
 end
 
 function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
@@ -65,14 +69,14 @@ function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
 end
 
 function runtime_pmap_rev(count, tapes, adjoint, args...)
-    e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
-    RT = Core.Compiler.return_type(func, Tuple{typeof(count), map((x,)->eltype(typeof(x)), args)...})
+    # e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
+    # RT = Core.Compiler.return_type(func, Tuple{typeof(count), map((x,)->eltype(typeof(x)), args)...})
 
-	function adj(idx, tapes, r_func, rargs...)
-        r_func(Const(idx), rargs..., tapes[idx])
-        nothing
-	end
-	Enzyme.pmap(count, tapes, AdjointThunk{typeof(func), RT, e_tt, typeof(nothing)}(func, adjoint, nothing), args...)
+	# function adj(idx, tapes, r_func, rargs...)
+    #     r_func(Const(idx), rargs..., tapes[idx])
+    #     nothing
+	# end
+	# Enzyme.pmap(count, tapes, AdjointThunk{typeof(func), RT, e_tt, typeof(nothing)}(func, adjoint, nothing), args...)
     Libc.free(tapes)
     return nothing
 end

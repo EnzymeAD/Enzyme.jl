@@ -3382,7 +3382,6 @@ end
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
-    @show argexprs
     if rettype <: Active
         @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
     elseif rettype <: Const
