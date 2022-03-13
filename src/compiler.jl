@@ -1473,7 +1473,7 @@ function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
-function runtime_pmap_augfwd(count, func, RT, TT, forward, args...)::Ptr{Ptr{Cvoid}}
+function runtime_pmap_augfwd(count, func, forward, args...)::Ptr{Ptr{Cvoid}}
     @warn "active variables passed by value to jl_pmap not yet supported"
 
     e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
@@ -1592,7 +1592,7 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     e_tt = Tuple{dup...}
     RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
     forward, adjoint = thunk(Core.Compiler.singleton_type(funcT), #=dfn=#nothing, Const{RT}, e_tt, Val(API.DEM_ReverseModePrimal))
-    _, splat = julia_activity(mi.specTypes.parameters, [funcT, typeof(RT), typeof(e_tt), typeof(forward.primal)], ops, gutils, #=tape=#false)
+    _, splat = julia_activity(mi.specTypes.parameters, [funcT, typeof(forward.primal)], ops, gutils, #=tape=#false)
     splat[1] = eltype(splat[1])
     tt = Tuple{splat...}
    
@@ -1627,8 +1627,8 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     # count
 	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
 
-    push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(RT)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
-    push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(e_tt)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
+    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(RT)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
+    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(e_tt)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
     # function
     push!(vals, LLVM.ConstantInt(convert(Int, forward.primal); ctx))
     
@@ -3682,6 +3682,7 @@ end
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
+    @show argexprs
     if rettype <: Active
         @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
     elseif rettype <: Const
@@ -3850,7 +3851,7 @@ end
         return quote
             Base.@_inline_meta
 
-            $(msrets...)
+            let $(msrets...)
             GC.@preserve $(gcsrets...) begin
                 $(tptrs...)
                 Base.llvmcall(($ir, $fn), Cvoid,
@@ -3862,6 +3863,7 @@ end
                     $(ccexprs...))
             end
             return ( $(results...), )
+            end
         end
 
         else

@@ -408,7 +408,7 @@ end
     nothing
 end
 
-function pmap(count, body::Body, args...) where {Body}
+function pmap_(count, body::Body, args...) where {Body}
     ccall(:jl_enter_threaded_region, Cvoid, ())
     n_threads = Base.Threads.nthreads()
     n_gen = min(n_threads, count)
@@ -435,6 +435,13 @@ function pmap(count, body::Body, args...) where {Body}
     finally
         ccall(:jl_exit_threaded_region, Cvoid, ())
     end
+end
+
+function pmap(count, body::Body, args...) where {Body}
+  for i in 1:count
+    body(i, args...)
+  end
+  nothing
 end
 
 macro parallel(args...)
