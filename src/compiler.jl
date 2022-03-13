@@ -297,7 +297,7 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
 end
 
 function runtime_newtask_augfwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ssize::Int)
-    @warn "active variables passeed by value to jl_new_task are not yet supported"
+    # @warn "active variables passeed by value to jl_new_task are not yet supported"
 
     tt′ = Tuple{}
     args = ()
@@ -1267,7 +1267,7 @@ const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
 function runtime_pfor_augfwd(func, dfunc)::Int64
-    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+    # @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -1300,7 +1300,7 @@ function runtime_pfor_rev(id::Int64)
 end
 else 
 function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
-    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+    # @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -3241,10 +3241,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             dispose(builder)
         end
         primalf = wrapper_f
-    else
-        source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
-        primalf = lower_convention(source_sig, mod, primalf, actualRetType)
     end
+
+    source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
+    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()

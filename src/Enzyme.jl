@@ -460,7 +460,7 @@ macro parallel(args...)
    quote
      let range = $(esc(range))
        function bodyf(idx, iter, $(Base.map(esc, captured)...))
-         local $(esc(lidx)) = iter[idx]
+         local $(esc(lidx)) = @inbounds iter[idx]
          $(esc(body))
          nothing
        end
