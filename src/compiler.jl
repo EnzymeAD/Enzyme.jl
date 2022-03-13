@@ -1476,16 +1476,19 @@ end
 function runtime_pmap_augfwd(count, func, RT, TT, forward, args...)::Ptr{Ptr{Cvoid}}
     @warn "active variables passed by value to jl_pmap not yet supported"
 
+    e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
+    RT = Core.Compiler.return_type(func, Tuple{typeof(count), map((x,)->eltype(typeof(x)), args)...})
+
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*count))
 	function fwd(idx, tapes, f_func, fargs...)
-        @show idx, fargs...
+        @show f_func, idx, fargs...
         flush(stdout)
         res = f_func(Const(idx), fargs...)
         @show res
         flush(stdout)
 		tapes[idx] = res[1]
 	end
-	Enzyme.pmap(count, fwd, tapes, AugmentedForwardThunk{typeof(func), RT, TT, typeof(nothing)}(func, forward, nothing), args...)
+	Enzyme.pmap(count, fwd, tapes, AugmentedForwardThunk{typeof(func), RT, e_tt, typeof(nothing)}(func, forward, nothing), args...)
     return tapes
 end
 
