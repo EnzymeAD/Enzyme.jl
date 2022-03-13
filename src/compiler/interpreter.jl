@@ -1,5 +1,6 @@
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
+using Enzyme
 
 struct EnzymeInterpeter <: AbstractInterpreter
     global_cache::CodeCache
@@ -71,6 +72,9 @@ function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
     if ft === typeof(Base.string) 
+       return true
+    end
+    if ft === typeof(Enzyme.pmap)
        return true
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||

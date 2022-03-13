@@ -2,6 +2,7 @@ module Enzyme
 
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
 export Const, Active, Duplicated, DuplicatedNoNeed
+export parallel, pmap
 
 """
     abstract type Annotation{T}
@@ -405,6 +406,60 @@ end
 @inline function markType(data::Ptr{Float64})
     Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, data)
     nothing
+end
+
+function pmap(count, body::Body, args...) where {Body}
+    ccall(:jl_enter_threaded_region, Cvoid, ())
+    n_threads = Base.Threads.nthreads()
+    n_gen = min(n_threads, count)
+    tasks = Vector{Task}(undef, n_gen)
+    cnt = (count + n_gen - 1) ÷ n_gen
+    for i = 0:(n_gen-1)
+        let start = i * cnt, endv = min(count, (i+1) * cnt)-1
+        t = Task() do
+           for j in start:endv
+              body(j+1, args...)
+           end
+           nothing
+        end
+        t.sticky = true
+        ccall(:jl_set_task_tid, Cint, (Any, Cint), t, i)
+        @inbounds tasks[i+1] = t
+        schedule(t)
+        end
+    end
+    try
+        for t in tasks
+            wait(t)
+        end
+    finally
+        ccall(:jl_exit_threaded_region, Cvoid, ())
+    end
+end
+
+macro parallel(args...)
+  captured = args[1:end-1]
+  ex = args[end]
+  if !(isa(ex, Expr) && ex.head === :for)
+    throw(ArgumentError("@threads requires a `for` loop expression"))
+  end
+  if !(ex.args[1] isa Expr && ex.args[1].head === :(=))
+        throw(ArgumentError("nested outer loops are not currently supported by @threads"))
+   end
+   iter = ex.args[1]
+   lidx = iter.args[1]         # index
+   range = iter.args[2]
+   body = ex.args[2]
+   quote
+     let range = $(esc(range))
+       function bodyf(idx, iter, $(Base.map(esc, captured)...))
+         local $(esc(lidx)) = iter[idx]
+         $(esc(body))
+       end
+       lenr = length(range)
+       pmap(lenr, bodyf, range, $(Base.map(esc, captured)...))
+     end
+   end
 end
 
 end # module
