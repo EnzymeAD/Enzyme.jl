@@ -22,7 +22,6 @@ end
         push!(realtypes, a)
     end
     llvm_f, _ = LLVM.Interop.create_function(Pvoid, llvmtys)
-    @show realargs, realtypes
 
 	LLVM.Builder(ctx) do builder
 		entry = BasicBlock(llvm_f, "entry"; ctx)
@@ -40,43 +39,31 @@ end
 	ir = string(mod)
 	fn = LLVM.name(llvm_f)
 
-    mac = quote
+    quote
         Base.@_inline_meta
 		Base.llvmcall(($ir, $fn), Ptr{Cvoid}, $(Tuple{realtypes...}), $(realargs...))
 	end
-    @show mac
-    mac
 end
 
 function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
     @warn "active variables passed by value to jl_pmap not yet supported"
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*count))
     res = callfn(forward, 0, args...)
+    function fwd(idx, tapes, f_func, fargs...)
+        st = callfn(f_func, idx, fargs...)
+        Base.unsafe_store!(tapes, st, idx)
+    end
+    Enzyme.pmap(count, fwd, tapes, forward, args...)
     return tapes
-   #  e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
-   #  RT = Core.Compiler.return_type(func, Tuple{typeof(count), map((x,)->eltype(typeof(x)), args)...})
-
-   #  function fwd(idx, tapes, f_func, fargs...)
-   #      @show f_func, idx, fargs...
-   #      flush(stdout)
-   #      f_func(Const(idx), fargs...)
-   #      @show res
-   #      flush(stdout)
-   #  	tapes[idx] = res[1]
-   #  end
-   #  Enzyme.pmap(count, fwd, tapes, AugmentedForwardThunk{typeof(func), RT, e_tt, typeof(nothing)}(func, forward, nothing), args...)
-   #  return tapes
 end
 
-function runtime_pmap_rev(count, tapes, adjoint, args...)
-    # e_tt = Tuple{Const{typeof(count)}, map(typeof, args)...}
-    # RT = Core.Compiler.return_type(func, Tuple{typeof(count), map((x,)->eltype(typeof(x)), args)...})
-
-	# function adj(idx, tapes, r_func, rargs...)
-    #     r_func(Const(idx), rargs..., tapes[idx])
-    #     nothing
-	# end
-	# Enzyme.pmap(count, tapes, AdjointThunk{typeof(func), RT, e_tt, typeof(nothing)}(func, adjoint, nothing), args...)
+function runtime_pmap_rev(count, adjoint, tapes, args...)
+	function adj(idx, tapes, r_func, rargs...)
+        st = unsafe_load(tapes, idx)
+        callfn(r_func, idx, rargs..., st)
+        nothing
+	end
+	Enzyme.pmap(count, adj, tapes, adjoint, args...)
     Libc.free(tapes)
     return nothing
 end
@@ -139,22 +126,26 @@ function julia_activity(source_types, FTs, ops, gutils, tape::Bool)
     return args, dup_args
 end
 
-function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-
+function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     llvmfn = LLVM.called_value(orig)
     mi = nothing
+    adjointnm = nothing
+    forwardnm = nothing
     for fattr in collect(function_attributes(llvmfn))
         if isa(fattr, LLVM.StringAttribute)
             if kind(fattr) == "enzymejl_mi"
                 ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
                 mi = Base.unsafe_pointer_to_objref(ptr)
                 break
+            end
+            if kind(fattr) == "enzymejl_forward"
+                forwardnm = value(fattr)
+            end
+            if kind(fattr) == "enzymejl_adjoint"
+                adjointnm = value(fattr)
             end
         end
     end
@@ -164,22 +155,35 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     ops = collect(operands(orig))[1:end-1]
 
-    _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils, #=tape=#false)
-    e_tt = Tuple{dup...}
-    RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
-    eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
-    
-    etarget = Compiler.EnzymeTarget()
-    eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
-    ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
-    
-    cmod, adjointnm, forwardnm = _thunk(ejob)
-    LLVM.link!(mod, cmod)
-    splat, _ = julia_activity(mi.specTypes.parameters, [Int, funcT, funcT], ops, gutils, #=tape=#false)
+    if forwardnm === nothing
+        _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils, #=tape=#false)
+        e_tt = Tuple{dup...}
+        @static if VERSION >= v"1.8" 
+          RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...})
+        else
+          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
+        end
+        eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
+        
+        etarget = Compiler.EnzymeTarget()
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
+        ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+        
+        cmod, adjointnm, forwardnm = _thunk(ejob)
+        LLVM.link!(mod, cmod)
+        attributes = function_attributes(llvmfn)
+        push!(attributes, StringAttribute("enzymejl_forward", forwardnm; ctx))
+        push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
+        attributes = function_attributes(llvmfn)
+        push!(function_attributes(functions(mod)[forwardnm]), EnumAttribute("alwaysinline"; ctx))
+        push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
+    end
+
+    splat, _ = julia_activity(mi.specTypes.parameters, tape === nothing ? [Int, funcT, funcT] : [Int, Ptr{Ptr{Cvoid}}, funcT, funcT], ops, gutils, #=tape=#false)
     # splat[1] = eltype(splat[1])
     tt = Tuple{splat...}
    
-    funcspec = FunctionSpec(runtime_pmap_augfwd, tt, #=kernel=# false, #=name=# nothing)
+    funcspec = FunctionSpec(runtime_fn, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
@@ -210,13 +214,14 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     # count
 	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
-
-    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(RT)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
-    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(e_tt)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
-    # function
-    push!(vals, ptrtoint!(B, functions(mod)[forwardnm], llvmtype(LLVM.ConstantInt(Int(0); ctx))))
     
-    # TODO: Optimization by emitting liverange
+    # function
+    push!(vals, ptrtoint!(B, functions(mod)[tape === nothing ? forwardnm : adjointnm], llvmtype(LLVM.ConstantInt(Int(0); ctx))))
+
+    if tape !== nothing
+        push!(vals, tape)
+    end
+    
     for i in 2:length(ops)
         primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
         push!(vals, primal)
@@ -226,7 +231,15 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         end
     end
     
-    tape = LLVM.call!(B, entry, vals)
+    return LLVM.call!(B, entry, vals)
+end
+
+function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+
+    tape = commonInnerCompile(runtime_pmap_augfwd, B, orig, gutils, nothing)
 
     # Delete the primal code
     if normal !== nothing
@@ -235,8 +248,6 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
     end
 
-    @show mod, entry
-
     unsafe_store!(tapeR, tape.ref)
 
     return nothing
@@ -244,104 +255,7 @@ end
 
 function pmap_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
-
-    llvmfn = LLVM.called_value(orig)
-    mi = nothing
-    for fattr in collect(function_attributes(llvmfn))
-        if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-                break
-            end
-        end
-    end
-
-    countT = mi.specTypes.parameters[2]
-	funcT = mi.specTypes.parameters[3]
-
-    ops = collect(operands(orig))[1:end-1]
-    
-    _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils, #=tape=#false)
-    e_tt = Tuple{dup...}
-    RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
-    forward, adjoint = thunk(Core.Compiler.singleton_type(funcT), #=dfn=#nothing, Const{RT}, e_tt, Val(API.DEM_ReverseModePrimal))
-    _, splat = julia_activity(mi.specTypes.parameters, [funcT, typeof(adjoint.adjoint)], ops, gutils, #=tape=#true)
-    splat[1] = eltype(splat[1])
-    tt = Tuple{splat...}
-    
-    funcspec = FunctionSpec(runtime_pmap_rev, tt, #=kernel=# false, #=name=# nothing)
-
-    # 3) Use the MI to create the correct augmented fwd/reverse
-    # TODO:
-    #  - GPU support
-    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
-
-    target = GPUCompiler.NativeCompilerTarget()
-    params = Compiler.PrimalCompilerParams()
-    job    = CompilerJob(target, funcspec, params)  
-
-    otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
-    entry = name(meta.entry)
-
-    # 4) Link the corresponding module
-    LLVM.link!(mod, otherMod)
-
-    # 5) Call the function
-    entry = functions(mod)[entry]
-
-    B = LLVM.Builder(B)
-    
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-
-    ops = collect(operands(orig))[1:end-1]
-
-    # count
-	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]), B))]
-    
-    # tape
-    tape = LLVM.Value(tape)
-    push!(vals, tape)
-    
-    
-    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(RT)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
-    # push!(vals, addrspacecast!(B, inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(e_tt)); ctx), LLVM.PointerType(T_jlvalue)), T_prjlvalue))
-    
-    # function
-    push!(vals, LLVM.ConstantInt(convert(Int, adjoint.adjoint); ctx))
-                                                                
-    EB = LLVM.Builder(ctx)
-    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-    
-    to_preserve = LLVM.Value[]
-    for i in 2:length(ops)
-        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
-        if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
-          shadow = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
-          v = UndefValue(LLVM.ArrayType(llvmtype(primal), 2)) # llvmtype(shadow)]; ctx)) 
-          v = insert_value!(B, v, primal, 0)
-          v = insert_value!(B, v, shadow, 1)
-          
-          ret = LLVM.alloca!(EB, llvmtype(v))
-          store!(B, v, ret)
-          ret = addrspacecast!(B, ret, LLVM.PointerType(llvmtype(v), 11))
-          push!(vals, ret)
-        else
-          push!(to_preserve, primal)
-          push!(vals, primal)
-        end
-    end
-    
-    token = emit_gc_preserve_begin(B, to_preserve)
-    LLVM.call!(B, entry, vals)
-    emit_gc_preserve_end(B, token)
-    
+    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, LLVM.Value(tape))
     return nothing
 end
 
