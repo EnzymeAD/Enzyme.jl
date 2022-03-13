@@ -28,9 +28,35 @@ end
 		position!(builder, entry)
 		params = collect(LLVM.Value, parameters(llvm_f))
 		lfn = @inbounds params[1]
-		params = params[2:end]
-		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(Pvoid, [llvmtype(x) for x in params])))
-		res = call!(builder, lfn, params)
+		nparams = LLVM.Value[]
+
+        for (parm, source_typ) in zip(params[2:end], realtypes[2:end])
+            push!(nparams, parm)
+            # codegen_typ = llvmtype(parm)
+            # @show parm, source_typ
+            # if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
+            #     push!(nparams, parm)
+            #     #push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ,
+            #     #             codegen=(typ=codegen_typ, i=codegen_i)))
+            # elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
+            #        !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
+            #     if !GPUCompiler.deserves_argbox(source_typ) 
+            #       push!(nparams, load!(builder, parm))
+            #     else
+            #       push!(nparams, parm)
+            #     end
+            #     # push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
+            #     #             codegen=(typ=codegen_typ, i=codegen_i)))
+            # else
+            #     push!(nparams, parm)
+            #     # push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ,
+            #     #              codegen=(typ=codegen_typ, i=codegen_i)))
+            # end
+        end
+
+
+		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(Pvoid, [llvmtype(x) for x in nparams])))
+		res = call!(builder, lfn, nparams)
         ret!(builder, res)
 	end
 
@@ -46,9 +72,8 @@ end
 end
 
 function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
-    @warn "active variables passed by value to jl_pmap not yet supported"
+    # @warn "active variables passed by value to jl_pmap not yet supported"
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*count))
-    res = callfn(forward, 0, args...)
     function fwd(idx, tapes, f_func, fargs...)
         st = callfn(f_func, idx, fargs...)
         Base.unsafe_store!(tapes, st, idx)
@@ -216,21 +241,66 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
 	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
     
     # function
-    push!(vals, ptrtoint!(B, functions(mod)[tape === nothing ? forwardnm : adjointnm], llvmtype(LLVM.ConstantInt(Int(0); ctx))))
+    run_fn = functions(mod)[tape === nothing ? forwardnm : adjointnm]
+    push!(vals, ptrtoint!(B, run_fn, llvmtype(LLVM.ConstantInt(Int(0); ctx))))
 
     if tape !== nothing
         push!(vals, tape)
     end
     
-    for i in 2:length(ops)
-        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
-        push!(vals, primal)
-        if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
-          shadow = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
-          push!(vals, shadow)
-        end
-    end
+    EB = LLVM.Builder(ctx)
+    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
+    i = 2
+    for source_typ in mi.specTypes.parameters[3:end]
+        if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            continue
+        end
+
+        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
+        shadow = if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
+          LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
+        else
+          nothing
+        end
+
+        codegen_typ = llvmtype(parameters(entry)[i+1 + (tape !== nothing)])
+        if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
+            push!(vals, primal)
+            if shadow !== nothing
+              push!(vals, shadow)
+            end
+            #push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ,
+            #             codegen=(typ=codegen_typ, i=codegen_i)))
+        elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
+               !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
+            if !GPUCompiler.deserves_argbox(source_typ) 
+              primA = alloca!(EB, llvmtype(primal))
+              store!(B, primal, primA)
+              primal = addrspacecast!(B, primA, codegen_typ)
+            end
+            push!(vals, primal)
+            if shadow !== nothing
+              if !GPUCompiler.deserves_argbox(source_typ) 
+                shadowA = alloca!(EB, llvmtype(shadow))
+                store!(B, shadow, shadowA)
+                shadow = addrspacecast!(B, shadowA, codegen_typ)
+              end
+              push!(vals, shadow)
+            end
+            # push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
+            #             codegen=(typ=codegen_typ, i=codegen_i)))
+        else
+            push!(vals, primal)
+            if shadow !== nothing
+              push!(vals, shadow)
+            end
+            # push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ,
+            #              codegen=(typ=codegen_typ, i=codegen_i)))
+        end
+        i += 1
+    end
+
     return LLVM.call!(B, entry, vals)
 end
 

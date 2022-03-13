@@ -462,6 +462,7 @@ macro parallel(args...)
        function bodyf(idx, iter, $(Base.map(esc, captured)...))
          local $(esc(lidx)) = iter[idx]
          $(esc(body))
+         nothing
        end
        lenr = length(range)
        pmap(lenr, bodyf, range, $(Base.map(esc, captured)...))

@@ -3173,6 +3173,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Enzyme.pmap
+            source_sig = Base.signature_type(func, sparam_vals)
+            primal = llvmfn == primalf
+            llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+            k_name = LLVM.name(llvmfn)
+            if primal
+                primalf = llvmfn
+            end
             handleCustom("jl_pmap", [], false)
             continue
         end
@@ -3234,6 +3241,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             dispose(builder)
         end
         primalf = wrapper_f
+    else
+        source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
+        primalf = lower_convention(source_sig, mod, primalf, actualRetType)
     end
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
@@ -3254,8 +3264,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
-    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
 
     # annotate
     annotate!(mod, mode)
