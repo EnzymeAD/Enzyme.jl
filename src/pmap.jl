@@ -223,6 +223,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
 
     otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
     entry = name(meta.entry)
+    optimize!(otherMod, JIT.get_tm())
 
     # 4) Link the corresponding module
     LLVM.link!(mod, otherMod)
