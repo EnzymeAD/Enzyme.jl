@@ -3290,8 +3290,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
-    @show mod
-    flush(stdout)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
