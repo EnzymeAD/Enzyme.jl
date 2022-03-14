@@ -229,9 +229,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     @show "prelink", mod
     @show "otherlink", otherMod
     LLVM.link!(mod, otherMod)
-    @show "postlink", mod
-    LLVM.link!(mod, otherMod)
-    
+    @show "postlink", mod 
 
     # 5) Call the function
     entry = functions(mod)[entry]
