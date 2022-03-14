@@ -2953,7 +2953,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
-
         toErase = LLVM.CallInst[]
         for u in LLVM.uses(entry_f)
             ci = LLVM.user(u)
@@ -2962,8 +2961,19 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
             ops = collect(operands(ci))[1:end-1]
             position!(builder, ci)
-            res = call!(builder, wrapper_f, ops[2:end])
-            store!(builder, res, ops[1])
+            nops = LLVM.Value[]
+            start = sret ? 2 : 1
+            for (parm, arg) in zip(ops[1+sret:end], args)
+                if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+                    push!(nops, load!(builder, parm))
+                else
+                    push!(nops, parm)
+                end
+            end
+            res = call!(builder, wrapper_f, nops)
+            if sret
+              store!(builder, res, ops[1])
+            end
             push!(toErase, ci)
         end
         for e in toErase

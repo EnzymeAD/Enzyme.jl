@@ -457,17 +457,17 @@ macro parallel(args...)
    lidx = iter.args[1]         # index
    range = iter.args[2]
    body = ex.args[2]
-   quote
-     let range = $(esc(range))
+   esc(quote
+     let range = $(range)
        function bodyf(idx, iter, $(captured...))
          local $(lidx) = @inbounds iter[idx]
-         $(esc(body))
+         $(body)
          nothing
        end
        lenr = length(range)
-       pmap(lenr, bodyf, range, $(Base.map(esc, captured)...))
+       pmap(lenr, bodyf, range, $(captured...))
      end
-   end
+   end)
 end
 
 end # module
