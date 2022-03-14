@@ -448,10 +448,10 @@ macro parallel(args...)
   captured = args[1:end-1]
   ex = args[end]
   if !(isa(ex, Expr) && ex.head === :for)
-    throw(ArgumentError("@threads requires a `for` loop expression"))
+    throw(ArgumentError("@parallel requires a `for` loop expression"))
   end
   if !(ex.args[1] isa Expr && ex.args[1].head === :(=))
-        throw(ArgumentError("nested outer loops are not currently supported by @threads"))
+        throw(ArgumentError("nested outer loops are not currently supported by @parallel"))
    end
    iter = ex.args[1]
    lidx = iter.args[1]         # index

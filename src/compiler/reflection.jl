@@ -1,5 +1,5 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-                 run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, kwargs...)
+                 run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, kwargs...)
 
     primal, adjoint = fspec(func, types)
 
@@ -7,7 +7,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     rt = A{rt}
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, mode, rt, run_enzyme, dupClosure)
+    params = Compiler.EnzymeCompilerParams(adjoint, mode, rt, run_enzyme, dupClosure, argwrap)
     return Compiler.CompilerJob(target, primal, params)
 end
 

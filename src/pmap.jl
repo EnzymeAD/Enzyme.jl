@@ -72,7 +72,6 @@ end
 end
 
 function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
-    # @warn "active variables passed by value to jl_pmap not yet supported"
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*count))
     function fwd(idx, tapes, f_func, fargs...)
         st = callfn(f_func, idx, fargs...)
@@ -181,8 +180,6 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     ops = collect(operands(orig))[1:end-1]
 
     if forwardnm === nothing
-        @show mi.specTypes.parameters, ops
-        flush(stdout)
         _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils, #=tape=#false)
         e_tt = Tuple{dup...}
         @static if VERSION >= v"1.8" 
@@ -226,10 +223,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     optimize!(otherMod, JIT.get_tm())
 
     # 4) Link the corresponding module
-    @show "prelink", mod
-    @show "otherlink", otherMod
     LLVM.link!(mod, otherMod)
-    @show "postlink", mod 
 
     # 5) Call the function
     entry = functions(mod)[entry]
@@ -314,6 +308,7 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
+    @warn "active variables passed by value to jl_pmap not yet supported"
     tape = commonInnerCompile(runtime_pmap_augfwd, B, orig, gutils, nothing)
 
     # Delete the primal code

@@ -52,3 +52,41 @@ end
     @test 2.0 ≈ dx[2]
     @test 2.0 ≈ dx[3]
 end
+
+@testset "Closure-less threads $(Threads.nthreads())" begin
+    function bf(i, x)
+      x[i] *= x[i]
+      nothing
+    end
+
+    function psquare0(x)
+      Enzyme.pmap(10, bf, x)
+    end
+
+    xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    dxs = ones(10)
+
+    Enzyme.autodiff(psquare0, Duplicated(xs, dxs))
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+
+    function psquare1(x)
+      Enzyme.@parallel x for i = 1:10
+        @inbounds x[i] *= x[i]
+      end
+    end
+    
+    xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    dxs = ones(10)
+
+    Enzyme.autodiff(psquare1, Duplicated(xs, dxs))
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+
+    function psquare2(x, y)
+      Enzyme.@parallel x y for i = 1:10
+        @inbounds x[i] *= y[i]
+      end
+    end
+    
+    Enzyme.autodiff(psquare2, Duplicated(xs, dxs), Duplicated(xs, dxs))
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+end

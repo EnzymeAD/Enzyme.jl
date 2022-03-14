@@ -182,9 +182,8 @@ function emit_allocobj!(B, T)
 end
 declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do mod, ctx, name
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 11)
-    
-	T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 11) 
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
     funcT = LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
     LLVM.Function(mod, name, funcT)
 end
@@ -192,7 +191,7 @@ function emit_pointerfromobjref!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-	ctx = context(mod)
+    ctx = context(mod)
     func = declare_pointerfromobjref!(mod)
     return call!(B, func, [T])
 end
@@ -297,7 +296,6 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
 end
 
 function runtime_newtask_augfwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ssize::Int)
-    # @warn "active variables passeed by value to jl_new_task are not yet supported"
 
     tt′ = Tuple{}
     args = ()
@@ -1267,7 +1265,6 @@ const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
 function runtime_pfor_augfwd(func, dfunc)::Int64
-    # @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -1300,7 +1297,6 @@ function runtime_pfor_rev(id::Int64)
 end
 else 
 function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
-    # @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -1362,6 +1358,7 @@ else
     tt = Tuple{funcT, funcT, Bool}
     extraArgs = 1
 end
+    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
     funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
@@ -1521,6 +1518,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
+    @warn "active variables passeed by value to jl_new_task are not yet supported"
     fun = @cfunction(runtime_newtask_augfwd, Cvoid, (Ptr{Any}, Any, Any, Any, Int))
 
     B = LLVM.Builder(B)
