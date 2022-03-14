@@ -226,6 +226,10 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     optimize!(otherMod, JIT.get_tm())
 
     # 4) Link the corresponding module
+    @show "prelink", mod
+    @show "otherlink", otherMod
+    LLVM.link!(mod, otherMod)
+    @show "postlink", mod
     LLVM.link!(mod, otherMod)
     
 
