@@ -180,6 +180,21 @@ function emit_allocobj!(B, T)
 	args[1] = bitcast!(B, args[1], parameters(eltype(llvmtype(func)))[1])
     return call!(B, func, args)
 end
+declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do mod, ctx, name
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 11) 
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    funcT = LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
+    LLVM.Function(mod, name, funcT)
+end
+function emit_pointerfromobjref!(B, T)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = context(mod)
+    func = declare_pointerfromobjref!(mod)
+    return call!(B, func, [T])
+end
 
 
 function array_inner(::Type{<:Array{T}}) where T
@@ -281,7 +296,6 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
 end
 
 function runtime_newtask_augfwd(ret_ptr::Ptr{Any}, fn::Any, dfn::Any, post::Any, ssize::Int)
-    @warn "active variables passeed by value to jl_new_task are not yet supported"
 
     tt′ = Tuple{}
     args = ()
@@ -1251,7 +1265,6 @@ const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
 function runtime_pfor_augfwd(func, dfunc)::Int64
-    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -1284,7 +1297,6 @@ function runtime_pfor_rev(id::Int64)
 end
 else 
 function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
-    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
@@ -1346,6 +1358,7 @@ else
     tt = Tuple{funcT, funcT, Bool}
     extraArgs = 1
 end
+    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
     funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
@@ -1448,6 +1461,8 @@ end
     return nothing
 end
 
+include("pmap.jl")
+
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1503,6 +1518,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
+    @warn "active variables passeed by value to jl_new_task are not yet supported"
     fun = @cfunction(runtime_newtask_augfwd, Cvoid, (Ptr{Any}, Any, Any, Any, Int))
 
     B = LLVM.Builder(B)
@@ -2055,6 +2071,12 @@ function __init__()
         @cfunction(threadsfor_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
+        ("jl_pmap",),
+        @cfunction(pmap_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(pmap_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(pmap_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
         ("jl_new_task", "ijl_new_task"),
         @cfunction(newtask_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(newtask_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
@@ -2157,6 +2179,7 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     rt::Type{<:Annotation}
     run_enzyme::Bool
     dupClosure::Bool
+    abiwrap::Bool
 end
 
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
@@ -2383,7 +2406,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure)
+function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure, wrap)
     rt  = job.params.rt
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
@@ -2548,7 +2571,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure)
+        if wrap
+          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure)
+        end
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
@@ -2559,7 +2584,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
             #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, 1,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
-        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure)
+        if wrap
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure)
+        end
     elseif mode == API.DEM_ReverseModeCombined
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
@@ -2567,7 +2594,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
-        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure)
+        if wrap
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure)
+        end
     elseif mode == API.DEM_ForwardMode
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
@@ -2575,7 +2604,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
-        adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure)
+        if wrap
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure)
+        end
     else
         @assert "Unhandled derivative mode", mode
     end
@@ -2920,7 +2951,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     # emit IR performing the "conversions"
     let builder = Builder(ctx)
-
         toErase = LLVM.CallInst[]
         for u in LLVM.uses(entry_f)
             ci = LLVM.user(u)
@@ -2929,8 +2959,19 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
             ops = collect(operands(ci))[1:end-1]
             position!(builder, ci)
-            res = call!(builder, wrapper_f, ops[2:end])
-            store!(builder, res, ops[1])
+            nops = LLVM.Value[]
+            start = sret ? 2 : 1
+            for (parm, arg) in zip(ops[1+sret:end], args)
+                if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+                    push!(nops, load!(builder, parm))
+                else
+                    push!(nops, parm)
+                end
+            end
+            res = call!(builder, wrapper_f, nops)
+            if sret
+              store!(builder, res, ops[1])
+            end
             push!(toErase, ci)
         end
         for e in toErase
@@ -3030,6 +3071,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mode   = params.mode
     adjoint = params.adjoint
     dupClosure = params.dupClosure
+    abiwrap = params.abiwrap
     primal  = job.source
 
     if parent_job === nothing
@@ -3080,10 +3122,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
 
-        function handleCustom(name, attrs=[])
+        function handleCustom(name, attrs=[], setlink=true)
             attributes = function_attributes(llvmfn)
             custom[k_name] = linkage(llvmfn)
-            linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
+            if setlink
+              linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
+            end
             for a in attrs
                 push!(attributes, a)
             end
@@ -3134,6 +3178,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom("jl_threadsfor")
             end
+            continue
+        end
+        if func == Enzyme.pmap
+            source_sig = Base.signature_type(func, sparam_vals)
+            primal = llvmfn == primalf
+            llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+            k_name = LLVM.name(llvmfn)
+            if primal
+                primalf = llvmfn
+            end
+            handleCustom("jl_pmap", [], false)
             continue
         end
 
@@ -3196,6 +3251,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primalf = wrapper_f
     end
 
+    source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
+    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
+
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()
     else
@@ -3214,8 +3272,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    source_sig = Base.signature_type(job.source.f, job.source.tt)::Type
-    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
 
     # annotate
     annotate!(mod, mode)
@@ -3229,7 +3285,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure, abiwrap)
     else
         adjointf = primalf
         augmented_primalf = nothing
@@ -3510,7 +3566,7 @@ end
         return quote
             Base.@_inline_meta
 
-            $(msrets...)
+            let $(msrets...)
             GC.@preserve $(gcsrets...) begin
                 $(tptrs...)
                 Base.llvmcall(($ir, $fn), Cvoid,
@@ -3522,6 +3578,7 @@ end
                     $(ccexprs...))
             end
             return ( $(results...), )
+            end
         end
 
         else
@@ -3636,7 +3693,7 @@ function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Mode}=Val(API.DEM_Re
 
     target = Compiler.EnzymeTarget()
 
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, rt, true, DF != Nothing)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, rt, true, DF != Nothing, #=abiwrap=#true)
     job    = Compiler.CompilerJob(target, primal, params)
 
     thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
@@ -3658,7 +3715,7 @@ import GPUCompiler: deferred_codegen_jobs
 @generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure}=Val(false),::Val{Mode}=Val(API.DEM_ReverseModeCombined)) where {f,tt, rt, DupClosure, Mode}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, Mode, rt, true, DupClosure)
+    params = EnzymeCompilerParams(adjoint, Mode, rt, true, DupClosure, #=abiwrap=#true)
     job    = CompilerJob(target, primal, params)
 
     addr = get_trampoline(job)

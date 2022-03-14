@@ -186,7 +186,8 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
         barrier_noop!(pm)
         lower_exc_handlers!(pm)
-        gc_invariant_verifier!(pm, false)
+        # BUDE.jl demonstrates a bug here TODO
+        # gc_invariant_verifier!(pm, false)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12
         # due to bug in `CreateAlignmentAssumption`.
