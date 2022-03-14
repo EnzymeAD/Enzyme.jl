@@ -181,6 +181,8 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     ops = collect(operands(orig))[1:end-1]
 
     if forwardnm === nothing
+        @show mi.specTypes.parameters, ops
+        flush(stdout)
         _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils, #=tape=#false)
         e_tt = Tuple{dup...}
         @static if VERSION >= v"1.8" 
