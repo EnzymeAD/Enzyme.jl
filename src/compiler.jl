@@ -3643,7 +3643,10 @@ end
 function _thunk(job)
     params = job.params
 
-    mod, meta = codegen(:llvm, job, optimize=false)
+    # TODO: on 1.9, this actually creates a context. cache those.
+    JuliaContext() do ctx
+      mod, meta = codegen(:llvm, job; optimize=false, ctx)
+    end
 
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
