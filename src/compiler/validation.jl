@@ -38,7 +38,9 @@ module FFI
                 ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
-                    BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
+                    @static if !Sys.iswindows()
+                        BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
+                    end
                     if !in(name, ignoreSymbols)
                         push!(symbols, name)
                     end
