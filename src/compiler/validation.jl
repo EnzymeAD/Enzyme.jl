@@ -10,6 +10,7 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
+        import ..FFI
         if VERSION >= v"1.7"
             function __init__()
                 if VERSION > v"1.8"
@@ -38,7 +39,9 @@ module FFI
                 path = Libdl.dlpath(BLAS.libblas)
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
+@static if !Sys.iswindows()
                     BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
+end
                     if !in(name, FFI.ignoreSymbols)
                         push!(symbols, name)
                     end
@@ -94,16 +97,11 @@ module FFI
 
     function memoize!(ptr, fn)
         if in(fn, ignoreSymbols)
-            fn = ""
+            @warn "Trying to memoize fn on ignore list" fn
+            return nothing
         end
-        fn = get(ptr_map, ptr, fn)
-        if !haskey(ptr_map, ptr)
-            if length(fn) > 0
-              ptr_map[ptr] = fn
-            end
-        else
-            @assert ptr_map[ptr] == fn
-        end
+        _fn = get!(ptr_map, ptr, fn)
+        @assert _fn == fn
         return fn
     end
 end
@@ -427,8 +425,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
 
                 # Remember pointer in our global map
                 fn = FFI.memoize!(ptr, string(fn))
-
-                if length(fn) > 1 && fromC
+                if fn !== nothing && length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                     lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
                     if lfn == C_NULL
