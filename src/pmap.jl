@@ -218,7 +218,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)  
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
     entry = name(meta.entry)
     optimize!(otherMod, JIT.get_tm())
 

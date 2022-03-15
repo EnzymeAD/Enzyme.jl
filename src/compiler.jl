@@ -1366,11 +1366,12 @@ end
     #  - GPU support
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
 
+
     target = GPUCompiler.NativeCompilerTarget()
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)  
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
     entry = name(meta.entry)
 
     # 4) Link the corresponding module
