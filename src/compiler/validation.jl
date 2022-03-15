@@ -35,7 +35,7 @@ module FFI
             function get_blas_symbols()
                 symbols = Set{String}()
                 path = Libdl.dlpath(BLAS.libblas)
-                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start"])
+                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
                     BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
