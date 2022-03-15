@@ -30,6 +30,24 @@ const tm = Ref{TargetMachine}() # for opt pipeline
 
 get_tm() = tm[]
 
+function absolute_symbol_materialization(name, ptr)
+	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
+	flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+	symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
+	gv = LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
+
+	return LLVM.absolute_symbols(Ref(gv))
+end
+
+function define_absolute_symbol(jd, name)
+	ptr = LLVM.find_symbol(name)
+	if ptr !== C_NULL
+		LLVM.define(jd, absolute_symbol_materialization(name, ptr))
+		return true
+	end
+	return false
+end
+
 function __init__()
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
@@ -70,6 +88,11 @@ function __init__()
     prefix = LLVM.get_prefix(lljit)
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
     LLVM.add!(jd_main, dg)
+
+	if Sys.iswindows() && Int === Int64
+		# TODO can we check isGNU?
+		define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
+	end
 
     es = ExecutionSession(lljit)
     try
