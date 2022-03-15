@@ -4,6 +4,7 @@ using Libdl
 
 module FFI
     using LLVM
+    const ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
     module BLASSupport
         # TODO: LAPACK handling
         using LinearAlgebra
@@ -35,11 +36,10 @@ module FFI
             function get_blas_symbols()
                 symbols = Set{String}()
                 path = Libdl.dlpath(BLAS.libblas)
-                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
                     BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
-                    if !in(name, ignoreSymbols)
+                    if !in(name, FFI.ignoreSymbols)
                         push!(symbols, name)
                     end
                 end
@@ -93,9 +93,14 @@ module FFI
     end
 
     function memoize!(ptr, fn)
+        if in(fn, ignoreSymbols)
+            fn = ""
+        end
         fn = get(ptr_map, ptr, fn)
         if !haskey(ptr_map, ptr)
-            ptr_map[ptr] = fn
+            if length(fn) > 0
+              ptr_map[ptr] = fn
+            end
         else
             @assert ptr_map[ptr] == fn
         end
