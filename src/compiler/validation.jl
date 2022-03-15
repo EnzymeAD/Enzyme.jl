@@ -38,14 +38,20 @@ module FFI
                 ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
                 for s in Symbols(readmeta(open(path, "r")))
                     name = symbol_name(s)
-                    @static if !Sys.iswindows()
-                        BLAS.vendor() == :openblas64 && endswith(name, "64_") || continue
+                    if !Sys.iswindows() && BLAS.vendor() == :openblas64
+                        endswith(name, "64_") || continue
+                    else
+                        endswith(name, "_") || continue
                     end
                     if !in(name, ignoreSymbols)
                         push!(symbols, name)
                     end
                 end
-                return collect(symbols)
+                symbols = collect(symbols)
+                if Sys.iswindows() &&  BLAS.vendor() == :openblas64
+                    return map(n->n*"64_", symbols)
+                end
+                return symbols
             end
 
             function lookup_blas_symbol(name)
