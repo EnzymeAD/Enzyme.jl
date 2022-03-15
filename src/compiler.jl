@@ -1770,6 +1770,44 @@ function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     return nothing
 end
 
+function arrayptrcopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+
+    shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    shadowdstp = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+    shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[3], B))
+    shadowsrcp = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[4], B))
+    n = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[5]))
+    
+    LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), [shadowdst, shadowdstp, shadowsrc, shadowsrcp, n])
+	
+	return nothing
+end
+
+function arrayptrcopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+	
+    orig = LLVM.Instruction(OrigCI)
+    origops = LLVM.operands(orig)
+
+    shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+    shadowdstp = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+    shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[3], B))
+    shadowsrcp = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[4], B))
+    n = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[5]))
+    
+    LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), [shadowdst, shadowdstp, shadowsrc, shadowsrcp, n])
+
+
+	return nothing
+end
+
+
+function arrayptrcopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    return nothing
+end
+
 function f_tuple_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented augmented forward for jl_f_tuple")
 
@@ -2105,6 +2143,12 @@ function __init__()
         @cfunction(arraycopy_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arraycopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(arraycopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
+        ("jl_array_ptr_copy","ijl_array_ptr_copy"),
+        @cfunction(arrayptrcopy_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(arrayptrcopy_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(arrayptrcopy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
         ("llvm.julia.gc_preserve_begin",),
