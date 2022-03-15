@@ -13,11 +13,11 @@ end
 
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-                 optimize::Bool=true, second_stage::Bool=true, kwargs...)
+                 optimize::Bool=true, second_stage::Bool=true, ctx=nothing, kwargs...)
 
     job = get_job(func, A, types; kwargs...)
     # Codegen the primal function and all its dependency in one module
-    mod, meta = Compiler.codegen(:llvm, job, optimize=optimize, #= validate=false =#)
+    mod, meta = Compiler.codegen(:llvm, job; optimize, ctx #= validate=false =#)
 
     if second_stage
         post_optimze!(mod, JIT.get_tm())
@@ -31,19 +31,23 @@ end
 function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types);
                           optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
                           raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
-    llvmf, _ = reflect(func, A, types; optimize,run_enzyme, second_stage)
+    JuliaContext() do ctx
+        llvmf, _ = reflect(func, A, types; optimize, run_enzyme, second_stage, ctx)
 
-    str = ccall(:jl_dump_function_ir, Ref{String},
-                (LLVM.API.LLVMValueRef, Bool, Bool, Ptr{UInt8}),
-                llvmf, !raw, dump_module, debuginfo)
-    print(io, str)
+        str = ccall(:jl_dump_function_ir, Ref{String},
+                    (LLVM.API.LLVMValueRef, Bool, Bool, Ptr{UInt8}),
+                    llvmf, !raw, dump_module, debuginfo)
+        print(io, str)
+    end
 end
 enzyme_code_llvm(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_llvm(stdout, func, A, types; kwargs...)
 
 function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types))
-    _, mod = reflect(func, A, types)
-    str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
-    print(io, str)
+    JuliaContext() do ctx
+        _, mod = reflect(func, A, types; ctx)
+        str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
+        print(io, str)
+    end
 end
 enzyme_code_native(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_native(stdout, func, A, types; kwargs...)
 
