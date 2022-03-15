@@ -1366,11 +1366,12 @@ end
     #  - GPU support
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
 
+
     target = GPUCompiler.NativeCompilerTarget()
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)  
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job, optimize=false, validate=false)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
     entry = name(meta.entry)
 
     # 4) Link the corresponding module
@@ -3065,7 +3066,7 @@ function adim(::Array{T, N}) where {T, N}
 end
 
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
-                 libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true,
+                 libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, ctx = nothing,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
     params  = job.params
     mode   = params.mode
@@ -3081,11 +3082,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         primal_job = similar(parent_job, job.source)
     end
-    mod, meta = GPUCompiler.codegen(:llvm, primal_job, optimize=false, validate=false, parent_job=parent_job)
+    mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
     primalf = meta.entry
     check_ir(job, mod)
 
-    ctx = context(mod)
+    @assert ctx == context(mod)
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
 
@@ -3611,7 +3612,7 @@ end
 # JIT
 ##
 
-function _link(job, (mod, adjoint_name, primal_name))
+function _link(job, (mod, adjoint_name, primal_name, ctx))
     params = job.params
     adjoint = params.adjoint
 
@@ -3620,6 +3621,11 @@ function _link(job, (mod, adjoint_name, primal_name))
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
+    if VERSION >= v"1.9.0-DEV.115"
+        LLVM.dispose(ctx)
+    else
+        # we cannot dispose of the global unique context
+    end
     adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
 
     adjoint_ptr  = pointer(adjoint_addr)
@@ -3643,7 +3649,9 @@ end
 function _thunk(job)
     params = job.params
 
-    mod, meta = codegen(:llvm, job, optimize=false)
+    # TODO: on 1.9, this actually creates a context. cache those.
+    ctx = JuliaContext()
+    mod, meta = codegen(:llvm, job; optimize=false, ctx)
 
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
@@ -3662,7 +3670,7 @@ function _thunk(job)
 
     # Run post optimization pipeline
     post_optimze!(mod, JIT.get_tm())
-    return (mod, adjoint_name, primal_name)
+    return (mod, adjoint_name, primal_name, ctx)
 end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
