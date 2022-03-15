@@ -2351,8 +2351,9 @@ function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTyp
     TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
     only!(TT, -1)
     API.EnzymeSetTypeTree(unsafe_load(args), TT)
-    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
-    shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
+    # dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
+    only!(TT, -1)
+    # shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
     API.EnzymeSetTypeTree(ret, TT)
     return UInt8(false)
 end
