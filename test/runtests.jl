@@ -99,6 +99,14 @@ end
     @test autodiff((x)->log(x), Active(2.0)) == (0.5,)
 end
 
+@testset "Simple Exception" begin
+    f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
+    y = [1.0, 2.0]
+    f_x = zero.(y)
+    @test_throws BoundsError autodiff(f_simple_exc, Duplicated(y, f_x), 0)
+end
+
+
 @testset "Duplicated" begin
     x = Ref(1.0)
     y = Ref(2.0)
