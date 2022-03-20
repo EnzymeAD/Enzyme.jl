@@ -835,3 +835,8 @@ end
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
 end
+
+using CUDA
+if CUDA.functional()
+    include("cuda.jl")
+end

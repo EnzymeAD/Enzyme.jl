@@ -1,4 +1,6 @@
 [deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
@@ -6,4 +8,3 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
