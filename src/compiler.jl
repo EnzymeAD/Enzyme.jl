@@ -2164,13 +2164,6 @@ function GPUCompiler.llvm_machine(::EnzymeTarget)
 end
 
 module Runtime
-    # the runtime library
-    signal_exception() = return
-    malloc(sz) = ccall("extern malloc", llvmcall, Csize_t, (Csize_t,), sz)
-    report_oom(sz) = return
-    report_exception(ex) = return
-    report_exception_name(ex) = return
-    report_exception_frame(idx, func, file, line) = return
 end
 
 abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
