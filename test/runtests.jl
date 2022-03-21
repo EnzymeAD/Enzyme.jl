@@ -181,6 +181,20 @@ end
     @test fwddiff(arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
+@testset "Dict" begin
+    params = Dict{Symbol, Float64}()
+    dparams = Dict{Symbol, Float64}()
+
+    params[:var] = 10.0
+    dparams[:var] = 0.0
+
+    f_dict(params, x) = params[:var] * x
+
+    @test autodiff(f_dict, Const(params), Active(5.0)) == (10.0,)
+    @test autodiff(f_dict, Duplicated(params, dparams), Active(5.0)) == (10.0,)
+    @test dparams[:var] == 5.0
+end
+
 function grad_closure(f, x)
     function noretval(x,res)
         y = f(x)
