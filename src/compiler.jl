@@ -2026,12 +2026,29 @@ function Base.showerror(io::IO, ece::CompilationException)
     print(io, ece.msg)
 end
 
-function julia_error(cstr::Cstring)
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
+    val = LLVM.Value(val)
+    if errtype == API.ET_NoDerivative
+        data = API.EnzymeGradientUtilsRef(data)
+        @show val
+    elseif errtype == API.ET_NoShadow
+        data = API.EnzymeGradientUtilsRef(data)
+        ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+        sval = Base.unsafe_string(ip)
+        API.EnzymeStringFree(ip)
+        @show sval, val
+    elseif errtype == API.ET_IllegalTypeAnalysis
+        data = API.EnzymeTypeAnalyzerRef(data)
+        ip = API.EnzymeTypeAnalyzerToString(data)
+        sval = Base.unsafe_string(ip)
+        API.EnzymeStringFree(ip)
+        @show sval, val
+    end
     throw(CompilationException(Base.unsafe_string(cstr)))
 end
 
 function __init__()
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring,)))
+    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring,LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),

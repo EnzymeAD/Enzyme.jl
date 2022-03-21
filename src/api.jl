@@ -9,6 +9,8 @@ using CEnum
 const EnzymeLogicRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
+const EnzymeTypeAnalyzerRef = Ptr{Cvoid}
+const EnzymeGradientUtilsRef = Ptr{Cvoid}
 
 const UP = Cint(1)
 const DOWN = Cint(2)
@@ -62,7 +64,7 @@ EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
         dst, dl, offset, maxSize, addOffset)
 
 EnzymeTypeTreeToString(tt) = ccall((:EnzymeTypeTreeToString, libEnzyme), Cstring, (CTypeTreeRef,), tt)
-EnzymeTypeTreeToStringFree(str) = ccall((:EnzymeTypeTreeToStringFree, libEnzyme), Cvoid, (Cstring,), str)
+EnzymeStringFree(str) = ccall((:EnzymeStringFree, libEnzyme), Cvoid, (Cstring,), str)
 
 struct CFnTypeInfo
     arguments::Ptr{CTypeTreeRef}
@@ -169,6 +171,10 @@ function FreeTypeAnalysis(ta)
     ccall((:FreeTypeAnalysis, libEnzyme), Cvoid, (EnzymeTypeAnalysisRef,), ta)
 end
 
+function EnzymeAnalyzeTypes(ta, CTI, F)
+    ccall((:EnzymeAnalyzeTypes, libEnzyme), EnzymeTypeAnalyzerRef, (EnzymeTypeAnalysisRef, CFnTypeInfo, LLVMValueRef), ta, CTI, F)
+end
+                             
 const CustomShadowAlloc = Ptr{Cvoid}
 const CustomShadowFree = Ptr{Cvoid}
 EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall((:EnzymeRegisterAllocationHandler, libEnzyme), Cvoid, (Cstring, CustomShadowAlloc, CustomShadowFree), name, ahandle, fhandle)
@@ -179,8 +185,6 @@ const CustomForwardPass = Ptr{Cvoid}
 const CustomReversePass = Ptr{Cvoid}
 EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomAugmentedForwardPass, CustomReversePass), name, fwdhandle, revhandle)
 EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall((:EnzymeRegisterFwdCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass), name, fwdhandle)
-
-const EnzymeGradientUtilsRef = Ptr{Cvoid}
 
 EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall((:EnzymeGradientUtilsNewFromOriginal, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
 EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, val, orig) = ccall((:EnzymeGradientUtilsSetDebugLocFromOriginal, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef), gutils, val, orig)
@@ -305,6 +309,20 @@ end
 
 function EnzymeAddAttributorLegacyPass(PM)
     ccall((:EnzymeAddAttributorLegacyPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,), PM)
+end
+
+@cenum(ErrorType,
+  ET_NoDerivative = 0,
+  ET_NoShadow = 1,
+  ET_IllegalTypeAnalysis = 2
+)
+
+function EnzymeTypeAnalyzerToString(typeanalyzer)
+    ccall((:EnzymeTypeAnalyzerToString, libEnzyme), Cstring, (EnzymeTypeAnalyzerRef,), typeanalyzer)
+end
+
+function EnzymeGradientUtilsInvertedPointersToString(gutils)
+    ccall((:EnzymeGradientUtilsInvertedPointersToString, libEnzyme), Cstring, (Ptr{Cvoid},), gutils)
 end
 
 function EnzymeSetHandler(handler)
