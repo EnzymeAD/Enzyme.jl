@@ -11,6 +11,8 @@ import GPUCompiler: CompilerJob, FunctionSpec, codegen
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
+using Printf
+
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else
@@ -2018,20 +2020,102 @@ function register_alloc_handler!(variants, alloc_handler, free_handler)
     end
 end
 
-struct CompilationException <: Base.Exception
+abstract type CompilationException <: Base.Exception end
+struct NoDerivativeException <: CompilationException
     msg::String
-end
-function Base.showerror(io::IO, ece::CompilationException)
-    print(io, "Enzyme compilation failed with: ")
-    print(io, ece.msg)
+    ir::String
+    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
 end
 
-function julia_error(cstr::Cstring)
-    throw(CompilationException(Base.unsafe_string(cstr)))
+function Base.showerror(io::IO, ece::NoDerivativeException)
+    print(io, "Enzyme compilation failed.\n")
+    print(io, "Current scope: \n")
+    print(io, ece.ir)
+    print(io, '\n', ece.msg, '\n')
+    if ece.bt !== nothing
+        Base.show_backtrace(io, ece.bt)
+        println(io)
+    end
+end
+
+struct NoShadowException <: CompilationException
+    msg::String
+    sval::String
+    ir::String
+    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
+end
+
+function Base.showerror(io::IO, ece::NoShadowException)
+    print(io, "Enzyme compilation failed due missing shadow.\n")
+    print(io, "Current scope: \n")
+    print(io, ece.ir)
+    print(io, "\n Inverted pointers: \n")
+    write(io, ece.sval)
+    print(io, '\n', ece.msg, '\n')
+    if ece.bt !== nothing
+        print(io,"\nCaused by:")
+        Base.show_backtrace(io, ece.bt)
+        println(io)
+    end
+end
+
+struct IllegalTypeAnalysisException <: CompilationException
+    msg::String
+    sval::String
+    ir::String
+    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
+end
+
+function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
+    print(io, "Enzyme compilation failed due to illegal type analysis.\n")
+    print(io, "Current scope: \n")
+    print(io, ece.ir)
+    print(io, "\n Type analysis state: \n")
+    write(io, ece.sval)
+    print(io, '\n', ece.msg, '\n')
+    if ece.bt !== nothing
+        print(io,"\nCaused by:")
+        Base.show_backtrace(io, ece.bt)
+        println(io)
+    end
+end
+
+parent_scope(val::LLVM.Function, depth=0) = depth==0 ? LLVM.parent(val) : val
+parent_scope(val::LLVM.Module, depth=0) = val
+parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
+
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
+    msg = Base.unsafe_string(cstr)
+    val = LLVM.Value(val)
+    if isa(val, LLVM.Instruction)
+        bt = GPUCompiler.backtrace(val)
+    else
+        bt = nothing
+    end
+    # Need to convert function to string, since when the error is going to be printed
+    # the module might have been destroyed
+    ir = sprint(io->show(io, parent_scope(val)))
+    if errtype == API.ET_NoDerivative
+        data = API.EnzymeGradientUtilsRef(data)
+        throw(NoDerivativeException(msg, ir, bt))
+    elseif errtype == API.ET_NoShadow
+        data = API.EnzymeGradientUtilsRef(data)
+        ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+        sval = Base.unsafe_string(ip)
+        API.EnzymeStringFree(ip)
+        throw(NoShadowException(msg, sval, ir, bt))
+    elseif errtype == API.ET_IllegalTypeAnalysis
+        data = API.EnzymeTypeAnalyzerRef(data)
+        ip = API.EnzymeTypeAnalyzerToString(data)
+        sval = Base.unsafe_string(ip)
+        API.EnzymeStringFree(ip)
+        throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
+    end
+    throw(AssertionError("Unknown errtype"))
 end
 
 function __init__()
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring,)))
+    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),

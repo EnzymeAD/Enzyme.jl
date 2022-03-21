@@ -22,7 +22,7 @@ Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
 function Base.string(tt::TypeTree)
     raw = API.EnzymeTypeTreeToString(tt)
     str = Base.unsafe_string(raw)
-    API.EnzymeTypeTreeToStringFree(raw)
+    API.EnzymeStringFree(raw)
     return str
 end
 

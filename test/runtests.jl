@@ -796,5 +796,14 @@ end
     f_exc(x) = sum(x*x)
     y = [[1.0, 2.0] [3.0,4.0]]
     f_x = zero.(y)
-    @test_throws Enzyme.CompilationException autodiff(f_exc, Duplicated(y, f_x))
+    @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_exc, Duplicated(y, f_x))
+
+    f_no_derv(x) = ccall("extern doesnotexist", llvmcall, Float64, (Float64,), x)
+    @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_no_derv, Active, Active(0.5))
+
+    f_union(cond, x) = cond ? x : 0
+    g_union(cond, x) = f_union(cond,x)*x
+    @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(g_union, Active, true, Active(1.0))
+
+    # TODO: Add test for NoShadowException
 end
