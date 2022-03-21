@@ -2023,14 +2023,16 @@ end
 abstract type CompilationException <: Base.Exception end
 struct NoDerivativeException <: CompilationException
     msg::String
-    ir::String
+    ir::Union{Nothing, String}
     bt::Union{Nothing, Vector{StackTraces.StackFrame}}
 end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
-    print(io, "Current scope: \n")
-    print(io, ece.ir)
+    if ece.ir !== nothing
+        print(io, "Current scope: \n")
+        print(io, ece.ir)
+    end
     print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
@@ -2041,14 +2043,16 @@ end
 struct NoShadowException <: CompilationException
     msg::String
     sval::String
-    ir::String
+    ir::Union{Nothing, String}
     bt::Union{Nothing, Vector{StackTraces.StackFrame}}
 end
 
 function Base.showerror(io::IO, ece::NoShadowException)
     print(io, "Enzyme compilation failed due missing shadow.\n")
-    print(io, "Current scope: \n")
-    print(io, ece.ir)
+    if ece.ir !== nothing
+        print(io, "Current scope: \n")
+        print(io, ece.ir)
+    end
     print(io, "\n Inverted pointers: \n")
     write(io, ece.sval)
     print(io, '\n', ece.msg, '\n')
@@ -2062,14 +2066,16 @@ end
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
     sval::String
-    ir::String
+    ir::Union{Nothing, String}
     bt::Union{Nothing, Vector{StackTraces.StackFrame}}
 end
 
 function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, "Enzyme compilation failed due to illegal type analysis.\n")
-    print(io, "Current scope: \n")
-    print(io, ece.ir)
+    if ece.ir !== nothing
+        print(io, "Current scope: \n")
+        print(io, ece.ir)
+    end
     print(io, "\n Type analysis state: \n")
     write(io, ece.sval)
     print(io, '\n', ece.msg, '\n')
@@ -2092,9 +2098,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     else
         bt = nothing
     end
-    # Need to convert function to string, since when the error is going to be printed
-    # the module might have been destroyed
-    ir = sprint(io->show(io, parent_scope(val)))
+    if isa(val, LLVM.ConstantExpr)
+        ir = nothing
+    else
+        # Need to convert function to string, since when the error is going to be printed
+        # the module might have been destroyed
+        ir = sprint(io->show(io, parent_scope(val)))
+    end
     if errtype == API.ET_NoDerivative
         data = API.EnzymeGradientUtilsRef(data)
         throw(NoDerivativeException(msg, ir, bt))
