@@ -430,6 +430,11 @@ function runtime_generic_augfwd(ret_ptr::Ptr{Any}, fn::Any, arg_ptr::Ptr{Any}, s
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
+    if rt == Any
+        annotation = Duplicated{Any}
+    end
+    @show rt, tt, annotation, fn
+    flush(stdout)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal))
@@ -1960,7 +1965,7 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     return nothing
 end
 
-function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_f_setfield")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -1970,7 +1975,49 @@ function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
 end
 
 function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_f_setfield")
+    return nothing
+end
+
+function getfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        B = LLVM.Builder(B)
+        newops = LLVM.Value[]
+        called_value = pop!(ops)
+        for v in ops
+            push!(newops, (API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0) ? LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, v)) : LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, v, B)))
+        end
+        res = LLVM.call!(B, called_value, newops)
+        callconv!(res, callconv(orig))
+        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
+        unsafe_store!(shadowR, res.ref)
+    elseif shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+
+function getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        B = LLVM.Builder(B)
+        newops = LLVM.Value[]
+        called_value = pop!(ops)
+        for v in ops
+            push!(newops, (API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0) ? LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, v)) : LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, v, B)))
+        end
+        res = LLVM.call!(B, called_value, newops)
+        callconv!(res, callconv(orig))
+        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
+        unsafe_store!(shadowR, res.ref)
+    elseif shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+function getfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     return nothing
 end
 
@@ -2245,9 +2292,15 @@ function __init__()
     )
     register_handler!(
         ("jl_f_setfield",),
-        @cfunction(setfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(setfield_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(setfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
+    register_handler!(
+        ("jl_f_getfield",),
+        @cfunction(getfield_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(getfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(getfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        )
     register_handler!(
         ("jl_f_tuple",),
         @cfunction(f_tuple_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
@@ -2390,6 +2443,14 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
+        end
+    end
+
+    for fname in ("jl_f_getfield",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
         end
     end
