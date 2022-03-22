@@ -1928,6 +1928,37 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
     return nothing
 end
 
+function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
+        B = LLVM.Builder(B)
+        ops[1] = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+        ops[2] = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]))
+        called_value = pop!(ops)
+        LLVM.call!(B, called_value, ops) 
+    end
+
+    return nothing
+end
+
+function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    ops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
+        B = LLVM.Builder(B)
+        ops[1] = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+        ops[1] = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, ops[1], B))
+        ops[2] = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]))
+        ops[2] = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, ops[2], B))
+        called_value = pop!(ops)
+        funcT = eltype(llvmtype(called_value)::LLVM.PointerType)::LLVM.FunctionType
+        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+        delF = LLVM.Function(mod, "jl_array_del_end", funcT)
+        LLVM.call!(B, delF, ops)
+    end
+    return nothing
+end
 
 function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_f_setfield")
@@ -2243,6 +2274,11 @@ function __init__()
         @cfunction(finalizer_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(finalizer_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(finalizer_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
+        ("jl_array_grow_end",),
+        @cfunction(jl_array_grow_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(jl_array_grow_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
 end
 
