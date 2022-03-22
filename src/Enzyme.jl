@@ -100,6 +100,8 @@ include("compiler.jl")
 
 import .Compiler: CompilationException
 
+include("JET.jl")
+
 # @inline annotate() = ()
 # @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
 # @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
@@ -115,6 +117,9 @@ import .Compiler: CompilationException
         end
     end
 end
+
+# annotated args to argtypes
+getargtypes(args′) = Tuple{map(@nospecialize(t)->eltype(Core.Typeof(t)), args′)...}
 
 prepare_cc() = ()
 prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
@@ -178,16 +183,16 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     if A <: Active
-        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(f, getargtypes(args′))
         if !allocatedinline(rt)
             forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient))
             res = forward(args′...)
             tape = res[1]
-            if res[3] isa Base.RefValue
-                res[3][] += one(eltype(typeof(res[3])))
+            res3 = res[3]
+            if res3 isa Base.RefValue
+                res3[] += one(eltype(res3))
             else
-                res[3] += one(eltype(typeof(res[3])))
+                res3 += one(eltype(res3))
             end
             return adjoint(args′..., tape)
         end
@@ -220,18 +225,14 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function autodiff(f::F, args...) where {F}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
+    rt    = Core.Compiler.return_type(f, getargtypes(args′))
     A     = guess_activity(rt)
     autodiff(f, A, args′...)
 end
 
 @inline function autodiff(dupf::Duplicated{F}, args...) where {F}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
+    rt    = Core.Compiler.return_type(dupf.val, getargtypes(args′))
     A     = guess_activity(rt)
     autodiff(dupf, A, args′...)
 end
@@ -280,7 +281,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     rt    = guess_activity(rt)
-    autodiff_deferred(f, rt, args′...) 
+    autodiff_deferred(f, rt, args′...)
 end
 
 using Adapt

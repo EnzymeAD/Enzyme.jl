@@ -24,8 +24,8 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     else
       @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
     end
-  
-    rm = ∂x 
+
+    rm = ∂x
     if typeof(x) <: Integer
         x = Float64(x)
     end
@@ -164,8 +164,8 @@ end
     autodiff(arsum, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
-    
-    @test fwddiff(arsum, Duplicated(inp, dinp))[1] ≈ 2.0 
+
+    @test fwddiff(arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
 @testset "Advanced array tests" begin
@@ -177,7 +177,7 @@ end
     autodiff(arsum2, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
-    
+
     @test fwddiff(arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
@@ -523,7 +523,7 @@ end
     dx = [1.0]
 
     Enzyme.autodiff(invtest, Duplicated(x, dx))
-    
+
     @test 10.0 ≈ x[1]
     @test 5.0 ≈ dx[1]
 end
@@ -583,12 +583,12 @@ end
     shadow_a_in = shadow_a_out
 
     autodiff(f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
-    
+
     @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
     @test shadow_a_out ≈ Float64[0.0, 1.0, 1.0, 2.0]
-    
+
     fwddiff(f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
-    
+
     @test shadow_a_in ≈ Float64[1.0, 1.0, 2.0, 2.0]
     @test shadow_a_out ≈ Float64[1.0, 1.0, 2.0, 2.0]
 end
@@ -602,7 +602,7 @@ end
     end
     @test 1.0 ≈ autodiff(f, false, Active(2.14))[1]
     @test_throws Base.UndefVarError autodiff(f, true, Active(2.14))
-    
+
     @test 1.0 ≈ fwddiff(f, false, Duplicated(2.14, 1.0))[1]
     @test_throws Base.UndefVarError fwddiff(f, true, Duplicated(2.14, 1.0))
 
@@ -631,7 +631,7 @@ end
 
 	@test 0.0 ≈ autodiff(tobedifferentiated, true, Active(2.1))[1]
 	@test 0.0 ≈ fwddiff(tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
-	
+
 	function tobedifferentiated2(cond, a)::Float64
 		if cond
 			a + t
@@ -701,9 +701,9 @@ end
 		@inbounds F2[1] * F2[2]
 	end
 	autodiff(copytest, Duplicated(F, dF))
-	@test F ≈ [1.234, 5.678] 
+	@test F ≈ [1.234, 5.678]
 	@test dF ≈ [3.0, 2.0]
-	
+
     @test 31.0 ≈ fwddiff(copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
 end
 
@@ -790,7 +790,7 @@ end
 
     GC.@preserve x y dx dy begin
       autodiff(foo,
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)), 
+                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
 end
@@ -834,4 +834,8 @@ end
     @test 1.0 ≈ first(Enzyme.autodiff(pusher, Duplicated(x, dx), Active(2.0)))
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
+end
+
+@testset "JET integration" begin
+    include("JET.jl")
 end
