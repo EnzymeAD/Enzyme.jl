@@ -2123,6 +2123,10 @@ parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
 
 function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
     msg = Base.unsafe_string(cstr)
+    if errtype == API.ET_NoDerivative && data !== C_NULL
+        val = Base.unsafe_convert(LLVM.API.LLVMValueRef, data)
+    end
+
     val = LLVM.Value(val)
     if isa(val, LLVM.Instruction)
         bt = GPUCompiler.backtrace(val)
@@ -2137,7 +2141,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         ir = sprint(io->show(io, parent_scope(val)))
     end
     if errtype == API.ET_NoDerivative
-        data = API.EnzymeGradientUtilsRef(data)
         throw(NoDerivativeException(msg, ir, bt))
     elseif errtype == API.ET_NoShadow
         data = API.EnzymeGradientUtilsRef(data)
