@@ -955,9 +955,9 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
         push!(to_preserve, ret)
     end
     token = emit_gc_preserve_begin(B, to_preserve)
-    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
-    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
-    cal = LLVM.call!(B, rtfn, vals)
+    # fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
+    # rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
+    cal = LLVM.call!(B, fun, vals)
     if numRet != 0
         @static if VERSION >= v"1.7.0" # LLVM12+
             sret_attr = TypeAttribute("sret", LLVM.llvmtype(ret); ctx)
@@ -984,7 +984,8 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#2, false)
+    llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#2, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1013,7 +1014,8 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_augfwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false)
+    llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#3, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1041,7 +1043,8 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     B = LLVM.Builder(B)
 
     @assert tape !== C_NULL
-    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_generic_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    llvmf = nested_codegen!(mod, runtime_generic_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -1061,7 +1064,8 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#2, false)
+    llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#2, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1090,7 +1094,8 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_augfwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false)
+    llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#3, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1121,7 +1126,8 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     B = LLVM.Builder(B)
 
-    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, @cfunction(runtime_invoke_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    llvmf = nested_codegen!(mod, runtime_invoke_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    _, token = genericSetup(orig, gutils, #=start=#1, ctx, B, llvmf, #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -1140,7 +1146,8 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_fwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#2, false)
+    llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#2, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1170,7 +1177,8 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     B = LLVM.Builder(B)
 
-    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_augfwd, Cvoid, (Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32)), #=numRet=#3, false)
+    llvmf = nested_codegen!(runtime_apply_latest_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#3, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -1196,7 +1204,8 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, @cfunction(runtime_apply_latest_rev, Cvoid, (Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any)), #=numRet=#0, true, tape)
+    llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
 
     return nothing
@@ -1332,6 +1341,30 @@ function runtime_pfor_rev(id::Int64, dynamic)
 end
 end
 
+function nested_codegen!(mod, f, tt)
+    # TODO: Put a cache here index on `mod` and f->tt
+    ctx = LLVM.context(mod)
+    funcspec = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
+
+    # 3) Use the MI to create the correct augmented fwd/reverse
+    # TODO:
+    #  - GPU support
+    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
+
+    target = GPUCompiler.NativeCompilerTarget()
+    params = Compiler.PrimalCompilerParams()
+    job    = CompilerJob(target, funcspec, params)  
+
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
+    entry = name(meta.entry)
+
+    # 4) Link the corresponding module
+    LLVM.link!(mod, otherMod)
+
+    # 5) Call the function
+    return functions(mod)[entry]
+end
+
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -1362,26 +1395,7 @@ else
     extraArgs = 1
 end
     @warn "active variables passeed by value to jl_threadsfor are not yet supported"
-    funcspec = FunctionSpec(runtime_pfor_augfwd, tt, #=kernel=# false, #=name=# nothing)
-
-    # 3) Use the MI to create the correct augmented fwd/reverse
-    # TODO:
-    #  - GPU support
-    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
-
-
-    target = GPUCompiler.NativeCompilerTarget()
-    params = Compiler.PrimalCompilerParams()
-    job    = CompilerJob(target, funcspec, params)  
-
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
-    entry = name(meta.entry)
-
-    # 4) Link the corresponding module
-    LLVM.link!(mod, otherMod)
-
-    # 5) Call the function
-    entry = functions(mod)[entry]
+    entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
     B = LLVM.Builder(B)
     
