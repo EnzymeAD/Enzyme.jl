@@ -275,6 +275,17 @@ end
 dedupargs() = ()
 dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
+# Force sret
+struct Return2
+    ret1::Any
+    ret2::Any
+end
+
+struct Return3
+    ret1::Any
+    ret2::Any
+    ret3::Any
+end
 
 function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
     tt′ = Tuple{}
@@ -295,18 +306,6 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
     end
 
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
-end
-
-# Force sret
-struct Return2
-    ret1::Any
-    ret2::Any
-end
-
-struct Return3
-    ret1::Any
-    ret2::Any
-    ret3::Any
 end
 
 function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int)
@@ -950,10 +949,17 @@ function generic_setup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, 
     return cal, token
 end
 
-function allocate_sret!(B, N, ctx)
+function allocate_sret!(B::LLVM.Builder, N, ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
+end
+
+function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N, ctx)
+    sret = LLVM.Builder(ctx) do B
+        position!(B, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+        allocate_sret!(B, N, ctx)
+    end
 end
 
 function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -968,8 +974,7 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     @assert conv == 37
 
     B = LLVM.Builder(B)
-
-    sret = allocate_sret!(B, 2, ctx)
+    sret = allocate_sret!(gutils, 2, ctx)
 
     llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
@@ -1000,8 +1005,7 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     @assert conv == 37
 
     B = LLVM.Builder(B)
-
-    sret = allocate_sret!(B, 3, ctx)
+    sret = allocate_sret!(gutils, 3, ctx)
 
     llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
@@ -1053,8 +1057,7 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     @assert conv == 38
 
     B = LLVM.Builder(B)
-
-    sret = allocate_sret!(B, 2, ctx)
+    sret = allocate_sret!(gutils, 2, ctx)
 
     llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
@@ -1085,8 +1088,7 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     @assert conv == 38
 
     B = LLVM.Builder(B)
-
-    sret = allocate_sret!(B, 2, ctx)
+    sret = allocate_sret!(gutils, 2, ctx)
 
     llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
@@ -1140,8 +1142,7 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     @assert conv == 37
 
     B = LLVM.Builder(B)
-
-    sret = allocate_sret!(B, 3, ctx)
+    sret = allocate_sret!(gutils, 3, ctx)
 
     llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
@@ -1487,17 +1488,11 @@ include("pmap.jl")
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
 
-    fun = @cfunction(runtime_newtask_fwd, Any, (Any, Any, Any, Int))
+    fun = nested_codegen!(mod, runtime_newtask_fwd, Tuple{Any, Any, Any, Int})
 
     B = LLVM.Builder(B)
     
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-
     ops = collect(operands(orig))
 
     vals = LLVM.Value[ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
@@ -1508,11 +1503,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     to_preserve = LLVM.Value[vals[1], vals[2], vals[3]]
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    T_args = LLVM.LLVMType[T_prjlvalue, T_prjlvalue, T_prjlvalue, T_int64]
-    
-    fnT = LLVM.FunctionType(T_prjlvalue, T_args)
-    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
-    ntask = LLVM.call!(B, rtfn, vals)
+    ntask = LLVM.call!(B, fun, vals)
 
     # TODO: GC, ret
     if shadowR != C_NULL
@@ -1540,51 +1531,31 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     ctx = LLVM.context(orig)
 
     @warn "active variables passeed by value to jl_new_task are not yet supported"
-    fun = @cfunction(runtime_newtask_augfwd, Cvoid, (Ptr{Any}, Any, Any, Any, Int))
+    fun = nested_codegen!(mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int})
 
     B = LLVM.Builder(B)
+    sret = allocate_sret!(gutils, 2, ctx)
     
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-
     ops = collect(operands(orig))[1:end-1]
 
-    EB = LLVM.Builder(ctx)
-    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    # TODO: Optimization by emitting liverange
-    ret = LLVM.array_alloca!(EB, T_prjlvalue, LLVM.ConstantInt(2; ctx))
-
-    for i in 1:2
-        idx = LLVM.Value[LLVM.ConstantInt(i-1; ctx)]
-        LLVM.store!(B, LLVM.null(T_prjlvalue), LLVM.inbounds_gep!(B, ret, idx))
-    end
-
-    vals = LLVM.Value[ret,
+    vals = LLVM.Value[sret,
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))]
 
-    to_preserve = LLVM.Value[vals[2], vals[3]]
+    to_preserve = LLVM.Value[vals[2], vals[3], vals[4]] # All Any should be preserved
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    T_args = LLVM.LLVMType[T_pprjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue, T_int64]
-    
-    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
-    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
-    LLVM.call!(B, rtfn, vals)
+    LLVM.call!(B, fun, vals)
 
-    # TODO: GC, ret
     if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(1; ctx)]))
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx)]))
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
