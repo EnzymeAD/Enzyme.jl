@@ -1223,6 +1223,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
     _, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#0, true, tape)
     emit_gc_preserve_end(B, token)
