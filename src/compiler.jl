@@ -944,28 +944,47 @@ function genericSetup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, f
     end
 
 
-    T_args = LLVM.LLVMType[T_prjlvalue, LLVM.llvmtype(primal), LLVM.llvmtype(shadow), LLVM.llvmtype(activity), T_int32]
+    # T_args = LLVM.LLVMType[T_prjlvalue, LLVM.llvmtype(primal), LLVM.llvmtype(shadow), LLVM.llvmtype(activity), T_int32]
     if tape !== nothing
-        push!(T_args, T_prjlvalue)
+        # push!(T_args, T_prjlvalue)
         push!(vals, LLVM.Value(tape))
         push!(to_preserve, LLVM.Value(tape))
     end
     if numRet != 0
-        pushfirst!(T_args, LLVM.llvmtype(ret))
+        # pushfirst!(T_args, LLVM.llvmtype(ret))
         push!(to_preserve, ret)
     end
     token = emit_gc_preserve_begin(B, to_preserve)
+
+    params = parameters(eltype(LLVM.llvmtype(fun)))
+    for (i, val) in enumerate(vals)
+        sourceT = LLVM.llvmtype(val)
+        targetT = params[i]
+        if sourceT !== targetT
+            vals[i] = if sourceT isa LLVM.PointerType && targetT isa LLVM.IntegerType
+                LLVM.ptrtoint!(B, val, targetT)
+        elseif sourceT isa LLVM.IntegerType && targetT isa LLVM.PointerType
+                LLVM.inttoptr!(B, val, targetT)
+            else
+                LLVM.bitcast!(B, val, targetT)
+            end
+        end
+    end
+
     # fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
     # rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
     cal = LLVM.call!(B, fun, vals)
-    if numRet != 0
-        @static if VERSION >= v"1.7.0" # LLVM12+
-            sret_attr = TypeAttribute("sret", LLVM.llvmtype(ret); ctx)
-        else
-            sret_attr = EnumAttribute("sret"; ctx)
-        end
-        LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), sret_attr)
-    end
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+    # conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+    # if numRet != 0
+    #     @static if VERSION >= v"1.7.0" # LLVM12+
+    #         sret_attr = TypeAttribute("sret", LLVM.llvmtype(ret); ctx)
+    #     else
+    #         sret_attr = EnumAttribute("sret"; ctx)
+    #     end
+    #     LLVM.API.LLVMAddCallSiteAttribute(cal, reinterpret(LLVM.API.LLVMAttributeIndex, Int32(1)), sret_attr)
+    # end
 
     # TODO: GC, ret
     return ret, token
@@ -1177,7 +1196,7 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     B = LLVM.Builder(B)
 
-    llvmf = nested_codegen!(runtime_apply_latest_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#3, false)
 
     if shadowR != C_NULL
@@ -1341,7 +1360,7 @@ function runtime_pfor_rev(id::Int64, dynamic)
 end
 end
 
-function nested_codegen!(mod, f, tt)
+function nested_codegen!(mod::LLVM.Module, f, tt)
     # TODO: Put a cache here index on `mod` and f->tt
     ctx = LLVM.context(mod)
     funcspec = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
