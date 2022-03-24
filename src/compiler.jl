@@ -1175,8 +1175,8 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     B = LLVM.Builder(B)
 
-    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Ptr{Any}, Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
-    ret, token = genericSetup(orig, gutils, #=start=#2, ctx, B, llvmf, #=numRet=#3, false)
+    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    ret, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false)
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
