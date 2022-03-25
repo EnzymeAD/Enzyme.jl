@@ -772,7 +772,7 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr
         ret2 = origRet
     elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
         shadow_return = nothing
-        ret = res[3]
+        ret2 = res[3]
     else
         error("Unknown annotation")
     end
