@@ -210,8 +210,6 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     entry = nested_codegen!(mod, runtime_fn, tt)
 
     # 5) Call the function
-    entry = functions(mod)[entry]
-
     B = LLVM.Builder(B)
     
     T_int64 = LLVM.Int64Type(ctx)
