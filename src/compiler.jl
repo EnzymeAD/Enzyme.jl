@@ -935,7 +935,7 @@ function generic_setup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, 
         if sourceT !== targetT
             vals[i] = if sourceT isa LLVM.PointerType && targetT isa LLVM.IntegerType
                 LLVM.ptrtoint!(B, val, targetT)
-        elseif sourceT isa LLVM.IntegerType && targetT isa LLVM.PointerType
+            elseif sourceT isa LLVM.IntegerType && targetT isa LLVM.PointerType
                 LLVM.inttoptr!(B, val, targetT)
             else
                 LLVM.bitcast!(B, val, targetT)
@@ -1142,7 +1142,7 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     @assert conv == 37
 
     B = LLVM.Builder(B)
-    sret = allocate_sret!(gutils, 3, ctx)
+    sret = allocate_sret!(gutils, 2, ctx)
 
     llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
@@ -1175,20 +1175,22 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     B = LLVM.Builder(B)
 
+    sret = allocate_sret!(gutils, 3, ctx)
+
     llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
-    ret, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false)
+    _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
+        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
         unsafe_store!(shadowR, shadow.ref)
     end
 
     if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
+        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, ret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
     unsafe_store!(tapeR, tape.ref)
 
     emit_gc_preserve_end(B, token)
