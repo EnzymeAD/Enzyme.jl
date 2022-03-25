@@ -189,6 +189,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
         end
         eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
         
+        # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
@@ -206,28 +207,9 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     splat, _ = julia_activity(mi.specTypes.parameters, tape === nothing ? [Int, funcT, funcT] : [Int, Ptr{Ptr{Cvoid}}, funcT, funcT], ops, gutils, #=tape=#false)
     # splat[1] = eltype(splat[1])
     tt = Tuple{splat...}
-   
-    funcspec = FunctionSpec(runtime_fn, tt, #=kernel=# false, #=name=# nothing)
-
-    # 3) Use the MI to create the correct augmented fwd/reverse
-    # TODO:
-    #  - GPU support
-    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
-
-    target = GPUCompiler.NativeCompilerTarget()
-    params = Compiler.PrimalCompilerParams()
-    job    = CompilerJob(target, funcspec, params)  
-
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
-    entry = name(meta.entry)
-    optimize!(otherMod, JIT.get_tm())
-
-    # 4) Link the corresponding module
-    LLVM.link!(mod, otherMod)
+    entry = nested_codegen!(mod, runtime_fn, tt)
 
     # 5) Call the function
-    entry = functions(mod)[entry]
-
     B = LLVM.Builder(B)
     
     T_int64 = LLVM.Int64Type(ctx)

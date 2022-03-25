@@ -187,7 +187,8 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         barrier_noop!(pm)
         lower_exc_handlers!(pm)
         # BUDE.jl demonstrates a bug here TODO
-        # gc_invariant_verifier!(pm, false)
+        gc_invariant_verifier!(pm, false)
+        verifier!(pm)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12
         # due to bug in `CreateAlignmentAssumption`.
