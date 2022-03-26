@@ -83,6 +83,8 @@ end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
 function addOptimizationPasses!(pm)
+    add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+
     constant_merge!(pm)
 
     propagate_julia_addrsp!(pm)
