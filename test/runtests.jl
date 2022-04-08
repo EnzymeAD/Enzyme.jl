@@ -130,6 +130,15 @@ end
     test_scalar(g, 3.0)
 end
 
+@testset "floatranges" begin
+    fr1(x) = first(1.0:0.1:x)
+    fr2(x) = first(1.0:x:10.0)
+    fr3(x) = first(x:0.1:10.0)
+    autodiff(fr1, Active, Active(10.0))
+    autodiff(fr2, Active, Active(0.1))
+    autodiff(fr3, Active, Active(1.0))
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
