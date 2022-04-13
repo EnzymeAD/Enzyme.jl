@@ -197,6 +197,34 @@ end
     @test autodiff(f_dict, Const(params), Active(5.0)) == (10.0,)
     @test autodiff(f_dict, Duplicated(params, dparams), Active(5.0)) == (10.0,)
     @test dparams[:var] == 5.0
+
+    
+    function sum_rec(d)
+        s = 0.0
+        for k in keys(d)
+            s += d[k].v
+            s += sum_relu_rec(d[k].d)
+        end
+        return s
+    end
+    
+    mutable struct MD
+        v::Float64
+        d::Dict{Symbol, MD}
+    end
+
+    par = Dict{Symbol, MD}()
+    par[:var] = MD(10.0, Dict{Symbol, MD}())
+    par[:sub] = MD(2.0, Dict{Symbol, MD}(:a=>MD(3.0, Dict{Symbol, MD}())))
+    
+    dpar = Dict{Symbol, MD}()
+    dpar[:var] = MD(0.0, Dict{Symbol, MD}())
+    dpar[:sub] = MD(0.0, Dict{Symbol, MD}(:a=>MD(0.0, Dict{Symbol, MD}())))
+
+    autodiff(sum_rec, Duplicated(par, dpar))
+    @test dpar[:var].v ≈ 1.0 
+    @test dpar[:sub].v ≈ 1.0 
+    @test dpar[:sub].d[:a].v ≈ 1.0 
 end
 
 function grad_closure(f, x)
