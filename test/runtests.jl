@@ -199,18 +199,20 @@ end
     @test dparams[:var] == 5.0
 
     
-    function sum_rec(d)
+    mutable struct MD
+        v::Float64
+        d::Dict{Symbol, MD}
+    end
+    
+    # TODO without Float64 on return
+    # there is a potential phi bug
+    function sum_rec(d::Dict{Symbol,MD})::Float64
         s = 0.0
         for k in keys(d)
             s += d[k].v
             s += sum_rec(d[k].d)
         end
         return s
-    end
-    
-    mutable struct MD
-        v::Float64
-        d::Dict{Symbol, MD}
     end
 
     par = Dict{Symbol, MD}()
