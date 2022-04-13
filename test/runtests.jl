@@ -203,7 +203,7 @@ end
         s = 0.0
         for k in keys(d)
             s += d[k].v
-            s += sum_relu_rec(d[k].d)
+            s += sum_rec(d[k].d)
         end
         return s
     end
