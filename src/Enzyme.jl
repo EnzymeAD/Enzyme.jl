@@ -1,7 +1,7 @@
 module Enzyme
 
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
-export Const, Active, Duplicated, DuplicatedNoNeed
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export parallel, pmap
 
 """
@@ -69,6 +69,27 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
     dval::T
 end
 
+
+"""
+    struct BatchDuplicated{T} <: Annotation{T}
+
+Constructor: `BatchDuplicated(x, ∂f_∂x)`
+
+Mark a function argument `x` of [`autodiff`](@ref) as duplicated, Enzyme will
+auto-differentiate in respect to such arguments, with `dx` acting as an
+accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
+`∂f_∂x`.
+"""
+struct BatchDuplicated{T} <: Annotation{T}
+    val::T
+    dval::Vector{T}
+end
+
+struct BatchDuplicatedNoNeed{T} <: Annotation{T}
+    val::T
+    dval::Vector{T}
+end
+
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
 function guess_activity(T, Mode=API.DEM_ReverseModeCombined)
@@ -116,10 +137,30 @@ import .Compiler: CompilationException
     end
 end
 
-prepare_cc() = ()
-prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
-prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
-prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
+@inline function same_or_one(args::Vararg{Any, N}) where N
+    current = -1
+    for arg in args
+        if arg isa BatchDuplicated
+            if current == -1
+                current = length(arg.dval)
+            else
+                @assert current == length(arg.dval)
+            end
+        elseif arg isa BatchDuplicatedNoNeed
+            if current == -1
+                current = length(arg.dval)
+            else
+                @assert current == length(arg.dval)
+            end
+        end
+    end
+
+    if current == -1
+        current = 1
+    end
+
+    return current
+end
 
 """
     autodiff(f, Activity, args...)
@@ -177,7 +218,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
 @inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
@@ -192,7 +233,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
             end
             return adjoint(args′..., tape)
         end
-    elseif A <: Duplicated
+    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), width)
@@ -206,7 +247,7 @@ end
 @inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), width)
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
@@ -248,7 +289,7 @@ code, as well as high-order differentiation.
 @inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     if A isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
@@ -262,11 +303,11 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
-    elseif A <: Duplicated
+    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk(args′...)
@@ -289,14 +330,15 @@ end
 using Adapt
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
+Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
+Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
-
 
 @inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
@@ -307,7 +349,7 @@ end
 @inline function fwddiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
@@ -345,7 +387,7 @@ code, as well as high-order differentiation.
 @inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = 1
+    width = Val(same_or_one(args...))
     if A isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
@@ -363,8 +405,8 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), Val(width))
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), width)
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
     thunk(args′...)
 end
 

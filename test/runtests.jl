@@ -42,9 +42,9 @@ include("typetree.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), 1)
-    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), 1)
-    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), 1)
+    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
 
@@ -52,7 +52,7 @@ include("typetree.jl")
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), 1)
+    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -836,4 +836,12 @@ end
     @test 1.0 ≈ first(Enzyme.autodiff(pusher, Duplicated(x, dx), Active(2.0)))
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
+end
+
+@testset "Batch" begin
+    square(x)=x*x
+    bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, [1.0, 2.0, 3.0]))
+    @test length(bres) == 1
+    @test length(bres[1]) == 3
+    @test bres ≈ ((6.0, 12.0, 18.0),)
 end
