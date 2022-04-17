@@ -1138,4 +1138,23 @@ end
     @test x ≈ [3.0]
     @test w ≈ [1.0]
     @test dw ≈ [3.0]
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+
+    x = Float32[3]
+
+    function loss(w, x, cond)
+      dest = Array{Float32}(undef, 1)
+      r = cond ? copy(x) : x
+      res = @inbounds w[1] * r[1]
+      @inbounds dest[1] = res
+      res
+    end
+
+    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
+    
+    @test x ≈ [3.0]
+    @test dw ≈ 3.0
 end
