@@ -191,12 +191,12 @@ struct Return3
     ret3::Any
 end
 
-function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
+function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width::Int64)
     tt′ = Tuple{}
     args = ()
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    forward = thunk(fn, dfn, Const, tt′, Val(API.DEM_ForwardMode))
+    forward = thunk(fn, dfn, Const, tt′, Val(API.DEM_ForwardMode), width)
 
     taperef = Ref{Ptr{Cvoid}}(C_NULL)
 
@@ -212,13 +212,13 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int)
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int)
+function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, width::Int64)
 
     tt′ = Tuple{}
     args = ()
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     taperef = Ref{Ptr{Cvoid}}(C_NULL)
 
@@ -251,7 +251,8 @@ struct Tape
     resT::DataType
 end
 
-function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
+                             width::Int64)
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
         args = Any[]
         for i in 1:arg_size
@@ -287,7 +288,7 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode))
+    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width)
 
     res = forward(args...)
     if annotation == Duplicated
@@ -299,7 +300,8 @@ end
 
 
 
-function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
+                                width::Int64)
 
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
 
@@ -338,7 +340,7 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     res = forward(args...)
     if length(res) > 1
@@ -369,7 +371,7 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
     return Return3(origRet, ret2, tape)
 end
 
-function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width::Int64)
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
         args = Any[]
         for i in 1:arg_size
@@ -430,7 +432,8 @@ function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     return nothing
 end
 
-function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
+                            width::Int64)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
@@ -458,7 +461,7 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(F, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode))
+    forward = thunk(F, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
 
     res = forward(args...)
     if annotation <: Duplicated
@@ -468,7 +471,7 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     end
 end
 
-function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width::Int64)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
@@ -506,7 +509,7 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     res = forward(args...)
     if length(res) > 1
@@ -536,7 +539,7 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     return Return3(origRet, ret2, tape)
 end
 
-function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width::Int64)
     fn = Base.unsafe_load(arg_ptr, 1)
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
         args = Any[]
@@ -601,7 +604,7 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     return nothing
 end
 
-function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width::Int64)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -626,7 +629,7 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode))
+    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
 
     res = forward(args...)
     if annotation <: Duplicated
@@ -636,7 +639,7 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     end
 end
 
-function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32)
+function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width::Int64)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -662,7 +665,7 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     res = forward(args...)
     origRet = res[2]
@@ -686,7 +689,7 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr
     return Return3(origRet, ret2, tape)
 end
 
-function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any)
+function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width::Int64)
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
     actives = []
@@ -847,6 +850,9 @@ function generic_setup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, 
         end
     end
 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    push!(vals, LLVM.ConstantInt(width; ctx))
+
     cal = LLVM.call!(B, fun, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
    
@@ -880,7 +886,7 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -911,7 +917,7 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 3, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -940,7 +946,7 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     B = LLVM.Builder(B)
 
     @assert tape !== C_NULL
-    llvmf = nested_codegen!(mod, runtime_generic_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    llvmf = nested_codegen!(mod, runtime_generic_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
 
     emit_gc_preserve_end(B, token)
@@ -963,7 +969,7 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -994,7 +1000,7 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -1026,7 +1032,7 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     B = LLVM.Builder(B)
 
-    llvmf = nested_codegen!(mod, runtime_invoke_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    llvmf = nested_codegen!(mod, runtime_invoke_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Int64})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
 
     emit_gc_preserve_end(B, token)
@@ -1048,7 +1054,7 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -1081,7 +1087,7 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     sret = allocate_sret!(gutils, 3, ctx)
 
-    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32})
+    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Int64})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
 
     if shadowR != C_NULL
@@ -1109,7 +1115,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     B = LLVM.Builder(B)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any})
+    llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Int64})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, true; tape)
 
     emit_gc_preserve_end(B, token)
@@ -1182,14 +1188,14 @@ end
 const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
-function runtime_pfor_augfwd(func, dfunc)::Int64
+function runtime_pfor_augfwd(func, dfunc, width)::Int64
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
 	tt = Tuple{}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
     # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
 
 	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
     # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
@@ -1214,14 +1220,14 @@ function runtime_pfor_rev(id::Int64)
     return nothing
 end
 else 
-function runtime_pfor_augfwd(func, dfunc, dynamic)::Int64
+function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
 	# tape = vec{Any}(numthreads())
 	# pfor threads tape[i] = aug(func, dfunc)
     
 	tt = Tuple{}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
     # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal))
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
 
 	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
     # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
@@ -1298,10 +1304,10 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 	funcT = mi.specTypes.parameters[2]
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, funcT} #annotate_tuple_type(mi.specTypes, activity)
+    tt = Tuple{funcT, funcT, Int64} #annotate_tuple_type(mi.specTypes, activity)
     extraArgs = 0
 else
-    tt = Tuple{funcT, funcT, Bool}
+    tt = Tuple{funcT, funcT, Bool, Int64}
     extraArgs = 1
 end
     @warn "active variables passeed by value to jl_threadsfor are not yet supported"
@@ -1334,6 +1340,8 @@ else
         push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
 end
     token = emit_gc_preserve_begin(B, to_preserve)
+
+    push!(vals, LLVM.ConstantInt(API.EnzymeGradientUtilsGetWidth(gutils); ctx))
 
     T_args = LLVM.LLVMType[T_int64,]
     tape = LLVM.call!(B, entry, vals)
@@ -1383,6 +1391,7 @@ end
 else
         push!(vals, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end]), B)))
 end
+
     LLVM.call!(B, rtfn, vals)
     
     emit_gc_preserve_end(B, token)
@@ -1395,7 +1404,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     orig = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    fun = nested_codegen!(mod, runtime_newtask_fwd, Tuple{Any, Any, Any, Int})
+    fun = nested_codegen!(mod, runtime_newtask_fwd, Tuple{Any, Any, Any, Int, Int64})
 
     B = LLVM.Builder(B)
     
@@ -1408,6 +1417,8 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     to_preserve = LLVM.Value[vals[1], vals[2], vals[3]]
     token = emit_gc_preserve_begin(B, to_preserve)
+
+    push!(vals, LLVM.ConstantInt(API.EnzymeGradientUtilsGetWidth(gutils); ctx=context(mod)))
 
     ntask = LLVM.call!(B, fun, vals)
 
@@ -1437,7 +1448,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     ctx = LLVM.context(orig)
 
     @warn "active variables passeed by value to jl_new_task are not yet supported"
-    fun = nested_codegen!(mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int})
+    fun = nested_codegen!(mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int, Int64})
 
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
@@ -1452,6 +1463,8 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     to_preserve = LLVM.Value[vals[2], vals[3], vals[4]] # All Any should be preserved
     token = emit_gc_preserve_begin(B, to_preserve)
+
+    push!(vals, LLVM.ConstantInt(API.EnzymeGradientUtilsGetWidth(gutils); ctx))
 
     LLVM.call!(B, fun, vals)
 
@@ -2201,6 +2214,7 @@ abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
 struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     adjoint::FunctionSpec
     mode::API.CDerivativeMode
+    width::Int64
     rt::Type{<:Annotation}
     run_enzyme::Bool
     dupClosure::Bool
@@ -2431,7 +2445,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure, wrap)
+function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap)
     rt  = job.params.rt
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
@@ -2615,7 +2629,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
 
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, 1,
+            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, width,
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
@@ -2624,7 +2638,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     elseif mode == API.DEM_ReverseModeCombined
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, 1,
+            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, width,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
@@ -2634,7 +2648,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
     elseif mode == API.DEM_ForwardMode
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#rt <: Duplicated, #=mode=#API.DEM_ForwardMode, 1,
+            #=returnValue=#rt <: Duplicated, #=mode=#API.DEM_ForwardMode, width,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
@@ -3105,6 +3119,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mode   = params.mode
     adjoint = params.adjoint
     dupClosure = params.dupClosure
+    width = params.width
     abiwrap = params.abiwrap
     primal  = job.source
 
@@ -3322,7 +3337,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupClosure, abiwrap)
+        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap)
     else
         adjointf = primalf
         augmented_primalf = nothing
@@ -3711,7 +3726,7 @@ end
 
 const cache = Dict{UInt, Dict{UInt, Any}}()
 
-function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Mode}=Val(API.DEM_ReverseModeCombined)) where {F, DF, A<:Annotation, TT<:Type, Mode}
+function thunk(f::F,df::DF, ::Type{A}, tt::TT,::Val{Mode}, width::Int64) where {F, DF, A<:Annotation, TT<:Type, Mode}
     primal, adjoint = fspec(f, tt)
 
     if A isa UnionAll
@@ -3733,11 +3748,11 @@ function thunk(f::F,df::DF, ::Type{A}, tt::TT=Tuple{},::Val{Mode}=Val(API.DEM_Re
     # This is counter-intuitive since we would expect the cache to be split
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
-    local_cache = get!(Dict{Int, Any}, cache, hash(adjoint, hash(rt, UInt64(Mode))))
+    local_cache = get!(Dict{Int, Any}, cache, hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)))
 
     target = Compiler.EnzymeTarget()
 
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, rt, true, DF != Nothing, #=abiwrap=#true)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, rt, true, DF != Nothing, #=abiwrap=#true)
     job    = Compiler.CompilerJob(target, primal, params)
 
     thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
@@ -3756,10 +3771,11 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure}=Val(false),::Val{Mode}=Val(API.DEM_ReverseModeCombined)) where {f,tt, rt, DupClosure, Mode}
+@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}) where {f,tt, rt, DupClosure, Mode, width}
     primal, adjoint = fspec(f, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, Mode, rt, true, DupClosure, #=abiwrap=#true)
+    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true)
     job    = CompilerJob(target, primal, params)
 
     addr = get_trampoline(job)

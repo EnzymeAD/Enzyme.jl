@@ -191,7 +191,8 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
         
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
         
         cmod, adjointnm, forwardnm = _thunk(ejob)
