@@ -518,4 +518,59 @@ macro parallel(args...)
    end)
 end
 
+@inline function onehot(x, start=1, endl=length(x))
+    ntuple(Val(endl-start+1)) do i
+        Base.@_inline_meta
+        res = similar(x)
+        for idx in 1:length(x)
+            @inbounds res[idx] = (i + start - 1== idx) ? 1.0 : 0.0
+        end
+        return res
+    end
+end
+
+@inline function onehot(x::NTuple{N, T}, start=1, endl=N) where {T, N}
+    ntuple(Val(endl-start+1)) do i
+        Base.@_inline_meta
+        ntuple(N) do idx
+            Base.@_inline_meta
+            return (i + start - 1 == idx) ? 1.0 : 0.0
+        end
+    end
+end
+
+# Like ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(sum, x, ForwardDiff.Chunk{length(x)}()))
+@inline function fwdgradient(f, x; shadow=onehot(x))
+    fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
+end
+
+@inline function chunkedonehot(x, ::Val{chunk}) where chunk
+    sz = length(x)
+    num = ((sz + chunk - 1) ÷ chunk)
+    ntuple(Val(num)) do i
+        onehot(x, (i-1)*chunk+1, i == num ? sz : (i*chunk) )
+    end
+end
+
+@inline tupleconcat(x) = x
+@inline tupleconcat(x, y) = (x..., y...)
+@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+
+@inline function fwdgradient(f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+    tmp = ntuple(length(shadow)) do i
+        fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
+    end
+    tupleconcat(tmp...)
+end
+
+@inline function fwdgradient(f, x, ::Val{1}; shadow=onehot(x))
+    ntuple(length(shadow)) do i
+        fwddiff(f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+    end
+end
+
+
+# x  = [Float64(i) for i in 1:10]; x2 = ntuple(10) do i x[i] end;
+#
+
 end # module
