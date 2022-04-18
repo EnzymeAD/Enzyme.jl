@@ -1,7 +1,7 @@
 module Enzyme
 
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, batch_size
 export parallel, pmap
 
 """
@@ -80,15 +80,16 @@ auto-differentiate in respect to such arguments, with `dx` acting as an
 accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 `∂f_∂x`.
 """
-struct BatchDuplicated{T} <: Annotation{T}
+struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
-    dval::Vector{T}
+    dval::NTuple{N,T}
 end
-
-struct BatchDuplicatedNoNeed{T} <: Annotation{T}
+batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
-    dval::Vector{T}
+    dval::NTuple{N,T}
 end
+batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
@@ -142,15 +143,15 @@ end
     for arg in args
         if arg isa BatchDuplicated
             if current == -1
-                current = length(arg.dval)
+                current = batch_size(arg)
             else
-                @assert current == length(arg.dval)
+                @assert current == batch_size(arg)
             end
         elseif arg isa BatchDuplicatedNoNeed
             if current == -1
-                current = length(arg.dval)
+                current = batch_size(arg)
             else
-                @assert current == length(arg.dval)
+                @assert current == batch_size(arg)
             end
         end
     end

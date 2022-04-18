@@ -2709,17 +2709,17 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if T <: Active
             if is_adjoint
                 # Use deserves_argbox??
-                llvmT = API.EnzymeGetShadowType(width, convert(LLVMType, source_typ; ctx))
+                llvmT = LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, source_typ; ctx)))
                 push!(T_JuliaSRet, llvmT)
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
             @assert width == 1
-            push!(T_wrapperargs, API.EnzymeGetShadowType(width, llvmT))
+            push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            # push!(T_wrapperargs, API.EnzymeGetShadowType(width, llvmT))
-            for _ in 1:width
-                push!(T_wrapperargs, llvmT)
-            end
+            push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+            # for _ in 1:width
+            #     push!(T_wrapperargs, llvmT)
+            # end
         else
             error("calling convention should be annotated, got $T")
         end
@@ -2842,11 +2842,17 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 push!(realparms, params[i])
                 i += 1
             elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-                val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(params[i]))))
-                for idx in 1:width
-                    val = insert_value!(builder, val, params[i], idx-1)
-                    i += 1
+                isboxed = GPUCompiler.deserves_argbox(NTuple{width, T′})
+                val = params[i]
+                if isboxed
+                  val = load!(builder, val)
                 end
+                i += 1
+                #val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(params[i]))))
+                # for idx in 1:width
+                #    val = insert_value!(builder, val, params[i], idx-1)
+                #    i += 1
+                # end
                 push!(realparms, val)
             end
         end
@@ -3537,15 +3543,13 @@ end
             push!(ccexprs, argexpr)
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             argexpr =  Expr(:., expr, QuoteNode(:dval))
-            for i in 1:width
-                argexpri = Expr(:call, :getindex, argexpr, i)
-                if isboxed
-                    push!(types, Any)
-                else
-                    push!(types, source_typ)
-                end
-                push!(ccexprs, argexpri)
+            isboxedvec = GPUCompiler.deserves_argbox(NTuple{width, source_typ})
+            if isboxedvec
+                push!(types, Any)
+            else
+                push!(types, NTuple{width, source_typ})
             end
+            push!(ccexprs, argexpr)
         else
             error("calling convention should be annotated, got $T")
         end
