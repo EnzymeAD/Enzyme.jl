@@ -1207,6 +1207,8 @@ if VERSION < v"1.8-"
 
 function runtime_pfor_fwd(func, dfunc, width)::Cvoid
     # pfor threads tape[i] = aug(func, dfunc)
+    @show func, dfunc, width
+    flush(stdout)
 
     tt = Tuple{}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
@@ -1410,7 +1412,7 @@ else
     tt = Tuple{funcT, funcT, Bool, Val{width}}
     extraArgs = 1
 end
-    @warn "active variables passeed by value to jl_threadsfor are not yet supported"
+    @warn "active variables passed by value to jl_threadsfor are not yet supported"
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
     B = LLVM.Builder(B)
@@ -3856,10 +3858,10 @@ end
 const cache = Dict{UInt, Thunk}()
 
 const cache_lock = ReentrantLock()
-@inline function cached_compilation(@nospecialize(job::CompilerJob), key)
+@inline function cached_compilation(@nospecialize(job::CompilerJob), key, specid)
     # XXX: CompilerJob contains a world age, so can't be respecialized.
     #      have specialization_id take a f/tt and return a world to construct a CompilerJob?
-    key = hash(hash(job, GPUCompiler.specialization_id(job)), key)
+    key = hash(hash(job, specid), key)
 
     # XXX: by taking the hash, we index the compilation cache directly with the world age.
     #      that's wrong; we should perform an intersection with the entry its bounds.
@@ -3880,22 +3882,48 @@ const cache_lock = ReentrantLock()
 end
 
 
-@inline function thunk(f::F,df::DF, ::Type{A}, tt::TT,::Val{Mode}, ::Val{width}) where {F, DF, A<:Annotation, TT<:Type, Mode, width}
+@generated function genthunk(f::F, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{specid}) where {F, DF, A<:Annotation, TT, Mode, width, specid}
+
     primal, adjoint = fspec(f, tt)
 
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true)
+    job    = Compiler.CompilerJob(target, primal, params)
+
+    # sig = Tuple{F, map(eltype, TT.parameters)...}
+
+    # world = ...
+    # interp = Core.Compiler.NativeInterpreter(world)
+
+
+    rrt = Core.Compiler.return_type(f, primal.tt) # nothing
+
+    # world = ccall(:jl_get_tls_world_age, UInt, ())
+    # for m in Base._methods_by_ftype(sig, -1, world)::Vector
+    #     m = m::Core.MethodMatch
+    #     ty = Core.Compiler.typeinf_type(interp, m.method, m.spec_types, m.sparams)
+    #     rrt = something(ty, Any)
+    #     break
+    # end
+    # @show tt, TT, sig, rrt, A
+
+    if rrt == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
     if A isa UnionAll
-        rt = Core.Compiler.return_type(primal.f, primal.tt)
-        rt = A{rt}
+        rt = rrt
+        rt = A
+        if rrt == Union{}
+            error("Return type inferred to be Union{}. Giving up.")
+        end
     else
         @assert A isa DataType
         # Can we relax this condition?
-        @assert eltype(A) == Core.Compiler.return_type(primal.f, primal.tt)
+        @assert eltype(A) == rrt
         rt = A
     end
 
-    if eltype(rt) == Union{}
-        error("Return type inferred to be Union{}. Giving up.")
-    end
 
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
@@ -3903,23 +3931,37 @@ end
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
 
-    target = Compiler.EnzymeTarget()
 
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, rt, true, DF != Nothing, #=abiwrap=#true)
-    job    = Compiler.CompilerJob(target, primal, params)
-
-    thunk = cached_compilation(job, hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)))::Thunk
+    thunk = cached_compilation(job, hash(hash(adjoint, hash(A, UInt64(Mode))), UInt64(width)), specid)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-        augmented = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF}(f, thunk.primal, df)
-        adjoint  = AdjointThunk{F, rt, adjoint.tt, Val{width}, DF}(f, thunk.adjoint, df)
-        return (augmented, adjoint)
+        return quote
+            augmented = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF}($f, $(thunk.primal), $df)
+            adjoint  = AdjointThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+            (augmented, adjoint)
+        end
     elseif Mode == API.DEM_ReverseModeCombined
-        return CombinedAdjointThunk{F, rt, adjoint.tt, Val{width}, DF}(f, thunk.adjoint, df)
+        return quote
+            CombinedAdjointThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+        end
     elseif Mode == API.DEM_ForwardMode
-        return ForwardModeThunk{F, rt, adjoint.tt, Val{width}, DF}(f, thunk.adjoint, df)
+        return quote
+            ForwardModeThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+        end
     else
         @assert false
     end
+end
+
+@inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}) where {F, DF, A<:Annotation, TT, Mode, width}
+    primal, adjoint = fspec(f, tt)
+
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true)
+    job    = Compiler.CompilerJob(target, primal, params)
+
+    specid = GPUCompiler.specialization_id(job)
+
+    genthunk(f, df, A, TT, Val(Mode), Val(width), Val(specid))
 end
 
 import GPUCompiler: deferred_codegen_jobs
