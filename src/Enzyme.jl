@@ -238,8 +238,9 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), width)
-    rt = eltype(Compiler.return_type(thunk))
     if A <: Active
+        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
     end
     thunk(args′...)

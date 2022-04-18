@@ -2548,7 +2548,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     rt  = job.params.rt
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
-    F   = typeof(adjoint.f)
+    F   = adjoint.f
 
     tt = [adjoint.tt.parameters...,]
 
@@ -3799,7 +3799,6 @@ function _link(job, (mod, adjoint_name, primal_name, ctx))
     adjoint = params.adjoint
 
     primal = job.source
-    rt = Core.Compiler.return_type(primal.f, primal.tt)
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
@@ -3885,35 +3884,33 @@ end
 @generated function genthunk(f::F, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{specid}) where {F, DF, A<:Annotation, TT, Mode, width, specid}
     primal, adjoint = fspec(F, TT)
 
-    ccall(:jl_, Cvoid, (Any,), adjoint)
-
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true)
     job    = Compiler.CompilerJob(target, primal, params)
 
-    # sig = Tuple{F, map(eltype, TT.parameters)...}
+    sig = Tuple{F, map(eltype, TT.parameters)...}
 
     # world = ...
-    # interp = Core.Compiler.NativeInterpreter(world)
-
+    
+    interp = Core.Compiler.NativeInterpreter(job.source.world)
 
     # TODO check compile return here, early
     # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
-    # world = ccall(:jl_get_tls_world_age, UInt, ())
-    # for m in Base._methods_by_ftype(sig, -1, world)::Vector
-    #     m = m::Core.MethodMatch
-    #     ty = Core.Compiler.typeinf_type(interp, m.method, m.spec_types, m.sparams)
-    #     rrt = something(ty, Any)
-    #     break
-    # end
+    rrt = nothing
+    for m in Base._methods_by_ftype(sig, -1, job.source.world)::Vector
+        m = m::Core.MethodMatch
+        ty = Core.Compiler.typeinf_type(interp, m.method, m.spec_types, m.sparams)
+        rrt = something(ty, Any)
+        break
+    end
     # @show tt, TT, sig, rrt, A
 
-    #if rrt == Union{}
-    #    error("Return type inferred to be Union{}. Giving up.")
-    #end
+    if rrt == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
 
     if A isa UnionAll
-        rt = A
+        rt = A{rrt}
     else
         @assert A isa DataType
         # Can we relax this condition?
