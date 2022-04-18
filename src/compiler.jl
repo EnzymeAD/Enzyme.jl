@@ -1170,90 +1170,6 @@ function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     return nothing
 end
 
-function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
-
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    fun = @cfunction(runtime_newtask_fwd, Any, (Any, Any, Any, Val(width)))
-
-    B = LLVM.Builder(B)
-    emit_error("fast pfor not implemented");
-    return nothing
-end
-
-let counter = Ref{Int64}(0)
-    global getid() = counter[] += 1
-end
-const leaked_objs = Base.Dict{Int64, Any}()
-
-if VERSION < v"1.8-"
-function runtime_pfor_augfwd(func, dfunc, width)::Int64
-	# tape = vec{Any}(numthreads())
-	# pfor threads tape[i] = aug(func, dfunc)
-    
-	tt = Tuple{}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
-
-	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
-    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
-	function fwd()
-		tapes[Base.Threads.threadid()] = forward()[1]
-	end
-	adj = () -> adjoint(tapes[Base.Threads.threadid()])
-    id = getid()
-    leaked_objs[id] = adj
-	Base.Threads.threading_run(fwd)
-    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
-    #       directly returning here allocates a heap object whose pointer is then leaked
-    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
-    #       we stash the object in a global dict, and return the id of the object
-    return id
-end
-
-function runtime_pfor_rev(id::Int64)
-    tape = leaked_objs[id]
-    delete!(leaked_objs, id)
-	Base.Threads.threading_run(tape)
-    return nothing
-end
-else 
-function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
-	# tape = vec{Any}(numthreads())
-	# pfor threads tape[i] = aug(func, dfunc)
-    
-	tt = Tuple{}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
-
-	tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
-    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
-	function fwd()
-		tapes[Base.Threads.threadid()] = forward()[1]
-	end
-	adj = () -> adjoint(tapes[Base.Threads.threadid()])
-    id = getid()
-    leaked_objs[id] = adj
-	Base.Threads.threading_run(fwd, dynamic)
-    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
-    #       directly returning here allocates a heap object whose pointer is then leaked
-    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
-    #       we stash the object in a global dict, and return the id of the object
-    return id
-end
-
-function runtime_pfor_rev(id::Int64, dynamic)
-    tape = leaked_objs[id]
-    delete!(leaked_objs, id)
-	Base.Threads.threading_run(tape, dynamic)
-    return nothing
-end
-end
-
 function nested_codegen!(mod::LLVM.Module, f, tt)
     # TODO: Put a cache here index on `mod` and f->tt
     ctx = LLVM.context(mod)
@@ -1266,7 +1182,7 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
 
     target = GPUCompiler.NativeCompilerTarget()
     params = Compiler.PrimalCompilerParams()
-    job    = CompilerJob(target, funcspec, params)  
+    job    = CompilerJob(target, funcspec, params)
 
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
     entry = name(meta.entry)
@@ -1280,6 +1196,187 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
 
     # 5) Call the function
     return functions(mod)[entry]
+end
+
+let counter = Ref{Int64}(0)
+    global getid() = counter[] += 1
+end
+const leaked_objs = Base.Dict{Int64, Any}()
+
+if VERSION < v"1.8-"
+
+function runtime_pfor_fwd(func, dfunc, width)::Cvoid
+    # pfor threads tape[i] = aug(func, dfunc)
+
+    tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward = thunk(func, dfunc, Const, tt, Val(API.DEM_ForwardMode), width)
+
+    function fwd()
+        forward()
+    end
+
+    Base.Threads.threading_run(fwd)
+    return
+end
+
+function runtime_pfor_augfwd(func, dfunc, width)::Int64
+    # tape = vec{Any}(numthreads())
+    # pfor threads tape[i] = aug(func, dfunc)
+
+    tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
+
+    tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
+    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
+    function fwd()
+        tapes[Base.Threads.threadid()] = forward()[1]
+    end
+    adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    id = getid()
+    leaked_objs[id] = adj
+    Base.Threads.threading_run(fwd)
+    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
+    #       directly returning here allocates a heap object whose pointer is then leaked
+    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
+    #       we stash the object in a global dict, and return the id of the object
+    return id
+end
+
+function runtime_pfor_rev(id::Int64)
+    tape = leaked_objs[id]
+    delete!(leaked_objs, id)
+    Base.Threads.threading_run(tape)
+    return nothing
+end
+else
+
+function runtime_pfor_fwd(func, dfunc, dynamic, width)::Cvoid
+    # pfor threads tape[i] = aug(func, dfunc)
+
+    tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward = thunk(func, dfunc, Const, tt, Val(API.DEM_ForwardMode), width)
+
+    function fwd()
+        forward()
+    end
+
+    Base.Threads.threading_run(fwd, dynamic)
+    return
+end
+
+function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
+    # tape = vec{Any}(numthreads())
+    # pfor threads tape[i] = aug(func, dfunc)
+
+    tt = Tuple{}
+    # TODO with the MI itself, we should be able to hoist the thunk generation into
+    # the original compilation (rather than runtime JIT compiling)
+    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
+
+    tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
+    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
+    function fwd()
+        tapes[Base.Threads.threadid()] = forward()[1]
+    end
+    adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    id = getid()
+    leaked_objs[id] = adj
+    Base.Threads.threading_run(fwd, dynamic)
+    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
+    #       directly returning here allocates a heap object whose pointer is then leaked
+    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
+    #       we stash the object in a global dict, and return the id of the object
+    return id
+end
+
+function runtime_pfor_rev(id::Int64, dynamic)
+    tape = leaked_objs[id]
+    delete!(leaked_objs, id)
+    Base.Threads.threading_run(tape, dynamic)
+    return nothing
+end
+end
+
+function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+
+    orig = LLVM.Instruction(OrigCI)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    ctx = LLVM.context(orig)
+
+    llvmfn = LLVM.called_value(orig)
+    mi = nothing
+    for fattr in collect(function_attributes(llvmfn))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_mi"
+                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                mi = Base.unsafe_pointer_to_objref(ptr)
+                break
+            end
+        end
+    end
+
+    funcT = mi.specTypes.parameters[2]
+
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+@static if VERSION < v"1.8-"
+    tt = Tuple{funcT, funcT, Val{width}}
+    extraArgs = 0
+else
+    tt = Tuple{funcT, funcT, Bool, Val{width}}
+    extraArgs = 1
+end
+    entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
+
+    B = LLVM.Builder(B)
+
+    T_int64 = LLVM.Int64Type(ctx)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+
+    ops = collect(operands(orig))[1:end-1]
+
+
+    vals = LLVM.Value[]
+    # TODO check if ghost type
+    if length(ops) > extraArgs
+        for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
+            push!(vals, real)
+        end
+        to_preserve = LLVM.Value[vals[1], vals[2]]
+        T_args = LLVM.LLVMType[T_prjlvalue, T_prjlvalue]
+    else
+        to_preserve = LLVM.Value[]
+        T_args = LLVM.LLVMType[]
+    end
+@static if VERSION < v"1.8-"
+else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+end
+    token = emit_gc_preserve_begin(B, to_preserve)
+
+    T_args = LLVM.LLVMType[T_int64,]
+    LLVM.call!(B, entry, vals)
+
+    emit_gc_preserve_end(B, token)
+
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+    end
+
 end
 
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
