@@ -843,10 +843,10 @@ end
     bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
     @test length(bres) == 1
     @test length(bres[1]) == 3
-    @test bres ≈ ((6.0, 12.0, 18.0),)
+    @test bres[1] ≈ (6.0, 12.0, 18.0),
 
     bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
-    @test bres ≈ ((6.0 + 14.0im, 12.0 + 28.0im, 18.0 + 42.0im),)
+    @test bres ≈ (6.0 + 14.0im, 12.0 + 28.0im, 18.0 + 42.0im)
 
     squareidx(x)=x[1]*x[1]
     inp = Float32[3.0]
@@ -857,5 +857,5 @@ end
 
     d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
     bres = fwddiff(squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
-    @test bres ≈ ((6.0, 12.0, 18.0),)
+    @test bres[1] ≈ (6.0, 12.0, 18.0)
 end
