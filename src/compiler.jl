@@ -2348,15 +2348,15 @@ include("compiler/optimize.jl")
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
 """
-@inline function fspec(f::F, tt::TT) where {F, TT}
+@inline function fspec(@nospecialize(F), @nospecialize(TT))
     # Entry for the cache look-up
-    adjoint = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
+    adjoint = FunctionSpec(F, TT, #=kernel=# false, #=name=# nothing)
 
     # primal function. Inferred here to get return type
-    _tt = (tt.parameters...,)
+    _tt = (TT.parameters...,)
 
     primal_tt = Tuple{map(eltype, _tt)...}
-    primal = FunctionSpec(f, primal_tt, #=kernel=# false, #=name=# nothing)
+    primal = FunctionSpec(F, primal_tt, #=kernel=# false, #=name=# nothing)
 
     return primal, adjoint
 end
@@ -3883,8 +3883,9 @@ end
 
 
 @generated function genthunk(f::F, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{specid}) where {F, DF, A<:Annotation, TT, Mode, width, specid}
+    primal, adjoint = fspec(F, TT)
 
-    primal, adjoint = fspec(f, tt)
+    ccall(:jl_, Cvoid, (Any,), adjoint)
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true)
@@ -3896,8 +3897,8 @@ end
     # interp = Core.Compiler.NativeInterpreter(world)
 
 
-    rrt = Core.Compiler.return_type(f, primal.tt) # nothing
-
+    # TODO check compile return here, early
+    # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
     # world = ccall(:jl_get_tls_world_age, UInt, ())
     # for m in Base._methods_by_ftype(sig, -1, world)::Vector
     #     m = m::Core.MethodMatch
@@ -3907,20 +3908,16 @@ end
     # end
     # @show tt, TT, sig, rrt, A
 
-    if rrt == Union{}
-        error("Return type inferred to be Union{}. Giving up.")
-    end
+    #if rrt == Union{}
+    #    error("Return type inferred to be Union{}. Giving up.")
+    #end
 
     if A isa UnionAll
-        rt = rrt
         rt = A
-        if rrt == Union{}
-            error("Return type inferred to be Union{}. Giving up.")
-        end
     else
         @assert A isa DataType
         # Can we relax this condition?
-        @assert eltype(A) == rrt
+        # @assert eltype(A) == rrt
         rt = A
     end
 
@@ -3935,17 +3932,17 @@ end
     thunk = cached_compilation(job, hash(hash(adjoint, hash(A, UInt64(Mode))), UInt64(width)), specid)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         return quote
-            augmented = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF}($f, $(thunk.primal), $df)
-            adjoint  = AdjointThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+            augmented = AugmentedForwardThunk{F, $rt, $(adjoint.tt), Val{width} , DF}(f, $(thunk.primal), df)
+            adjoint  = AdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF}(f, $(thunk.adjoint), df)
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
         return quote
-            CombinedAdjointThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+            CombinedAdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF}(f, $(thunk.adjoint), df)
         end
     elseif Mode == API.DEM_ForwardMode
         return quote
-            ForwardModeThunk{F, rt, adjoint.tt, Val{width}, DF}($f, $(thunk.adjoint), $df)
+            ForwardModeThunk{F, $rt, $(adjoint.tt), Val{width}, DF}(f, $(thunk.adjoint), df)
         end
     else
         @assert false
@@ -3953,8 +3950,7 @@ end
 end
 
 @inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}) where {F, DF, A<:Annotation, TT, Mode, width}
-    primal, adjoint = fspec(f, tt)
-
+    primal, adjoint = fspec(F, TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true)
     job    = Compiler.CompilerJob(target, primal, params)
@@ -3966,9 +3962,9 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{f}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
-                                     ::Val{width}) where {f,tt, rt, DupClosure, Mode, width}
-    primal, adjoint = fspec(f, tt)
+@generated function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}) where {F,tt, rt, DupClosure, Mode, width}
+    primal, adjoint = fspec(F, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true)
     job    = CompilerJob(target, primal, params)
