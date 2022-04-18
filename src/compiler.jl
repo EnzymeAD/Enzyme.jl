@@ -1175,6 +1175,7 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
     fun = @cfunction(runtime_newtask_fwd, Any, (Any, Any, Any, Val(width)))
 
     B = LLVM.Builder(B)
@@ -3755,9 +3756,34 @@ function _thunk(job)
     return (mod, adjoint_name, primal_name, ctx)
 end
 
-const cache = Dict{UInt, Dict{UInt, Any}}()
+const cache = Dict{UInt, Thunk}()
 
-function thunk(f::F,df::DF, ::Type{A}, tt::TT,::Val{Mode}, ::Val{width}) where {F, DF, A<:Annotation, TT<:Type, Mode, width}
+const cache_lock = ReentrantLock()
+@inline function cached_compilation(@nospecialize(job::CompilerJob), key)
+    # XXX: CompilerJob contains a world age, so can't be respecialized.
+    #      have specialization_id take a f/tt and return a world to construct a CompilerJob?
+    key = hash(hash(job, GPUCompiler.specialization_id(job)), key)
+
+    # XXX: by taking the hash, we index the compilation cache directly with the world age.
+    #      that's wrong; we should perform an intersection with the entry its bounds.
+
+    # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
+    lock(cache_lock)
+    try
+        obj = get(cache, key, nothing)
+        if obj === nothing
+            asm = _thunk(job)
+            obj = _link(job, asm)
+            cache[key] = obj
+        end
+        obj
+    finally
+        unlock(cache_lock)
+    end
+end
+
+
+@inline function thunk(f::F,df::DF, ::Type{A}, tt::TT,::Val{Mode}, ::Val{width}) where {F, DF, A<:Annotation, TT<:Type, Mode, width}
     primal, adjoint = fspec(f, tt)
 
     if A isa UnionAll
@@ -3779,14 +3805,13 @@ function thunk(f::F,df::DF, ::Type{A}, tt::TT,::Val{Mode}, ::Val{width}) where {
     # This is counter-intuitive since we would expect the cache to be split
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
-    local_cache = get!(Dict{Int, Any}, cache, hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)))
 
     target = Compiler.EnzymeTarget()
 
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, rt, true, DF != Nothing, #=abiwrap=#true)
     job    = Compiler.CompilerJob(target, primal, params)
 
-    thunk = GPUCompiler.cached_compilation(local_cache, job, _thunk, _link)::Thunk
+    thunk = cached_compilation(job, hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)))::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         augmented = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF}(f, thunk.primal, df)
         adjoint  = AdjointThunk{F, rt, adjoint.tt, Val{width}, DF}(f, thunk.adjoint, df)

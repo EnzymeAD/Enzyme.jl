@@ -859,20 +859,3 @@ end
     bres = fwddiff(squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
     @test bres[1] ≈ (6.0, 12.0, 18.0)
 end
-
-
-# julia> @btime sum(ForwardDiff.Dual{ForwardDiff.Tag(sum, Float64),Float64, 10}.([Float64(i) for i in 1:10], ForwardDiff.construct_seeds(ForwardDiff.Partials{10,Float64})))
-
-@inline function onehot(x)
-    @inline function setIndex(x, i)
-        res = zero(x)
-        @inbounds res[i] = 1.0
-        return res
-    end
-    ntuple(Val(length(x))) do i
-        Base.@_inline_meta
-        res = zero(x)
-        @inbounds res[i] = 1.0
-        return res
-    end
-end
