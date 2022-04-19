@@ -1807,7 +1807,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
  
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if width == 1
-        shadowres = LLVM.call!(V, LLVM.called_value(orig), [shadowin])
+        shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
         for idx in 1:width
