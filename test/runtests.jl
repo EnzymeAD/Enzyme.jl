@@ -882,9 +882,9 @@ end
     x = Ref(2.0)
 
     autodiff(refbatchbwd, BatchDuplicated(out, Enzyme.onehot(out)), BatchDuplicated(x, dxs))
-    @test dxs[1][] ≈  6.0
-    @test dxs[2][] ≈ 12.0
-    @test dxs[3][] ≈ 18.0
+    @test dxs[1][] ≈  1.0
+    @test dxs[2][] ≈  4.0
+    @test dxs[3][] ≈ 12.0
 
     function batchbwd(out, v)
         out[1] = v
@@ -896,7 +896,37 @@ end
     bres = Enzyme.autodiff(batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))
     @test length(bres) == 1
     @test length(bres[1]) == 3
-    @test bres[1][1] ≈  6.0
-    @test bres[1][2] ≈ 12.0
-    @test bres[1][3] ≈ 18.0
+    @test bres[1][1] ≈  1.0
+    @test bres[1][2] ≈  4.0
+    @test bres[1][3] ≈ 12.0
 end
+
+@testset "Jacobian" begin
+    function inout(v)
+       [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
+    end
+
+	jac = Enzyme.revjacobian(inout, [2.0, 3.0], Val(1); n_outs=Val(3))	
+	@test length(jac) == 3
+	@test jac[1] ≈ [ 0.0, 1.0]
+	@test jac[2] ≈ [ 4.0, 0.0]
+	@test jac[3] ≈ [12.0, 0.0]
+	
+	jac = Enzyme.fwdjacobian(inout, [2.0, 3.0], Val(1))
+	@test length(jac) == 2
+	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
+	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+
+	jac = Enzyme.revjacobian(inout, [2.0, 3.0], Val(2); n_outs=Val(3))	
+	@test length(jac) == 3
+	@test jac[1] ≈ [ 0.0, 1.0]
+	@test jac[2] ≈ [ 4.0, 0.0]
+	@test jac[3] ≈ [12.0, 0.0]
+	
+	jac = Enzyme.fwdjacobian(inout, [2.0, 3.0], Val(2))
+	@test length(jac) == 2
+	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
+	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+end
+
+

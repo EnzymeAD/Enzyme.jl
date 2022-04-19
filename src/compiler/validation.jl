@@ -70,7 +70,8 @@ module FFI
             "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
             "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
             "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
-            "jl_symbol_n", "jl_", "jl_object_id"
+            "jl_symbol_n", "jl_", "jl_object_id",
+            "jl_reshape_array","ijl_reshape_array"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)

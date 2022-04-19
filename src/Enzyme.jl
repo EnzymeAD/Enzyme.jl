@@ -232,7 +232,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt)
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), width)
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), width, #=ModifiedBetween=#Val(false))
             res = forward(args′...)
             tape = res[1]
             if res[3] isa Base.RefValue
@@ -548,6 +548,12 @@ end
     end
 end
 
+@inline function revgradient(f, x)
+    dx = zeros(x)
+    fwddiff(f, Duplicated(x, dx))
+    dx
+end
+
 # Like ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(sum, x, ForwardDiff.Chunk{length(x)}()))
 @inline function fwdgradient(f, x; shadow=onehot(x))
     fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
@@ -557,6 +563,7 @@ end
     sz = length(x)
     num = ((sz + chunk - 1) ÷ chunk)
     ntuple(Val(num)) do i
+        Base.@_inline_meta
         onehot(x, (i-1)*chunk+1, i == num ? sz : (i*chunk) )
     end
 end
@@ -582,7 +589,52 @@ end
     fwdgradient(args...; kwargs...)
 end
 
-# x  = [Float64(i) for i in 1:10]; x2 = ntuple(10) do i x[i] end;
-#
+@inline function revjacobian(f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
+    num = ((n_out_val + chunk - 1) ÷ chunk)
+
+    tt′    = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
+    tt    = Tuple{Core.Typeof(x)}
+    rt = Core.Compiler.return_type(f, tt)
+    forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), #=ModifiedBetween=#Val(false))
+    
+    if num * chunk == n_out_val
+        last_size = chunk
+        forward2, adjoint2 = forward, adjoint
+    else
+        last_size = n_out_val - (num-1)*chunk
+        tt′    = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
+        forward2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), #=ModifiedBetween=#Val(false))
+    end
+
+    tmp = ntuple(num) do i
+        Base.@_inline_meta
+        dx = ntuple(i == num ? last_size : chunk) do idx
+            Base.@_inline_meta
+            zero(x)
+        end
+        res = (i == num ? forward2 : forward)(BatchDuplicated(x, dx))
+        tape = res[1]
+        res[2][i] += one(eltype(typeof(res[2])))
+        (i == num ? adjoint2 : adjoint)(BatchDuplicated(x, dx), tape)
+        return dx
+    end
+    tupleconcat(tmp...)
+end
+
+@inline function revjacobian(f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
+    tt′    = Tuple{Duplicated{Core.Typeof(x)}}
+    tt    = Tuple{Core.Typeof(x)}
+    rt = Core.Compiler.return_type(f, tt)
+    forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
+    ntuple(n_outs) do i
+        Base.@_inline_meta
+        dx = zero(x)
+        res = forward(Duplicated(x, dx))
+        tape = res[1]
+        res[2][i] += one(eltype(typeof(res[2])))
+        adjoint(Duplicated(x, dx), tape)
+        return dx
+    end
+end
 
 end # module

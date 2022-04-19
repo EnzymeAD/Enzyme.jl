@@ -1,10 +1,11 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, kwargs...)
 
-    primal, adjoint = fspec(func, types)
+    primal, adjoint = fspec(Core.Typeof(func), types)
     width = 1
 
-    rt = Core.Compiler.return_type(primal.f, primal.tt)
+    tt    = Tuple{map(eltype, types.parameters)...}
+    rt = Core.Compiler.return_type(func, tt)
     rt = A{rt}
 
     target = Compiler.EnzymeTarget()
