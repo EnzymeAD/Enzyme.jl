@@ -549,8 +549,13 @@ end
 end
 
 @inline function revgradient(f, x)
-    dx = zeros(x)
-    fwddiff(f, Duplicated(x, dx))
+    dx = zero(x)
+    autodiff(f, Duplicated(x, dx))
+    dx
+end
+@inline function revgradient!(dx, f, x)
+    dx .= 0
+    autodiff(f, Duplicated(x, dx))
     dx
 end
 
@@ -599,7 +604,7 @@ end
     
     if num * chunk == n_out_val
         last_size = chunk
-        primal2, adjoint2 = forward, adjoint
+        primal2, adjoint2 = primal, adjoint
     else
         last_size = n_out_val - (num-1)*chunk
         tt′    = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}

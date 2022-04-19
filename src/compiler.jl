@@ -1766,14 +1766,32 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     if !fwd
         shadowdst = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowdst, B))
     end
-    shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
     shadowsrc = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origArg, B))
     if !fwd
         shadowsrc = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowsrc, B))
     end
+    
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    if width == 1
+    
     shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
+    shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
 
     API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
+    
+    else
+    for i in 1:width
+
+    evsrc = extract_value!(B, shadowsrc, i-1)
+    evdst = extract_value!(B, shadowdst, i-1)
+
+    shadowsrc0 = load!(B, bitcast!(B, evsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(evsrc)))))
+    shadowdst0 = load!(B, bitcast!(B, evdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(evdst)))))
+
+    API.EnzymeGradientUtilsSubTransferHelper(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst0, false, shadowsrc0, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
+    end
+
+    end
 
     return nothing
 end
@@ -1783,12 +1801,24 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
 
-    shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
-    shadowres = LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), [shadowin])
- 
-    unsafe_store!(shadowR, shadowres.ref)
+    B = LLVM.Builder(B)
 
-    arraycopy_common(#=fwd=#true, LLVM.Builder(B), orig, origops[1], gutils)
+    shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+ 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    if width == 1
+        shadowres = LLVM.call!(V, LLVM.called_value(orig), [shadowin])
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
+        for idx in 1:width
+            shadowres = insert_value!(B, shadowres, LLVM.call!(B, LLVM.called_value(orig), [
+                            extract_value!(B, shadowin, idx-1)
+                            ]), idx-1)
+        end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+    
+    arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils)
 	
 	return nothing
 end
