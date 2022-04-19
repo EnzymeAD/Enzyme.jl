@@ -1674,8 +1674,23 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+
     shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
-    shadowres = LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), [shadowin])
+
+    B = LLVM.Builder(B)
+
+    if width == 1
+        shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
+    else
+        shadowres = UndefValue(LLVM.Type(API.EnzymeGetShadowType(width, llvmtype(orig))))
+        for idx in 1:width
+            shadowres = insert_value!(B, shadowres, LLVM.call!(B, LLVM.called_value(orig), [
+                            extract_value!(shadowin, idx-1)
+                            ]), idx-1)
+            @shadowres
+        end
+    end
  
     unsafe_store!(shadowR, shadowres.ref)
 	
