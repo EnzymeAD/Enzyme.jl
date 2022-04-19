@@ -2935,7 +2935,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
         # shadow return
         if existed[3] != 0
-            push!(T_JuliaSRet, llvmT)
+            push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
         else
             @assert rettype <: Const || rettype <: Active
         end

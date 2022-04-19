@@ -614,7 +614,9 @@ end
         end
         res = (i == num ? forward2 : forward)(BatchDuplicated(x, dx))
         tape = res[1]
-        res[2][i] += one(eltype(typeof(res[2])))
+        for shadow in res[2]
+            shadow[i] += one(eltype(typeof(shadow)))
+        end
         (i == num ? adjoint2 : adjoint)(BatchDuplicated(x, dx), tape)
         return dx
     end
