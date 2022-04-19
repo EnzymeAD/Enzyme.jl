@@ -93,21 +93,29 @@ batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
-function guess_activity(T, Mode=API.DEM_ReverseModeCombined)
-    if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
-        if Mode == API.DEM_ForwardMode
-            return DuplicatedNoNeed{T}
-        else
-            return Active{T}
-        end
-    elseif T <: AbstractArray
-        if Mode == API.DEM_ForwardMode
-            return DuplicatedNoNeed{T}
-        else
-            return Duplicated{T}
-        end
+@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T}
+    return Const{T}
+end
+@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
     else
-        return Const{T}
+        return Active{T}
+    end
+end
+@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:Complex{<:AbstractFloat}}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Active{T}
+    end
+end
+
+@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:AbstractArray}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Duplicated{T}
     end
 end
 
@@ -570,6 +578,9 @@ end
     end
 end
 
+@inline function fwdjacobian(args...; kwargs...)
+    fwdgradient(args...; kwargs...)
+end
 
 # x  = [Float64(i) for i in 1:10]; x2 = ntuple(10) do i x[i] end;
 #

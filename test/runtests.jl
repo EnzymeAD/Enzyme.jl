@@ -45,8 +45,10 @@ include("typetree.jl")
     thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_d = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     @test thunk_a.adjoint !== thunk_b.adjoint
-    @test thunk_c.adjoint === thunk_a.adjoint
+    @test_broken thunk_c.adjoint === thunk_a.adjoint
+    @test thunk_c.adjoint === thunk_d.adjoint
 
     @test thunk_a(Active(2.0), 1.0) == (1.0,)
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
@@ -838,15 +840,19 @@ end
     @test dx ≈ [1.0]
 end
 
-@testset "Batch" begin
+@testset "Batch Forward" begin
     square(x)=x*x
     bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
     @test length(bres) == 1
     @test length(bres[1]) == 3
-    @test bres[1] ≈ (6.0, 12.0, 18.0),
-
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+    
     bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
-    @test bres ≈ (6.0 + 14.0im, 12.0 + 28.0im, 18.0 + 42.0im)
+    @test bres[1][1] ≈  6.0 + 14.0im
+    @test bres[1][2] ≈ 12.0 + 28.0im
+    @test bres[1][3] ≈ 18.0 + 42.0im
 
     squareidx(x)=x[1]*x[1]
     inp = Float32[3.0]
@@ -857,5 +863,40 @@ end
 
     d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
     bres = fwddiff(squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
-    @test bres[1] ≈ (6.0, 12.0, 18.0)
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+end
+
+@testset "Batch Reverse" begin
+    function refbatchbwd(out, x)
+        v = x[]
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    dxs = (Ref(0.0), Ref(0.0), Ref(0.0))
+    out = Float64[0,0,0]
+    x = Ref(2.0)
+
+    autodiff(refbatchbwd, BatchDuplicated(out, Enzyme.onehot(out)), BatchDuplicated(x, dxs))
+    @test dxs[1][] ≈  6.0
+    @test dxs[2][] ≈ 12.0
+    @test dxs[3][] ≈ 18.0
+
+    function batchbwd(out, v)
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    bres = Enzyme.autodiff(batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))
+    @test length(bres) == 1
+    @test length(bres[1]) == 3
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
 end
