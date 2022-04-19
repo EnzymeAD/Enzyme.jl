@@ -595,15 +595,15 @@ end
     tt′    = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
-    forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), #=ModifiedBetween=#Val(false))
+    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), #=ModifiedBetween=#Val(false))
     
     if num * chunk == n_out_val
         last_size = chunk
-        forward2, adjoint2 = forward, adjoint
+        primal2, adjoint2 = forward, adjoint
     else
         last_size = n_out_val - (num-1)*chunk
         tt′    = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        forward2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), #=ModifiedBetween=#Val(false))
+        primal2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), #=ModifiedBetween=#Val(false))
     end
 
     tmp = ntuple(num) do i
@@ -612,7 +612,7 @@ end
             Base.@_inline_meta
             zero(x)
         end
-        res = (i == num ? forward2 : forward)(BatchDuplicated(x, dx))
+        res = (i == num ? primal2 : primal)(BatchDuplicated(x, dx))
         tape = res[1]
         for shadow in res[2]
             shadow[i] += one(eltype(typeof(shadow)))
@@ -627,11 +627,11 @@ end
     tt′    = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
-    forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
+    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
     ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
-        res = forward(Duplicated(x, dx))
+        res = primal(Duplicated(x, dx))
         tape = res[1]
         res[2][i] += one(eltype(typeof(res[2])))
         adjoint(Duplicated(x, dx), tape)
