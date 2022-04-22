@@ -58,20 +58,29 @@ LLVM_VER_MAJOR = Base.libllvm_version.major
 
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR
-run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
-run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
+run(`cmake -DCMAKE_BUILD_TYPE=Debug -DLLVM_DIR=$(LLVM_DIR) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
+run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
 
 # Discover built libraries
 built_libs = filter(readdir(joinpath(scratch_dir, "Enzyme"))) do file
     endswith(file, ".$(Libdl.dlext)") && startswith(file, "lib")
 end
+
 lib_path = joinpath(scratch_dir, "Enzyme", only(built_libs))
 isfile(lib_path) || error("Could not find library $lib_path in build directory")
+
+built_libs = filter(readdir(joinpath(scratch_dir, "BCLoad"))) do file
+    endswith(file, ".$(Libdl.dlext)") && startswith(file, "lib")
+end
+
+libBC_path = joinpath(scratch_dir, "BCLoad", only(built_libs))
+isfile(libBC_path) || error("Could not find library $libBC_path in build directory")
 
 # Tell Enzyme_jll to load our library instead of the default artifact one
 set_preferences!(
     joinpath(dirname(@__DIR__), "LocalPreferences.toml"),
     "Enzyme_jll",
-    "libEnzyme_path" => lib_path;
+    "libEnzyme_path" => lib_path,
+    "libEnzymeBCLoad_path" => libBC_path;
     force=true,
 )
