@@ -1924,6 +1924,8 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     to_preserve = LLVM.Value[]
 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    B = LLVM.Builder(B)
     for op in ops
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         push!(to_preserve, val)
@@ -1931,11 +1933,19 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
         if active
-            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)))
+            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+
+            if width == 1
+                push!(to_preserve, shadowin)
+            else
+                for idx in 1:width
+                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
+                end
+            end
         end
     end
 
-    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+    token = emit_gc_preserve_begin(B, to_preserve)
     unsafe_store!(normalR, token.ref)
 
     return nothing
@@ -1948,6 +1958,8 @@ function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
 
     to_preserve = LLVM.Value[]
 
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    B = LLVM.Builder(B)
     for op in ops
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         push!(to_preserve, val)
@@ -1955,11 +1967,19 @@ function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
         if active
-            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B)))
+            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+
+            if width == 1
+                push!(to_preserve, shadowin)
+            else
+                for idx in 1:width
+                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
+                end
+            end
         end
     end
 
-    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+    token = emit_gc_preserve_begin(B, to_preserve)
     unsafe_store!(normalR, token.ref)
 
     return nothing
