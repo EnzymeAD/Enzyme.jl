@@ -503,6 +503,7 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
+    @assert width == 1
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     res = forward(args...)
@@ -621,6 +622,7 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     if annotation <: DuplicatedNoNeed
         annotation = Duplicated
     end
+    @assert width == 1
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
@@ -1835,13 +1837,29 @@ function arrayreshape_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
 
-    args = LLVM.Value[
-                      LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
-                      LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
-                      LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
-                      ]
-    shadowres = LLVM.call!(LLVM.Builder(B), LLVM.called_value(orig), args)
- 
+    B = LLVM.Builder(B)    
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+    shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+    if width == 1
+        args = LLVM.Value[
+                          LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                          shadowin
+                          LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                          ]
+        shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
+        for idx in 1:width
+            args = LLVM.Value[
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                              extract_value!(B, shadowin, idx-1)
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                              ]
+            tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+            shadowres = insert_value!(B, shadowres, tmp, idx-1)
+        end
+    end
     unsafe_store!(shadowR, shadowres.ref)
 	
 	return nothing
