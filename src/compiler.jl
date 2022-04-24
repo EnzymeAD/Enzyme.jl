@@ -4064,7 +4064,7 @@ end
     if rrt == Union{}
         error("Return type inferred to be Union{}. Giving up.")
     end
-
+ 
     if A isa UnionAll
         rt = A{rrt}
     else
@@ -4074,6 +4074,9 @@ end
         rt = A
     end
 
+    if rrt == Nothing && !(A <: Const)
+        error("Return of nothing must be marked Const")
+    end
 
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions
