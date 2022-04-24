@@ -503,7 +503,6 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    @assert width == 1
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
 
     res = forward(args...)
@@ -622,7 +621,6 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     if annotation <: DuplicatedNoNeed
         annotation = Duplicated
     end
-    @assert width == 1
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
@@ -1414,7 +1412,7 @@ else
     tt = Tuple{funcT, funcT, Bool, Val{width}}
     extraArgs = 1
 end
-    @warn "active variables passed by value to jl_threadsfor are not yet supported"
+    GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
     B = LLVM.Builder(B)
@@ -1549,7 +1547,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
-    @warn "active variables passeed by value to jl_new_task are not yet supported"
+    GPUCompiler.@safe_warn "active variables passeed by value to jl_new_task are not yet supported"
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     fun = nested_codegen!(mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int, Val{width}})
 
@@ -3328,7 +3326,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
             res = call!(builder, wrapper_f, nops)
             if sret
-              @assert llvmtype(res) == llvmtype(ops[1])
+              @assert llvmtype(res) == eltype(llvmtype(ops[1]))
               store!(builder, res, ops[1])
             end
             push!(toErase, ci)
