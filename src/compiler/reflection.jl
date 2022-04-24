@@ -7,9 +7,9 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     tt    = Tuple{map(eltype, types.parameters)...}
     rt = Core.Compiler.return_type(func, tt)
     rt = A{rt}
-
+    modifiedBetween = false
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap)
+    params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween)
     return Compiler.CompilerJob(target, primal, params)
 end
 

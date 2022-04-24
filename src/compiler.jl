@@ -2094,6 +2094,36 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     return nothing
 end
 
+function jl_array_del_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+        B = LLVM.Builder(B)
+
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+        shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+        if width == 1
+            args = LLVM.Value[
+                              shadowin
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+                              ]
+            shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
+        else
+            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
+            for idx in 1:width
+                args = LLVM.Value[
+                                  extract_value!(B, shadowin, idx-1)
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+                                  ]
+                tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+                shadowres = insert_value!(B, shadowres, tmp, idx-1)
+            end
+        end
+    end
+    return nothing
+end
+
 function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_f_setfield")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -2193,7 +2223,9 @@ end
 
 function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=nothing)
     for variant in variants
-        API.EnzymeRegisterCallHandler(variant, augfwd_handler, rev_handler)
+        if augfwd_handler !== nothing && rev_handler !== nothing
+            API.EnzymeRegisterCallHandler(variant, augfwd_handler, rev_handler)
+        end
         if fwd_handler !== nothing
             API.EnzymeRegisterFwdCallHandler(variant, fwd_handler)
         end
@@ -2410,7 +2442,7 @@ function __init__()
         @cfunction(setfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
-        ("jl_f_tuple",),
+        ("jl_f_tuple","ijl_f_tuple"),
         @cfunction(f_tuple_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(f_tuple_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
@@ -2440,6 +2472,12 @@ function __init__()
         ("jl_array_grow_end","ijl_array_grow_end"),
         @cfunction(jl_array_grow_end_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_array_grow_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+    )
+    register_handler!(
+        ("jl_array_del_end","ijl_array_del_end"),
+        nothing,
+        nothing,
+        @cfunction(jl_array_del_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
 end
 
@@ -3247,6 +3285,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
+    @assert length(args) == length(collect(parameters(entry_f))[1+sret:end]) 
 
     # TODO use rettype for sret calculation instead
     rettype = actualRetType
@@ -3289,6 +3328,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
             res = call!(builder, wrapper_f, nops)
             if sret
+              @assert llvmtype(res) == llvmtype(ops[1])
               store!(builder, res, ops[1])
             end
             push!(toErase, ci)
@@ -3309,6 +3349,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
         # perform argument conversions
         for (parm, arg) in zip(collect(parameters(entry_f))[1+sret:end], args)
+            wrapparm = parameters(wrapper_f)[arg.codegen.i-sret]
             if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
                 # copy the argument value to a stack slot, and reference it.
                 ty = llvmtype(parm)
@@ -3320,10 +3361,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
-                store!(builder, parameters(wrapper_f)[arg.codegen.i-sret], ptr)
+                @assert eltype(ty) == llvmtype(wrapparm)
+                store!(builder, wrapparm, ptr)
                 push!(wrapper_args, ptr)
             else
-                push!(wrapper_args, parameters(wrapper_f)[arg.codegen.i-sret])
+                push!(wrapper_args, wrapparm)
                 for attr in collect(parameter_attributes(entry_f, arg.codegen.i))
                     push!(parameter_attributes(wrapper_f, arg.codegen.i-sret), attr)
                 end
@@ -3735,7 +3777,7 @@ end
         error("return type is Union{}, giving up.")
     end
 
-    sret_types  = DataType[]  # Julia types of all returned variables
+    sret_types  = []  # Julia types of all returned variables
     # By ref values we create and need to preserve
     ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
 
@@ -4059,7 +4101,6 @@ end
         rrt = something(ty, Any)
         break
     end
-    # @show tt, TT, sig, rrt, A
 
     if rrt == Union{}
         error("Return type inferred to be Union{}. Giving up.")
@@ -4077,6 +4118,8 @@ end
     if rrt == Nothing && !(A <: Const)
         error("Return of nothing must be marked Const")
     end
+
+    # @assert isa(rrt, DataType)
 
     # We need to use primal as the key, to lookup the right method
     # but need to mixin the hash of the adjoint to avoid cache collisions

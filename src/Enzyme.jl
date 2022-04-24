@@ -1,6 +1,7 @@
 module Enzyme
 
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
+export revjacobian, fwdjacobian, revgradient, revgradient!, fwdgradient, onehot, chunkedonehot
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, batch_size
 export parallel, pmap
 
