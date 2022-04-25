@@ -44,6 +44,7 @@ function EnzymeConcreteTypeIsFloat(cc::CConcreteType, ctx)
   end
 end
 
+EnzymeBitcodeReplacement(mod) = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef,), mod)
 
 struct EnzymeTypeTree end
 const CTypeTreeRef = Ptr{EnzymeTypeTree}

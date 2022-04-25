@@ -71,7 +71,8 @@ module FFI
             "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
             "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
             "jl_symbol_n", "jl_", "jl_object_id",
-            "jl_reshape_array","ijl_reshape_array"
+            "jl_reshape_array","ijl_reshape_array",
+            "jl_matching_methods", "ijl_matching_methods"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
