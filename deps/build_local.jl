@@ -58,7 +58,7 @@ LLVM_VER_MAJOR = Base.libllvm_version.major
 
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR
-run(`cmake -DCMAKE_BUILD_TYPE=Debug -DLLVM_DIR=$(LLVM_DIR) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
+run(`cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=$(LLVM_DIR) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
 run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
 
 # Discover built libraries
