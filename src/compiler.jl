@@ -1590,6 +1590,12 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
 	data0!(tt)
     ct = API.EnzymeTypeTreeInner0(tt)
 
+    if ct == API.DT_Unknown
+        @warn "Unknown concrete type" tt=string(tt)
+        emit_error(LLVM.Builder(B), "Enzyme: Unkown concrete type in arraycopy_common")
+        return nothing
+    end
+
     @assert ct != API.DT_Unknown
     ctx = LLVM.context(orig)
     secretty = API.EnzymeConcreteTypeIsFloat(ct, ctx)
