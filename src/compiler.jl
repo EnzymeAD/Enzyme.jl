@@ -1591,7 +1591,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     ct = API.EnzymeTypeTreeInner0(tt)
 
     if ct == API.DT_Unknown
-        @warn "Unknown concrete type" tt=string(tt)
+        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt)
         emit_error(B, "Enzyme: Unknown concrete type in arraycopy_common")
         return nothing
     end
