@@ -64,7 +64,6 @@ struct Duplicated{T} <: Annotation{T}
     dval::T
 end
 
-
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T

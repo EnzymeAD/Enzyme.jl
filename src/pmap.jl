@@ -165,7 +165,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
                 mi = Base.unsafe_pointer_to_objref(ptr)
                 break
             end
-            if kind(fattr) == "enzymejl_forward"
+            if kind(fattr) == "enzymejl_augforward"
                 forwardnm = value(fattr)
             end
             if kind(fattr) == "enzymejl_adjoint"

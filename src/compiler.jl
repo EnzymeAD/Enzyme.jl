@@ -278,9 +278,15 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
+    @show rt, fn, tt
+    flush(stdout)
+    if rt == Union{}
         annotation = Duplicated
+    else
+        annotation = guess_activity(rt, API.DEM_ForwardMode)
+        if annotation <: DuplicatedNoNeed
+            annotation = Duplicated
+        end
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
@@ -3936,6 +3942,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
+    @show mod
+    flush(stdout)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
@@ -4155,13 +4163,18 @@ end
 
         returnUsed = !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
         if returnUsed
+            jlRT = eltype(rettype)
+            if typeof(jlRT) == UnionAll
+              # Future improvement, add tye assertion on load
+              jlRT = DataType
+            end
             if (CC <: AugmentedForwardThunk || CC <: ForwardModeThunk) && (rettype <: Duplicated || rettype <: BatchDuplicated)
-                push!(sret_types, eltype(rettype))
+                push!(sret_types, jlRT)
             end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
-                push!(sret_types, eltype(rettype))
+                push!(sret_types, jlRT)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-                push!(sret_types, NTuple{width, eltype(rettype)})
+                push!(sret_types, NTuple{width, jlRT})
             end
         end
     end
@@ -4173,13 +4186,7 @@ end
     if !isempty(sret_types)
       llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      if in(Any, sret_types)
-        for T in llsret_types
-          pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
-        end
-      else
-        pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
-      end
+      pushfirst!(llvmtys, convert(LLVMType,  Ptr{Cvoid}; ctx))
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
@@ -4193,20 +4200,8 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = params
-        if in(Any, sret_types)
-            callparams = params[(length(sret_types)+1):end]
-            alloc = LLVM.alloca!(builder, T_sjoint)
-            pushfirst!(callparams, alloc)
-        end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
-        if in(Any, sret_types)
-            for (i, (parm, sret)) in enumerate(zip(params[1:length(sret_types)], llsret_types))
-                out = LLVM.load!(builder, LLVM.gep!(builder, alloc, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)]))
-                parm = LLVM.inttoptr!(builder, parm, LLVM.PointerType(sret))
-                LLVM.store!(builder, out, parm)
-            end
-		end
         ret!(builder)
 	end
 
@@ -4216,36 +4211,9 @@ end
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
 
-        @show sret_types, ir, F
+        @show sret_types, F
+        println(ir)
         flush(stdout)
-
-        if in(Any, sret_types)
-       
-        msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
-        gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
-        tptrs = (:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{Cvoid}, Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) ) for (i, x) in enumerate(sret_types))
-        voidptrs = (:(Ptr{Cvoid}) for _ in 1:length(sret_types))
-        tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
-        results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
-        return quote
-            Base.@_inline_meta
-
-            let $(msrets...)
-            GC.@preserve $(gcsrets...) begin
-                $(tptrs...)
-                Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid},
-                    $(voidptrs...),
-                    $(types...)},
-                    fptr,
-                    $(tptrres...),
-                    $(ccexprs...))
-            end
-            return ( $(results...), )
-            end
-        end
-
-        else
 
         return quote
             Base.@_inline_meta
@@ -4258,7 +4226,6 @@ end
                     fptr, tptr, $(ccexprs...))
             end
             return sret[]
-        end
         end
     else
         return quote
@@ -4432,6 +4399,8 @@ end
 end
 
 @inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween}
+    @show TT
+    flush(stdout)
     primal, adjoint = fspec(F, TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween)
