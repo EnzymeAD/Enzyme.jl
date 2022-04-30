@@ -7,6 +7,8 @@ import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
+using DiffEqBase
+
 import GPUCompiler: CompilerJob, FunctionSpec, codegen
 using LLVM.Interop
 import LLVM: Target, TargetMachine
@@ -1897,6 +1899,8 @@ function f_tuple_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                         LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, o, B)) for o in origops[1:end-1] ]
         if width == 1
             shadowres = LLVM.call!(B, LLVM.called_value(orig), shadowsin)
+            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
             for idx in 1:width
@@ -1904,6 +1908,8 @@ function f_tuple_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                                   extract_value!(B, s, idx-1) for s in shadowsin
                                   ]
                 tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
                 shadowres = insert_value!(B, shadowres, tmp, idx-1)
             end
         end
@@ -2237,6 +2243,8 @@ function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
             end
 
             shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
+            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
             for idx in 1:width
@@ -2248,6 +2256,8 @@ function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
                     push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
                 end
                 tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
                 shadowres = insert_value!(B, shadowres, tmp, idx-1)
             end
         end
@@ -3420,7 +3430,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
-
+    @show llvm_f
+    flush(stdout)
     return llvm_f
 end
 
@@ -3753,9 +3764,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = meth.name
         jlmod  = meth.module
 
-        Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
-        func = getfield(jlmod, name)
-
         function handleCustom(name, attrs=[], setlink=true)
             attributes = function_attributes(llvmfn)
             custom[k_name] = linkage(llvmfn)
@@ -3772,19 +3780,18 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             nothing
         end
 
+        Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
+        func = getfield(jlmod, name)
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == Base.println || func == Base.print || func == Base.show ||
             func == Base.flush || func == Base.string || func == Base.print_to_string
+            # func == Base.Core.kwfunc(DiffEqBase.checkkwargs)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
         if func == Base.eps || func == Base.nextfloat || func == Base.prevfloat
-<<<<<<< HEAD
             handleCustom("jl_inactive_inout", [StringAttribute("enzyme_inactive"; ctx),
-=======
-            handleCustom("jl_inactive_inout", [StringAttribute("enzyme_inactive"; ctx),                
->>>>>>> Continued pushing
                                       EnumAttribute("readnone", 0; ctx),
                                       EnumAttribute("speculatable", 0; ctx),
                                       StringAttribute("enzyme_shouldrecompute"; ctx)
@@ -4208,6 +4215,9 @@ end
 
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
+
+        @show sret_types, ir, F
+        flush(stdout)
 
         if in(Any, sret_types)
        

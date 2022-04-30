@@ -1,6 +1,7 @@
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
 using Enzyme
+using DiffEqBase
 
 struct EnzymeInterpeter <: AbstractInterpreter
     global_cache::CodeCache
@@ -82,6 +83,9 @@ function is_primitive_func(@nospecialize(TT))
     end
     if ft === typeof(Enzyme.pmap)
        return true
+    end
+    if ft === typeof(DiffEqBase.fastpow) # || ft === typeof(DiffEqBase.checkkwargs) || ft === Base.Core.kwftype(typeof(DiffEqBase.checkkwargs))
+        return true
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
        ft === typeof(Base.tan) || ft === typeof(Base.exp) || 
