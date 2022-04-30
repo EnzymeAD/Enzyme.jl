@@ -553,6 +553,7 @@ end
     autodiff(f, Duplicated(x, dx))
     dx
 end
+
 @inline function revgradient!(dx, f, x)
     dx .= 0
     autodiff(f, Duplicated(x, dx))

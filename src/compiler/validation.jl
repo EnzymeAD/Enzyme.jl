@@ -447,7 +447,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         end
         dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
-        flush(stdout)
         if isa(dest, LLVM.Function) && name(dest) == "jl_f_invoke"
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
             while isa(flib, LLVM.ConstantExpr)
@@ -464,7 +463,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                 end
             end
-            flush(stdout)
         end
     end
 

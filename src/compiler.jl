@@ -7,8 +7,6 @@ import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
-using DiffEqBase
-
 import GPUCompiler: CompilerJob, FunctionSpec, codegen
 using LLVM.Interop
 import LLVM: Target, TargetMachine
@@ -278,8 +276,6 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    @show rt, fn, tt
-    flush(stdout)
     if rt == Union{}
         annotation = Duplicated
     else
@@ -3436,8 +3432,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
-    @show llvm_f
-    flush(stdout)
     return llvm_f
 end
 
@@ -3792,7 +3786,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == Base.println || func == Base.print || func == Base.show ||
             func == Base.flush || func == Base.string || func == Base.print_to_string
-            # func == Base.Core.kwfunc(DiffEqBase.checkkwargs)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
@@ -3942,8 +3935,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
-    @show mod
-    flush(stdout)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
@@ -4210,11 +4201,6 @@ end
 
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
-
-        @show sret_types, F
-        println(ir)
-        flush(stdout)
-
         return quote
             Base.@_inline_meta
             sret = Ref{$(Tuple{sret_types...})}()
@@ -4399,8 +4385,6 @@ end
 end
 
 @inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween}
-    @show TT
-    flush(stdout)
     primal, adjoint = fspec(F, TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween)
