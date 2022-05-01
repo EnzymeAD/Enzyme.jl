@@ -620,8 +620,10 @@ end
         end
         res = (i == num ? primal2 : primal)(BatchDuplicated(x, dx))
         tape = res[1]
+        j = 0
         for shadow in res[2]
-            shadow[i] += one(eltype(typeof(shadow)))
+            j += 1
+            @inbounds shadow[(i-1)*chunk+j] += one(eltype(typeof(shadow)))
         end
         (i == num ? adjoint2 : adjoint)(BatchDuplicated(x, dx), tape)
         return dx
@@ -639,7 +641,7 @@ end
         dx = zero(x)
         res = primal(Duplicated(x, dx))
         tape = res[1]
-        res[2][i] += one(eltype(typeof(res[2])))
+        @inbounds res[2][i] += one(eltype(typeof(res[2])))
         adjoint(Duplicated(x, dx), tape)
         return dx
     end
