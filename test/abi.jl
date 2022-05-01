@@ -8,12 +8,12 @@ using Test
     # GhostType -> Nothing
     res = autodiff(f, Const, Const(nothing))
     @test res === ()
-    
+
     @test () === fwddiff(f, Const, Const(nothing))
 
     res = autodiff(f, Const(nothing))
     @test res === ()
-    
+
     @test () === fwddiff(f, Const(nothing))
 
     res = Enzyme.autodiff_deferred(f, Const(nothing))
@@ -34,19 +34,19 @@ using Test
     @test () === fwddiff_deferred(f, Const(Int))
 
     # Complex numbers
-    cres,  = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
+    cres, = Enzyme.autodiff(f, Active, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff(f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
+    cres, = Enzyme.fwddiff(f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres,  = Enzyme.autodiff(f, Active(1.5 + 0.7im))
+    cres, = Enzyme.autodiff(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff(f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres, = Enzyme.fwddiff(f, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
     cres, = Enzyme.autodiff_deferred(f, Active(1.5 + 0.7im))
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres, = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
@@ -120,51 +120,54 @@ using Test
     end
 
     g(x) = x.qux
-    res2,  = autodiff(g, Active, Active(Foo(3, 1.2)))
+    res2, = autodiff(g, Active, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
 
-    @test 1.0≈ first(fwddiff(g, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0 ≈ first(fwddiff(g, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
-    res2,  = autodiff(g, Active(Foo(3, 1.2)))
+    res2, = autodiff(g, Active(Foo(3, 1.2)))
     @test res2.qux ≈ 1.0
 
-    @test 1.0≈ first(fwddiff(g, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0 ≈ first(fwddiff(g, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     unused2(_, y) = y.qux
     resF, = autodiff(unused2, Active, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
 
-    @test 1.0≈ first(fwddiff(unused2, DuplicatedNoNeed, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0 ≈ first(fwddiff(unused2, DuplicatedNoNeed, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     resF, = autodiff(unused2, Const(nothing), Active(Foo(3, 2.0)))
     @test resF.qux ≈ 1.0
 
-    @test 1.0≈ first(fwddiff(unused2, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0 ≈ first(fwddiff(unused2, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     h(x, y) = x.qux * y.qux
     res3 = autodiff(h, Active, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
-    @test 7*3.4 + 9 * 1.2 ≈ first(fwddiff(h, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
+    @test 7 * 3.4 + 9 * 1.2 ≈ first(
+        fwddiff(h, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))),
+    )
 
     res3 = autodiff(h, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
-    @test 7*3.4 + 9 * 1.2 ≈ first(fwddiff(h, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
+    @test 7 * 3.4 + 9 * 1.2 ≈
+          first(fwddiff(h, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
 
     caller(f, x) = f(x)
-    res4, = autodiff(caller, Active, (x)->x, Active(3.0))
+    res4, = autodiff(caller, Active, (x) -> x, Active(3.0))
     @test res4 ≈ 1.0
 
-    res4, = fwddiff(caller, DuplicatedNoNeed, (x)->x, Duplicated(3.0, 1.0))
+    res4, = fwddiff(caller, DuplicatedNoNeed, (x) -> x, Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
-    res4, = autodiff(caller, (x)->x, Active(3.0))
+    res4, = autodiff(caller, (x) -> x, Active(3.0))
     @test res4 ≈ 1.0
 
-    res4, = fwddiff(caller, (x)->x, Duplicated(3.0, 1.0))
+    res4, = fwddiff(caller, (x) -> x, Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
     struct LList
@@ -182,7 +185,7 @@ using Test
     end
 
     regular = LList(LList(nothing, 1.0), 2.0)
-    shadow  = LList(LList(nothing, 0.0), 0.0)
+    shadow = LList(LList(nothing, 0.0), 0.0)
     ad = autodiff(sumlist, Active, Duplicated(regular, shadow))
     @test ad === ()
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
@@ -203,18 +206,18 @@ using Test
     y = Ref(3.0)
     dx = Ref(5.0)
     dy = Ref(7.0)
-    @test 5.0*3.0 + 2.0*7.0≈ first(fwddiff(mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
+    @test 5.0 * 3.0 + 2.0 * 7.0 ≈ first(fwddiff(mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
 
-    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, (x -> x * x,), Active(2.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))
+    mid, = Enzyme.autodiff((fs, x) -> fs[1](x), Active, [x -> x * x], Active(2.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, (x->x*x,), Duplicated(2.0, 1.0))
+    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, (x -> x * x,), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, [x->x*x], Duplicated(2.0, 1.0))
+    mid, = Enzyme.fwddiff((fs, x) -> fs[1](x), DuplicatedNoNeed, [x -> x * x], Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
 
@@ -236,14 +239,14 @@ end
     end
 
     function sqMStruct(domain::Vector{MStruct}, x::Float32)
-       @inbounds domain[1] = MStruct(x*x)
-       return nothing
+        @inbounds domain[1] = MStruct(x * x)
+        return nothing
     end
 
-    orig   = [MStruct(0.0)]
+    orig = [MStruct(0.0)]
     shadow = [MStruct(17.0)]
     Enzyme.fwddiff(sqMStruct, Duplicated(orig, shadow), Duplicated(Float32(3.14), Float32(1.0)))
-     @test 2.0*3.14 ≈ shadow[1].val 
+    @test 2.0 * 3.14 ≈ shadow[1].val
 
 end
 
@@ -267,10 +270,10 @@ end
     @test 2.0 ≈ Enzyme.autodiff(f, Active(3.0))[1]
 
     @test 2.0 ≈ Enzyme.fwddiff(f, Duplicated(3.0, 1.0))[1]
-    
+
     df = clo2(0.0)
     @test 2.0 ≈ Enzyme.autodiff(Duplicated(f, df), Active(3.0))[1]
-    @test 3.0 ≈ df.V[1] 
+    @test 3.0 ≈ df.V[1]
 
     @test 2.0 * 7.0 + 3.0 * 5.0 ≈ first(Enzyme.fwddiff(Duplicated(f, df), Duplicated(5.0, 7.0)))
 end
@@ -281,29 +284,28 @@ end
     end
 
     struct AFoo
-       x::Float64
+        x::Float64
     end
 
     function (f::AFoo)(x::Float64)
-       return f.x * x
+        return f.x * x
     end
 
-    @test Enzyme.autodiff(method, Active, AFoo(2.0), Active(3.0))[1]≈ 2.0
-    @test Enzyme.autodiff(AFoo(2.0), Active, Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(method, Active, AFoo(2.0), Active(3.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(AFoo(2.0), Active, Active(3.0))[1] ≈ 2.0
 
-    @test Enzyme.fwddiff(method, DuplicatedNoNeed, AFoo(2.0), Duplicated(3.0, 1.0))[1]≈ 2.0
-    @test Enzyme.fwddiff(AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1]≈ 2.0
+    @test Enzyme.fwddiff(method, DuplicatedNoNeed, AFoo(2.0), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.fwddiff(AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 
-    struct ABar
-    end
+    struct ABar end
 
     function (f::ABar)(x::Float64)
-       return 2.0 * x
+        return 2.0 * x
     end
 
-    @test Enzyme.autodiff(method, Active, ABar(), Active(3.0))[1]≈ 2.0
-    @test Enzyme.autodiff(ABar(), Active, Active(3.0))[1]≈ 2.0
+    @test Enzyme.autodiff(method, Active, ABar(), Active(3.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(ABar(), Active, Active(3.0))[1] ≈ 2.0
 
-    @test Enzyme.fwddiff(method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1]≈ 2.0
-    @test Enzyme.fwddiff(ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1]≈ 2.0
+    @test Enzyme.fwddiff(method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.fwddiff(ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 end
