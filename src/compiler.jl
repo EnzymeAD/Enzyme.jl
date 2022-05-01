@@ -4189,7 +4189,7 @@ end
               # Future improvement, add tye assertion on load
               jlRT = DataType
             end
-            if (CC <: AugmentedForwardThunk || CC <: ForwardModeThunk) && (rettype <: Duplicated || rettype <: BatchDuplicated)
+            if CC <: AugmentedForwardThunk || ((CC <: ForwardModeThunk) && (rettype <: Duplicated || rettype <: BatchDuplicated))
                 push!(sret_types, jlRT)
             end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
