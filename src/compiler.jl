@@ -1308,10 +1308,10 @@ function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
 
     tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
     # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
-    function fwd()
-        tapes[Base.Threads.threadid()] = forward()[1]
+    function fwd(tid)
+        tapes[tid] = forward()[1]
     end
-    adj = () -> adjoint(tapes[Base.Threads.threadid()])
+    adj = (tid) -> adjoint(tapes[tid])
     id = getid()
     leaked_objs[id] = adj
     Base.Threads.threading_run(fwd, dynamic)
