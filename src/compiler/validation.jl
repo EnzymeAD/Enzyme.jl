@@ -3,118 +3,141 @@ using ObjectFile
 using Libdl
 
 module FFI
-    using LLVM
-    module BLASSupport
-        # TODO: LAPACK handling
-        using LinearAlgebra
-        using ObjectFile
-        using Libdl
-        if VERSION >= v"1.7"
-            function __init__()
-                if VERSION > v"1.8"
-                  global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
-                else
-                  global blas_handle = Libdl.dlopen(BLAS.libblas)
-                end
-            end
-            function get_blas_symbols()
-                symbols = BLAS.get_config().exported_symbols
-                if BLAS.USE_BLAS64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
-
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
+using LLVM
+module BLASSupport
+# TODO: LAPACK handling
+using LinearAlgebra
+using ObjectFile
+using Libdl
+if VERSION >= v"1.7"
+    function __init__()
+        if VERSION > v"1.8"
+            global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
         else
-            function __init__()
-                global blas_handle = Libdl.dlopen(BLAS.libblas)
-            end
-            function get_blas_symbols()
-                symbols = Set{String}()
-                path = Libdl.dlpath(BLAS.libblas)
-                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
-                for s in Symbols(readmeta(open(path, "r")))
-                    name = symbol_name(s)
-                    if !Sys.iswindows() && BLAS.vendor() == :openblas64
-                        endswith(name, "64_") || continue
-                    else
-                        endswith(name, "_") || continue
-                    end
-                    if !in(name, ignoreSymbols)
-                        push!(symbols, name)
-                    end
-                end
-                symbols = collect(symbols)
-                if Sys.iswindows() &&  BLAS.vendor() == :openblas64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
-
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
+            global blas_handle = Libdl.dlopen(BLAS.libblas)
         end
     end
+    function get_blas_symbols()
+        symbols = BLAS.get_config().exported_symbols
+        if BLAS.USE_BLAS64
+            return map(n -> n * "64_", symbols)
+        end
+        return symbols
+    end
 
-    const ptr_map = Dict{Ptr{Cvoid},String}()
-
+    function lookup_blas_symbol(name)
+        Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
+    end
+else
     function __init__()
-        known_names = (
-            "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d", 
-            "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d", 
-            "jl_new_array", "jl_array_copy", "jl_alloc_string",
-            "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
-            "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
-            "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
-            "jl_symbol_n", "jl_", "jl_object_id"
-        )
-        for name in known_names
-            sym = LLVM.find_symbol(name)
-            if sym == C_NULL
+        global blas_handle = Libdl.dlopen(BLAS.libblas)
+    end
+    function get_blas_symbols()
+        symbols = Set{String}()
+        path = Libdl.dlpath(BLAS.libblas)
+        ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
+        for s in Symbols(readmeta(open(path, "r")))
+            name = symbol_name(s)
+            if !Sys.iswindows() && BLAS.vendor() == :openblas64
+                endswith(name, "64_") || continue
+            else
+                endswith(name, "_") || continue
+            end
+            if !in(name, ignoreSymbols)
+                push!(symbols, name)
+            end
+        end
+        symbols = collect(symbols)
+        if Sys.iswindows() && BLAS.vendor() == :openblas64
+            return map(n -> n * "64_", symbols)
+        end
+        return symbols
+    end
+
+    function lookup_blas_symbol(name)
+        Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
+    end
+end
+end
+
+const ptr_map = Dict{Ptr{Cvoid},String}()
+
+function __init__()
+    known_names = (
+        "jl_alloc_array_1d",
+        "jl_alloc_array_2d",
+        "jl_alloc_array_3d",
+        "ijl_alloc_array_1d",
+        "ijl_alloc_array_2d",
+        "ijl_alloc_array_3d",
+        "jl_new_array",
+        "jl_array_copy",
+        "jl_alloc_string",
+        "jl_in_threaded_region",
+        "jl_enter_threaded_region",
+        "jl_exit_threaded_region",
+        "jl_set_task_tid",
+        "jl_new_task",
+        "malloc",
+        "memmove",
+        "memcpy",
+        "jl_array_grow_beg",
+        "jl_array_grow_end",
+        "jl_array_grow_at",
+        "jl_array_del_beg",
+        "jl_array_del_end",
+        "jl_array_del_at",
+        "jl_array_ptr",
+        "jl_value_ptr",
+        "jl_get_ptls_states",
+        "jl_gc_add_finalizer_th",
+        "jl_symbol_n",
+        "jl_",
+        "jl_object_id",
+    )
+    for name in known_names
+        sym = LLVM.find_symbol(name)
+        if sym == C_NULL
+            continue
+        end
+        if haskey(ptr_map, sym)
+            # On MacOS memcpy and memmove seem to collide?
+            if name == "memcpy"
                 continue
             end
-            if haskey(ptr_map, sym)
-                # On MacOS memcpy and memmove seem to collide?
-                if name == "memcpy"
-                    continue
-                end
-            end
-            @assert !haskey(ptr_map, sym)
-            ptr_map[sym] = name
         end
-        for sym in BLASSupport.get_blas_symbols()
-            ptr = BLASSupport.lookup_blas_symbol(sym)
-            if ptr !== nothing
-                if haskey(ptr_map, ptr)
-                    if ptr_map[ptr] != sym
-                        @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
-                    end
-                    continue
+        @assert !haskey(ptr_map, sym)
+        ptr_map[sym] = name
+    end
+    for sym in BLASSupport.get_blas_symbols()
+        ptr = BLASSupport.lookup_blas_symbol(sym)
+        if ptr !== nothing
+            if haskey(ptr_map, ptr)
+                if ptr_map[ptr] != sym
+                    @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
                 end
-                ptr_map[ptr] = sym
+                continue
             end
+            ptr_map[ptr] = sym
         end
     end
+end
 
-    function memoize!(ptr, fn)
-        fn = get(ptr_map, ptr, fn)
-        if !haskey(ptr_map, ptr)
-            ptr_map[ptr] = fn
-        else
-            @assert ptr_map[ptr] == fn
-        end
-        return fn
+function memoize!(ptr, fn)
+    fn = get(ptr_map, ptr, fn)
+    if !haskey(ptr_map, ptr)
+        ptr_map[ptr] = fn
+    else
+        @assert ptr_map[ptr] == fn
     end
+    return fn
+end
 end
 
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    i64 = LLVM.IntType(64; ctx=context(mod))
+    i64 = LLVM.IntType(64; ctx = context(mod))
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
@@ -159,11 +182,18 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
-        # remove illegal invariant.load and jtbaa_const invariants
+            # remove illegal invariant.load and jtbaa_const invariants
         elseif isInline && isa(inst, LLVM.LoadInst)
             md = metadata(inst)
             if haskey(md, LLVM.MD_tbaa)
-                modified = LLVM.Metadata(ccall((:EnzymeMakeNonConstTBAA, API.libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,), md[LLVM.MD_tbaa]))
+                modified = LLVM.Metadata(
+                    ccall(
+                        (:EnzymeMakeNonConstTBAA, API.libEnzyme),
+                        LLVM.API.LLVMMetadataRef,
+                        (LLVM.API.LLVMMetadataRef,),
+                        md[LLVM.MD_tbaa],
+                    ),
+                )
                 setindex!(md, modified, LLVM.MD_tbaa)
             end
             if haskey(md, LLVM.MD_invariant_load)
@@ -204,7 +234,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
             if mfn == C_NULL
                 ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
+                mfn = LLVM.API.LLVMAddFunction(
+                    mod,
+                    "malloc",
+                    LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]),
+                )
             end
             mfn2 = LLVM.Function(mfn)
             nval = ptrtoint!(b, call!(b, mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), llvmtype(inst))
@@ -223,7 +257,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 flib = LLVM.initializer(flib)
             end
             if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8; ctx)
-                flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
+                flib = String(map((x) -> convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
             fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
@@ -234,7 +268,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 fname = LLVM.initializer(fname)
             end
             if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
-                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+                fname = String(map((x) -> convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
             if isa(hnd, LLVM.GlobalVariable)
@@ -260,7 +294,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     if isa(op1, LLVM.ConstantExpr)
                         op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
                         if isa(op2, ConstantInt)
-                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
+                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2) + 8)
                             ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
                             flib = Base.unsafe_pointer_to_objref(ld)
                         end
@@ -276,7 +310,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 fname = LLVM.initializer(fname)
             end
             if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
-                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+                fname = String(map((x) -> convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 
             if !isa(fname, String) || !isa(flib, String)
@@ -374,32 +408,32 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 b = Builder(ctx)
                 position!(b, inst)
                 replacement = LLVM.inttoptr!(b, replaceWith, llvmtype(inst))
-                            for u in LLVM.uses(inst)
+                for u in LLVM.uses(inst)
+                    u = LLVM.user(u)
+                    if isa(u, LLVM.CallInst)
+                        push!(calls, u)
+                    end
+                    if isa(u, LLVM.PHIInst)
+                        if all(x -> first(x) == inst || first(x) == replacement, LLVM.incoming(u))
+
+                            for u in LLVM.uses(u)
                                 u = LLVM.user(u)
                                 if isa(u, LLVM.CallInst)
                                     push!(calls, u)
                                 end
-                                if isa(u, LLVM.PHIInst)
-                                    if all(x->first(x) == inst || first(x) == replacement, LLVM.incoming(u))
-
-                                        for u in LLVM.uses(u)
-                                            u = LLVM.user(u)
-                                            if isa(u, LLVM.CallInst)
-                                                push!(calls, u)
-                                            end
-                                            if isa(u, LLVM.BitCastInst)
-                                                for u1 in LLVM.uses(u)
-                                                    u1 = LLVM.user(u1)
-                                                    if isa(u1, LLVM.CallInst)
-                                                        push!(calls, u1)
-                                                    end
-                                                end
-                                                replace_uses!(u, LLVM.inttoptr!(b, replaceWith, llvmtype(u)))
-                                            end
+                                if isa(u, LLVM.BitCastInst)
+                                    for u1 in LLVM.uses(u)
+                                        u1 = LLVM.user(u1)
+                                        if isa(u1, LLVM.CallInst)
+                                            push!(calls, u1)
                                         end
                                     end
+                                    replace_uses!(u, LLVM.inttoptr!(b, replaceWith, llvmtype(u)))
                                 end
                             end
+                        end
+                    end
+                end
                 replace_uses!(inst, replacement)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
@@ -419,7 +453,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ptr = Ptr{Cvoid}(ptr_val)
 
             # look it up in the Julia JIT cache
-            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint), ptr, 0)
 
             if length(frames) >= 1
                 if VERSION >= v"1.4.0-DEV.123"
@@ -437,9 +471,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     if lfn == C_NULL
                         lfn = LLVM.API.LLVMAddFunction(mod, fn, LLVM.API.LLVMGetCalledFunctionType(inst))
                     else
-                        lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
+                        lfn = LLVM.API.LLVMConstBitCast(
+                            lfn,
+                            LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))),
+                        )
                     end
-                    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst) - 1, lfn)
                 end
             end
         end

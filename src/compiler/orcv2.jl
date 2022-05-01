@@ -1,7 +1,7 @@
 module JIT
 
 using LLVM
-import LLVM:TargetMachine
+import LLVM: TargetMachine
 
 import GPUCompiler
 import ..Compiler
@@ -10,8 +10,8 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.LLJIT
-    lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-    ism::Union{LLVM.IndirectStubsManager, Nothing}
+    lctm::Union{LLVM.LazyCallThroughManager,Nothing}
+    ism::Union{LLVM.IndirectStubsManager,Nothing}
 end
 
 function LLVM.dispose(ci::CompilerInstance)
@@ -31,21 +31,21 @@ const tm = Ref{TargetMachine}() # for opt pipeline
 get_tm() = tm[]
 
 function absolute_symbol_materialization(name, ptr)
-	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
-	flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
-	symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
-	gv = LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
+    address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
+    flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+    symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
+    gv = LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
 
-	return LLVM.absolute_symbols(Ref(gv))
+    return LLVM.absolute_symbols(Ref(gv))
 end
 
 function define_absolute_symbol(jd, name)
-	ptr = LLVM.find_symbol(name)
-	if ptr !== C_NULL
-		LLVM.define(jd, absolute_symbol_materialization(name, ptr))
-		return true
-	end
-	return false
+    ptr = LLVM.find_symbol(name)
+    if ptr !== C_NULL
+        LLVM.define(jd, absolute_symbol_materialization(name, ptr))
+        return true
+    end
+    return false
 end
 
 function __init__()
@@ -58,11 +58,11 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tempTM = LLVM.JITTargetMachine(;optlevel=optlevel)
+    tempTM = LLVM.JITTargetMachine(; optlevel = optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    tempTM = LLVM.JITTargetMachine(;optlevel)
+    tempTM = LLVM.JITTargetMachine(; optlevel)
     LLVM.asm_verbosity!(tempTM, true)
 
     if haskey(ENV, "ENABLE_GDBLISTENER")
@@ -80,7 +80,7 @@ function __init__()
             lljit = LLJIT(builder)
         end
     else
-        lljit = LLJIT(;tm=tempTM)
+        lljit = LLJIT(; tm = tempTM)
     end
 
     jd_main = JITDylib(lljit)
@@ -89,10 +89,10 @@ function __init__()
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
     LLVM.add!(jd_main, dg)
 
-	if Sys.iswindows() && Int === Int64
-		# TODO can we check isGNU?
-		define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
-	end
+    if Sys.iswindows() && Int === Int64
+        # TODO can we check isGNU?
+        define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
+    end
 
     es = ExecutionSession(lljit)
     try
@@ -119,7 +119,7 @@ function move_to_threadsafe(ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
     return ThreadSafeContext() do ctx
-        mod = parse(LLVM.Module, buf; ctx=context(ctx))
+        mod = parse(LLVM.Module, buf; ctx = context(ctx))
         ThreadSafeModule(mod; ctx)
     end
 end
@@ -127,8 +127,8 @@ end
 function get_trampoline(job)
     compiler = jit[]
     lljit = compiler.jit
-    lctm  = compiler.lctm
-    ism   = compiler.ism
+    lctm = compiler.lctm
+    ism = compiler.ism
 
     if lctm === nothing || ism === nothing
         error("Delayed compilation not available.")
@@ -140,12 +140,13 @@ function get_trampoline(job)
     entry_sym = String(gensym(:entry))
     target_sym = String(gensym(:target))
     flags = LLVM.API.LLVMJITSymbolFlags(
-                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+        LLVM.API.LLVMJITSymbolGenericFlagsCallable | LLVM.API.LLVMJITSymbolGenericFlagsExported,
+        0,
+    )
     entry = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, entry_sym),
-                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
-                    mangle(lljit, target_sym), flags))
+        mangle(lljit, entry_sym),
+        LLVM.API.LLVMOrcCSymbolAliasMapEntry(mangle(lljit, target_sym), flags),
+    )
 
     mu = LLVM.reexports(lctm, ism, jd, Ref(entry))
     LLVM.define(jd, mu)
@@ -175,8 +176,7 @@ function get_trampoline(job)
         return nothing
     end
 
-    function discard(jd, sym)
-    end
+    function discard(jd, sym) end
 
     mu = LLVM.CustomMaterializationUnit(entry_sym, Ref(sym), materialize, discard)
     LLVM.define(jd, mu)

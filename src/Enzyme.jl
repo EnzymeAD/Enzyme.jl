@@ -25,7 +25,7 @@ struct Const{T} <: Annotation{T}
 end
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
-Const(::Type{T}) where T = Const{Type{T}}(T)
+Const(::Type{T}) where {T} = Const{Type{T}}(T)
 
 """
     struct Active{T} <: Annotation{T}
@@ -69,9 +69,9 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
     dval::T
 end
 
-Base.eltype(::Type{<:Annotation{T}}) where T = T
+Base.eltype(::Type{<:Annotation{T}}) where {T} = T
 
-function guess_activity(T, Mode=API.DEM_ReverseModeCombined)
+function guess_activity(T, Mode = API.DEM_ReverseModeCombined)
     if T <: AbstractFloat || T <: Complex{<:AbstractFloat}
         if Mode == API.DEM_ForwardMode
             return DuplicatedNoNeed{T}
@@ -104,7 +104,7 @@ import .Compiler: CompilationException
 # @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
 # @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
 
-@inline function annotate(args::Vararg{Any, N}) where N
+@inline function annotate(args::Vararg{Any,N}) where {N}
     ntuple(Val(N)) do i
         Base.@_inline_meta
         arg = @inbounds args[i]
@@ -174,14 +174,14 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
+@inline function autodiff(f::F, ::Type{A}, args...) where {F,A<:Annotation}
+    args′ = annotate(args...)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
     if A <: Active
-        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt)
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient))
+            forward, adjoint = Enzyme.Compiler.thunk(f, nothing, Duplicated{rt}, tt′, Val(API.DEM_ReverseModeGradient)) #=Split=#
             res = forward(args′...)
             tape = res[1]
             if res[3] isa Base.RefValue
@@ -194,7 +194,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     elseif A <: Duplicated
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined))
+    thunk = Enzyme.Compiler.thunk(f, nothing, A, tt′, Val(API.DEM_ReverseModeCombined)) #=Split=#
     rt = eltype(Compiler.return_type(thunk))
     if A <: Active
         args′ = (args′..., one(rt))
@@ -202,10 +202,10 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     thunk(args′...)
 end
 
-@inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined))
+@inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F,A<:Annotation}
+    args′ = annotate(args...)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
+    thunk = Enzyme.Compiler.thunk(dupf.val, dupf.dval, A, tt′, Val(API.DEM_ReverseModeCombined)) #=Split=#
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
@@ -220,19 +220,19 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function autodiff(f::F, args...) where {F}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    A     = guess_activity(rt)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(f, tt)
+    A = guess_activity(rt)
     autodiff(f, A, args′...)
 end
 
 @inline function autodiff(dupf::Duplicated{F}, args...) where {F}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(dupf.val, tt)
+    A = guess_activity(rt)
     autodiff(dupf, A, args′...)
 end
 
@@ -243,11 +243,11 @@ end
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F,A<:Annotation}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt′ = Tuple{map(Core.Typeof, args′)...}
     if A isa UnionAll
-        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         rt = A{rt}
     else
@@ -259,8 +259,8 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    ptr = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt))
+    thunk = Compiler.CombinedAdjointThunk{F,rt,tt′,Nothing}(f, ptr, nothing) #=df=#
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated
@@ -276,11 +276,11 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
 """
 @inline function autodiff_deferred(f::F, args...) where {F}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    rt    = guess_activity(rt)
-    autodiff_deferred(f, rt, args′...) 
+    tt′ = Tuple{map(Core.Typeof, args′)...}
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(f, tt)
+    rt = guess_activity(rt)
+    autodiff_deferred(f, rt, args′...)
 end
 
 using Adapt
@@ -290,23 +290,23 @@ Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 
-@inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
+@inline function fwddiff(f::F, ::Type{A}, args...) where {F,A<:Annotation}
+    args′ = annotate(args...)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode))
+    thunk = Enzyme.Compiler.thunk(f, nothing, A, tt′, Val(API.DEM_ForwardMode)) #=Mode=#
     thunk(args′...)
 end
 
-@inline function fwddiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
+@inline function fwddiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F,A<:Annotation}
+    args′ = annotate(args...)
+    tt′ = Tuple{map(Core.Typeof, args′)...}
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode))
+    thunk = Enzyme.Compiler.thunk(dupf.val, dupf.dval, A, tt′, Val(API.DEM_ForwardMode)) #=Mode=#
     thunk(args′...)
 end
 
@@ -317,17 +317,17 @@ Like [`fwddiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function fwddiff(f::F, args...) where {F}
     args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    A     = guess_activity(rt, API.DEM_ForwardMode)
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(f, tt)
+    A = guess_activity(rt, API.DEM_ForwardMode)
     fwddiff(f, A, args′...)
 end
 
 @inline function fwddiff(dupf::Duplicated{F}, args...) where {F}
     args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt, API.DEM_ForwardMode)
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(dupf.val, tt)
+    A = guess_activity(rt, API.DEM_ForwardMode)
     fwddiff(dupf, A, args′...)
 end
 
@@ -337,12 +337,12 @@ end
 Same as [`fwddiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F,A<:Annotation}
     args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt′ = Tuple{map(Core.Typeof, args′)...}
 
     if A isa UnionAll
-        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         rt = A{rt}
     else
@@ -358,8 +358,8 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ptr   = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode))
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, Nothing}(f, ptr, #=df=#nothing)
+    ptr = Compiler.deferred_codegen(Val(f), Val(tt′), Val(rt), Val(false), Val(API.DEM_ForwardMode)) #=dupClosure=#
+    thunk = Compiler.ForwardModeThunk{F,rt,tt′,Nothing}(f, ptr, nothing) #=df=#
     thunk(args′...)
 end
 
@@ -370,9 +370,9 @@ Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return
 """
 @inline function fwddiff_deferred(f::F, args...) where {F}
     args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    rt    = guess_activity(rt, API.DEM_ForwardMode)
+    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args′)...}
+    rt = Core.Compiler.return_type(f, tt)
+    rt = guess_activity(rt, API.DEM_ForwardMode)
     fwddiff_deferred(f, rt, args′...)
 end
 
@@ -385,11 +385,11 @@ Base.@ccallable function __enzyme_double(x::Ptr{Cvoid})::Cvoid
     return nothing
 end
 
-@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where T
+@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where {T}
     markType(Base.unsafe_convert(Ptr{T}, ptr))
 end
 
-@inline function markType(data::Array{T}) where T
+@inline function markType(data::Array{T}) where {T}
     GC.@preserve data markType(pointer(data))
 end
 
@@ -399,12 +399,28 @@ end
 end
 
 @inline function markType(data::Ptr{Float32})
-    Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, data)
+    Base.llvmcall(
+        (
+            "declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }",
+            "c",
+        ),
+        Cvoid,
+        Tuple{Ptr{Float32}},
+        data,
+    )
     nothing
 end
 
 @inline function markType(data::Ptr{Float64})
-    Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, data)
+    Base.llvmcall(
+        (
+            "declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }",
+            "c",
+        ),
+        Cvoid,
+        Tuple{Ptr{Float64}},
+        data,
+    )
     nothing
 end
 
@@ -414,18 +430,18 @@ function pmap(count, body::Body, args::Vararg{Any,N}) where {Body,N}
     n_gen = min(n_threads, count)
     tasks = Vector{Task}(undef, n_gen)
     cnt = (count + n_gen - 1) ÷ n_gen
-    for i = 0:(n_gen-1)
-        let start = i * cnt, endv = min(count, (i+1) * cnt)-1
-        t = Task() do
-           for j in start:endv
-              body(j+1, args...)
-           end
-           nothing
-        end
-        t.sticky = true
-        ccall(:jl_set_task_tid, Cint, (Any, Cint), t, i)
-        @inbounds tasks[i+1] = t
-        schedule(t)
+    for i in 0:(n_gen-1)
+        let start = i * cnt, endv = min(count, (i + 1) * cnt) - 1
+            t = Task() do
+                for j in start:endv
+                    body(j + 1, args...)
+                end
+                nothing
+            end
+            t.sticky = true
+            ccall(:jl_set_task_tid, Cint, (Any, Cint), t, i)
+            @inbounds tasks[i+1] = t
+            schedule(t)
         end
     end
     try
@@ -438,36 +454,36 @@ function pmap(count, body::Body, args::Vararg{Any,N}) where {Body,N}
 end
 
 function pmap_(count, body::Body, args::Vararg{Any,N}) where {Body,N}
-  for i in 1:count
-    body(i, args...)
-  end
-  nothing
+    for i in 1:count
+        body(i, args...)
+    end
+    nothing
 end
 
 macro parallel(args...)
-  captured = args[1:end-1]
-  ex = args[end]
-  if !(isa(ex, Expr) && ex.head === :for)
-    throw(ArgumentError("@parallel requires a `for` loop expression"))
-  end
-  if !(ex.args[1] isa Expr && ex.args[1].head === :(=))
+    captured = args[1:end-1]
+    ex = args[end]
+    if !(isa(ex, Expr) && ex.head === :for)
+        throw(ArgumentError("@parallel requires a `for` loop expression"))
+    end
+    if !(ex.args[1] isa Expr && ex.args[1].head === :(=))
         throw(ArgumentError("nested outer loops are not currently supported by @parallel"))
-   end
-   iter = ex.args[1]
-   lidx = iter.args[1]         # index
-   range = iter.args[2]
-   body = ex.args[2]
-   esc(quote
-     let range = $(range)
-       function bodyf(idx, iter, $(captured...))
-         local $(lidx) = @inbounds iter[idx]
-         $(body)
-         nothing
-       end
-       lenr = length(range)
-       pmap(lenr, bodyf, range, $(captured...))
-     end
-   end)
+    end
+    iter = ex.args[1]
+    lidx = iter.args[1]         # index
+    range = iter.args[2]
+    body = ex.args[2]
+    esc(quote
+        let range = $(range)
+            function bodyf(idx, iter, $(captured...))
+                local $(lidx) = @inbounds iter[idx]
+                $(body)
+                nothing
+            end
+            lenr = length(range)
+            pmap(lenr, bodyf, range, $(captured...))
+        end
+    end)
 end
 
 end # module

@@ -10,7 +10,7 @@ export get_trampoline
 
 # We have one global JIT and TM
 const jit = Ref{OrcJIT}()
-const tm  = Ref{TargetMachine}()
+const tm = Ref{TargetMachine}()
 
 get_tm() = tm[]
 
@@ -24,7 +24,7 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tm[] = LLVM.JITTargetMachine(optlevel=optlevel)
+    tm[] = LLVM.JITTargetMachine(optlevel = optlevel)
     LLVM.asm_verbosity!(tm[], true)
 
     jit[] = OrcJIT(tm[]) # takes ownership of tm
@@ -43,7 +43,7 @@ mutable struct CallbackContext
     compiled::Bool
 end
 
-const outstanding = IdDict{CallbackContext, Nothing}()
+const outstanding = IdDict{CallbackContext,Nothing}()
 
 # Setup the lazy callback for creating a module
 function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
@@ -100,7 +100,7 @@ function resolver(name, ctx)
         ## Step 4: Lookup in libatomic
         # TODO: Do we need to do this?
     catch ex
-        @error "Enzyme: Lookup failed" jl_name exception=(ex, Base.catch_backtrace())
+        @error "Enzyme: Lookup failed" jl_name exception = (ex, Base.catch_backtrace())
         C_NULL
     end
     if ptr === C_NULL
