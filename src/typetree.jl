@@ -47,61 +47,61 @@ function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
 
-function merge!(dst::TypeTree, src::TypeTree; consume=true)
+function merge!(dst::TypeTree, src::TypeTree; consume = true)
     API.EnzymeMergeTypeTree(dst, src)
     LLVM.dispose(src)
     return nothing
 end
 
-function typetree(::Type{T}, ctx, dl, seen=nothing) where T <: Integer
+function typetree(::Type{T}, ctx, dl, seen = nothing) where {T<:Integer}
     tt = TypeTree()
     for i in 1:sizeof(T)
-        merge!(tt, TypeTree(API.DT_Integer, i-1, ctx))
+        merge!(tt, TypeTree(API.DT_Integer, i - 1, ctx))
     end
     return tt
 end
 
-function typetree(::Type{Float16}, ctx, dl, seen=nothing)
+function typetree(::Type{Float16}, ctx, dl, seen = nothing)
     return TypeTree(API.DT_Half, -1, ctx)
 end
 
-function typetree(::Type{Float32}, ctx, dl, seen=nothing)
+function typetree(::Type{Float32}, ctx, dl, seen = nothing)
     return TypeTree(API.DT_Float, -1, ctx)
 end
 
-function typetree(::Type{Float64}, ctx, dl, seen=nothing)
+function typetree(::Type{Float64}, ctx, dl, seen = nothing)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree(::Type{T}, ctx, dl, seen=nothing) where T<:AbstractFloat
+function typetree(::Type{T}, ctx, dl, seen = nothing) where {T<:AbstractFloat}
     @warn "Unknown floating point type" T
     return TypeTree()
 end
 
-function typetree(::Type{<:DataType}, ctx, dl, seen=nothing)
+function typetree(::Type{<:DataType}, ctx, dl, seen = nothing)
     return TypeTree()
 end
 
-function typetree(::Type{Any}, ctx, dl, seen=nothing)
+function typetree(::Type{Any}, ctx, dl, seen = nothing)
     return TypeTree()
 end
 
-function typetree(::Type{Symbol}, ctx, dl, seen=nothing)
+function typetree(::Type{Symbol}, ctx, dl, seen = nothing)
     return TypeTree()
 end
 
-function typetree(::Type{<:AbstractString}, ctx, dl, seen=nothing)
+function typetree(::Type{<:AbstractString}, ctx, dl, seen = nothing)
     return TypeTree()
 end
 
-function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl, seen=nothing) where T
+function typetree(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl, seen = nothing) where {T}
     tt = typetree(T, ctx, dl, seen)
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt
 end
 
-function typetree(::Type{<:Array{T}}, ctx, dl, seen=nothing) where T
+function typetree(::Type{<:Array{T}}, ctx, dl, seen = nothing) where {T}
     offset = 0
 
     tt = typetree(T, ctx, dl, seen)
@@ -131,7 +131,7 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
-function typetree(@nospecialize(T), ctx, dl, seen=nothing)
+function typetree(@nospecialize(T), ctx, dl, seen = nothing)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
@@ -166,8 +166,8 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
 
     tt = TypeTree()
     for f in 1:fieldcount(T)
-        offset  = fieldoffset(T, f)
-        subT    = fieldtype(T, f)
+        offset = fieldoffset(T, f)
+        subT = fieldtype(T, f)
         subtree = typetree(subT, ctx, dl, seen)
 
         if subT isa UnionAll || subT isa Union || subT == Union{}

@@ -11,9 +11,9 @@ function optimize!(mod::LLVM.Module, tm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         dce!(pm)
-@static if isdefined(GPUCompiler, :cpu_features!)
-        GPUCompiler.cpu_features!(pm)
-end
+        @static if isdefined(GPUCompiler, :cpu_features!)
+            GPUCompiler.cpu_features!(pm)
+        end
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
@@ -181,7 +181,7 @@ function addMachinePasses!(pm)
     gvn!(pm)
 end
 
-function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
+function addJuliaLegalizationPasses!(pm, lower_intrinsics = true)
     if lower_intrinsics
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
         # LLVM's devirtualization heuristics, which would result in the entire
@@ -204,7 +204,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         sccp!(pm)
         # Remove dead use of ptls
         dce!(pm)
-        lower_ptls!(pm, #=dump_native=# false)
+        lower_ptls!(pm, false) #=dump_native=#
         instruction_combining!(pm)
         # Clean up write barrier and ptls lowering
         cfgsimplification!(pm)
