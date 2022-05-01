@@ -808,13 +808,15 @@ end
     @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
-end
-
-@testset "Exception" begin
+    
     f_exc(x) = sum(x*x)
     y = [[1.0, 2.0] [3.0,4.0]]
     f_x = zero.(y)
-    @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_exc, Duplicated(y, f_x))
+    Enzyme.Compiler.NoDerivativeException autodiff(f_exc, Duplicated(y, f_x))
+    @test f_x ≈ [7.0 9.0; 11.0 13.0]
+end
+
+@testset "Exception" begin
 
     f_no_derv(x) = ccall("extern doesnotexist", llvmcall, Float64, (Float64,), x)
     @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_no_derv, Active, Active(0.5))
