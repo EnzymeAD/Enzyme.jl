@@ -61,7 +61,7 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, n
     funcT = LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
     LLVM.Function(mod, name, funcT)
 end
-function emit_allocobj!(B, T)
+function emit_allocobj!(B, T, size)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -75,10 +75,13 @@ function emit_allocobj!(B, T)
 
 	ty = inttoptr!(B, LLVM.ConstantInt(convert(Int, pointer_from_objref(T)); ctx), LLVM.PointerType(T_jlvalue))
 	ty = addrspacecast!(B, ty, T_prjlvalue)
-	size = LLVM.ConstantInt(T_size, sizeof(T))
+	size = LLVM.ConstantInt(T_size, size)
     args = [reinsert_gcmarker!(fn), size, ty]
 	args[1] = bitcast!(B, args[1], parameters(eltype(llvmtype(func)))[1])
     return call!(B, func, args)
+end
+function emit_allocobj!(B, T)
+    emit_allocobj!(B, T, sizeof(T))
 end
 declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do mod, ctx, name
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -632,7 +635,7 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
 
     res = forward(args...)
     if annotation <: Duplicated
-        return Return2(res[1], res[2])
+       return Return2(res[1], res[2])
     else
         return Return2(nothing, nothing)
     end
@@ -858,7 +861,12 @@ end
 function allocate_sret!(B::LLVM.Builder, N, ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
+    al = LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
+    for i in 1:N
+        LLVM.store!(B, LLVM.null(T_prjlvalue),
+                    LLVM.inbounds_gep!(B, al, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]))
+    end
+    return al
 end
 
 function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N, ctx)
@@ -3931,11 +3939,32 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if params.run_enzyme
         # Generate the adjoint
         adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween)
+        toremove = []
+        # Inline the wrapper
+        for f in functions(mod)
+            if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline"; ctx)), collect(function_attributes(f))))
+                continue
+            end
+            if !any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(f))))
+                push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
+                push!(toremove, name(f))
+            end
+        end 
+        ModulePassManager() do pm
+            always_inliner!(pm)
+            run!(pm, mod)
+        end
+        for fname in toremove
+            if in(fname, functions(mod))
+                f = functions(mod)[fname]
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
+            end
+        end
     else
         adjointf = primalf
         augmented_primalf = nothing
     end
-
+    
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
         f = functions(mod)[fname]
@@ -3999,6 +4028,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
+
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
@@ -4177,11 +4207,20 @@ end
     if !isempty(sret_types)
       llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      pushfirst!(llvmtys, convert(LLVMType,  Ptr{Cvoid}; ctx))
+      if in(Any, sret_types)
+        for T in llsret_types
+          pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+        end
+      else
+		@assert allocatedinline(Tuple{sret_types...})
+        pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+      end
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
-	llvm_f, _ = LLVM.Interop.create_function(T_void, llvmtys)
+    T_ret = T_void
+	llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
+
 	mod = LLVM.parent(llvm_f)
     i64 = LLVM.IntType(64; ctx)
 	LLVM.Builder(ctx) do builder
@@ -4191,8 +4230,20 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = params
+        if in(Any, sret_types)
+            callparams = params[(length(sret_types)+1):end]
+            alloc = LLVM.alloca!(builder, T_sjoint)
+            pushfirst!(callparams, alloc)
+        end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
+        if in(Any, sret_types)
+            for (i, (parm, sret)) in enumerate(zip(params[1:length(sret_types)], llsret_types))
+                out = LLVM.load!(builder, LLVM.gep!(builder, alloc, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)]))
+                parm = LLVM.inttoptr!(builder, parm, LLVM.PointerType(sret))
+                LLVM.store!(builder, out, parm)
+            end
+		end
         ret!(builder)
 	end
 
@@ -4201,17 +4252,45 @@ end
 
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
+		# Any case needed since this cannot be included inside a tuple
+        if in(Any, sret_types)
+
+        msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
+        gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
+        tptrs = (:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{Cvoid}, Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) ) for (i, x) in enumerate(sret_types))
+        voidptrs = (:(Ptr{Cvoid}) for _ in 1:length(sret_types))
+        tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
+        results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
         return quote
             Base.@_inline_meta
-            sret = Ref{$(Tuple{sret_types...})}()
-            GC.@preserve sret begin
-                tptr = Base.unsafe_convert(Ptr{$(Tuple{sret_types...})}, sret)
-                tptr = Base.unsafe_convert(Ptr{Cvoid}, tptr)
+
+            let $(msrets...)
+            GC.@preserve $(gcsrets...) begin
+                $(tptrs...)
                 Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                    fptr, tptr, $(ccexprs...))
+                    Tuple{Ptr{Cvoid},
+                    $(voidptrs...),
+                    $(types...)},
+                    fptr,
+                    $(tptrres...),
+                    $(ccexprs...))
             end
-            return sret[]
+            return ( $(results...), )
+            end
+        end
+
+        else
+            return quote
+                Base.@_inline_meta
+                    sret = Ref{$(Tuple{sret_types...})}()
+                    GC.@preserve sret begin
+                       tret = Base.pointer_from_objref(sret)
+                       Base.llvmcall(($ir, $fn), Cvoid,
+                        Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                        fptr, tret, $(ccexprs...))
+                    end
+                    sret[]
+            end
         end
     else
         return quote
