@@ -3101,7 +3101,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primal_params = Compiler.PrimalCompilerParams()
         primal_job    = CompilerJob(primal_target, primal, primal_params)
     else
-        primal_job = similar(parent_job, job.source)
+        primal_job = similar(parent_job, primal)
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
     primalf = meta.entry
@@ -3294,6 +3294,16 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
+    # TODO: Should the inner job be kernel=true if the outer is?
+    #   VC: I don't think so since we could have a higher-order AD call,
+    #       but if !source.kernel the kernel_state won't be setup properly
+    if parent_job !== nothing && parent_job.source.kernel
+        source = FunctionSpec(primal.f, primal.tt, true, primal.name, primal.world_age) 
+        primal_job = similar(parent_job, source)
+        entry_fn = LLVM.name(primalf)
+        GPUCompiler.add_kernel_state!(primal_job, mod, primalf)
+        primalf = functions(mod)[entry_fn]
+    end
 
     # annotate
     annotate!(mod, mode)
