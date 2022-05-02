@@ -3294,16 +3294,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    # TODO: Should the inner job be kernel=true if the outer is?
-    #   VC: I don't think so since we could have a higher-order AD call,
-    #       but if !source.kernel the kernel_state won't be setup properly
-    if parent_job !== nothing && parent_job.source.kernel
-        source = FunctionSpec(primal.f, primal.tt, true, primal.name, primal.world_age) 
-        primal_job = similar(parent_job, source)
-        entry_fn = LLVM.name(primalf)
-        GPUCompiler.add_kernel_state!(primal_job, mod, primalf)
-        primalf = functions(mod)[entry_fn]
-    end
+
 
     # annotate
     annotate!(mod, mode)
@@ -3368,7 +3359,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     adjointf = functions(mod)[adjointf_name]
 
-    # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
+    # TODO: Should the inner job be kernel=true if the outer is?
+    #   VC: I don't think so since we could have a higher-order AD call,
+    #       but if !source.kernel the kernel_state won't be setup properly
+    if parent_job !== nothing && parent_job.source.kernel
+        GPUCompiler.add_kernel_state!(parent_job, mod, adjointf)
+        adjointf = functions(mod)[adjointf_name]
+    end
 
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
