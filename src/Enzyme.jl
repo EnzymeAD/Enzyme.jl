@@ -135,6 +135,29 @@ end
 
 import LLVM
 
+"""
+    abstract type Mode
+
+Abstract type for what differentiation mode will be used.
+"""
+abstract type Mode end
+
+"""
+    struct Reverse <: Mode
+
+Reverse mode differentiation
+"""
+struct Reverse <: Mode
+end
+
+"""
+    struct Forward <: Mode
+
+Forward mode differentiation
+"""
+struct Forward <: Mode
+end
+
 include("api.jl")
 include("logic.jl")
 include("typeanalysis.jl")
@@ -616,7 +639,7 @@ end
 end
 
 """
-    revgradient(f, x)
+    gradient(::Reverse, f, x)
 
 Compute the gradient of an array-input function `f` using reverse mode.
 This will allocate and return new array with the gradient result.
@@ -628,7 +651,7 @@ using Enzyme
 
 f(x) = x[1]*x[2]
 
-grad = revgradient(f, [2.0, 3.0])
+grad = gradient(::Reverse, f, [2.0, 3.0])
 
 # output
 
@@ -637,7 +660,7 @@ grad = revgradient(f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function revgradient(f, x)
+@inline function gradient(::Reverse, f, x)
     dx = zero(x)
     autodiff(f, Duplicated(x, dx))
     dx
@@ -645,7 +668,7 @@ end
 
 
 """
-    revgradient!(dx, f, x)
+    gradient!(::Reverse, dx, f, x)
 
 Compute the gradient of an array-input function `f` using reverse mode,
 storing the derivative result in an existing array `dx`.
@@ -658,7 +681,7 @@ using Enzyme
 f(x) = x[1]*x[2]
 
 dx = [0.0, 0.0]
-revgradient!(dx, f, [2.0, 3.0])
+gradient!(::Reverse, dx, f, [2.0, 3.0])
 
 # output
 
@@ -667,14 +690,14 @@ revgradient!(dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function revgradient!(dx, f, x)
+@inline function gradient!(::Reverse, dx, f, x)
     dx .= 0
     autodiff(f, Duplicated(x, dx))
     dx
 end
 
 """
-    fwdgradient(f, x; shadow=onehot(x))
+    gradient(::Forward, f, x; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -689,14 +712,14 @@ using Enzyme
 
 f(x) = x[1]*x[2]
 
-grad = fwdgradient(f, [2.0, 3.0])
+grad = gradient(::Forward, f, [2.0, 3.0])
 
 # output
 
 ((3.0, 2.0),)
 ```
 """
-@inline function fwdgradient(f, x; shadow=onehot(x))
+@inline function gradient(::Forward, f, x; shadow=onehot(x))
     fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
 end
 
@@ -734,25 +757,25 @@ grad = fwdgradient(f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function fwdgradient(f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+@inline function gradient(::Forward, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
     tmp = ntuple(length(shadow)) do i
         fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
     end
     tupleconcat(tmp...)
 end
 
-@inline function fwdgradient(f, x, ::Val{1}; shadow=onehot(x))
+@inline function gradient(::Forward, f, x, ::Val{1}; shadow=onehot(x))
     ntuple(length(shadow)) do i
         fwddiff(f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
 end
 
 """
-    fwdjacobian(f, x; shadow=onehot(x))
-    fwdjacobian(f, x, ::Val{chunk}; shadow=onehot(x))
+    jacobian(::Forward, f, x; shadow=onehot(x))
+    jacobian(::Forward, f, x, ::Val{chunk}; shadow=onehot(x))
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
-forward mode. This is a simple rename of the [`fwdgradient`](@ref) function,
+forward mode. This is a simple rename of the [`gradient`](@ref) function,
 and all relevant arguments apply here.
 
 Example:
@@ -762,19 +785,19 @@ using Enzyme
 
 f(x) = [x[1]*x[2], x[2]]
 
-grad = fwdgradient(f, [2.0, 3.0])
+grad = jacobian(::Forward, f, [2.0, 3.0])
 
 # output
 
 (([3.0, 0.0], [2.0, 1.0]),)
 ```
 """
-@inline function fwdjacobian(args...; kwargs...)
-    fwdgradient(args...; kwargs...)
+@inline function jacobian(::Forward, args...; kwargs...)
+    fwdgradient(::Forward, args...; kwargs...)
 end
 
 """
-    revjacobian(f, x, ::Val{chunk}; Val{num_outs})
+    jacobian(::Reverse, f, x, ::Val{chunk}; Val{num_outs})
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
 reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
@@ -788,14 +811,14 @@ using Enzyme
 
 f(x) = [x[1]*x[2], x[2]]
 
-grad = revgradient(f, [2.0, 3.0])
+grad = jacobian(::Reverse, f, [2.0, 3.0])
 
 # output
 
 (([3.0, 2.0], [0.0, 1.0]),)
 ```
 """
-@inline function revjacobian(f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
+@inline function jacobian(::Reverse, f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
 
     tt′    = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
@@ -831,7 +854,7 @@ grad = revgradient(f, [2.0, 3.0])
     tupleconcat(tmp...)
 end
 
-@inline function revjacobian(f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
+@inline function jacobian(::Reverse, f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
     tt′    = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)

@@ -908,24 +908,24 @@ end
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
     end
 
-	jac = Enzyme.revjacobian(inout, [2.0, 3.0], Val(1); n_outs=Val(3))	
+	jac = Enzyme.jacobian(::Reverse, inout, [2.0, 3.0], Val(1); n_outs=Val(3))	
 	@test length(jac) == 3
 	@test jac[1] ≈ [ 0.0, 1.0]
 	@test jac[2] ≈ [ 4.0, 0.0]
 	@test jac[3] ≈ [12.0, 0.0]
 	
-	jac = Enzyme.fwdjacobian(inout, [2.0, 3.0], Val(1))
+	jac = Enzyme.jacobian(::Forward, inout, [2.0, 3.0], Val(1))
 	@test length(jac) == 2
 	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
 	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
 
-	jac = Enzyme.revjacobian(inout, [2.0, 3.0], Val(2); n_outs=Val(3))	
+	jac = Enzyme.jacobian(::Reverse, inout, [2.0, 3.0], Val(2); n_outs=Val(3))	
 	@test length(jac) == 3
 	@test jac[1] ≈ [ 0.0, 1.0]
 	@test jac[2] ≈ [ 4.0, 0.0]
 	@test jac[3] ≈ [12.0, 0.0]
 	
-	jac = Enzyme.fwdjacobian(inout, [2.0, 3.0], Val(2))
+	jac = Enzyme.jacobian(::Forward, inout, [2.0, 3.0], Val(2))
 	@test length(jac) == 2
 	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
 	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
