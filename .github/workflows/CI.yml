@@ -75,10 +75,16 @@ jobs:
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
       - name: Build libEnzyme
-        if: ${{ matrix.libEnzyme == 'local' }}
+        if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
           julia --project=deps deps/build_local.jl
+          cp LocalPreferences.toml test/
+      - name: Build libEnzyme MacOS
+        if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
+        run: |
+          julia --project=deps -e 'using Pkg; Pkg.instantiate()'
+          SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1

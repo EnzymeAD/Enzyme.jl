@@ -165,7 +165,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
                 mi = Base.unsafe_pointer_to_objref(ptr)
                 break
             end
-            if kind(fattr) == "enzymejl_forward"
+            if kind(fattr) == "enzymejl_augforward"
                 forwardnm = value(fattr)
             end
             if kind(fattr) == "enzymejl_adjoint"
@@ -191,7 +191,8 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
         
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false, #=modifiedBetween=#true)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
         
         cmod, adjointnm, forwardnm = _thunk(ejob)
