@@ -15,9 +15,7 @@ Abstract type for [`autodiff`](@ref) function argument wrappers like
 abstract type Annotation{T} end
 
 """
-    struct Const{T} <: Annotation{T}
-
-Constructor: `Const(x)`
+    Const(x)
 
 Mark a function argument `x` of [`autodiff`](@ref) as constant,
 Enzyme will not auto-differentiate in respect `Const` arguments.
@@ -30,9 +28,7 @@ end
 Const(::Type{T}) where T = Const{Type{T}}(T)
 
 """
-    struct Active{T} <: Annotation{T}
-
-Constructor: `Active(x)`
+    Active(x)
 
 Mark a function argument `x` of [`autodiff`](@ref) as active,
 Enzyme will auto-differentiate in respect `Active` arguments.
@@ -51,9 +47,7 @@ Active(i::Integer) = Active(float(i))
 
 
 """
-    struct Duplicated{T} <: Annotation{T}
-
-Constructor: `Duplicated(x, ∂f_∂x)`
+    Duplicated(x, ∂f_∂x)
 
 Mark a function argument `x` of [`autodiff`](@ref) as duplicated, Enzyme will
 auto-differentiate in respect to such arguments, with `dx` acting as an
@@ -66,9 +60,7 @@ struct Duplicated{T} <: Annotation{T}
 end
 
 """
-    struct DuplicatedNoNeed{T} <: Annotation{T}
-
-Constructor: `DuplicatedNoNeed(x, ∂f_∂x)`
+    DuplicatedNoNeed(x, ∂f_∂x)
 
 Like [`Duplicated`](@ref), except also specifies that Enzyme may avoid computing
 the original result and only compute the derivative values.
@@ -80,9 +72,7 @@ end
 
 
 """
-    struct BatchDuplicated{T} <: Annotation{T}
-
-Constructor: `BatchDuplicated(x, ∂f_∂xs)`
+    BatchDuplicated(x, ∂f_∂xs)
 
 Like [`Duplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
@@ -92,9 +82,7 @@ struct BatchDuplicated{T,N} <: Annotation{T}
     dval::NTuple{N,T}
 end
 """
-    struct BatchDuplicatedNoNeed{T} <: Annotation{T}
-
-Constructor: `BatchDuplicatedNoNeed(x, ∂f_∂xs)`
+    BatchDuplicatedNoNeed(x, ∂f_∂xs)
 
 Like [`DuplicatedNoNeed`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
@@ -824,7 +812,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
 @inline function jacobian(::ReverseMode, f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
 
-    tt′    = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
+    tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
     primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), #=ModifiedBetween=#Val(false))
@@ -834,7 +822,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
         primal2, adjoint2 = primal, adjoint
     else
         last_size = n_out_val - (num-1)*chunk
-        tt′    = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
+        tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
         primal2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), #=ModifiedBetween=#Val(false))
     end
 
@@ -858,7 +846,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
 end
 
 @inline function jacobian(::ReverseMode, f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
-    tt′    = Tuple{Duplicated{Core.Typeof(x)}}
+    tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
     primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
