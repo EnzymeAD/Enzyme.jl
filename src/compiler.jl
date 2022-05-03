@@ -1232,8 +1232,6 @@ if VERSION < v"1.8-"
 
 function runtime_pfor_fwd(func, dfunc, width)::Cvoid
     # pfor threads tape[i] = aug(func, dfunc)
-    @show func, dfunc, width
-    flush(stdout)
 
     tt = Tuple{}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
@@ -1281,27 +1279,27 @@ function runtime_pfor_rev(id::Int64)
 end
 else
 
-function runtime_pfor_fwd(func, dfunc, dynamic, width)::Cvoid
+function runtime_pfor_fwd(func, dfunc, width, dynamic)::Cvoid
     # pfor threads tape[i] = aug(func, dfunc)
 
-    tt = Tuple{}
+    tt = Tuple{Const{Int}}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
     # the original compilation (rather than runtime JIT compiling)
     forward = thunk(func, dfunc, Const, tt, Val(API.DEM_ForwardMode), width)
 
-    function fwd()
-        forward()
+    function fwd(tid)
+        forward(Const(tid))
     end
 
     Base.Threads.threading_run(fwd, dynamic)
     return
 end
 
-function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
+function runtime_pfor_augfwd(func, dfunc, width, dynamic)::Int64
     # tape = vec{Any}(numthreads())
     # pfor threads tape[i] = aug(func, dfunc)
 
-    tt = Tuple{}
+    tt = Tuple{Const{Int}}
     # TODO with the MI itself, we should be able to hoist the thunk generation into
     # the original compilation (rather than runtime JIT compiling)
     forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
@@ -1309,9 +1307,9 @@ function runtime_pfor_augfwd(func, dfunc, dynamic, width)::Int64
     tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
     # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
     function fwd(tid)
-        tapes[tid] = forward()[1]
+        tapes[tid] = forward(Const(tid))[1]
     end
-    adj = (tid) -> adjoint(tapes[tid])
+    adj = (tid) -> adjoint(Const(tid), tapes[tid])
     id = getid()
     leaked_objs[id] = adj
     Base.Threads.threading_run(fwd, dynamic)
@@ -1359,7 +1357,7 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     tt = Tuple{funcT, funcT, Val{width}}
     extraArgs = 0
 else
-    tt = Tuple{funcT, funcT, Bool, Val{width}}
+    tt = Tuple{funcT, funcT, Val{width}, Bool}
     extraArgs = 1
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
@@ -1373,26 +1371,22 @@ end
 
     ops = collect(operands(orig))[1:end-1]
 
-
-    vals = LLVM.Value[]
-    # TODO check if ghost type
-    if length(ops) > extraArgs
-        for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
-            push!(vals, real)
-        end
+    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
+			push!(vals, real)
+		end
         to_preserve = LLVM.Value[vals[1], vals[2]]
-        T_args = LLVM.LLVMType[T_prjlvalue, T_prjlvalue]
     else
         to_preserve = LLVM.Value[]
-        T_args = LLVM.LLVMType[]
-    end
+	end
 @static if VERSION < v"1.8-"
 else
+    if length(vals) ÷ 2 != length(ops)
         push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+    end
 end
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    T_args = LLVM.LLVMType[T_int64,]
     LLVM.call!(B, entry, vals)
 
     emit_gc_preserve_end(B, token)
@@ -1434,7 +1428,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     tt = Tuple{funcT, funcT, Val{width}} #annotate_tuple_type(mi.specTypes, activity)
     extraArgs = 0
 else
-    tt = Tuple{funcT, funcT, Bool, Val{width}}
+    tt = Tuple{funcT, funcT, Val{width}, Bool}
     extraArgs = 1
 end
     GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
@@ -1449,27 +1443,23 @@ end
 
     ops = collect(operands(orig))[1:end-1]
 
-
 	vals = LLVM.Value[]
-	# TODO check if ghost type
-	if length(ops) > extraArgs
+    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
 			push!(vals, real)
 		end
         to_preserve = LLVM.Value[vals[1], vals[2]]
-        T_args = LLVM.LLVMType[T_prjlvalue, T_prjlvalue]
     else
         to_preserve = LLVM.Value[]
-        T_args = LLVM.LLVMType[]
 	end
 @static if VERSION < v"1.8-"
 else
+    if length(vals) ÷ 2 != length(ops)
         push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+    end
 end
     token = emit_gc_preserve_begin(B, to_preserve)
 
-
-    T_args = LLVM.LLVMType[T_int64,]
     tape = LLVM.call!(B, entry, vals)
     
     emit_gc_preserve_end(B, token)
@@ -1945,6 +1935,8 @@ function f_tuple_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 end
 
 function f_tuple_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    # This function allocates a new return which returns a pointer, thus this instruction itself cannot transfer
+    # derivative info, only create a shadow pointer, which is handled by the forward pass.
     return nothing
 end
 

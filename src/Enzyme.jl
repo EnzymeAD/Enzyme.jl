@@ -64,6 +64,14 @@ struct Duplicated{T} <: Annotation{T}
     dval::T
 end
 
+"""
+    struct DuplicatedNoNeed{T} <: Annotation{T}
+
+Constructor: `DuplicatedNoNeed(x, ∂f_∂x)`
+
+Like [`Duplicated`](@ref), except also specifies that Enzyme may avoid computing
+the original result and only compute the derivative values.
+"""
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
@@ -73,22 +81,28 @@ end
 """
     struct BatchDuplicated{T} <: Annotation{T}
 
-Constructor: `BatchDuplicated(x, ∂f_∂x)`
+Constructor: `BatchDuplicated(x, ∂f_∂xs)`
 
-Mark a function argument `x` of [`autodiff`](@ref) as duplicated, Enzyme will
-auto-differentiate in respect to such arguments, with `dx` acting as an
-accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
-`∂f_∂x`.
+Like [`Duplicated`](@ref), except contains several shadows to compute derivatives
+for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
 """
 struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
 end
-batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+"""
+    struct BatchDuplicatedNoNeed{T} <: Annotation{T}
+
+Constructor: `BatchDuplicatedNoNeed(x, ∂f_∂xs)`
+
+Like [`DuplicatedNoNeed`](@ref), except contains several shadows to compute derivatives
+for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
+"""
 struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
 end
+batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
@@ -345,6 +359,59 @@ Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adap
 Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
+"""
+    fwddiff(f, Activity, args...)
+
+Auto-differentiate function `f` at arguments `args` using forward mode.
+
+`args` may be numbers, arrays, structs of numbers, structs of arrays and so
+on. Enzyme will only differentiate in respect to arguments that are wrapped
+in a [`Duplicated`](@ref) or similar argument. Non-annotated arguments will
+automatically be treated as [`Const`](@ref). Unlike reverse mode in
+[`autodiff`](@ref), [`Active`](@ref) arguments are not allowed here, since
+all 
+
+`Activity` is the Activity of the return value, it may be:
+* `Const` if the return is not to be differentiated with respect to
+* `Duplicated`, if the return is being differentiated with respect to and
+  both the original value and the derivative return are desired
+* `DuplicatedNoNeed`, if the return is being differentiated with respect to
+  and only the derivative return is desired.
+
+Example returning both original return and derivative:
+
+```jldoctest
+using Enzyme
+
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+res, ∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
+
+# output
+
+(3.14*3.14, 2*3.14)
+```
+
+Example returning just the derivative:
+
+```jldoctest
+using Enzyme
+
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
+
+# output
+
+2*3.14
+```
+"""
 @inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
@@ -370,7 +437,7 @@ end
 """
     fwddiff(f, args...)
 
-Like [`fwddiff`](@ref) but will try to guess the activity of the return value.
+Like [`fwddiff`](@ref) but will try to guess the activity of the return value, defaulting to only returning the derivative.
 """
 @inline function fwddiff(f::F, args...) where {F}
     args′ = annotate(args...)
@@ -548,19 +615,83 @@ end
     end
 end
 
+"""
+    revgradient(f, x)
+
+Compute the gradient of an array-input function `f` using reverse mode.
+This will allocate and return new array with the gradient result.
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = x[1]*x[2]
+
+grad = revgradient(f, [2.0, 3.0])
+
+# output
+
+[3.0, 2.0]
+```
+"""
 @inline function revgradient(f, x)
     dx = zero(x)
     autodiff(f, Duplicated(x, dx))
     dx
 end
 
+"""
+    revgradient!(dx, f, x)
+
+Compute the gradient of an array-input function `f` using reverse mode,
+storing the derivative result in an existing array `dx`.
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = x[1]*x[2]
+
+dx = [0.0, 0.0]
+revgradient!(dx, f, [2.0, 3.0])
+dx
+
+# output
+
+[3.0, 2.0]
+```
+"""
 @inline function revgradient!(dx, f, x)
     dx .= 0
     autodiff(f, Duplicated(x, dx))
     dx
 end
 
-# Like ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(sum, x, ForwardDiff.Chunk{length(x)}()))
+"""
+    fwdgradient(f, x; shadow=onehot(x))
+
+Compute the gradient of an array-input function `f` using forward mode. The
+optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
+which are used to forward-propagate into the return. For performance reasons,
+this should be computed once, outside the call to `fwdgradient`, rather than
+within this call.
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = x[1]*x[2]
+
+grad = fwdgradient(f, [2.0, 3.0])
+
+# output
+
+(3.0, 2.0)
+```
+"""
 @inline function fwdgradient(f, x; shadow=onehot(x))
     fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
 end
@@ -578,6 +709,27 @@ end
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
+"""
+    fwdgradient(f, x, ::Val{chunk}; shadow=onehot(x))
+
+Compute the gradient of an array-input function `f` using vector forward mode.
+Like [`fwdgradient`](@ref), except it uses a chunk size of `chunk` to compute
+`chunk` derivatives in a single call.
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = x[1]*x[2]
+
+grad = fwdgradient(f, [2.0, 3.0], Val(2))
+
+# output
+
+(3.0, 2.0)
+```
+"""
 @inline function fwdgradient(f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
     tmp = ntuple(length(shadow)) do i
         fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
@@ -591,10 +743,54 @@ end
     end
 end
 
+"""
+    fwdjacobian(f, x; shadow=onehot(x))
+    fwdjacobian(f, x, ::Val{chunk}; shadow=onehot(x))
+
+Compute the jacobian of an array-input function `f` using (potentially vector)
+forward mode. This is a simple rename of the [`fwdgradient`](@ref) function,
+and all relevant arguments apply here.
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = [x[1]*x[2], x[2]]
+
+grad = fwdgradient(f, [2.0, 3.0])
+
+# output
+
+([3.0, 0.0], [2.0, 1.0])
+```
+"""
 @inline function fwdjacobian(args...; kwargs...)
     fwdgradient(args...; kwargs...)
 end
 
+"""
+    revjacobian(f, x, ::Val{chunk}; Val{num_outs})
+
+Compute the jacobian of an array-input function `f` using (potentially vector)
+reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
+denotes the number of outputs `f` will return in an array. Note that the result
+of this is the transpose of [`fwdjacobian`](@ref)
+
+Example:
+
+```jldoctest
+using Enzyme
+
+f(x) = [x[1]*x[2], x[2]]
+
+grad = revgradient(f, [2.0, 3.0])
+
+# output
+
+([3.0, 2.0], [0.0, 1.0])
+```
+"""
 @inline function revjacobian(f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
 
