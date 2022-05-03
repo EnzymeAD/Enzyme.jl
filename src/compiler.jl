@@ -3239,9 +3239,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-            # for _ in 1:width
-            #     push!(T_wrapperargs, llvmT)
-            # end
         else
             error("calling convention should be annotated, got $T")
         end
@@ -3289,9 +3286,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             end
             if !(rettype <: Const)
                 push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-                # for _ in 1:width
-                #     push!(T_JuliaSRet, llvmT)
-                # end
             end
         end
     end
@@ -3370,11 +3364,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                   val = load!(builder, val)
                 end
                 i += 1
-                #val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(params[i]))))
-                # for idx in 1:width
-                #    val = insert_value!(builder, val, params[i], idx-1)
-                #    i += 1
-                # end
                 push!(realparms, val)
             end
         end
