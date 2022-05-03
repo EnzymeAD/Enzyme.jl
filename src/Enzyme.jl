@@ -392,7 +392,7 @@ res, ∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
-(3.14*3.14, 2*3.14)
+(9.8596, 6.28)
 ```
 
 Example returning just the derivative:
@@ -405,11 +405,11 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
+∂f_∂x = fwddiff(f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
 
 # output
 
-2*3.14
+(6.28,)
 ```
 """
 @inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
@@ -632,7 +632,9 @@ grad = revgradient(f, [2.0, 3.0])
 
 # output
 
-[3.0, 2.0]
+2-element Vector{Float64}:
+ 3.0
+ 2.0
 ```
 """
 @inline function revgradient(f, x)
@@ -656,11 +658,12 @@ f(x) = x[1]*x[2]
 
 dx = [0.0, 0.0]
 revgradient!(dx, f, [2.0, 3.0])
-dx
 
 # output
 
-[3.0, 2.0]
+2-element Vector{Float64}:
+ 3.0
+ 2.0
 ```
 """
 @inline function revgradient!(dx, f, x)
@@ -689,7 +692,7 @@ grad = fwdgradient(f, [2.0, 3.0])
 
 # output
 
-(3.0, 2.0)
+((3.0, 2.0),)
 ```
 """
 @inline function fwdgradient(f, x; shadow=onehot(x))
@@ -762,7 +765,7 @@ grad = fwdgradient(f, [2.0, 3.0])
 
 # output
 
-([3.0, 0.0], [2.0, 1.0])
+(([3.0, 0.0], [2.0, 1.0]),)
 ```
 """
 @inline function fwdjacobian(args...; kwargs...)
@@ -788,7 +791,7 @@ grad = revgradient(f, [2.0, 3.0])
 
 # output
 
-([3.0, 2.0], [0.0, 1.0])
+(([3.0, 2.0], [0.0, 1.0]),)
 ```
 """
 @inline function revjacobian(f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
