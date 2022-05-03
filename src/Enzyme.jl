@@ -148,16 +148,18 @@ abstract type Mode end
 
 Reverse mode differentiation
 """
-struct Reverse <: Mode
+struct ReverseMode <: Mode
 end
+const Reverse = ReverseMode()
 
 """
     struct Forward <: Mode
 
 Forward mode differentiation
 """
-struct Forward <: Mode
+struct ForwardMode <: Mode
 end
+const Forward = ForwardMode()
 
 include("api.jl")
 include("logic.jl")
@@ -640,7 +642,7 @@ end
 end
 
 """
-    gradient(::Type{Reverse}, f, x)
+    gradient(::ReverseMode, f, x)
 
 Compute the gradient of an array-input function `f` using reverse mode.
 This will allocate and return new array with the gradient result.
@@ -661,7 +663,7 @@ grad = gradient(Reverse, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient(::Type{Reverse}, f, x)
+@inline function gradient(::ReverseMode, f, x)
     dx = zero(x)
     autodiff(f, Duplicated(x, dx))
     dx
@@ -669,7 +671,7 @@ end
 
 
 """
-    gradient!(::Type{Reverse}, dx, f, x)
+    gradient!(::ReverseMode, dx, f, x)
 
 Compute the gradient of an array-input function `f` using reverse mode,
 storing the derivative result in an existing array `dx`.
@@ -691,14 +693,14 @@ gradient!(::Reverse, dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient!(::Type{Reverse}, dx, f, x)
+@inline function gradient!(::ReverseMode, dx, f, x)
     dx .= 0
     autodiff(f, Duplicated(x, dx))
     dx
 end
 
 """
-    gradient(::Type{Forward}, f, x; shadow=onehot(x))
+    gradient(::ForwardMode, f, x; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -720,7 +722,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
 ((3.0, 2.0),)
 ```
 """
-@inline function gradient(::Type{Forward}, f, x; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
     fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
 end
 
@@ -738,7 +740,7 @@ end
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
 """
-    gradient(::Type{Forward}, f, x, ::Val{chunk}; shadow=onehot(x))
+    gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using vector forward mode.
 Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
@@ -758,22 +760,22 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::Type{Forward}, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+@inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
     tmp = ntuple(length(shadow)) do i
         fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
     end
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::Type{Forward}, f, x, ::Val{1}; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f, x, ::Val{1}; shadow=onehot(x))
     ntuple(length(shadow)) do i
         fwddiff(f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
 end
 
 """
-    jacobian(::Type{Forward}, f, x; shadow=onehot(x))
-    jacobian(::Type{Forward}, f, x, ::Val{chunk}; shadow=onehot(x))
+    jacobian(::ForwardMode, f, x; shadow=onehot(x))
+    jacobian(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
 forward mode. This is a simple rename of the [`gradient`](@ref) function,
@@ -793,12 +795,12 @@ grad = jacobian(Forward, f, [2.0, 3.0])
 (([3.0, 0.0], [2.0, 1.0]),)
 ```
 """
-@inline function jacobian(::Type{Forward}, args...; kwargs...)
+@inline function jacobian(::ForwardMode, args...; kwargs...)
     fwdgradient(Forward, args...; kwargs...)
 end
 
 """
-    jacobian(::Type{Reverse}, f, x, ::Val{chunk}; Val{num_outs})
+    jacobian(::ReverseMode, f, x, ::Val{chunk}; Val{num_outs})
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
 reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
@@ -819,7 +821,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
 (([3.0, 2.0], [0.0, 1.0]),)
 ```
 """
-@inline function jacobian(::Type{Reverse}, f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
+@inline function jacobian(::ReverseMode, f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
 
     tt′    = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
@@ -855,7 +857,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
     tupleconcat(tmp...)
 end
 
-@inline function jacobian(::Type{Reverse}, f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
+@inline function jacobian(::ReverseMode, f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
     tt′    = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
