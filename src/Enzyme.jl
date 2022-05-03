@@ -1,5 +1,6 @@
 module Enzyme
 
+export Forward, Reverse
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
 export revjacobian, fwdjacobian, revgradient, revgradient!, fwdgradient, onehot, chunkedonehot
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, batch_size
@@ -651,7 +652,7 @@ using Enzyme
 
 f(x) = x[1]*x[2]
 
-grad = gradient(::Reverse, f, [2.0, 3.0])
+grad = gradient(Reverse, f, [2.0, 3.0])
 
 # output
 
@@ -712,7 +713,7 @@ using Enzyme
 
 f(x) = x[1]*x[2]
 
-grad = gradient(::Forward, f, [2.0, 3.0])
+grad = gradient(Forward, f, [2.0, 3.0])
 
 # output
 
@@ -785,7 +786,7 @@ using Enzyme
 
 f(x) = [x[1]*x[2], x[2]]
 
-grad = jacobian(::Forward, f, [2.0, 3.0])
+grad = jacobian(Forward, f, [2.0, 3.0])
 
 # output
 
@@ -793,7 +794,7 @@ grad = jacobian(::Forward, f, [2.0, 3.0])
 ```
 """
 @inline function jacobian(::Forward, args...; kwargs...)
-    fwdgradient(::Forward, args...; kwargs...)
+    fwdgradient(Forward, args...; kwargs...)
 end
 
 """
