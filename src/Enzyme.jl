@@ -2,7 +2,7 @@ module Enzyme
 
 export Forward, Reverse
 export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
-export revjacobian, fwdjacobian, revgradient, revgradient!, fwdgradient, onehot, chunkedonehot
+export jacobian, gradient, gradient!, onehot, chunkedonehot
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, batch_size
 export parallel, pmap
 
@@ -693,7 +693,7 @@ end
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
 which are used to forward-propagate into the return. For performance reasons,
-this should be computed once, outside the call to `fwdgradient`, rather than
+this should be computed once, outside the call to `gradient`, rather than
 within this call.
 
 Example:
@@ -784,7 +784,7 @@ grad = jacobian(Forward, f, [2.0, 3.0])
 ```
 """
 @inline function jacobian(::ForwardMode, args...; kwargs...)
-    fwdgradient(Forward, args...; kwargs...)
+    gradient(Forward, args...; kwargs...)
 end
 
 """
