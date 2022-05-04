@@ -1156,5 +1156,5 @@ end
     Enzyme.API.runtimeActivity!(false)
     
     @test x ≈ [3.0]
-    @test dw ≈ 3.0
+    @test dw[1] ≈ 3.0
 end
