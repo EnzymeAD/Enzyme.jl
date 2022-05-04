@@ -3005,10 +3005,18 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             res = call!(builder, wrapper_f, nops)
             if sret
               store!(builder, res, ops[1])
+            else
+              LLVM.replace_uses!(ci, res)
             end
             push!(toErase, ci)
         end
         for e in toErase
+            if !isempty(collect(uses(e)))
+                @show mod
+                @show entry_f
+                @show e
+                throw(AssertionError("Use after deletion"))
+            end
             LLVM.API.LLVMInstructionEraseFromParent(e)
         end
 
