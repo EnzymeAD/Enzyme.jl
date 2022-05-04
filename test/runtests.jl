@@ -1133,7 +1133,7 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
-	Enzyme.autodiff(loss, Active, Duplicated(w, dw), Const(x), Const(false))
+	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
     @test x ≈ [3.0]
     @test w ≈ [1.0]
