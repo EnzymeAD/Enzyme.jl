@@ -1,9 +1,9 @@
 module Compiler
 
-import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation, guess_activity, eltype
+import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+import ..Enzyme: Annotation, guess_activity, eltype
 import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
-                 TypeAnalysis, FnTypeInfo, Logic, allocatedinline
-
+                 TypeAnalysis, FnTypeInfo, Logic, allocatedinline, pmap
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
@@ -18,6 +18,25 @@ if LLVM.has_orc_v1()
 else
     include("compiler/orcv2.jl")
 end
+    
+# Julia function to LLVM stem and arity
+const known_ops = Dict(
+    Base.cbrt => (:cbrt, 1),
+    Base.sqrt => (:sqrt, 1),
+    Base.sin => (:sin, 1),
+    Base.sincos => (:__fd_sincos_1, 1),
+    Base.:^ => (:pow, 2),
+    Base.cos => (:cos, 1),
+    Base.tan => (:tan, 1),
+    Base.exp => (:exp, 1),
+    Base.log => (:log, 1),
+    Base.log2 => (:log2, 1),
+    Base.log10 => (:log10, 1),
+    Base.asin => (:asin, 1),
+    Base.tanh => (:tanh, 1),
+    Base.ldexp => (:ldexp, 2),
+    Base.FastMath.tanh_fast => (:tanh, 1)
+)
 
 # User facing interface
 abstract type AbstractThunk{F, RT, TT, Width, DF} end
@@ -250,6 +269,8 @@ end
 
 function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                              width)
+    @show "genfwd", fn
+    flush(stdout)
     if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
         args = Any[]
         for i in 1:arg_size
@@ -279,7 +300,9 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    if rt == Union{}
+    @show fn, args, tt, rt
+    flush(stdout)
+    if rt == Union{} || rt == Any
         annotation = Duplicated
     else
         annotation = guess_activity(rt, API.DEM_ForwardMode)
@@ -883,28 +906,30 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
-    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-    @assert conv == 37
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
+        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+        @assert conv == 37
 
-    B = LLVM.Builder(B)
-    sret = allocate_sret!(gutils, 2, ctx)
+        B = LLVM.Builder(B)
+        sret = allocate_sret!(gutils, 2, ctx)
 
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
+        _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
-    if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
-        unsafe_store!(shadowR, shadow.ref)
+        if shadowR != C_NULL
+            shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
+            unsafe_store!(shadowR, shadow.ref)
+        end
+
+        if normalR != C_NULL
+            normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
+            unsafe_store!(normalR, normal.ref)
+        end
+
+        emit_gc_preserve_end(B, token)
     end
-
-    if normalR != C_NULL
-        normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
-        unsafe_store!(normalR, normal.ref)
-    end
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
@@ -2734,7 +2759,6 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
 end
 
-include("compiler/interpreter.jl")
 ## job
 
 # TODO: We shouldn't blanket opt-out
@@ -2750,11 +2774,12 @@ GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 # provide a specific interpreter to use.
 GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-    EnzymeInterpeter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world)
+    Interpreter.EnzymeInterpeter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world)
 
 include("compiler/utils.jl")
 include("compiler/passes.jl")
 include("compiler/optimize.jl")
+include("compiler/interpreter.jl")
 
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
@@ -2791,6 +2816,24 @@ const inactivefns = Set{String}((
     "jl_excstack_state", "jl_current_exception"
     # "jl_"
 ))
+
+const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
+                               Base.CoreLogging.shouldlog,
+                               Base.to_tuple_type,
+                               Base.methods,
+                               Base.println,
+                               Base.print,
+                               Base.show,
+                               Base.flush,
+                               Base.string,
+                               Base.print_to_string,
+                               Base.Threads.threadid,
+                               Base.Threads.nthreads,
+                               Base.eps,
+                               Base.nextfloat,
+                               Base.prevfloat,
+                               Core.kwfunc
+                               ])
 
 const activefns = Set{String}((
     "jl_",
@@ -3507,6 +3550,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
+    @show sret, args, entry_f
     @assert length(args) == length(collect(parameters(entry_f))[1+sret:end]) 
 
     # TODO use rettype for sret calculation instead
@@ -3677,7 +3721,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
     primalf = meta.entry
     check_ir(job, mod)
-    if Enzyme.API.EnzymeBitcodeReplacement(mod) != 0
+    if API.EnzymeBitcodeReplacement(mod) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
             run!(pm, mod)
@@ -3742,24 +3786,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
 
-    # Julia function to LLVM stem and arity
-    known_ops = Dict(
-        Base.cbrt => (:cbrt, 1),
-        Base.sqrt => (:sqrt, 1),
-        Base.sin => (:sin, 1),
-        Base.sincos => (:__fd_sincos_1, 1),
-        Base.:^ => (:pow, 2),
-        Base.cos => (:cos, 1),
-        Base.tan => (:tan, 1),
-        Base.exp => (:exp, 1),
-        Base.log => (:log, 1),
-        Base.log2 => (:log2, 1),
-        Base.log10 => (:log10, 1),
-        Base.asin => (:asin, 1),
-        Base.tanh => (:tanh, 1),
-        Base.ldexp => (:ldexp, 2),
-        Base.FastMath.tanh_fast => (:tanh, 1)
-    )
     actualRetType = nothing
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
@@ -3794,11 +3820,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         func = getfield(jlmod, name)
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
-        if func == Base.println || func == Base.print || func == Base.show ||
-            func == Base.flush || func == Base.string || func == Base.print_to_string
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
-            continue
-        end
         if func == Base.eps || func == Base.nextfloat || func == Base.prevfloat
             handleCustom("jl_inactive_inout", [StringAttribute("enzyme_inactive"; ctx),
                                       EnumAttribute("readnone", 0; ctx),
@@ -3807,8 +3828,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                                       ])
             continue
         end
-        if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
-            handleCustom("jl_enq_work")
+        if func == Base.to_tuple_type
+            handleCustom("jl_to_tuple_type",
+                   [EnumAttribute("readonly", 0; ctx),
+                    EnumAttribute("inaccessiblememonly", 0; ctx),
+                    EnumAttribute("speculatable", 0; ctx),
+                    StringAttribute("enzyme_shouldrecompute"; ctx),
+                    StringAttribute("enzyme_inactive"; ctx),
+                                  ])
             continue
         end
         if func == Base.Threads.threadid || func == Base.Threads.nthreads
@@ -3820,6 +3847,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     StringAttribute("enzyme_shouldrecompute"; ctx),
                     StringAttribute("enzyme_inactive"; ctx),
                                   ])
+            continue
+        end
+        if in(func, InactiveFunctions)
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
+            continue
+        end
+        if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
+            handleCustom("jl_enq_work")
             continue
         end
         if func == Base.wait || func == Base._wait
@@ -3835,7 +3870,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
             continue
         end
-        if func == Enzyme.pmap
+        if func == pmap
             source_sig = Base.signature_type(func, sparam_vals)
             primal = llvmfn == primalf
             llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
@@ -4209,12 +4244,11 @@ end
     if !isempty(sret_types)
       llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      if in(Any, sret_types)
-        for T in llsret_types
+      if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
+        for T in llsret_types 
           pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
         end
       else
-		@assert allocatedinline(Tuple{sret_types...})
         pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
       end
 	end
@@ -4232,14 +4266,14 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = params
-        if in(Any, sret_types)
+        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
             callparams = params[(length(sret_types)+1):end]
             alloc = LLVM.alloca!(builder, T_sjoint)
             pushfirst!(callparams, alloc)
         end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
-        if in(Any, sret_types)
+        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
             for (i, (parm, sret)) in enumerate(zip(params[1:length(sret_types)], llsret_types))
                 out = LLVM.load!(builder, LLVM.gep!(builder, alloc, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)]))
                 parm = LLVM.inttoptr!(builder, parm, LLVM.PointerType(sret))
@@ -4255,7 +4289,7 @@ end
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
 		# Any case needed since this cannot be included inside a tuple
-        if in(Any, sret_types)
+        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
 
         msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
         gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))

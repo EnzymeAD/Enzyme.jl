@@ -1,7 +1,8 @@
+module Interpreter
+
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
-using Enzyme
-
+using ....Enzyme: pmap
 struct EnzymeInterpeter <: AbstractInterpreter
     global_cache::CodeCache
     method_table::Union{Nothing,Core.MethodTable}
@@ -68,19 +69,13 @@ Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     GPUCompiler.WorldOverlayMethodTable(interp.world)
 end
 
+const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(pmap),
+                            typeof(Base.to_tuple_type)])
+
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
-    if ft === typeof(Base.string) 
-       return true
-    end
-    if ft === typeof(Base.eps)
-       return true
-    end
-    if ft === typeof(Base.nextfloat) || ft === typeof(Base.prevfloat)
-       return true
-    end
-    if ft === typeof(Enzyme.pmap)
+    if in(ft, PrimitiveFuncs)
        return true
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
@@ -144,3 +139,5 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
 end
 
 end # @static if isdefined(Core.Compiler, :is_stmt_inline)
+
+end
