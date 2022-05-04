@@ -3600,6 +3600,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
+    @show sret, args, entry_f
     @assert length(args) == length(collect(parameters(entry_f))[1+sret:end]) 
 
     # TODO use rettype for sret calculation instead
