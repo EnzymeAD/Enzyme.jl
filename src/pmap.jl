@@ -187,7 +187,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
         else
           RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
         end
-        eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
+        eprimal, eadjoint = fspec(funcT, e_tt)
         
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
