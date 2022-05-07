@@ -319,16 +319,6 @@ end
 
 function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                              width)
-    if in(fn, InactiveFunctions)
-        args = Any[]
-        for i in 1:arg_size
-            push!(args, Base.unsafe_load(arg_ptr, i))
-        end
-
-        res = fn(args...)
-        return Return2(res, res)
-    end
-
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -358,6 +348,9 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
         end
     end
 
+    @show fn, tt, rt, annotation
+    flush(stdout)
+
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
@@ -373,17 +366,6 @@ end
 
 function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                                 width)
-
-    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
-
-        args = Any[]
-        for i in 1:arg_size
-            push!(args, Base.unsafe_load(arg_ptr, i))
-        end
-
-        res = fn(args...)
-        return Return3(res, res, nothing)
-    end
 
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
@@ -443,15 +425,6 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
 end
 
 function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
-        args = Any[]
-        for i in 1:arg_size
-            push!(args, Base.unsafe_load(arg_ptr, i))
-        end
-
-        res = fn(args...)
-        return nothing
-    end
 
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = []
@@ -528,12 +501,12 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
-        annotation = Duplicated
+        annotation = Duplicated{rt}
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
 
-    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width,
+    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
                         #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
@@ -548,11 +521,6 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
 
     fn = Base.unsafe_load(arg_ptr, 1)
-    
-    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
-        res::Any = ccall(:jl_invoke, Any, (Any, Ptr{Any}, UInt32, Any), fn, args, length(args), mi)
-        return Return3(res, res, nothing)
-    end
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
@@ -614,15 +582,6 @@ end
 
 function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
     fn = Base.unsafe_load(arg_ptr, 1)
-    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
-        args = Any[]
-        for i in 1:arg_size
-            push!(args, Base.unsafe_load(arg_ptr, i))
-        end
-
-        res = fn(args...)
-        return nothing
-    end
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
@@ -698,11 +657,14 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
-        annotation = Duplicated
+        annotation = Duplicated{rt}
     end
 
+    @show fn, tt, rt, annotation
+    flush(stdout)
+
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width,
+    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
                         #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
@@ -1310,19 +1272,8 @@ const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
 
-function runtime_pfor_fwd(func, dfunc, width)::Cvoid
-    # pfor threads tape[i] = aug(func, dfunc)
-
-    tt = Tuple{}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward = thunk(func, dfunc, Const, tt, Val(API.DEM_ForwardMode), width)
-
-    function fwd()
-        forward()
-    end
-
-    Base.Threads.threading_run(fwd)
+function runtime_pfor_fwd(fthunk)::Cvoid
+    Base.Threads.threading_run(fthunk)
     return
 end
 
@@ -1359,18 +1310,10 @@ function runtime_pfor_rev(id::Int64)
 end
 else
 
-function runtime_pfor_fwd(func, dfunc, width, dynamic)::Cvoid
-    # pfor threads tape[i] = aug(func, dfunc)
-
-    tt = Tuple{Const{Int}}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward = thunk(func, dfunc, Const, tt, Val(API.DEM_ForwardMode), width)
-
+function runtime_pfor_fwd(fthunk, dynamic)::Cvoid
     function fwd(tid)
-        forward(Const(tid))
+        fthunk(Const(tid))
     end
-
     Base.Threads.threading_run(fwd, dynamic)
     return
 end
@@ -1429,16 +1372,19 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         end
     end
 
+    B = LLVM.Builder(B)
+
     funcT = mi.specTypes.parameters[2]
 
         @static if VERSION >= v"1.8" 
           e_tt = Tuple{Const{Bool}}
-          RT = Core.Compiler.return_type(Tuple{funcT, Bool})
         else
           e_tt = Tuple{}
-          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{})
         end
-        eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
+        eprimal, eadjoint = fspec(funcT, e_tt)
+
+        @show funcT, Core.Compiler.singleton_type(funcT), e_tt, eprimal, eadjoint
+        flush(stdout)
         
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
@@ -1447,44 +1393,63 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         ops = collect(operands(orig))[1:end-1]
         dupClosure = !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT) && API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
 
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{RT}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#false, #=modifiedBetween=#false)
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#false, #=modifiedBetween=#false, #=returnPrimal=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
         
         cmod, adjointnm, _ = _thunk(ejob)
         LLVM.link!(mod, cmod)
 
+        thunkTy = ForwardModeThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
+
+        llty = convert(LLVMType, thunkTy; ctx)
+
+        rtthunk = UndefValue(llty)
+        idx = 0
+
+        to_preserve = LLVM.Value[]
+
+        if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+            v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
+            push!(to_preserve, v)
+            rtthunk = insert_value!(B, rtthunk, v, idx)
+            idx+= 1
+        end
+
+        rtthunk = insert_value!(B, rtthunk, ptrtoint!(B, functions(mod)[adjointnm], convert(LLVMType, Ptr{Cvoid}; ctx)), idx)
+        idx += 1
+
+        @show rtthunk, llty
+        flush(stdout)
+
+        if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+            v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+            push!(to_preserve, v)
+            rtthunk = insert_value!(B, rtthunk, v, idx)
+            idx+= 1
+        end
+
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, funcT, Val{width}}
+    tt = Tuple{thunkTy}
     extraArgs = 0
 else
-    tt = Tuple{funcT, funcT, Val{width}, Bool}
+    tt = Tuple{thunkTy, Bool}
     extraArgs = 1
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
 
-    B = LLVM.Builder(B)
 
     T_int64 = LLVM.Int64Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
+    vals = LLVM.Value[rtthunk]
 
-	vals = LLVM.Value[]
-    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
-		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
-			push!(vals, real)
-		end
-        to_preserve = LLVM.Value[vals[1], vals[2]]
-    else
-        to_preserve = LLVM.Value[]
-	end
 @static if VERSION < v"1.8-"
 else
-    if length(vals) ÷ 2 != length(ops)
-        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
-    end
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
 end
+
     token = emit_gc_preserve_begin(B, to_preserve)
 
     LLVM.call!(B, entry, vals)
@@ -4688,6 +4653,10 @@ end
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
+
+
+    @show f, primal, adjoint, A, TT
+    flush(stdout)
 
     genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
 end
