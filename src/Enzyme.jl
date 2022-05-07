@@ -381,7 +381,9 @@ f(x) = x*x
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width)
+    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width,
+                                     #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
 
@@ -392,7 +394,8 @@ end
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width)
+    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
 
@@ -434,8 +437,9 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
+    ReturnPrimal = Val(false)
+    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -485,8 +489,9 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), width)
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
+    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(width), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
     thunk(args′...)
 end
 
