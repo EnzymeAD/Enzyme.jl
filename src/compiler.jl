@@ -327,6 +327,7 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
         p = Base.unsafe_load(arg_ptr, i)
         if __activity[i] != 0
             s = Base.unsafe_load(shadow_ptr, i)
+            # TODO if ptr(s) == ptr(p) => Const(p)
             push!(args, Duplicated(p, s))
         else
             push!(args, Const(p))
@@ -349,8 +350,6 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
-    @show fn, res
-    flush(stdout)
     if annotation == Duplicated
         return Return2(res[1], res[2])
     else
@@ -400,15 +399,15 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
-
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     res = forward(args...)
     if length(res) > 1
-        origRet = res[2]
-        resT = typeof(origRet)
+      origRet = res[2]
+      resT = typeof(origRet)
     else
-        origRet = nothing
-        resT = Nothing
+      origRet = nothing
+      resT = Nothing
     end
 
     if annotation <: Active
@@ -522,13 +521,14 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
 
     tt′ = Tuple{map(Core.Typeof, args)...}
 
-    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
+    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width,
+                        #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
     if annotation <: Duplicated
         return Return2(res[1], res[2])
     else
-        return Return2(nothing, nothing)
+        return Return2(res[1], res[1])
     end
 end
 
@@ -570,21 +570,21 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
-
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     res = forward(args...)
     if length(res) > 1
-        origRet = res[2]
-        resT = typeof(origRet)
+      origRet = res[2]
+      resT = typeof(origRet)
     else
-        origRet = nothing
-        resT = Nothing
+      origRet = nothing
+      resT = Nothing
     end
 
     if annotation <: Active
         # This assumes that we have an Immutable object here that got passed as a boxed value
         shadow_return = Ref(zero(resT))
-        ret2 = shadow_return # due to this store we need typetag
+        ret2 = shadow_return
     elseif annotation <: Const
         shadow_return = nothing
         ret2 = origRet
@@ -594,8 +594,8 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     else
         error("Unknown annotation")
     end
-    internal_tape = res[1]
 
+    internal_tape = res[1]
     tape = Tape(adjoint, internal_tape, shadow_return, resT)
     return Return3(origRet, ret2, tape)
 end
@@ -690,13 +690,14 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width)
+    forward = thunk(fn, #=dfn=#nothing, Duplicated, tt′, Val(API.DEM_ForwardMode), width,
+                        #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
     if annotation <: Duplicated
        return Return2(res[1], res[2])
     else
-        return Return2(nothing, nothing)
+        return Return2(res[1], nothing)
     end
 end
 
@@ -726,11 +727,17 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width)
+    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
     res = forward(args...)
-    origRet = res[2]
-    resT = typeof(origRet)
+    if length(res) > 1
+      origRet = res[2]
+      resT = typeof(origRet)
+    else
+      origRet = nothing
+      resT = Nothing
+    end
 
     if annotation <: Active
         shadow_return = Ref(zero(resT))
@@ -1412,7 +1419,27 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     funcT = mi.specTypes.parameters[2]
 
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
+        @static if VERSION >= v"1.8" 
+          e_tt = Tuple{Const{Bool}}
+          RT = Core.Compiler.return_type(Tuple{funcT, Bool})
+        else
+          e_tt = Tuple{}
+          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{})
+        end
+        eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
+        
+        # TODO: Clean this up and add to `nested_codegen!` asa feature
+        etarget = Compiler.EnzymeTarget()
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+        ops = collect(operands(orig))[1:end-1]
+        dupClosure = !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT) && API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
+
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{RT}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#false, #=modifiedBetween=#false)
+        ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+        
+        cmod, adjointnm, _ = _thunk(ejob)
+        LLVM.link!(mod, cmod)
 
 @static if VERSION < v"1.8-"
     tt = Tuple{funcT, funcT, Val{width}}
@@ -1430,7 +1457,6 @@ end
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
-    ops = collect(operands(orig))[1:end-1]
 
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
@@ -3186,7 +3212,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         if wrap
-          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width)
+          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed)
         end
 
         # TODOs:
@@ -3199,27 +3225,31 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width, #=returnPrimal=#false)
         end
     elseif mode == API.DEM_ReverseModeCombined
+        returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType)) 
+        returnUsed &= returnPrimal
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#returnPrimal, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, width,
+            #=returnValue=#returnUsed, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, width,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure, width)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure, width, returnUsed)
         end
     elseif mode == API.DEM_ForwardMode
+        returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType)) 
+        returnUsed &= returnPrimal
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#returnPrimal, #=mode=#API.DEM_ForwardMode, width,
+            #=returnValue=#returnUsed, #=mode=#API.DEM_ForwardMode, width,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -3227,7 +3257,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     return adjointf, augmented_primalf
 end
 
-function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure, width)
+function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure, width, returnPrimal)
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -3310,7 +3340,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         
         # primal return
         if existed[2] != 0 
+            @assert returnPrimal
             push!(T_JuliaSRet, llvmT)
+        else
+            @assert !returnPrimal
         end
         # shadow return
         if existed[3] != 0
@@ -3324,7 +3357,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if returnUsed
             isboxed = GPUCompiler.deserves_argbox(actualRetType)
             llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
-            if rettype <: Duplicated || rettype <: BatchDuplicated
+            if returnPrimal
                 push!(T_JuliaSRet, llvmT)
             end
             if !(rettype <: Const)
@@ -3423,9 +3456,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
 
         val = call!(builder, enzymefn, realparms)
-
-        @show val, T_JuliaSRet, enzymefn
-        flush(stdout)
 
         if Mode == API.DEM_ReverseModePrimal
             returnNum = 0
@@ -3629,9 +3659,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     # TODO use rettype for sret calculation instead
     rettype = actualRetType
     
-	if returnRoots
-		push!(wrapper_types, llvmtype(parameters(entry_f)[1+sret]))
-	end
+	# if returnRoots
+	# 	push!(wrapper_types, llvmtype(parameters(entry_f)[1+sret]))
+	# end
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret+returnRoots:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
@@ -3700,12 +3730,14 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             push!(wrapper_args, sretPtr)
         end
 		if returnRoots
-			push!(wrapper_args, parameters(entry_f)[1+sret])
+            retRootPtr = alloca!(builder, eltype(llvmtype(parameters(entry_f)[1+sret])))
+            # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
+			push!(wrapper_args, retRootPtr)
 		end
 
         # perform argument conversions
         for (parm, arg) in zip(collect(parameters(entry_f))[1+sret+returnRoots:end], args)
-            wrapparm = parameters(wrapper_f)[arg.codegen.i-sret]
+            wrapparm = parameters(wrapper_f)[arg.codegen.i-sret-returnRoots]
             if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
                 # copy the argument value to a stack slot, and reference it.
                 ty = llvmtype(parm)
@@ -3723,7 +3755,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             else
                 push!(wrapper_args, wrapparm)
                 for attr in collect(parameter_attributes(entry_f, arg.codegen.i))
-                    push!(parameter_attributes(wrapper_f, arg.codegen.i-sret), attr)
+                    push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), attr)
                 end
             end
         end
@@ -3774,7 +3806,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
     end
     verify(wrapper_f)
-    return wrapper_f
+    return wrapper_f, returnRoots
 end
 
 function adim(::Array{T, N}) where {T, N}
@@ -3933,6 +3965,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if in(func, InactiveFunctions)
+            @show "inactive", func, k_name
+            flush(stdout)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
@@ -3956,7 +3990,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if func == pmap
             source_sig = Base.signature_type(func, sparam_vals)
             primal = llvmfn == primalf
-            llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+            llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
             k_name = LLVM.name(llvmfn)
             if primal
                 primalf = llvmfn
@@ -3988,7 +4022,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         if name == :__fd_sincos_1
           source_sig = Base.signature_type(func, sparam_vals)
-          llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+          llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
           k_name = LLVM.name(llvmfn)
         end
 
@@ -4025,7 +4059,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     source_sig = GPUCompiler.typed_signature(job)::Type
-    primalf = lower_convention(source_sig, mod, primalf, actualRetType)
+    primalf, returnRoots = lower_convention(source_sig, mod, primalf, actualRetType)
 
     if primal_job.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()
@@ -4180,7 +4214,7 @@ function jl_set_typeof(v::Ptr{Cvoid}, T)
     return nothing
 end
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Type{Val{returnPrimal}}, tt::Type{T},
+@generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
                                 rt::Type{RT}, f::F, df::DF, args::Vararg{Any, N}) where {F, T, RT, DF, N, CC, width, returnPrimal}
 
     is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
@@ -4511,7 +4545,7 @@ const cache_lock = ReentrantLock()
 end
 
 
-@generated function genthunk(f::F, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}) where {F, DF, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal}
+@generated function genthunk(::Type{F}, f::Fn, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}) where {F, Fn, DF, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal}
     primal, adjoint = fspec(F, TT)
 
     target = Compiler.EnzymeTarget()
@@ -4563,17 +4597,17 @@ end
     thunk = cached_compilation(job, hash(hash(hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)), UInt64(ModifiedBetween)), UInt64(ReturnPrimal)), specid)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         return quote
-            augmented = AugmentedForwardThunk{F, $rt, $(adjoint.tt), Val{width} , DF, Val{ReturnPrimal}}(f, $(thunk.primal), df)
+            augmented = AugmentedForwardThunk{F, $rt, $(adjoint.tt), Val{width} , DF, Val(ReturnPrimal)}(f, $(thunk.primal), df)
             adjoint  = AdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF}(f, $(thunk.adjoint), df)
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
         return quote
-            CombinedAdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val{ReturnPrimal}}(f, $(thunk.adjoint), df)
+            CombinedAdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val(ReturnPrimal)}(f, $(thunk.adjoint), df)
         end
     elseif Mode == API.DEM_ForwardMode
         return quote
-            ForwardModeThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val{ReturnPrimal}}(f, $(thunk.adjoint), df)
+            ForwardModeThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val(ReturnPrimal)}(f, $(thunk.adjoint), df)
         end
     else
         @assert false
@@ -4581,21 +4615,21 @@ end
 end
 
 @inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal}
-    primal, adjoint = fspec(F, TT)
+    primal, adjoint = fspec(Core.Typeof(f), TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
 
-    genthunk(f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
+    genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
                                      ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
-    primal, adjoint = fspec(F, tt)
+    primal, adjoint = fspec(Core.Typeof(f), tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
     job    = CompilerJob(target, primal, params)
