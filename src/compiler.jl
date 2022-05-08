@@ -1271,9 +1271,17 @@ end
 const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
-
 function runtime_pfor_fwd(fthunk)::Cvoid
-    Base.Threads.threading_run(fthunk)
+    @show fthunk
+    flush(stdout)
+    function fwd()
+        @show "inner", Base.Threads.threadid()
+        flush(stdout)
+        @show InteractiveUtils.@code_llvm fthunk()
+        flush(stdout)
+        fthunk()
+    end
+    Base.Threads.threading_run(fwd)
     return
 end
 
@@ -1393,7 +1401,7 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         ops = collect(operands(orig))[1:end-1]
         dupClosure = !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT) && API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
 
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#false, #=modifiedBetween=#false, #=returnPrimal=#false)
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
         
         cmod, adjointnm, _ = _thunk(ejob)
@@ -3273,9 +3281,13 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
+        @show "pre", adjointf
+        flush(stdout)
         if wrap
           adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed)
         end
+        @show "post", adjointf
+        flush(stdout)
     else
         @assert "Unhandled derivative mode", mode
     end
@@ -4135,6 +4147,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if params.run_enzyme
         # Generate the adjoint
         adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal)
+        @show mod
+        flush(stdout)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
