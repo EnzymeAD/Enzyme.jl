@@ -90,6 +90,14 @@ function typetree(::Type{Symbol}, ctx, dl, seen=nothing)
     return TypeTree()
 end
 
+function typetree(::Type{Core.SimpleVector}, ctx, dl, seen=nothing)
+    tt = TypeTree()
+    for i in 0:(sizeof(Csize_t)-1)
+        merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+    end
+    return tt
+end
+
 function typetree(::Type{<:AbstractString}, ctx, dl, seen=nothing)
     return TypeTree()
 end
@@ -159,6 +167,9 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
             return TypeTree()
         end
         if isa(T, DataType) && !ismutabletype(T) # singleton
+            return TypeTree()
+        end
+        if T <: Module
             return TypeTree()
         end
         error("$T is unknown leaf")

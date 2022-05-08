@@ -2375,11 +2375,8 @@ function int_return_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 end
 
 function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
-    TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
+    TT = TypeTree(API.DT_Pointer, LLVM.context(LLVM.Value(val)))
     only!(TT, -1)
-    API.EnzymeSetTypeTree(unsafe_load(args), TT)
-    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(LLVM.Instruction(val))))))
-    shift!(TT,  dl, #=off=#0, #=maxSize=#8, #=addOffset=#0)
     API.EnzymeSetTypeTree(ret, TT)
     return UInt8(false)
 end
@@ -2579,6 +2576,15 @@ function enzyme!(job, mod, primalf, adjoint, mode, parallel, actualRetType, dupC
         "enz_noop" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_inactive_inout" => @cfunction(inout_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_excstack_state" => @cfunction(int_return_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "julia.except_enter" => @cfunction(int_return_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
     )
 
     logic = Logic()
@@ -2999,10 +3005,18 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             res = call!(builder, wrapper_f, nops)
             if sret
               store!(builder, res, ops[1])
+            else
+              LLVM.replace_uses!(ci, res)
             end
             push!(toErase, ci)
         end
         for e in toErase
+            if !isempty(collect(uses(e)))
+                @show mod
+                @show entry_f
+                @show e
+                throw(AssertionError("Use after deletion"))
+            end
             LLVM.API.LLVMInstructionEraseFromParent(e)
         end
 
@@ -3128,6 +3142,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         Base.tan => (:tan, 1),
         Base.exp => (:exp, 1),
         Base.log => (:log, 1),
+        Base.log2 => (:log2, 1),
+        Base.log10 => (:log10, 1),
         Base.asin => (:asin, 1),
         Base.tanh => (:tanh, 1),
         Base.ldexp => (:ldexp, 2),
@@ -3173,12 +3189,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
-        if func == Base.copy && length(sparam_vals) == 1 && first(sparam_vals) <: Array
-            AT = first(sparam_vals)
-            T = eltype(AT)
-            N = adim(AT)
-            bitsunion = Base.isbitsunion(T)
-            error("jl_copy unhandled")
+        if func == Base.eps || func == Base.nextfloat || func == Base.prevfloat
+            handleCustom("jl_inactive_inout", [StringAttribute("enzyme_inactive"; ctx),
+                                      EnumAttribute("readnone", 0; ctx),
+                                      EnumAttribute("speculatable", 0; ctx),
+                                      StringAttribute("enzyme_shouldrecompute"; ctx)
+                                                      ])
+            continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
             handleCustom("jl_enq_work")
