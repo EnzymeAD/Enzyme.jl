@@ -348,9 +348,6 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
         end
     end
 
-    @show fn, tt, rt, annotation
-    flush(stdout)
-
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
@@ -512,8 +509,10 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     res = forward(args...)
     if annotation <: Duplicated
         return Return2(res[1], res[2])
-    else
+    elseif length(res) > 0
         return Return2(res[1], res[1])
+    else
+        return Return2(nothing, nothing)
     end
 end
 
@@ -660,9 +659,6 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
         annotation = Duplicated{rt}
     end
 
-    @show fn, tt, rt, annotation
-    flush(stdout)
-
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
                         #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
@@ -670,8 +666,10 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     res = forward(args...)
     if annotation <: Duplicated
        return Return2(res[1], res[2])
+    elseif length(res) > 0
+        return Return2(res[1], res[1])
     else
-        return Return2(res[1], nothing)
+        return Return2(nothing, nothing)
     end
 end
 
@@ -1272,16 +1270,7 @@ const leaked_objs = Base.Dict{Int64, Any}()
 
 if VERSION < v"1.8-"
 function runtime_pfor_fwd(fthunk)::Cvoid
-    @show fthunk
-    flush(stdout)
-    function fwd()
-        @show "inner", Base.Threads.threadid()
-        flush(stdout)
-        @show InteractiveUtils.@code_llvm fthunk()
-        flush(stdout)
-        fthunk()
-    end
-    Base.Threads.threading_run(fwd)
+    Base.Threads.threading_run(fthunk)
     return
 end
 
@@ -1391,9 +1380,6 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         end
         eprimal, eadjoint = fspec(funcT, e_tt)
 
-        @show funcT, Core.Compiler.singleton_type(funcT), e_tt, eprimal, eadjoint
-        flush(stdout)
-        
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
         width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -1414,9 +1400,6 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         rtthunk = alloca!(B, llty)
         rtthunk = addrspacecast!(B, rtthunk, LLVM.PointerType(llty, 11))
         idx = 0
-
-        @show rtthunk, llty
-        flush(stdout)
 
         to_preserve = LLVM.Value[]
 
@@ -1452,9 +1435,6 @@ else
     extraArgs = 1
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
-
-    @show entry
-    flush(stdout)
 
     T_int64 = LLVM.Int64Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -3281,13 +3261,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
-        @show "pre", adjointf
-        flush(stdout)
         if wrap
           adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed)
         end
-        @show "post", adjointf
-        flush(stdout)
     else
         @assert "Unhandled derivative mode", mode
     end
@@ -4019,8 +3995,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if in(func, InactiveFunctions)
-            @show "inactive", func, k_name
-            flush(stdout)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
@@ -4147,8 +4121,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if params.run_enzyme
         # Generate the adjoint
         adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal)
-        @show mod
-        flush(stdout)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
@@ -4502,7 +4474,7 @@ end
     else
         return quote
             Base.@_inline_meta
-            Base.llvmcall(($ir, $fn), Cvoid,
+	    Base.llvmcall(($ir, $fn), Cvoid,
                 Tuple{Ptr{Cvoid}, $(types...),},
                 fptr, $(ccexprs...))
             return ()
@@ -4677,10 +4649,6 @@ end
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
-
-
-    @show f, primal, adjoint, A, TT
-    flush(stdout)
 
     genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
 end
