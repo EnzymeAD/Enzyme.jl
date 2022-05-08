@@ -1402,19 +1402,25 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
         if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
             v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
+            if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
+                v = load!(B, v)
+            end
             push!(to_preserve, v)
-            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(idx; ctx)]))
+            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
             idx+= 1
         end
 
-        store!(B, ptrtoint!(B, functions(mod)[adjointnm], convert(LLVMType, Ptr{Cvoid}; ctx)), inbounds_gep!(rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(idx; ctx)]))
+        store!(B, ptrtoint!(B, functions(mod)[adjointnm], convert(LLVMType, Ptr{Cvoid}; ctx)), inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
         idx += 1
 
 
         if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
             v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+            if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
+                v = load!(B, v)
+            end
             push!(to_preserve, v)
-            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(idx; ctx)]))
+            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
             idx+= 1
         end
 
