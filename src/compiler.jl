@@ -17,6 +17,7 @@ import LLVM: Target, TargetMachine
 
 using Random
 using Printf
+using InteractiveUtils
 
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
@@ -1263,46 +1264,42 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
     return functions(mod)[entry]
 end
 
-let counter = Ref{Int64}(0)
-    global getid() = counter[] += 1
-end
-const leaked_objs = Base.Dict{Int64, Any}()
-
 if VERSION < v"1.8-"
 function runtime_pfor_fwd(fthunk)::Cvoid
     Base.Threads.threading_run(fthunk)
     return
 end
 
-function runtime_pfor_augfwd(func, dfunc, width)::Int64
-    # tape = vec{Any}(numthreads())
-    # pfor threads tape[i] = aug(func, dfunc)
+function runtime_pfor_augfwd(thunk)::Ptr{Ptr{Cvoid}}
+    @show "starting augfwd", thunk
+    flush(stdout)
+    tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
 
-    tt = Tuple{}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
-
-    tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
-    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
     function fwd()
-        tapes[Base.Threads.threadid()] = forward()[1]
+        @show "called fwd at tid", Base.Threads.threadid()
+        flush(stdout)
+        ntape = thunk()[1]
+        @show ntape, Base.Threads.threadid(), tapes
+        flush(stdout)
+        unsafe_store!(tapes, ntape, Base.Threads.threadid())
     end
-    adj = () -> adjoint(tapes[Base.Threads.threadid()])
-    id = getid()
-    leaked_objs[id] = adj
     Base.Threads.threading_run(fwd)
-    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
-    #       directly returning here allocates a heap object whose pointer is then leaked
-    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
-    #       we stash the object in a global dict, and return the id of the object
-    return id
+    return tapes
 end
 
-function runtime_pfor_rev(id::Int64)
-    tape = leaked_objs[id]
-    delete!(leaked_objs, id)
-    Base.Threads.threading_run(tape)
+function runtime_pfor_rev(thunk, tapes::Ptr{Ptr{Cvoid}})
+    @show "starting rev", thunk
+    flush(stdout)
+    function rev()
+        ntape = unsafe_load(tapes, Base.Threads.threadid())
+        @show "rev", ntape, Base.Threads.threadid(), tapes
+        flush(stdout)
+        @show InteractiveUtils.@code_llvm thunk(ntape)
+        flush(stdout)
+        thunk(ntape)
+    end
+    Base.Threads.threading_run(rev)
+    Libc.free(tapes)
     return nothing
 end
 else
@@ -1315,117 +1312,162 @@ function runtime_pfor_fwd(fthunk, dynamic)::Cvoid
     return
 end
 
-function runtime_pfor_augfwd(func, dfunc, width, dynamic)::Int64
-    # tape = vec{Any}(numthreads())
-    # pfor threads tape[i] = aug(func, dfunc)
+function runtime_pfor_augfwd(thunk, dynamic)::Ptr{Ptr{Cvoid}}
+    tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
 
-    tt = Tuple{Const{Int}}
-    # TODO with the MI itself, we should be able to hoist the thunk generation into
-    # the original compilation (rather than runtime JIT compiling)
-    forward, adjoint = thunk(func, dfunc, Const, tt, Val(API.DEM_ReverseModePrimal), width)
-
-    tapes = Vector{Ptr{Cvoid}}(undef, Base.Threads.nthreads())
-    # tapes = unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads))
     function fwd(tid)
-        tapes[tid] = forward(Const(tid))[1]
+        unsafe_store!(tapes, thunk(Const(tid))[1], tid)
     end
-    adj = (tid) -> adjoint(Const(tid), tapes[tid])
-    id = getid()
-    leaked_objs[id] = adj
     Base.Threads.threading_run(fwd, dynamic)
-    # Note: `adj` is an immutable object, and thus has pass-by-value semantics
-    #       directly returning here allocates a heap object whose pointer is then leaked
-    #       onto the tape and GC, will kill it. Until we have proper tape+GC support,
-    #       we stash the object in a global dict, and return the id of the object
-    return id
+    return tapes
 end
 
-function runtime_pfor_rev(id::Int64, dynamic)
-    tape = leaked_objs[id]
-    delete!(leaked_objs, id)
-    Base.Threads.threading_run(tape, dynamic)
+function runtime_pfor_rev(thunk, tapes::Ptr{Ptr{Cvoid}}, dynamic)
+    function rev(tid)
+        thunk(Const(tid), unsafe_load(tapes, tid))
+    end
+    Base.Threads.threading_run(rev, dynamic)
+    Libc.free(tapes)
     return nothing
 end
 end
 
-function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-
-    orig = LLVM.Instruction(OrigCI)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+@inline function threadsfor_common(orig, gutils, B, mode)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     llvmfn = LLVM.called_value(orig)
     mi = nothing
-    for fattr in collect(function_attributes(llvmfn))
+    fwdmodenm = nothing
+    augfwdnm = nothing
+    adjointnm = nothing
+    attributes = function_attributes(llvmfn)
+    for fattr in collect(attributes)
         if isa(fattr, LLVM.StringAttribute)
             if kind(fattr) == "enzymejl_mi"
                 ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
                 mi = Base.unsafe_pointer_to_objref(ptr)
-                break
+            end
+            if kind(fattr) == "enzymejl_forward"
+                fwdmodenm = value(fattr)
+            end
+            if kind(fattr) == "enzymejl_augforward"
+                augfwdnm = value(fattr)
+            end
+            if kind(fattr) == "enzymejl_adjoint"
+                adjointnm = value(fattr)
             end
         end
     end
 
-    B = LLVM.Builder(B)
-
     funcT = mi.specTypes.parameters[2]
 
-        @static if VERSION >= v"1.8" 
-          e_tt = Tuple{Const{Bool}}
-        else
-          e_tt = Tuple{}
+    @static if VERSION >= v"1.8"
+      e_tt = Tuple{Const{Bool}}
+    else
+      e_tt = Tuple{}
+    end
+    eprimal, eadjoint = fspec(funcT, e_tt)
+
+    # TODO: Clean this up and add to `nested_codegen!` asa feature
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+    ops = collect(operands(orig))[1:end-1]
+    dupClosure = !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT) && API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
+
+    subfunc = nothing
+    if mode == API.DEM_ForwardMode
+        if fwdmodenm === nothing
+            etarget = Compiler.EnzymeTarget()
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false)
+            ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+            cmod, fwdmodenm, _ = _thunk(ejob)
+            LLVM.link!(mod, cmod)
+
+            push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm; ctx))
+            push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
         end
-        eprimal, eadjoint = fspec(funcT, e_tt)
-
-        # TODO: Clean this up and add to `nested_codegen!` asa feature
-        etarget = Compiler.EnzymeTarget()
-        width = API.EnzymeGradientUtilsGetWidth(gutils)
-
-        ops = collect(operands(orig))[1:end-1]
-        dupClosure = !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT) && API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
-
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false)
-        ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
-        
-        cmod, adjointnm, _ = _thunk(ejob)
-        LLVM.link!(mod, cmod)
 
         thunkTy = ForwardModeThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
+        subfunc = functions(mod)[fwdmodenm]
 
-        llty = convert(LLVMType, thunkTy; ctx)
+    elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+        if augfwdnm === nothing || adjointnm === nothing
+            etarget = Compiler.EnzymeTarget()
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false)
+            ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+            cmod, adjointnm, augfwdnm = _thunk(ejob)
+            LLVM.link!(mod, cmod)
 
-        rtthunk = alloca!(B, llty)
-        rtthunk = addrspacecast!(B, rtthunk, LLVM.PointerType(llty, 11))
-        idx = 0
+            push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm; ctx))
+            push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
 
-        to_preserve = LLVM.Value[]
-
-        if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
-            v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
-            if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
-                v = load!(B, v)
-            end
-            push!(to_preserve, v)
-            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-            idx+= 1
+            push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
+            push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
         end
 
-        store!(B, ptrtoint!(B, functions(mod)[adjointnm], convert(LLVMType, Ptr{Cvoid}; ctx)), inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-        idx += 1
-
-
-        if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
-            v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
-            if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
-                v = load!(B, v)
-            end
-            push!(to_preserve, v)
-            store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-            idx+= 1
+        if mode == API.DEM_ReverseModePrimal
+            thunkTy = AugmentedForwardThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(true)}
+            subfunc = functions(mod)[augfwdnm]
+       else
+            thunkTy = AdjointThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing}
+            subfunc = functions(mod)[adjointnm]
         end
+    else
+        @assert "Unknown mode"
+    end
+
+    llty = convert(LLVMType, thunkTy; ctx)
+
+    EB = LLVM.Builder(ctx)
+    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+    rtthunk = alloca!(EB, llty)
+    rtthunk = addrspacecast!(EB, rtthunk, LLVM.PointerType(llty, 11))
+    idx = 0
+
+    to_preserve = LLVM.Value[]
+
+    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+        v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
+        if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
+            v = load!(B, v)
+        end
+        push!(to_preserve, v)
+        store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
+        idx+= 1
+    end
+
+    @show subfunc, mode
+    flush(stdout)
+
+    store!(B, ptrtoint!(B, subfunc, convert(LLVMType, Ptr{Cvoid}; ctx)), inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
+    idx += 1
+
+
+    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+        v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+        if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
+            v = load!(B, v)
+        end
+        push!(to_preserve, v)
+        store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
+        idx+= 1
+    end
+
+    return thunkTy, rtthunk, to_preserve
+end
+
+function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+
+    orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+
+    B = LLVM.Builder(B)
+
+    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
 @static if VERSION < v"1.8-"
     tt = Tuple{thunkTy}
@@ -1435,11 +1477,6 @@ else
     extraArgs = 1
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
-
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
     vals = LLVM.Value[rtthunk]
 
@@ -1460,71 +1497,41 @@ end
     else
         LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
     end
-
 end
 
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+
     orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
+    B = LLVM.Builder(B)
 
-    llvmfn = LLVM.called_value(orig)
-    mi = nothing
-    for fattr in collect(function_attributes(llvmfn))
-        if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-                break
-            end
-        end
-    end
-
-	funcT = mi.specTypes.parameters[2]
-
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, funcT, Val{width}} #annotate_tuple_type(mi.specTypes, activity)
+    tt = Tuple{thunkTy}
     extraArgs = 0
 else
-    tt = Tuple{funcT, funcT, Val{width}, Bool}
+    tt = Tuple{thunkTy, Bool}
     extraArgs = 1
 end
-    GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
-    B = LLVM.Builder(B)
-    
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    vals = LLVM.Value[rtthunk]
 
-    ops = collect(operands(orig))[1:end-1]
-
-	vals = LLVM.Value[]
-    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
-		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
-			push!(vals, real)
-		end
-        to_preserve = LLVM.Value[vals[1], vals[2]]
-    else
-        to_preserve = LLVM.Value[]
-	end
 @static if VERSION < v"1.8-"
 else
-    if length(vals) ÷ 2 != length(ops)
-        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
-    end
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
 end
+
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
-    
+    @show tape
+    flush(stdout)
+
     emit_gc_preserve_end(B, token)
 
     # Delete the primal code
@@ -1534,45 +1541,43 @@ end
         LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
     end
 
+    GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
+
     unsafe_store!(tapeR, tape.ref)
 
     return nothing
 end
 
 function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+
     orig = LLVM.Instruction(OrigCI)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     tape = LLVM.Value(tape)
-    ctx = LLVM.context(orig)
+
+    B = LLVM.Builder(B)
+
+    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
+
 @static if VERSION < v"1.8-"
-    fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,))
+    tt = Tuple{thunkTy, Ptr{Ptr{Cvoid}}}
+    extraArgs = 0
 else
-    fun = @cfunction(runtime_pfor_rev, Cvoid, (Int64,Bool))
+    tt = Tuple{thunkTy, Ptr{Ptr{Cvoid}}, Bool}
+    extraArgs = 1
 end
-    
-	B = LLVM.Builder(B)
-    ops = collect(operands(orig))[1:end-1]
-    
-	vals = LLVM.Value[tape]
-    to_preserve = LLVM.Value[vals[1]]
+    entry = nested_codegen!(mod, runtime_pfor_rev, tt)
+
+    vals = LLVM.Value[rtthunk, tape]
+
+@static if VERSION < v"1.8-"
+else
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+end
+
     token = emit_gc_preserve_begin(B, to_preserve)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-    T_int64 = LLVM.Int64Type(ctx)
 
-@static if VERSION < v"1.8-"
-    T_args = LLVM.LLVMType[T_int64]
-else
-    T_args = LLVM.LLVMType[T_int64, LLVM.Int8Type(ctx)]
-end
-    fnT = LLVM.FunctionType(LLVM.VoidType(ctx), T_args)
-    rtfn = LLVM.inttoptr!(B, LLVM.ConstantInt(convert(UInt64, fun); ctx), LLVM.PointerType(fnT))
-@static if VERSION < v"1.8-"
-else
-        push!(vals, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end]), B)))
-end
+    tape = LLVM.call!(B, entry, vals)
 
-    LLVM.call!(B, rtfn, vals)
-    
     emit_gc_preserve_end(B, token)
     return nothing
 end

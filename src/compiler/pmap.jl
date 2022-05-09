@@ -163,7 +163,6 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
             if kind(fattr) == "enzymejl_mi"
                 ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
                 mi = Base.unsafe_pointer_to_objref(ptr)
-                break
             end
             if kind(fattr) == "enzymejl_augforward"
                 forwardnm = value(fattr)
