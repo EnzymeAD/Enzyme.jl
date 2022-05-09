@@ -51,7 +51,8 @@ const inactivefns = Set{String}((
     "jl_stored_inline", "ijl_stored_inline",
     "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
     "jl_matching_methods", "ijl_matching_methods",
-    "jl_excstack_state", "jl_current_exception"
+    "jl_excstack_state", "jl_current_exception",
+    "memhash_seed"
     # "jl_"
 ))
 
@@ -64,6 +65,7 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Base.show,
                                Base.flush,
                                Base.string,
+                               Base.repr,
                                Base.print_to_string,
                                Base.Threads.threadid,
                                Base.Threads.nthreads,
@@ -1253,12 +1255,14 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
 end
 
 if VERSION < v"1.8-"
-function runtime_pfor_fwd(fthunk)::Cvoid
-    Base.Threads.threading_run(fthunk)
+function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
+    Base.Threads.threading_run(thunk)
     return
 end
 
-function runtime_pfor_augfwd(thunk)::Ptr{Ptr{Cvoid}}
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Ptr{Ptr{Cvoid}} where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
     @show "starting augfwd", thunk
     flush(stdout)
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
@@ -1275,7 +1279,8 @@ function runtime_pfor_augfwd(thunk)::Ptr{Ptr{Cvoid}}
     return tapes
 end
 
-function runtime_pfor_rev(thunk, tapes::Ptr{Ptr{Cvoid}})
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes::Ptr{Ptr{Cvoid}}) where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
     @show "starting rev", thunk
     flush(stdout)
     function rev()
@@ -1287,20 +1292,24 @@ function runtime_pfor_rev(thunk, tapes::Ptr{Ptr{Cvoid}})
         thunk(ntape)
     end
     Base.Threads.threading_run(rev)
+    @show "post run", thunk
+    flush(stdout)
     Libc.free(tapes)
     return nothing
 end
 else
 
-function runtime_pfor_fwd(fthunk, dynamic)::Cvoid
+function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
     function fwd(tid)
-        fthunk(Const(tid))
+        thunk(Const(tid))
     end
     Base.Threads.threading_run(fwd, dynamic)
     return
 end
 
-function runtime_pfor_augfwd(thunk, dynamic)::Ptr{Ptr{Cvoid}}
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Ptr{Ptr{Cvoid}} where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
     tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
 
     function fwd(tid)
@@ -1310,7 +1319,8 @@ function runtime_pfor_augfwd(thunk, dynamic)::Ptr{Ptr{Cvoid}}
     return tapes
 end
 
-function runtime_pfor_rev(thunk, tapes::Ptr{Ptr{Cvoid}}, dynamic)
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes::Ptr{Ptr{Cvoid}}, dynamic) where ThunkTy
+    thunk = ThunkTy(func, ptr, dfunc)
     function rev(tid)
         thunk(Const(tid), unsafe_load(tapes, tid))
     end
@@ -1406,44 +1416,24 @@ end
         @assert "Unknown mode"
     end
 
-    llty = convert(LLVMType, thunkTy; ctx)
-
-    EB = LLVM.Builder(ctx)
-    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-    rtthunk = alloca!(EB, llty)
-    rtthunk = addrspacecast!(EB, rtthunk, LLVM.PointerType(llty, 11))
-    idx = 0
-
     to_preserve = LLVM.Value[]
+    vals = LLVM.Value[]
 
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
         v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
-        if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
-            v = load!(B, v)
-        end
+        push!(vals, v)
         push!(to_preserve, v)
-        store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-        idx+= 1
     end
 
-    @show subfunc, mode
-    flush(stdout)
-
-    store!(B, ptrtoint!(B, subfunc, convert(LLVMType, Ptr{Cvoid}; ctx)), inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-    idx += 1
-
+    push!(vals, ptrtoint!(B, subfunc, convert(LLVMType, Ptr{Cvoid}; ctx)))
 
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
         v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
-        if isa(llvmtype(v), LLVM.PointerType) && !isa(elements(llty)[idx+1], LLVM.PointerType)
-            v = load!(B, v)
-        end
+        push!(vals, v)
         push!(to_preserve, v)
-        store!(B, v, inbounds_gep!(B, rtthunk, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(LLVM.IntType(32; ctx), idx)]))
-        idx+= 1
     end
 
-    return thunkTy, rtthunk, to_preserve
+    return funcT, vals, thunkTy, to_preserve
 end
 
 function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -1455,18 +1445,14 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     B = LLVM.Builder(B)
 
-    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
+    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy}
-    extraArgs = 0
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}}
 else
-    tt = Tuple{thunkTy, Bool}
-    extraArgs = 1
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
-
-    vals = LLVM.Value[rtthunk]
 
 @static if VERSION < v"1.8-"
 else
@@ -1496,18 +1482,15 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     B = LLVM.Builder(B)
 
-    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
+    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy}
-    extraArgs = 0
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}}
 else
-    tt = Tuple{thunkTy, Bool}
-    extraArgs = 1
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
-    entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
-    vals = LLVM.Value[rtthunk]
+    entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
 
 @static if VERSION < v"1.8-"
 else
@@ -1517,8 +1500,6 @@ end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
-    @show tape
-    flush(stdout)
 
     emit_gc_preserve_end(B, token)
 
@@ -1544,18 +1525,16 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     B = LLVM.Builder(B)
 
-    thunkTy, rtthunk, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
+    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, Ptr{Ptr{Cvoid}}}
-    extraArgs = 0
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Ptr{Cvoid}}}
 else
-    tt = Tuple{thunkTy, Ptr{Ptr{Cvoid}}, Bool}
-    extraArgs = 1
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Ptr{Cvoid}}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
 
-    vals = LLVM.Value[rtthunk, tape]
+    push!(vals, tape)
 
 @static if VERSION < v"1.8-"
 else
@@ -1564,7 +1543,7 @@ end
 
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    tape = LLVM.call!(B, entry, vals)
+    LLVM.call!(B, entry, vals)
 
     emit_gc_preserve_end(B, token)
     return nothing
@@ -4136,6 +4115,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
     end
+
+    @show mod
+    flush(stdout)
 
     adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))

@@ -71,7 +71,7 @@ Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
 end
 
 const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(pmap),
-                            typeof(Base.to_tuple_type)])
+                            typeof(Base.to_tuple_type), typeof(Base.repr)])
 
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
