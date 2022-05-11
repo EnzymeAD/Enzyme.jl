@@ -43,7 +43,11 @@ function reinsert_gcmarker!(func)
     if ptls === nothing
         B = Builder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
-        position!(B, first(instructions(entry_bb)))
+        if !isempty(instructions(entry_bb))
+            position!(B, first(instructions(entry_bb)))
+        else
+            position!(B, entry_bb)
+        end
         emit_ptls!(B)
 	else
 		ptls
@@ -86,7 +90,11 @@ function reinsert_gcmarker!(func)
     if pgs === nothing
         B = Builder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
-        position!(B, first(instructions(entry_bb)))
+        if !isempty(instructions(entry_bb))
+            position!(B, first(instructions(entry_bb)))
+        else
+            position!(B, entry_bb)
+        end
         emit_pgcstack(B)
 	else
 		pgs

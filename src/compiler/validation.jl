@@ -70,7 +70,10 @@ module FFI
             "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
             "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
             "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
-            "jl_symbol_n", "jl_", "jl_object_id"
+            "jl_symbol_n", "jl_", "jl_object_id",
+            "jl_reshape_array","ijl_reshape_array",
+            "jl_matching_methods", "ijl_matching_methods",
+            "jl_array_sizehint", "ijl_array_sizehint"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -440,6 +443,24 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         lfn = LLVM.API.LLVMConstBitCast(lfn, LLVM.PointerType(LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))))
                     end
                     LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst)-1, lfn)
+                end
+            end
+        end
+        dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
+        if isa(dest, LLVM.Function) && name(dest) == "jl_f_invoke"
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            while isa(flib, LLVM.ConstantExpr)
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+            end
+            if isa(flib, ConstantInt)
+                rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
+                flib = Base.unsafe_pointer_to_objref(rep)
+                if flib === Base.CoreLogging.logmsg_code || flib === Base.CoreLogging.shouldlog
+                    ofn = LLVM.parent(LLVM.parent(inst))
+                    mod = LLVM.parent(ofn)
+                    ctx = context(mod)
+                    inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                 end
             end
         end

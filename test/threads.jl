@@ -51,6 +51,10 @@ end
     @test 2.0 ≈ dx[1]
     @test 2.0 ≈ dx[2]
     @test 2.0 ≈ dx[3]
+
+    x = [1.0, 2.0, 3.0]
+    dx = [1.0, 1.0, 1.0]
+    @test_broken Enzyme.fwddiff(foo, Duplicated(x, dx))
 end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin

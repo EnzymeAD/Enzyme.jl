@@ -42,17 +42,19 @@ include("typetree.jl")
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}})
-    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}})
-    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}})
+    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_d = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     @test thunk_a.adjoint !== thunk_b.adjoint
-    @test thunk_c.adjoint === thunk_a.adjoint
+    @test_broken thunk_c.adjoint === thunk_a.adjoint
+    @test thunk_c.adjoint === thunk_d.adjoint
 
     @test thunk_a(Active(2.0), 1.0) == (1.0,)
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient))
+    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -95,6 +97,8 @@ end
     @test fwddiff(tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
+    test_scalar(log2, 1.0)
+    test_scalar(log10, 1.0)
 
     @test autodiff((x)->log(x), Active(2.0)) == (0.5,)
 end
@@ -193,6 +197,38 @@ end
     @test autodiff(f_dict, Const(params), Active(5.0)) == (10.0,)
     @test autodiff(f_dict, Duplicated(params, dparams), Active(5.0)) == (10.0,)
     @test dparams[:var] == 5.0
+
+    
+    mutable struct MD
+        v::Float64
+        d::Dict{Symbol, MD}
+    end
+    
+    # TODO without Float64 on return
+    # there is a potential phi bug
+    function sum_rec(d::Dict{Symbol,MD})::Float64
+        s = 0.0
+        for k in keys(d)
+            s += d[k].v
+            s += sum_rec(d[k].d)
+        end
+        return s
+    end
+
+    par = Dict{Symbol, MD}()
+    par[:var] = MD(10.0, Dict{Symbol, MD}())
+    par[:sub] = MD(2.0, Dict{Symbol, MD}(:a=>MD(3.0, Dict{Symbol, MD}())))
+    
+    dpar = Dict{Symbol, MD}()
+    dpar[:var] = MD(0.0, Dict{Symbol, MD}())
+    dpar[:sub] = MD(0.0, Dict{Symbol, MD}(:a=>MD(0.0, Dict{Symbol, MD}())))
+
+    # TODO
+    # autodiff(sum_rec, Duplicated(par, dpar))
+    # @show par, dpar, sum_rec(par)
+    # @test dpar[:var].v ≈ 1.0 
+    # @test dpar[:sub].v ≈ 1.0 
+    # @test dpar[:sub].d[:a].v ≈ 1.0 
 end
 
 function grad_closure(f, x)
@@ -804,13 +840,15 @@ end
     @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
-end
-
-@testset "Exception" begin
+    
     f_exc(x) = sum(x*x)
     y = [[1.0, 2.0] [3.0,4.0]]
     f_x = zero.(y)
-    @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_exc, Duplicated(y, f_x))
+    Enzyme.autodiff(f_exc, Duplicated(y, f_x))
+    @test f_x ≈ [7.0 9.0; 11.0 13.0]
+end
+
+@testset "Exception" begin
 
     f_no_derv(x) = ccall("extern doesnotexist", llvmcall, Float64, (Float64,), x)
     @test_throws Enzyme.Compiler.NoDerivativeException autodiff(f_no_derv, Active, Active(0.5))
@@ -835,3 +873,94 @@ end
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
 end
+
+@testset "Batch Forward" begin
+    square(x)=x*x
+    bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
+    @test length(bres) == 1
+    @test length(bres[1]) == 3
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+    
+    bres = fwddiff(square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
+    @test bres[1][1] ≈  6.0 + 14.0im
+    @test bres[1][2] ≈ 12.0 + 28.0im
+    @test bres[1][3] ≈ 18.0 + 42.0im
+
+    squareidx(x)=x[1]*x[1]
+    inp = Float32[3.0]
+
+    # Shadow offset is not the same as primal so following doesn't work
+    # d_inp = Float32[1.0, 2.0, 3.0]
+    # fwddiff(squareidx, BatchDuplicatedNoNeed, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
+
+    d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
+    bres = fwddiff(squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+end
+
+@testset "Batch Reverse" begin
+    function refbatchbwd(out, x)
+        v = x[]
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    dxs = (Ref(0.0), Ref(0.0), Ref(0.0))
+    out = Float64[0,0,0]
+    x = Ref(2.0)
+
+    autodiff(refbatchbwd, BatchDuplicated(out, Enzyme.onehot(out)), BatchDuplicated(x, dxs))
+    @test dxs[1][] ≈  1.0
+    @test dxs[2][] ≈  4.0
+    @test dxs[3][] ≈ 12.0
+
+    function batchbwd(out, v)
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    bres = Enzyme.autodiff(batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))
+    @test length(bres) == 1
+    @test length(bres[1]) == 3
+    @test bres[1][1] ≈  1.0
+    @test bres[1][2] ≈  4.0
+    @test bres[1][3] ≈ 12.0
+end
+
+@testset "Jacobian" begin
+    function inout(v)
+       [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
+    end
+
+	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], Val(1); n_outs=Val(3))	
+	@test length(jac) == 3
+	@test jac[1] ≈ [ 0.0, 1.0]
+	@test jac[2] ≈ [ 4.0, 0.0]
+	@test jac[3] ≈ [12.0, 0.0]
+	
+	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(1))
+	@test length(jac) == 2
+	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
+	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+
+	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], Val(2); n_outs=Val(3))	
+	@test length(jac) == 3
+	@test jac[1] ≈ [ 0.0, 1.0]
+	@test jac[2] ≈ [ 4.0, 0.0]
+	@test jac[3] ≈ [12.0, 0.0]
+	
+	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(2))
+	@test length(jac) == 2
+	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
+	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+end
+
+
