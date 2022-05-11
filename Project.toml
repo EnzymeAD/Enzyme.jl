@@ -17,7 +17,7 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
-Enzyme_jll = "0.0.30"
+Enzyme_jll = "0.0.31"
 GPUCompiler = "0.15"
 LLVM = "4.1"
 ObjectFile = "0.3"
