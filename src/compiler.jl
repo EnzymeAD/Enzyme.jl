@@ -7,7 +7,7 @@ import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
-import GPUCompiler: CompilerJob, FunctionSpec, codegen
+import GPUCompiler: CompilerJob, FunctionSpec, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
@@ -3300,7 +3300,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     end
 
     FT = LLVM.FunctionType(T_void, T_wrapperargs)
-    llvm_f = LLVM.Function(mod, LLVM.name(enzymefn)*"wrap", FT)
+    llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -3521,7 +3521,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         push!(wrapper_types, typ)
     end
     wrapper_fn = LLVM.name(entry_f)
-    LLVM.name!(entry_f, wrapper_fn * ".inner")
+    LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
 
@@ -3874,7 +3874,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         llvmfn = primalf
         FT = eltype(llvmtype(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
 
-        wrapper_f = LLVM.Function(mod, LLVM.name(llvmfn)*"mustwrap", FT)
+        wrapper_f = LLVM.Function(mod, safe_name(LLVM.name(llvmfn)*"mustwrap"), FT)
 
         let builder = Builder(ctx)
             entry = BasicBlock(wrapper_f, "entry"; ctx)
