@@ -1,10 +1,9 @@
 module Enzyme
 
 export Forward, Reverse
-export autodiff, autodiff_deferred, fwddiff, fwddiff_deferred, markType
-export jacobian, gradient, gradient!, onehot, chunkedonehot
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, batch_size
-export parallel, pmap
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export autodiff, jacobian, gradient, gradient!
+export markType, batch_size, onehot, chunkedonehot
 
 """
     abstract type Annotation{T}
@@ -96,34 +95,6 @@ batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
-@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T}
-    return Const{T}
-end
-@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Active{T}
-    end
-end
-@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:Complex{<:AbstractFloat}}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Active{T}
-    end
-end
-
-@inline function guess_activity(::Type{T}, Mode=API.DEM_ReverseModeCombined) where {T<:AbstractArray}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Duplicated{T}
-    end
-end
-
-import LLVM
-
 """
     abstract type Mode
 
@@ -139,6 +110,7 @@ Reverse mode differentiation
 struct ReverseMode <: Mode
 end
 const Reverse = ReverseMode()
+guess_activity(::Type{T}, ::ReverseMode) where T = guess_activity(T)
 
 """
     struct Forward <: Mode
@@ -148,8 +120,39 @@ Forward mode differentiation
 struct ForwardMode <: Mode
 end
 const Forward = ForwardMode()
+guess_activity(::Type{T}, ::ForwardMode) where T = guess_activity(T, API.DEM_ForwardMode)
+
+import LLVM
 
 include("api.jl")
+
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
+    return Const{T}
+end
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Active{T}
+    end
+end
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:Complex{<:AbstractFloat}}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Active{T}
+    end
+end
+
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractArray}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Duplicated{T}
+    end
+end
+
+
 include("logic.jl")
 include("typeanalysis.jl")
 include("typetree.jl")
@@ -200,9 +203,9 @@ end
 end
 
 """
-    autodiff(f, Activity, args...)
+    autodiff(::ReverseMode, f, Activity, args...)
 
-Auto-differentiate function `f` at arguments `args`.
+Auto-differentiate function `f` at arguments `args` using reverse mode.
 
 Limitations:
 
@@ -229,7 +232,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
-∂f_∂a, ∂f_∂d = autodiff(f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
+∂f_∂a, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
 
 # output
 
@@ -247,7 +250,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ReverseMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
@@ -277,7 +280,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     thunk(args′...)
 end
 
-@inline function autodiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ReverseMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
@@ -290,28 +293,31 @@ end
 end
 
 """
-    autodiff(f, args...)
+    autodiff(mode::Mode, f, args...)
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff(f::F, args...) where {F}
+@inline function autodiff(mode::Mode, f::F, args...) where {F}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
-    A     = guess_activity(rt)
-    autodiff(f, A, args′...)
+    A     = guess_activity(rt, mode)
+    autodiff(mode, f, A, args′...)
 end
 
-@inline function autodiff(dupf::Duplicated{F}, args...) where {F}
+@inline function autodiff(mode::Mode, dupf::Duplicated{F}, args...) where {F}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt)
-    autodiff(dupf, A, args′...)
+    A     = guess_activity(rt, mode)
+    autodiff(mode, dupf, A, args′...)
 end
 
+# Compat
+@inline autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} = autodiff(Reverse, f, A, args...)
+@inline autodiff(f::F, args...) where {F} = autodiff(Reverse, f, args...)
 
 """
     autodiff_deferred(f, Activity, args...)
@@ -369,7 +375,7 @@ Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 """
-    fwddiff(f, Activity, args...)
+    autodiff(::ForwardMode, f, Activity, args...)
 
 Auto-differentiate function `f` at arguments `args` using forward mode.
 
@@ -395,7 +401,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-res, ∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
+res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
@@ -410,14 +416,14 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-∂f_∂x = fwddiff(f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
+∂f_∂x = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
 
 # output
 
 (6.28,)
 ```
 """
-@inline function fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
@@ -428,7 +434,7 @@ f(x) = x*x
     thunk(args′...)
 end
 
-@inline function fwddiff(dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ForwardMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
@@ -439,26 +445,10 @@ end
     thunk(args′...)
 end
 
-"""
-    fwddiff(f, args...)
 
-Like [`fwddiff`](@ref) but will try to guess the activity of the return value, defaulting to only returning the derivative.
-"""
-@inline function fwddiff(f::F, args...) where {F}
-    args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    A     = guess_activity(rt, API.DEM_ForwardMode)
-    fwddiff(f, A, args′...)
-end
-
-@inline function fwddiff(dupf::Duplicated{F}, args...) where {F}
-    args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt, API.DEM_ForwardMode)
-    fwddiff(dupf, A, args′...)
-end
+# Compat
+@deprecate fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} autodiff(Forward, f, A, args...)
+@deprecate fwddiff(f::F, args...) where {F} autodiff(Forward, f, args...)
 
 """
     fwddiff_deferred(f, Activity, args...)
@@ -642,7 +632,7 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 """
 @inline function gradient(::ReverseMode, f, x)
     dx = zero(x)
-    autodiff(f, Duplicated(x, dx))
+    autodiff(Reverse, f, Duplicated(x, dx))
     dx
 end
 
@@ -670,7 +660,7 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 """
 @inline function gradient!(::ReverseMode, dx, f, x)
     dx .= 0
-    autodiff(f, Duplicated(x, dx))
+    autodiff(Reverse, f, Duplicated(x, dx))
     dx
 end
 
@@ -696,7 +686,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
-    fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
+    autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -733,14 +723,14 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 """
 @inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
     tmp = ntuple(length(shadow)) do i
-        fwddiff(f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
+        autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
     end
     tupleconcat(tmp...)
 end
 
 @inline function gradient(::ForwardMode, f, x, ::Val{1}; shadow=onehot(x))
     ntuple(length(shadow)) do i
-        fwddiff(f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
 end
 
