@@ -204,6 +204,18 @@ EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign
     ( EnzymeGradientUtilsRef, CDerivativeMode, LLVMTypeRef, UInt64, UInt64, UInt64, UInt64, UInt8, LLVMValueRef, UInt8, LLVMValueRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, UInt8, UInt8),
 	gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
 
+function sub_transfer(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
+    GC.@preserve secretty
+        if secretty === nothing
+            secretty = Base.unsafe_convert(LLVMTypeRef, C_NULL)
+        else
+            secretty = Base.unsafe_convert(LLVMTypeRef, secretty)
+        end
+
+        EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
+    end
+end
+
 function CreateLogic(postOpt=false)
     ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, (UInt8,), postOpt)
 end
