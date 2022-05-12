@@ -4,7 +4,7 @@ CurrentModule = Enzyme
 
 # Enzyme
 
-Documentation for [Enzyme.jl](https://github.com/wsmoses/Enzyme.jl), the Julia bindings for [Enzyme](https://github.com/wsmoses/enzyme).
+Documentation for [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl), the Julia bindings for [Enzyme](https://github.com/EnzymeAD/enzyme).
 
 Enzyme performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
 

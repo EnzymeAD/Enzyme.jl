@@ -8,7 +8,7 @@ DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 makedocs(;
     modules=[Enzyme],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
-    repo="https://github.com/wsmoses/Enzyme.jl/blob/{commit}{path}#{line}",
+    repo="https://github.com/EnzymeAD/Enzyme.jl/blob/{commit}{path}#{line}",
     sitename="Enzyme.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
@@ -33,7 +33,7 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/wsmoses/Enzyme.jl",
+    repo="github.com/EnzymeAD/Enzyme.jl",
     devbranch = "master",
     push_preview = true,
 )

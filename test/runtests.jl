@@ -74,6 +74,11 @@ end
     end
 end
 
+using  Documenter
+DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+@testset "DocTests" begin
+    doctest(Enzyme; manual = false)
+end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -300,7 +305,7 @@ end
     end
     # TODO(wsmoses): Assertion failed: (pp->getNumUses() == 0), function eraseFictiousPHIs
     # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
-    # TODO: https://github.com/wsmoses/Enzyme/issues/393
+    # TODO: https://github.com/EnzymeAD/Enzyme/issues/393
     # @test Enzyme.fwddiff(gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
@@ -940,7 +945,7 @@ end
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
     end
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], Val(1); n_outs=Val(3))	
+	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
 	@test length(jac) == 3
 	@test jac[1] ≈ [ 0.0, 1.0]
 	@test jac[2] ≈ [ 4.0, 0.0]
@@ -951,7 +956,7 @@ end
 	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
 	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], Val(2); n_outs=Val(3))	
+	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
 	@test length(jac) == 3
 	@test jac[1] ≈ [ 0.0, 1.0]
 	@test jac[2] ≈ [ 4.0, 0.0]
