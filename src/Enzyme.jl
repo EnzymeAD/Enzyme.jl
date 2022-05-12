@@ -5,6 +5,8 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 export autodiff, jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
+using Adapt
+
 """
     abstract type Annotation{T}
 
@@ -12,6 +14,7 @@ Abstract type for [`autodiff`](@ref) function argument wrappers like
 [`Const`](@ref), [`Active`](@ref) and [`Duplicated`](@ref).
 """
 abstract type Annotation{T} end
+Base.eltype(::Type{<:Annotation{T}}) where T = T
 
 """
     Const(x)
@@ -22,6 +25,7 @@ Enzyme will not auto-differentiate in respect `Const` arguments.
 struct Const{T} <: Annotation{T}
     val::T
 end
+Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
 Const(::Type{T}) where T = Const{Type{T}}(T)
@@ -41,9 +45,9 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 struct Active{T} <: Annotation{T}
     val::T
 end
+Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 Active(i::Integer) = Active(float(i))
-
 
 """
     Duplicated(x, ∂f_∂x)
@@ -57,6 +61,7 @@ struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
 end
+Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
@@ -68,7 +73,7 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
 end
-
+Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
     BatchDuplicated(x, ∂f_∂xs)
@@ -80,6 +85,8 @@ struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
 end
+Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
+
 """
     BatchDuplicatedNoNeed(x, ∂f_∂xs)
 
@@ -92,8 +99,7 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
 end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
-
-Base.eltype(::Type{<:Annotation{T}}) where T = T
+Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
     abstract type Mode
@@ -292,8 +298,10 @@ end
     thunk(args′...)
 end
 
+
 """
     autodiff(mode::Mode, f, args...)
+    autodiff(f, mode::Mode, args...)
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
@@ -314,65 +322,6 @@ end
     A     = guess_activity(rt, mode)
     autodiff(mode, dupf, A, args′...)
 end
-
-# Compat
-@inline autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} = autodiff(Reverse, f, A, args...)
-@inline autodiff(f::F, args...) where {F} = autodiff(Reverse, f, args...)
-
-"""
-    autodiff_deferred(f, Activity, args...)
-
-Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
-code, as well as high-order differentiation.
-"""
-@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
-    if A isa UnionAll
-        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f, tt)
-        rt = A{rt}
-    else
-        @assert A isa DataType
-        rt = A
-    end
-
-    if eltype(rt) == Union{}
-        error("Return type inferred to be Union{}. Giving up.")
-    end
-
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
-    if rt <: Active
-        args′ = (args′..., one(eltype(rt)))
-    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
-        throw(ErrorException("Duplicated Returns not yet handled"))
-    end
-    thunk(args′...)
-end
-
-"""
-    autodiff_deferred(f, args...)
-
-Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
-"""
-@inline function autodiff_deferred(f::F, args...) where {F}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
-    rt    = guess_activity(rt)
-    autodiff_deferred(f, rt, args′...) 
-end
-
-using Adapt
-Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
-Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
-Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
-Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
-Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
-Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 """
     autodiff(::ForwardMode, f, Activity, args...)
@@ -449,6 +398,63 @@ end
 # Compat
 @deprecate fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} autodiff(Forward, f, A, args...)
 @deprecate fwddiff(f::F, args...) where {F} autodiff(Forward, f, args...)
+
+# Compat
+@inline autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} = autodiff(Reverse, f, A, args...)
+@inline autodiff(f::F, args...) where {F} = autodiff(Reverse, f, args...)
+
+# F as first arg for `do` syntax
+@inline autodiff(dupf::Duplicated{F}, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, dupf, A, args...)
+@inline autodiff(f::F, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, f, A, args...)
+@inline autodiff(dupf::Duplicated{F}, mode::Mode, args...) where {F} = autodiff(mode, dupf, args...)
+@inline autodiff(f::F, mode::Mode, args...) where {F} = autodiff(mode, f, args...)
+
+"""
+    autodiff_deferred(f, Activity, args...)
+
+Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
+code, as well as high-order differentiation.
+"""
+@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    width = Val(same_or_one(args...))
+    if A isa UnionAll
+        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        rt = Core.Compiler.return_type(f, tt)
+        rt = A{rt}
+    else
+        @assert A isa DataType
+        rt = A
+    end
+
+    if eltype(rt) == Union{}
+        error("Return type inferred to be Union{}. Giving up.")
+    end
+
+    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing}(f, ptr, #=df=#nothing)
+    if rt <: Active
+        args′ = (args′..., one(eltype(rt)))
+    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
+        throw(ErrorException("Duplicated Returns not yet handled"))
+    end
+    thunk(args′...)
+end
+
+"""
+    autodiff_deferred(f, args...)
+
+Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
+"""
+@inline function autodiff_deferred(f::F, args...) where {F}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(f, tt)
+    rt    = guess_activity(rt)
+    autodiff_deferred(f, rt, args′...) 
+end
 
 """
     fwddiff_deferred(f, Activity, args...)
