@@ -785,7 +785,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
 # output
 
-(([3.0, 2.0], [0.0, 1.0]),)
+([3.0, 2.0], [0.0, 1.0])
 ```
 """
 @inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
