@@ -1,9 +1,13 @@
 module Compiler
 
-import ..Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
-import ..Enzyme: Annotation, guess_activity, eltype
-import ..Enzyme: API, TypeTree, typetree, only!, shift!, data0!,
-                 TypeAnalysis, FnTypeInfo, Logic, allocatedinline, pmap
+import ..Enzyme
+import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
+               Annotation, guess_activity, eltype, 
+               API, TypeTree, typetree, only!, shift!, data0!,
+               TypeAnalysis, FnTypeInfo, Logic, allocatedinline
+
+using Enzyme
+
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
@@ -1582,7 +1586,7 @@ end
     return nothing
 end
 
-include("pmap.jl")
+include("compiler/pmap.jl")
 
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
@@ -3930,7 +3934,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
             continue
         end
-        if func == pmap
+        if func == Enzyme.pmap
             source_sig = Base.signature_type(func, sparam_vals)
             primal = llvmfn == primalf
             llvmfn = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
