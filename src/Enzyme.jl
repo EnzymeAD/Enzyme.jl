@@ -212,9 +212,6 @@ Limitations:
   value in one of the arguments, which must be wrapped in a
   [`Duplicated`](@ref).
 
-* `f` may not allocate memory, this restriction is likely to be removed in
-  future versions. Technically it can currently allocate memory directly, but not in a function called by `f`.
-
 `args` may be numbers, arrays, structs of numbers, structs of arrays and so
 on. Enzyme will only differentiate in respect to arguments that are wrapped
 in an [`Active`](@ref) (for immutable arguments like primitive types and
@@ -227,8 +224,6 @@ treated as [`Const`](@ref).
 Example:
 
 ```jldoctest
-using Enzyme
-
 a = 4.2
 b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
@@ -395,8 +390,6 @@ all
 Example returning both original return and derivative:
 
 ```jldoctest
-using Enzyme
-
 a = 4.2
 b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
@@ -412,8 +405,6 @@ res, ∂f_∂x = fwddiff(f, Duplicated, Duplicated(3.14, 1.0))
 Example returning just the derivative:
 
 ```jldoctest
-using Enzyme
-
 a = 4.2
 b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
@@ -638,8 +629,6 @@ This will allocate and return new array with the gradient result.
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = x[1]*x[2]
 
 grad = gradient(Reverse, f, [2.0, 3.0])
@@ -667,12 +656,10 @@ storing the derivative result in an existing array `dx`.
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = x[1]*x[2]
 
 dx = [0.0, 0.0]
-gradient!(::Reverse, dx, f, [2.0, 3.0])
+gradient!(Reverse, dx, f, [2.0, 3.0])
 
 # output
 
@@ -699,8 +686,6 @@ within this call.
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = x[1]*x[2]
 
 grad = gradient(Forward, f, [2.0, 3.0])
@@ -737,8 +722,6 @@ Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = x[1]*x[2]
 
 grad = gradient(Forward, f, [2.0, 3.0], Val(2))
@@ -772,8 +755,6 @@ and all relevant arguments apply here.
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = [x[1]*x[2], x[2]]
 
 grad = jacobian(Forward, f, [2.0, 3.0])
@@ -788,7 +769,7 @@ grad = jacobian(Forward, f, [2.0, 3.0])
 end
 
 """
-    jacobian(::ReverseMode, f, x, ::Val{chunk}; Val{num_outs})
+    jacobian(::ReverseMode, f, x, ::Val{num_outs}, ::Val{chunk})
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
 reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
@@ -798,18 +779,16 @@ of this is the transpose of the Forward [`jacobian`](@ref)
 Example:
 
 ```jldoctest
-using Enzyme
-
 f(x) = [x[1]*x[2], x[2]]
 
-grad = jacobian(Reverse, f, [2.0, 3.0])
+grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
 # output
 
-(([3.0, 2.0], [0.0, 1.0]),)
+([3.0, 2.0], [0.0, 1.0])
 ```
 """
-@inline function jacobian(::ReverseMode, f, x, ::Val{chunk}; n_outs::Val{n_out_val}) where {chunk, n_out_val}
+@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
@@ -845,7 +824,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0])
     tupleconcat(tmp...)
 end
 
-@inline function jacobian(::ReverseMode, f, x, ::Val{1}; n_outs::Val{n_out_val}) where {n_out_val}
+@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {n_out_val}
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
