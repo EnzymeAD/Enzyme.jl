@@ -205,7 +205,7 @@ EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign
 	gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
 
 function sub_transfer(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
-    GC.@preserve secretty
+    GC.@preserve secretty begin
         if secretty === nothing
             secretty = Base.unsafe_convert(LLVMTypeRef, C_NULL)
         else
