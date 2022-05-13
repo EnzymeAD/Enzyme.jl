@@ -4,7 +4,7 @@ using LLVM
 using GPUCompiler
 using ..Compiler
 
-import ..Compiler: AdjointThunk, API, allocatedinline
+import ..Compiler: AdjointThunk, API, allocatedinline, nested_codegen
 
 struct Tape
     thunk::AdjointThunk
@@ -1150,34 +1150,6 @@ function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     ops = [LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, o), B)) for o in real_ops]
     call!(B, ops[end], ops[1:end-1])
     return nothing
-end
-
-function nested_codegen!(mod::LLVM.Module, f, tt)
-    # TODO: Put a cache here index on `mod` and f->tt
-    ctx = LLVM.context(mod)
-    funcspec = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
-
-    # 3) Use the MI to create the correct augmented fwd/reverse
-    # TODO:
-    #  - GPU support
-    #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
-
-    target = GPUCompiler.NativeCompilerTarget()
-    params = Compiler.PrimalCompilerParams()
-    job    = CompilerJob(target, funcspec, params)
-
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
-    entry = name(meta.entry)
-
-    # Apply first stage of optimization's so that this module is at the same stage as `mod`
-    optimize!(otherMod, JIT.get_tm())
-
-    # 4) Link the corresponding module
-    LLVM.link!(mod, otherMod)
-
-
-    # 5) Call the function
-    return functions(mod)[entry]
 end
 
 let counter = Ref{Int64}(0)
