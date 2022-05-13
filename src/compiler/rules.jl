@@ -4,7 +4,7 @@ using LLVM
 using GPUCompiler
 using ..Compiler
 
-import ..Compiler: AdjointThunk, API, allocatedinline, nested_codegen
+import ..Compiler: AdjointThunk, API, allocatedinline, nested_codegen!
 
 struct Tape
     thunk::AdjointThunk
