@@ -80,7 +80,7 @@ function is_primitive_func(@nospecialize(TT))
     if ft === typeof(Base.nextfloat) || ft === typeof(Base.prevfloat)
        return true
     end
-    if ft === typeof(Enzyme.pmap)
+    if ft === typeof(Enzyme.Parallel.pmap)
        return true
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
