@@ -12,6 +12,7 @@ using LLVM.Interop
 import LLVM: Target, TargetMachine
 
 using Printf
+using Random
 
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
@@ -3185,7 +3186,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == Base.println || func == Base.print || func == Base.show ||
-            func == Base.flush || func == Base.string || func == Base.print_to_string
+            func == Base.flush || func == Base.string || func == Base.print_to_string || func == Random.default_rng
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end
