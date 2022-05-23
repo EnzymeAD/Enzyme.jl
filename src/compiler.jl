@@ -3707,6 +3707,19 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 LLVM.API.LLVMInstructionEraseFromParent(ci)
             end
         end
+
+        for fname in ["cblas_xerbla"]
+            if in(fname, functions(mod))
+                f = functions(mod)[fname]
+                if isempty(LLVM.blocks(f))
+                    entry = BasicBlock(f, "entry"; ctx)
+                    b = Builder(ctx)
+                    position!(b, entry)
+                    emit_error(b, "BLAS Error")
+                    ret!(b)
+                end
+            end
+        end
         
         ModulePassManager() do pm
             always_inliner!(pm)
