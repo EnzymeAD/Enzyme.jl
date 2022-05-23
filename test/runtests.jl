@@ -13,6 +13,7 @@ using Test
 using FiniteDifferences
 using ForwardDiff
 using Statistics
+using LinearAlgebra
 
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
@@ -966,6 +967,35 @@ end
 	@test length(jac) == 2
 	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
 	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+
+    function f_test_1(A, x)
+        u = A*x[2:end] .+ x[1]
+        return u
+    end
+
+    function f_test_2(A, x)
+        u = Vector{Float64}(undef, length(x)-1)
+        u .= A*x[2:end] .+ x[1]
+        return u
+    end
+
+    function f_test_3!(u, A, x)
+        u .= A*x[2:end] .+ x[1]
+    end
+
+    J_f_1(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_1(A, θ), x, Val(1))
+    J_f_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(1))
+    J_f_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(1))
+
+    x = ones(6)
+    A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
+    J_f_1(A, x)
+    # TODO check result
+    J_f_2(A, x)
+    # TODO check result
+
+    u = Vector{Float64}(undef, 5)
+    J_f_3(u,A,x)
 end
 
 using CUDA
