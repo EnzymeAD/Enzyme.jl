@@ -1261,42 +1261,25 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkT
     return
 end
 
-function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Ptr{Ptr{Cvoid}} where ThunkTy
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Core.LLVMPtr{UInt8, 0} where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
     @show "starting augfwd", thunk
     flush(stdout)
-    tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
-
-    function fwd()
-        @show "called fwd at tid", Base.Threads.threadid()
+        ntape = convert(Core.LLVMPtr{UInt8, 0}, thunk()[1])
+        @show ntape, Base.Threads.threadid()
         flush(stdout)
-        ntape = thunk()[1]
-        @show ntape, Base.Threads.threadid(), tapes
-        flush(stdout)
-        unsafe_store!(tapes, ntape, Base.Threads.threadid())
-    end
-    Base.Threads.threading_run(fwd)
-    return tapes
+    return ntape
 end
 
-function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes::Ptr{Ptr{Cvoid}}) where ThunkTy
-    thunk = ThunkTy(func, ptr, dfunc)
-    @show "starting rev", thunk
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{AdjointThunk{F, RT, TT, Width, DF}}, ntape::Core.LLVMPtr{UInt8, 0}) where {F, Width, DF, RT, TT}
+    @show "pre run", func, dfunc
     flush(stdout)
-    function rev()
-        ntape = unsafe_load(tapes, Base.Threads.threadid())
-        @show "rev", ntape, Base.Threads.threadid(), tapes
-        flush(stdout)
-        @show InteractiveUtils.@code_llvm thunk(ntape)
-        flush(stdout)
-        thunk(ntape)
-    end
-    Base.Threads.threading_run(rev)
-    @show "post run", thunk
+    enzyme_call(ptr, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, func, dfunc, ntape)
+    @show "post run", func, dfunc
     flush(stdout)
-    Libc.free(tapes)
     return nothing
 end
+
 else
 
 function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid where ThunkTy
@@ -1439,6 +1422,7 @@ end
 function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
 
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
@@ -1453,6 +1437,7 @@ else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
+    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
 @static if VERSION < v"1.8-"
 else
@@ -1476,6 +1461,7 @@ end
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
 
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
@@ -1491,6 +1477,7 @@ else
 end
 
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
+    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
 @static if VERSION < v"1.8-"
 else
@@ -1500,6 +1487,9 @@ end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
+    @show entry
+    @show tape, vals
+    flush(stdout)
 
     emit_gc_preserve_end(B, token)
 
@@ -1520,6 +1510,7 @@ end
 function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
 
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     tape = LLVM.Value(tape)
 
@@ -1528,13 +1519,17 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Ptr{Cvoid}}}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Core.LLVMPtr{UInt8, 0} }
 else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Ptr{Cvoid}}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
+    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
+    tape = LLVM.null(convert(LLVM.LLVMType, Core.LLVMPtr{UInt8, 0}; ctx)) 
     push!(vals, tape)
+    @show vals
+    flush(stdout)
 
 @static if VERSION < v"1.8-"
 else
