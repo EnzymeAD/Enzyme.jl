@@ -3708,8 +3708,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
 
-        for fname in ["cblas_xerbla"]
-            if in(fname, functions(mod))
+        for fname in ("cblas_xerbla",)
+            if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
                 if isempty(LLVM.blocks(f))
                     entry = BasicBlock(f, "entry"; ctx)
