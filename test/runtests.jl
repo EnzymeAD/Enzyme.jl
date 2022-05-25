@@ -13,6 +13,7 @@ using Test
 using FiniteDifferences
 using ForwardDiff
 using Statistics
+using Random
 
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
@@ -359,6 +360,14 @@ end
 		return a + b
 	end
     test_scalar(sumsincos, 1.0, rtol=1e-5, atol=1e-5)
+end
+
+f_rand(x) = x*rand()
+f_randn(x, N) = x*sum(randn(N))
+
+@testset "Random" begin
+    autodiff(f_rand, Active, Active(1.0))
+    autodiff(f_randn, Active, Active(1.0), Const(64))
 end
 
 """
