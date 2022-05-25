@@ -65,8 +65,9 @@ if isdefined(Base.Experimental, Symbol("@overlay"))
 Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 else
+using GPUCompiler: WorldOverlayMethodTable
 Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
-    GPUCompiler.WorldOverlayMethodTable(interp.world)
+    WorldOverlayMethodTable(interp.world)
 end
 
 const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(pmap),
