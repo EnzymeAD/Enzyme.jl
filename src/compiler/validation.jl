@@ -73,7 +73,8 @@ module FFI
             "jl_symbol_n", "jl_", "jl_object_id",
             "jl_reshape_array","ijl_reshape_array",
             "jl_matching_methods", "ijl_matching_methods",
-            "jl_array_sizehint", "ijl_array_sizehint"
+            "jl_array_sizehint", "ijl_array_sizehint",
+            "jl_get_keyword_sorter", "ijl_get_keyword_sorter"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -447,7 +448,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         end
         dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
-        if isa(dest, LLVM.Function) && name(dest) == "jl_f_invoke"
+        if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
             while isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
@@ -455,7 +456,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, ConstantInt)
                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                 flib = Base.unsafe_pointer_to_objref(rep)
-                if flib === Base.CoreLogging.logmsg_code || flib === Base.CoreLogging.shouldlog
+                if in(flib, InactiveFunctions)
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     ctx = context(mod)
