@@ -38,6 +38,44 @@ const known_ops = Dict(
     Base.FastMath.tanh_fast => (:tanh, 1)
 )
 
+const inactivefns = Set{String}((
+    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
+    "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
+    "jl_breakpoint",
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
+    "jl_f_fieldtype",
+    "jl_symbol_n",
+    "jl_stored_inline", "ijl_stored_inline",
+    "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
+    "jl_matching_methods", "ijl_matching_methods",
+    "jl_excstack_state", "jl_current_exception"
+    # "jl_"
+))
+
+const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
+                               Base.CoreLogging.shouldlog,
+                               Base.to_tuple_type,
+                               Base.methods,
+                               Base.println,
+                               Base.print,
+                               Base.show,
+                               Base.flush,
+                               Base.string,
+                               Base.print_to_string,
+                               Base.Threads.threadid,
+                               Base.Threads.nthreads,
+                               Base.eps,
+                               Base.nextfloat,
+                               Base.prevfloat,
+                               Core.kwfunc
+                               ])
+
+const activefns = Set{String}((
+    "jl_",
+))
+
 # User facing interface
 abstract type AbstractThunk{F, RT, TT, Width, DF} end
 
@@ -269,9 +307,7 @@ end
 
 function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                              width)
-    @show "genfwd", fn
-    flush(stdout)
-    if fn == Base.println || fn == Base.print || fn == Base.show || fn == Base.flush
+    if in(fn, InactiveFunctions)
         args = Any[]
         for i in 1:arg_size
             push!(args, Base.unsafe_load(arg_ptr, i))
@@ -300,8 +336,6 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    @show fn, args, tt, rt
-    flush(stdout)
     if rt == Union{} || rt == Any
         annotation = Duplicated
     else
@@ -2801,44 +2835,6 @@ end
 # Enzyme compiler step
 ##
 
-const inactivefns = Set{String}((
-    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
-    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
-    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
-    "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
-    "jl_breakpoint",
-    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
-    "jl_f_fieldtype",
-    "jl_symbol_n",
-    "jl_stored_inline", "ijl_stored_inline",
-    "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
-    "jl_matching_methods", "ijl_matching_methods",
-    "jl_excstack_state", "jl_current_exception"
-    # "jl_"
-))
-
-const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
-                               Base.CoreLogging.shouldlog,
-                               Base.to_tuple_type,
-                               Base.methods,
-                               Base.println,
-                               Base.print,
-                               Base.show,
-                               Base.flush,
-                               Base.string,
-                               Base.print_to_string,
-                               Base.Threads.threadid,
-                               Base.Threads.nthreads,
-                               Base.eps,
-                               Base.nextfloat,
-                               Base.prevfloat,
-                               Core.kwfunc
-                               ])
-
-const activefns = Set{String}((
-    "jl_",
-))
-
 function annotate!(mod, mode)
     ctx = context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
@@ -3550,7 +3546,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
-    @show sret, args, entry_f
     @assert length(args) == length(collect(parameters(entry_f))[1+sret:end]) 
 
     # TODO use rettype for sret calculation instead

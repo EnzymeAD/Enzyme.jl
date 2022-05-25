@@ -77,7 +77,7 @@ function runtime_pmap_augfwd(count, forward, args...)::Ptr{Ptr{Cvoid}}
         st = callfn(f_func, idx, fargs...)
         Base.unsafe_store!(tapes, st, idx)
     end
-    Enzyme.pmap(count, fwd, tapes, forward, args...)
+    pmap(count, fwd, tapes, forward, args...)
     return tapes
 end
 
@@ -87,7 +87,7 @@ function runtime_pmap_rev(count, adjoint, tapes, args...)
         callfn(r_func, idx, rargs..., st)
         nothing
 	end
-	Enzyme.pmap(count, adj, tapes, adjoint, args...)
+	pmap(count, adj, tapes, adjoint, args...)
     Libc.free(tapes)
     return nothing
 end
