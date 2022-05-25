@@ -66,6 +66,7 @@ if isdefined(Base.Experimental, Symbol("@overlay"))
 Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 else
+
 # On 1.6- CUDA.jl will poison the method table at the end of the world
 # using GPUCompiler: WorldOverlayMethodTable
 # Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
