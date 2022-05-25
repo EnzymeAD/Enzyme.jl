@@ -3340,6 +3340,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     FT = LLVM.FunctionType(T_void, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
+    LLVM.set_subprogram!(llvm_f, LLVM.get_subprogram(enzymefn)) 
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -3563,6 +3564,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
+    LLVM.set_subprogram!(wrapper_f, LLVM.get_subprogram(entry_f)) 
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
