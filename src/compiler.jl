@@ -2568,6 +2568,7 @@ end
 parent_scope(val::LLVM.Function, depth=0) = depth==0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
+parent_scope(val::LLVM.Argument, depth=0) = parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth+1)
 
 function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
     msg = Base.unsafe_string(cstr)
