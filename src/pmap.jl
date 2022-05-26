@@ -293,6 +293,7 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     @warn "active variables passed by value to jl_pmap not yet supported"
     tape = commonInnerCompile(runtime_pmap_augfwd, B, orig, gutils, nothing)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
 
     # Delete the primal code
     if normal !== nothing
@@ -308,7 +309,8 @@ end
 
 function pmap_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, LLVM.Value(tape))
+    cal = commonInnerCompile(runtime_pmap_rev, B, orig, gutils, LLVM.Value(tape))
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     return nothing
 end
 
