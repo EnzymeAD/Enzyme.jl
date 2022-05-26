@@ -3675,6 +3675,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primal_job = similar(parent_job, job.source)
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
+    
     primalf = meta.entry
     check_ir(job, mod)
     if Enzyme.API.EnzymeBitcodeReplacement(mod) != 0
@@ -3880,7 +3881,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         handleCustom(name, [EnumAttribute("readnone", 0; ctx),
                     StringAttribute("enzyme_shouldrecompute"; ctx)])
     end
-
+    
     @assert actualRetType !== nothing
 
     if must_wrap
@@ -3905,7 +3906,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         primalf = wrapper_f
     end
-
+    
     source_sig = GPUCompiler.typed_signature(job)::Type
     primalf = lower_convention(source_sig, mod, primalf, actualRetType)
 
@@ -3966,7 +3967,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
-    
+
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
         f = functions(mod)[fname]
@@ -4003,13 +4004,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     restore_lookups(mod)
-
+    
     if parent_job !== nothing
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimze!(mod, target_machine)
+        post_optimze!(mod, target_machine, #=machine=#false)
     end
-
+    
     adjointf = functions(mod)[adjointf_name]
 
     # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)

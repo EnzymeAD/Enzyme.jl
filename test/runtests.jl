@@ -983,18 +983,53 @@ end
         u .= A*x[2:end] .+ x[1]
     end
 
-    J_f_1(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_1(A, θ), x, Val(1))
-    J_f_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(1))
-    J_f_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(1))
+    J_r_1(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_1(A, θ), x, Val(5))
+    J_r_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(5))
+    J_r_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(5))
+    
+    J_f_1(A, x) = Enzyme.jacobian(Forward, θ -> f_test_1(A, θ), x)
+    J_f_2(A, x) = Enzyme.jacobian(Forward, θ -> f_test_2(A, θ), x)
+    J_f_3(u, A, x) = Enzyme.jacobian(Forward, θ -> f_test_3!(u, A, θ), x)
 
     x = ones(6)
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
-    @test J_f_1(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0],)
-    @test J_f_2(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0],)
+    u = Vector{Float64}(undef, 5)
+    @test J_r_1(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    @test_broken J_r_2(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    
+	# TODO fix forward vector bugs
+    # @test J_f_1(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
+    # @test J_f_2(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
 
-    # Currently broken
-    # u = Vector{Float64}(undef, 5)
-    # J_f_3(u,A,x)
+    # Bug on (augmented) forward pass deducing if
+	# shadow value is used
+    # @show J_r_3(u, A, x)
+    # @show J_f_3(u, A, x)
+end
+
+@testset "Forward on Reverse" begin
+
+	function speelpenning(y, x)
+		ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
+								  y, x, 2 * 8)
+		return nothing
+	end
+
+	x = [0.5, 0.3]
+	y = zeros(2)
+    dx = ones(2)
+    rx = zeros(2)
+    drx = zeros(2)
+    dy = zeros(2)
+    ry = ones(2)
+    dry = zeros(2)
+
+    function foo(y, dy, x, dx)
+        autodiff_deferred(speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
+        return nothing
+    end
+
+    fwddiff(foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
 using CUDA
