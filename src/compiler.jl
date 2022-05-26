@@ -1262,20 +1262,21 @@ end
 
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Core.LLVMPtr{UInt8, 0} where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
-    @show "starting augfwd", thunk
-    flush(stdout)
-        ntape = convert(Core.LLVMPtr{UInt8, 0}, thunk()[1])
-        @show ntape, Base.Threads.threadid()
-        flush(stdout)
+    # @show "starting augfwd", thunk
+    # flush(stdout)
+	tres = thunk()
+    ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, tres[1])
+	# @show ntape, Base.Threads.threadid()
+	# flush(stdout)
     return ntape
 end
 
 function runtime_pfor_rev(func, ptr, dfunc, ::Type{AdjointThunk{F, RT, TT, Width, DF}}, ntape::Core.LLVMPtr{UInt8, 0}) where {F, Width, DF, RT, TT}
-    @show "pre run", func, dfunc
-    flush(stdout)
-    enzyme_call(ptr, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, func, dfunc, ntape)
-    @show "post run", func, dfunc
-    flush(stdout)
+    # @show "pre run", func, dfunc
+    # flush(stdout)
+    # enzyme_call(ptr, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, func, dfunc, ntape)
+    # @show "post run", func, dfunc
+    # flush(stdout)
     return nothing
 end
 
@@ -1369,7 +1370,7 @@ end
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
         end
 
-        thunkTy = ForwardModeThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
+        thunkTy = ForwardModeThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
         subfunc = functions(mod)[fwdmodenm]
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
@@ -1388,10 +1389,10 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(true)}
+            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(true)}
             subfunc = functions(mod)[augfwdnm]
        else
-            thunkTy = AdjointThunk{funcT, Nothing, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing}
+            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing}
             subfunc = functions(mod)[adjointnm]
         end
     else
@@ -1457,6 +1458,38 @@ end
     end
 end
 
+using InteractiveUtils
+
+function code_typed_by_type(@nospecialize(tt::Type);
+                            optimize=true,
+                            debuginfo::Symbol=:default,
+                            world = Base.get_world_counter(),
+                            interp = Core.Compiler.NativeInterpreter(world))
+    if @isdefined(IRShow)
+        debuginfo = IRShow.debuginfo(debuginfo)
+    elseif debuginfo === :default
+        debuginfo = :source
+    end
+    if debuginfo !== :source && debuginfo !== :none
+        throw(ArgumentError("'debuginfo' must be either :source or :none"))
+    end
+    tt = Base.to_tuple_type(tt)
+    matches = Base._methods_by_ftype(tt, -1, world)
+    if matches === false
+        error("signature does not correspond to a generic function")
+    end
+    asts = []
+    for match in matches::Vector
+        match = match::Core.MethodMatch
+        meth = Base.func_for_method_checked(match.method, tt, match.sparams)
+        (code, ty) = Core.Compiler.typeinf_code(interp, meth, match.spec_types, match.sparams, optimize)
+        code === nothing && error("inference not successful") # inference disabled?
+        debuginfo === :none && remove_linenums!(code)
+        push!(asts, code => ty)
+    end
+    return asts
+end
+
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
 
     orig = LLVM.Instruction(OrigCI)
@@ -1474,7 +1507,10 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
-
+    @show funcT, thunkTy
+    flush(stdout)
+    @show code_typed_by_type(Tuple{typeof(runtime_pfor_augfwd), funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}})
+    flush(stdout)
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
@@ -1524,8 +1560,9 @@ else
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
+    
+	@show entry
 
-    tape = LLVM.null(convert(LLVM.LLVMType, Core.LLVMPtr{UInt8, 0}; ctx)) 
     push!(vals, tape)
     @show vals
     flush(stdout)
@@ -3156,6 +3193,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         if wrap
           augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed)
         end
+		@show "wrapped", wrap, augmented_primalf
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
@@ -3616,7 +3654,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         push!(wrapper_types, typ)
     end
     wrapper_fn = LLVM.name(entry_f)
-    LLVM.name!(entry_f, safe_name(wrapper_fn * "."))
+    LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
     sfn = LLVM.get_subprogram(entry_f)
@@ -4146,6 +4184,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
+	@show mod
+	flush(stdout)
+
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
@@ -4289,14 +4330,16 @@ end
 
     if needs_tape
         # TODO
-        push!(types, Ptr{Cvoid})
+        push!(types, Core.LLVMPtr{UInt8,0})
         push!(ccexprs, last(argexprs))
     end
 
     # Tape
     if CC <: AugmentedForwardThunk 
-        push!(sret_types, Ptr{Cvoid})
+        push!(sret_types, Core.LLVMPtr{UInt8,0})
     end
+
+	@show rettype, returnPrimal
     
         if !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
             jlRT = eltype(rettype)
@@ -4315,6 +4358,8 @@ end
                 end
             end
         end
+	@show sret_types
+	flush(stdout)
 
 	# calls fptr
 	ctx = LLVM.Context()
@@ -4323,11 +4368,11 @@ end
       llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
       T_sjoint = LLVM.StructType(llsret_types; ctx)
       if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
-        for T in llsret_types 
-          pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+        for T in reverse(llsret_types) 
+          pushfirst!(llvmtys, convert(LLVMType, Ptr{T}; ctx)) # LLVM.PointerType(T))
         end
       else
-        pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+        pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
       end
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
@@ -4343,11 +4388,13 @@ end
 		params = collect(LLVM.Value, parameters(llvm_f))
 		lfn = @inbounds params[1]
 		params = params[2:end]
-        callparams = params
+        callparams = collect(params)
         if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
             callparams = params[(length(sret_types)+1):end]
             alloc = LLVM.alloca!(builder, T_sjoint)
             pushfirst!(callparams, alloc)
+		elseif !isempty(sret_types)
+			callparams[1] = LLVM.inttoptr!(builder, callparams[1], LLVM.PointerType(T_sjoint))
         end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
@@ -4371,8 +4418,8 @@ end
 
         msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
         gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
-        tptrs = (:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{Cvoid}, Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) ) for (i, x) in enumerate(sret_types))
-        voidptrs = (:(Ptr{Cvoid}) for _ in 1:length(sret_types))
+        tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
+        voidptrs = [:(Ptr{$x}) for x in sret_types]
         tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
         results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
         return quote
