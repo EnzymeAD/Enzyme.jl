@@ -17,7 +17,6 @@ import LLVM: Target, TargetMachine
 
 using Random
 using Printf
-using InteractiveUtils
 
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
@@ -3785,6 +3784,14 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     fixup_metadata!(entry_f)
 
+    if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
+        @show mod
+        @show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
+        @show wrapper_f
+        flush(stdout)
+        throw(LLVM.LLVMException("broken function"))
+    end
+
 	ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
@@ -4176,9 +4183,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
     end
-
-    @show mod
-    flush(stdout)
 
     adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
@@ -4631,15 +4635,15 @@ end
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
-
+    
     genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
-    primal, adjoint = fspec(Core.Typeof(f), tt)
+@generated function gendeferred_codegen(::Type{F}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+    primal, adjoint = fspec(F, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
     job    = CompilerJob(target, primal, params)
@@ -4652,6 +4656,11 @@ import GPUCompiler: deferred_codegen_jobs
     quote
         ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $trampoline)
     end
+end
+
+@inline function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+    gendeferred_codegen(Core.Typeof(f), Val(tt), Val(rt), Val(DupClosure), Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal))
 end
 
 include("compiler/reflection.jl")
