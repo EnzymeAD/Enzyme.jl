@@ -205,7 +205,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     tot = LLVM.mul!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), elsz, false))
 
     if elsz == 1 && !isunion
-        tot = LLVM.add!(b, t, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
+        # extra byte for all julia allocated byte arrays
+        tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
     end
     if (isunion)
         # an extra byte for each isbits union array element, stored after a->maxsize
