@@ -12,7 +12,6 @@ using LLVM.Interop
 import LLVM: Target, TargetMachine
 
 using Printf
-using InteractiveUtils
 
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
@@ -3320,7 +3319,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     FT = LLVM.FunctionType(T_void, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
-    LLVM.set_subprogram!(llvm_f, LLVM.get_subprogram(enzymefn)) 
+    sfn = LLVM.get_subprogram(enzymefn)
+    if sfn !== nothing
+        LLVM.set_subprogram!(llvm_f, sfn)
+    end
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -3614,10 +3616,13 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         push!(wrapper_types, typ)
     end
     wrapper_fn = LLVM.name(entry_f)
-    LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
+    LLVM.name!(entry_f, safe_name(wrapper_fn * "."))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
-    LLVM.set_subprogram!(wrapper_f, LLVM.get_subprogram(entry_f)) 
+    sfn = LLVM.get_subprogram(entry_f)
+    if sfn !== nothing
+        LLVM.set_subprogram!(wrapper_f, sfn)
+    end
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
@@ -3665,6 +3670,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
         entry = BasicBlock(wrapper_f, "entry"; ctx)
         position!(builder, entry)
+        if LLVM.get_subprogram(entry_f) !== nothing
+            debuglocation!(builder, DILocation(ctx, 0, 0, LLVM.get_subprogram(entry_f)))
+        end
 
         wrapper_args = Vector{LLVM.Value}()
 
@@ -3727,6 +3735,14 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     fixup_metadata!(entry_f)
 
+    if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
+        @show mod
+        @show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
+        @show wrapper_f
+        flush(stdout)
+        throw(LLVM.LLVMException("broken function"))
+    end
+
 	ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
@@ -3748,7 +3764,13 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
         end
     end
-    verify(wrapper_f)
+    if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
+        @show mod
+        @show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
+        @show wrapper_f
+        flush(stdout)
+        throw(LLVM.LLVMException("broken function"))
+    end
     return wrapper_f, returnRoots
 end
 
@@ -4110,9 +4132,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.process_module!(parent_job, mod)
     end
-
-    @show mod
-    flush(stdout)
 
     adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
@@ -4495,7 +4514,7 @@ end
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
     job    = Compiler.CompilerJob(target, primal, params)
-
+    
     sig = Tuple{F, map(eltype, TT.parameters)...}
 
     # world = ...
@@ -4565,28 +4584,32 @@ end
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
-
+    
     genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
-    primal, adjoint = fspec(Core.Typeof(f), tt)
+@generated function gendeferred_codegen(::Type{F}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+    primal, adjoint = fspec(F, tt)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
     job    = CompilerJob(target, primal, params)
-
+    
     addr = get_trampoline(job)
     id = Base.reinterpret(Int, pointer(addr))
 
     deferred_codegen_jobs[id] = job
     trampoline = reinterpret(Ptr{Cvoid}, id)
-
     quote
         ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $trampoline)
     end
+end
+
+@inline function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
+                                     ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+    gendeferred_codegen(Core.Typeof(f), Val(tt), Val(rt), Val(DupClosure), Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal))
 end
 
 include("compiler/reflection.jl")
