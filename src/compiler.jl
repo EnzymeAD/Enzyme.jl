@@ -1875,7 +1875,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
-
+    
     B = LLVM.Builder(B)
 
     shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
@@ -2277,7 +2277,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         end
         
         # GPUCompiler.@safe_warn "Not applying memsetUnknown concrete type" tt=string(tt)
-        emit_error("Not applying memset on reverse of jl_array_del_end")
+        emit_error(B, "Not applying memset on reverse of jl_array_del_end")
         # memset(data + idx * elsz, 0, inc * elsz);
     end
     return nothing
