@@ -68,7 +68,7 @@ module FFI
             "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d", 
             "jl_new_array", "jl_array_copy", "jl_alloc_string",
             "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
-            "malloc", "memmove", "memcpy", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
+            "malloc", "memmove", "memcpy", "memset", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
             "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
             "jl_symbol_n", "jl_", "jl_object_id",
             "jl_reshape_array","ijl_reshape_array",

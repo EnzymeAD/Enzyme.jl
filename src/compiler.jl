@@ -205,7 +205,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     tot = LLVM.mul!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), elsz, false))
 
     if elsz == 1 && !isunion
-        tot = LLVM.add!(b, t, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
+        # extra byte for all julia allocated byte arrays
+        tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.llvmtype(tot), 1, false))
     end
     if (isunion)
         # an extra byte for each isbits union array element, stored after a->maxsize
@@ -1874,7 +1875,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
-
+    
     B = LLVM.Builder(B)
 
     shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
@@ -2174,7 +2175,6 @@ function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                               ]
             LLVM.call!(B, LLVM.called_value(orig), args)
         else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
             for idx in 1:width
                 args = LLVM.Value[
                                   extract_value!(B, shadowin, idx-1)
@@ -2188,32 +2188,7 @@ function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 end
 
 function jl_array_grow_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    origops = collect(operands(orig))
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
-
-        width = API.EnzymeGradientUtilsGetWidth(gutils)
-
-        shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
-        if width == 1
-            args = LLVM.Value[
-                              shadowin
-                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
-                              ]
-            LLVM.call!(B, LLVM.called_value(orig), args)
-        else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
-            for idx in 1:width
-                args = LLVM.Value[
-                                  extract_value!(B, shadowin, idx-1)
-                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
-                                  ]
-                LLVM.call!(B, LLVM.called_value(orig), args)
-            end
-        end
-    end
-
+    jl_array_grow_end_fwd(B, OrigCI, gutils, normalR, shadowR)
     return nothing
 end
 
@@ -2257,30 +2232,53 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 end
 
 function jl_array_del_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    jl_array_grow_end_fwd(B, OrigCI, gutils, normalR, shadowR)
+    return nothing
+end
+
+function jl_array_del_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    jl_array_del_end_fwd(B, OrigCI, gutils, normalR, shadowR)
+    return nothing
+end
+
+function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
         B = LLVM.Builder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        
+        called_value = origops[end]
+        funcT = eltype(llvmtype(called_value)::LLVM.PointerType)::LLVM.FunctionType
+        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+        delF = LLVM.Function(mod, "jl_array_grow_end", funcT)
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+        shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowin, B))
+
+        offset = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+        offset = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, offset, B))
+
         if width == 1
             args = LLVM.Value[
                               shadowin
-                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+                              offset
                               ]
-            LLVM.call!(B, LLVM.called_value(orig), args)
+            LLVM.call!(B, delF, args)
         else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
             for idx in 1:width
                 args = LLVM.Value[
                                   extract_value!(B, shadowin, idx-1)
-                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+                                  offset
                                   ]
-                LLVM.call!(B, LLVM.called_value(orig), args)
+                LLVM.call!(B, delF, args)
             end
         end
+        
+        # GPUCompiler.@safe_warn "Not applying memsetUnknown concrete type" tt=string(tt)
+        emit_error(B, "Not applying memset on reverse of jl_array_del_end")
+        # memset(data + idx * elsz, 0, inc * elsz);
     end
     return nothing
 end
@@ -2568,6 +2566,7 @@ end
 parent_scope(val::LLVM.Function, depth=0) = depth==0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
+parent_scope(val::LLVM.Argument, depth=0) = parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth+1)
 
 function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
     msg = Base.unsafe_string(cstr)
@@ -2738,8 +2737,8 @@ function __init__()
     )
     register_handler!(
         ("jl_array_del_end","ijl_array_del_end"),
-        nothing,
-        nothing,
+        @cfunction(jl_array_del_end_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(jl_array_del_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_array_del_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
