@@ -3783,7 +3783,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             run!(pm, mod)
         end
         for fname in toremove
-            if in(fname, functions(mod))
+            if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
             end
@@ -4005,7 +4005,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             run!(pm, mod)
         end
         for fname in toremove
-            if in(fname, functions(mod))
+            if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
             end
