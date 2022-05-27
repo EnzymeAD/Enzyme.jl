@@ -214,7 +214,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
     end
 end
 
-function post_optimze!(mod, tm)
+function post_optimze!(mod, tm, machine=true)
     # @show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
@@ -223,10 +223,12 @@ function post_optimze!(mod, tm)
         addOptimizationPasses!(pm)
         run!(pm, mod)
     end
-    LLVM.ModulePassManager() do pm
-        addJuliaLegalizationPasses!(pm, true)
-        addMachinePasses!(pm)
-        run!(pm, mod)
+    if machine
+        LLVM.ModulePassManager() do pm
+            addJuliaLegalizationPasses!(pm, true)
+            addMachinePasses!(pm)
+            run!(pm, mod)
+        end
     end
     # @show "post_mod", mod
     # flush(stdout)
