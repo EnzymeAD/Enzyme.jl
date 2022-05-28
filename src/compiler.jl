@@ -2813,6 +2813,7 @@ include("compiler/utils.jl")
 include("compiler/passes.jl")
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
+include("compiler/validation.jl")
 
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.
@@ -4543,6 +4544,5 @@ import GPUCompiler: deferred_codegen_jobs
 end
 
 include("compiler/reflection.jl")
-include("compiler/validation.jl")
 
 end
