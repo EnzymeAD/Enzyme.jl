@@ -304,10 +304,9 @@ end
         end
         return mean(a)
     end
-    # TODO(wsmoses): Assertion failed: (pp->getNumUses() == 0), function eraseFictiousPHIs
-    # @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
-    # TODO: https://github.com/EnzymeAD/Enzyme/issues/393
-    # @test Enzyme.fwddiff(gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
+    
+    @test Enzyme.autodiff(gc_copy, Active, Active(5.0))[1] ≈ 10
+    @test Enzyme.fwddiff(gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
 
