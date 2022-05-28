@@ -1771,7 +1771,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 	return nothing
 end
 
-function arraycopy_common(fwd, B, orig, origArg, gutils)
+function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     # size_t len = jl_array_len(ary);
     # size_t elsz = ary->elsize;
     # memcpy(new_ary->data, ary->data, len * elsz);
@@ -1837,7 +1837,6 @@ function arraycopy_common(fwd, B, orig, origArg, gutils)
     allowForward = false
     intrinsic = LLVM.Intrinsic("llvm.memcpy").id
 
-    shadowdst = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
     if !fwd
         shadowdst = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowdst, B))
     end
@@ -1879,7 +1878,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     B = LLVM.Builder(B)
 
     shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
- 
+    
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if width == 1
         shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
@@ -1893,7 +1892,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     end
     unsafe_store!(shadowR, shadowres.ref)
     
-    arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils)
+    arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils, shadowres)
 	
 	return nothing
 end
@@ -1901,7 +1900,7 @@ end
 function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
-    arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils)
+    arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
     return nothing
 end
 
@@ -1971,17 +1970,6 @@ function f_tuple_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                 conv = LLVM.API.LLVMGetInstructionCallConv(orig)
                 LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
                 shadowres = insert_value!(B, shadowres, tmp, idx-1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    else
-        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-        if width == 1
-            shadowres = normal
-        else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(normal))))
-            for idx in 1:width
-                shadowres = insert_value!(B, shadowres, normal, idx-1)
             end
         end
         unsafe_store!(shadowR, shadowres.ref)
@@ -2563,6 +2551,30 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     end
 end
 
+struct NoTypeException <: CompilationException
+    msg::String
+    sval::String
+    ir::Union{Nothing, String}
+    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
+    val::LLVM.Instruction
+end
+
+function Base.showerror(io::IO, ece::NoTypeException)
+    print(io, "Enzyme cannot deduce type\n")
+    if ece.ir !== nothing
+        print(io, "Current scope: \n")
+        print(io, ece.ir)
+    end
+    print(io, "\n Type analysis state: \n")
+    write(io, ece.sval)
+    print(io, '\n', ece.msg, '\n')
+    if ece.bt !== nothing
+        print(io,"\nCaused by:")
+        Base.show_backtrace(io, ece.bt)
+        println(io)
+    end
+end
+
 parent_scope(val::LLVM.Function, depth=0) = depth==0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
@@ -2598,6 +2610,12 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
         throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
+    elseif errtype == API.ET_NoType
+        data = API.EnzymeTypeAnalyzerRef(data)
+        ip = API.EnzymeTypeAnalyzerToString(data)
+        sval = Base.unsafe_string(ip)
+        API.EnzymeStringFree(ip)
+        throw(NoTypeException(msg, sval, ir, bt, val))
     end
     throw(AssertionError("Unknown errtype"))
 end

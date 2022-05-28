@@ -330,7 +330,8 @@ end
 @cenum(ErrorType,
   ET_NoDerivative = 0,
   ET_NoShadow = 1,
-  ET_IllegalTypeAnalysis = 2
+  ET_IllegalTypeAnalysis = 2,
+  ET_NoType = 3
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
