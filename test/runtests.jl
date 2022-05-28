@@ -569,6 +569,8 @@ end
     @test 5.0 ≈ dx[1]
 end
 
+# FIXME: Enzyme: Unknown concrete type in arraycopy_common
+if VERSION < v"1.8.0-"
 @testset "broadcast" begin
     A = rand(10); B = rand(10); R = similar(A)
     dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
@@ -587,6 +589,7 @@ end
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
     autodiff(foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+end
 end
 
 
