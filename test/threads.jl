@@ -15,11 +15,11 @@ using Test
     R = Float64[0., 0.]
     dR = Float64[2., 3.]
 
-    @test 5.0 ≈ Enzyme.autodiff(tasktest, Duplicated(R, dR), Active(2.0))[1]
+    @test 5.0 ≈ Enzyme.autodiff(Reverse, tasktest, Duplicated(R, dR), Active(2.0))[1]
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
     
-    Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
+    Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
     @test Float64[1.0, 1.0] ≈ dR
 
     function tasktest2(M, x)
@@ -30,8 +30,8 @@ using Test
         nothing
     end
     # The empty return previously resulted in an illegal instruction error
-    @test 0.0 ≈ Enzyme.autodiff(tasktest2, Duplicated(R, dR), Active(2.0))[1]
-    @test () === Enzyme.fwddiff(tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
+    @test 0.0 ≈ Enzyme.autodiff(Reverse, tasktest2, Duplicated(R, dR), Active(2.0))[1]
+    @test () === Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
 
 @testset "Advanced Threads $(Threads.nthreads())" begin
@@ -44,7 +44,7 @@ end
 
     x = [1.0, 2.0, 3.0]
     dx = [1.0, 1.0, 1.0]
-    Enzyme.autodiff(foo, Duplicated(x, dx))
+    Enzyme.autodiff(Reverse, foo, Duplicated(x, dx))
     @test 2.0 ≈ x[1]
     @test 4.0 ≈ x[2]
     @test 6.0 ≈ x[3]
@@ -54,7 +54,7 @@ end
 
     x = [1.0, 2.0, 3.0]
     dx = [1.0, 1.0, 1.0]
-    @test_broken Enzyme.fwddiff(foo, Duplicated(x, dx))
+    @test_broken Enzyme.autodiff(Forward, foo, Duplicated(x, dx))
 end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin
@@ -70,7 +70,7 @@ end
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
 
-    Enzyme.autodiff(psquare0, Duplicated(xs, dxs))
+    Enzyme.autodiff(Reverse, psquare0, Duplicated(xs, dxs))
     @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
 
     function psquare1(x)
@@ -82,7 +82,7 @@ end
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
 
-    Enzyme.autodiff(psquare1, Duplicated(xs, dxs))
+    Enzyme.autodiff(Reverse, psquare1, Duplicated(xs, dxs))
     @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
 
     function psquare2(x, y)
@@ -94,6 +94,6 @@ end
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
     
-    Enzyme.autodiff(psquare2, Duplicated(xs, dxs), Duplicated(xs, dxs))
+    Enzyme.autodiff(Reverse, psquare2, Duplicated(xs, dxs), Duplicated(xs, dxs))
     @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
 end

@@ -2,7 +2,8 @@ module Interpreter
 using Random
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
-using ....Enzyme: pmap
+import ..Enzyme
+
 struct EnzymeInterpeter <: AbstractInterpreter
     global_cache::CodeCache
     method_table::Union{Nothing,Core.MethodTable}
@@ -70,7 +71,7 @@ Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     WorldOverlayMethodTable(interp.world)
 end
 
-const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(pmap),
+const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(Enzyme.pmap),
                             typeof(Base.to_tuple_type),
                             typeof(Random.rand), typeof(Random.rand!), typeof(Random.randn), typeof(Random.default_rng), typeof(Random.seed!)])
 
