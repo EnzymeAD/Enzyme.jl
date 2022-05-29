@@ -34,6 +34,7 @@ const known_ops = Dict(
     Base.cos => (:cos, 1),
     Base.tan => (:tan, 1),
     Base.exp => (:exp, 1),
+    Base.FastMath.exp_fast => (:exp, 1),
     Base.log => (:log, 1),
     Base.log1p => (:log1p, 1),
     Base.log2 => (:log2, 1),
@@ -2639,7 +2640,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         ir = sprint(io->show(io, parent_scope(val)))
     end
     if errtype == API.ET_NoDerivative
-        data = API.EnzymeGradientUtilsRef(data)
         throw(NoDerivativeException(msg, ir, bt))
     elseif errtype == API.ET_NoShadow
         data = API.EnzymeGradientUtilsRef(data)
