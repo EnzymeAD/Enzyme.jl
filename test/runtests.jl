@@ -1031,6 +1031,15 @@ end
     fwddiff(foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
+using Random
+
+@testset "Random" begin
+	f_rand(x) = x*rand()
+	f_randn(x, N) = x*sum(randn(N))
+    autodiff(f_rand, Active, Active(1.0))
+    autodiff(f_randn, Active, Active(1.0), Const(64))
+end
+
 using CUDA
 if CUDA.functional()
     include("cuda.jl")

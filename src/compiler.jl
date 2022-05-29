@@ -11,6 +11,7 @@ import GPUCompiler: CompilerJob, FunctionSpec, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
+using Random
 using Printf
 
 if LLVM.has_orc_v1()
@@ -69,7 +70,12 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Base.eps,
                                Base.nextfloat,
                                Base.prevfloat,
-                               Core.kwfunc
+                               Core.kwfunc,
+                               Random.rand,
+                               Random.rand!,
+                               Random.randn,
+                               Random.default_rng,
+                               Random.seed!
                                ])
 
 const activefns = Set{String}((
