@@ -1431,6 +1431,7 @@ end
 
     ops = collect(operands(orig))[1:end-1]
 
+	vals = LLVM.Value[]
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
 			push!(vals, real)
@@ -1792,14 +1793,11 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     ct = API.EnzymeTypeTreeInner0(tt)
 
     if ct == API.DT_Unknown
-        analyzer = API.EnzymeGradientUtilsTypeAnalyzer(gutils)
-        ip = API.EnzymeTypeAnalyzerToString(analyzer)
-        sval = Base.unsafe_string(ip)
-        API.EnzymeStringFree(ip)
-        @show LLVM.parent(LLVM.parent(orig))
-        @show orig
-        println(sval)
-        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt) orig=string(orig) sval=string(sval)
+        # analyzer = API.EnzymeGradientUtilsTypeAnalyzer(gutils)
+        # ip = API.EnzymeTypeAnalyzerToString(analyzer)
+        # sval = Base.unsafe_string(ip)
+        # API.EnzymeStringFree(ip)
+        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt) orig=string(orig)
         emit_error(B, "Enzyme: Unknown concrete type in arraycopy_common")
         return nothing
     end
