@@ -1431,6 +1431,7 @@ end
 
     ops = collect(operands(orig))[1:end-1]
 
+	vals = LLVM.Value[]
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
 		for real in [ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])), LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))]
 			push!(vals, real)
@@ -1792,7 +1793,11 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     ct = API.EnzymeTypeTreeInner0(tt)
 
     if ct == API.DT_Unknown
-        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt)
+        # analyzer = API.EnzymeGradientUtilsTypeAnalyzer(gutils)
+        # ip = API.EnzymeTypeAnalyzerToString(analyzer)
+        # sval = Base.unsafe_string(ip)
+        # API.EnzymeStringFree(ip)
+        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt) orig=string(orig)
         emit_error(B, "Enzyme: Unknown concrete type in arraycopy_common")
         return nothing
     end
@@ -3129,28 +3134,40 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         "jl_box_float32" => @cfunction(f32_box_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_box_float32" => @cfunction(f32_box_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_int64" => @cfunction(i64_box_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_box_int64" => @cfunction(i64_box_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_uint64" => @cfunction(i64_box_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_box_uint64" => @cfunction(i64_box_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_1d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_alloc_array_1d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_2d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_alloc_array_2d" => @cfunction(alloc_rule,
+                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "jl_alloc_array_3d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_alloc_array_3d" => @cfunction(alloc_rule,
