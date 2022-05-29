@@ -104,7 +104,7 @@ function resolver(name, ctx)
         C_NULL
     end
     if ptr === C_NULL
-        @show name
+        @safe_show name
         error("Enzyme: Symbol lookup failed. Aborting!")
     end
 
