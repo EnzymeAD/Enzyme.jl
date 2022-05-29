@@ -31,6 +31,7 @@ const known_ops = Dict(
     Base.tan => (:tan, 1),
     Base.exp => (:exp, 1),
     Base.log => (:log, 1),
+    Base.log1p => (:log1p, 1),
     Base.log2 => (:log2, 1),
     Base.log10 => (:log10, 1),
     Base.asin => (:asin, 1),
