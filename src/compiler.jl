@@ -119,6 +119,18 @@ return_type(::AbstractThunk{F, RT, TT, Width, DF}) where {F, RT, TT, Width, DF} 
 
 using .JIT
 
+
+safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
+macro safe_show(exs...)
+    blk = Expr(:block)
+    for ex in exs
+        push!(blk.args, :($safe_println($(sprint(Base.show_unquoted, ex)*" = "),
+            repr(begin local value = $(esc(ex)) end))))
+    end
+    isempty(exs) || push!(blk.args, :value)
+    return blk
+end
+
 declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, name
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
@@ -1274,20 +1286,20 @@ end
 
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Core.LLVMPtr{UInt8, 0} where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
-    # @show "starting augfwd", thunk
+    # @safe_show "starting augfwd", thunk
     # flush(stdout)
 	tres = thunk()
     ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, tres[1])
-	# @show ntape, Base.Threads.threadid()
+	# @safe_show ntape, Base.Threads.threadid()
 	# flush(stdout)
     return ntape
 end
 
 function runtime_pfor_rev(func, ptr, dfunc, ::Type{AdjointThunk{F, RT, TT, Width, DF}}, ntape::Core.LLVMPtr{UInt8, 0}) where {F, Width, DF, RT, TT}
-    # @show "pre run", func, dfunc
+    # @safe_show "pre run", func, dfunc
     # flush(stdout)
     # enzyme_call(ptr, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, func, dfunc, ntape)
-    # @show "post run", func, dfunc
+    # @safe_show "post run", func, dfunc
     # flush(stdout)
     return nothing
 end
@@ -1519,9 +1531,9 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
-    @show funcT, thunkTy
+    @safe_show funcT, thunkTy
     flush(stdout)
-    @show code_typed_by_type(Tuple{typeof(runtime_pfor_augfwd), funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}})
+    @safe_show code_typed_by_type(Tuple{typeof(runtime_pfor_augfwd), funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}})
     flush(stdout)
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
@@ -1534,8 +1546,8 @@ end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
-    @show entry
-    @show tape, vals
+    @safe_show entry
+    @safe_show tape, vals
     flush(stdout)
 
     emit_gc_preserve_end(B, token)
@@ -1573,10 +1585,10 @@ end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
     
-	@show entry
+	@safe_show entry
 
     push!(vals, tape)
-    @show vals
+    @safe_show vals
     flush(stdout)
 
 @static if VERSION < v"1.8-"
@@ -3242,7 +3254,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         if wrap
           augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed)
         end
-		@show "wrapped", wrap, augmented_primalf
+		@safe_show "wrapped", wrap, augmented_primalf
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
@@ -3747,9 +3759,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
         for e in toErase
             if !isempty(collect(uses(e)))
-                @show mod
-                @show entry_f
-                @show e
+                @safe_show mod
+                @safe_show entry_f
+                @safe_show e
                 throw(AssertionError("Use after deletion"))
             end
             LLVM.API.LLVMInstructionEraseFromParent(e)
@@ -3780,7 +3792,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 # copy the argument value to a stack slot, and reference it.
                 ty = llvmtype(parm)
                 if !isa(ty, LLVM.PointerType)
-                    @show entry_f, args, parm, ty
+                    @safe_show entry_f, args, parm, ty
                 end
                 @assert isa(ty, LLVM.PointerType)
                 ptr = alloca!(builder, eltype(ty))
@@ -3823,9 +3835,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     fixup_metadata!(entry_f)
 
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
-        @show mod
-        @show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
-        @show wrapper_f
+        @safe_show mod
+        @safe_show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
+        @safe_show wrapper_f
         flush(stdout)
         throw(LLVM.LLVMException("broken function"))
     end
@@ -3853,9 +3865,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
     
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
-        @show mod
-        @show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
-        @show wrapper_f
+        @safe_show mod
+        @safe_show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
+        @safe_show wrapper_f
         flush(stdout)
         throw(LLVM.LLVMException("broken function"))
     end
@@ -4235,7 +4247,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
-	@show mod
+	@safe_show mod
 	flush(stdout)
 
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
@@ -4390,7 +4402,7 @@ end
         push!(sret_types, Core.LLVMPtr{UInt8,0})
     end
 
-	@show rettype, returnPrimal
+	@safe_show rettype, returnPrimal
     
         if !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
             jlRT = eltype(rettype)
@@ -4409,7 +4421,7 @@ end
                 end
             end
         end
-	@show sret_types
+	@safe_show sret_types
 	flush(stdout)
 
 	# calls fptr
