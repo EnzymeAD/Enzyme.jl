@@ -1024,7 +1024,7 @@ end
     dry = zeros(2)
 
     function foo(y, dy, x, dx)
-        autodiff_deferred(speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
+        Enzyme.autodiff_deferred(speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
         return nothing
     end
 
