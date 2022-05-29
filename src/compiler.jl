@@ -73,7 +73,9 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Core.kwfunc,
                                Random.rand,
                                Random.rand!,
-                               Random.randn
+                               Random.randn,
+                               Random.default_rng,
+                               Random.seed!
                                ])
 
 const activefns = Set{String}((
