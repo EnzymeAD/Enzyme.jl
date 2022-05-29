@@ -104,6 +104,7 @@ end
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
     test_scalar(log2, 1.0)
+    test_scalar(log1p, 1.0)
     test_scalar(log10, 1.0)
 
     @test autodiff((x)->log(x), Active(2.0)) == (0.5,)
