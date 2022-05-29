@@ -461,7 +461,7 @@ end
 """
     fwddiff_deferred(f, Activity, args...)
 
-Same as [`fwddiff`](@ref) but uses deferred compilation to support usage in GPU
+Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
 @inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
