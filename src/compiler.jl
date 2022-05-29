@@ -314,7 +314,7 @@ end
 
 struct Tape
     thunk::AdjointThunk
-    internal_tape::Ptr{Cvoid}
+    internal_tape::Core.LLVMPtr{UInt8, 0}
     shadow_return::Any
     resT::DataType
 end
