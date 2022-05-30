@@ -1511,38 +1511,6 @@ end
     end
 end
 
-using InteractiveUtils
-
-function code_typed_by_type(@nospecialize(tt::Type);
-                            optimize=true,
-                            debuginfo::Symbol=:default,
-                            world = Base.get_world_counter(),
-                            interp = Core.Compiler.NativeInterpreter(world))
-    if @isdefined(IRShow)
-        debuginfo = IRShow.debuginfo(debuginfo)
-    elseif debuginfo === :default
-        debuginfo = :source
-    end
-    if debuginfo !== :source && debuginfo !== :none
-        throw(ArgumentError("'debuginfo' must be either :source or :none"))
-    end
-    tt = Base.to_tuple_type(tt)
-    matches = Base._methods_by_ftype(tt, -1, world)
-    if matches === false
-        error("signature does not correspond to a generic function")
-    end
-    asts = []
-    for match in matches::Vector
-        match = match::Core.MethodMatch
-        meth = Base.func_for_method_checked(match.method, tt, match.sparams)
-        (code, ty) = Core.Compiler.typeinf_code(interp, meth, match.spec_types, match.sparams, optimize)
-        code === nothing && error("inference not successful") # inference disabled?
-        debuginfo === :none && remove_linenums!(code)
-        push!(asts, code => ty)
-    end
-    return asts
-end
-
 function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
 
     orig = LLVM.Instruction(OrigCI)
