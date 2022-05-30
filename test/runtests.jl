@@ -1027,6 +1027,11 @@ end
     autodiff(Forward, foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
+using CUDA
+if CUDA.functional() && VERSION >= v"1.7.0
+    include("cuda.jl")
+end
+
 using Random
 
 @testset "Random" begin
@@ -1034,9 +1039,4 @@ using Random
 	f_randn(x, N) = x*sum(randn(N))
     autodiff(f_rand, Active, Active(1.0))
     autodiff(f_randn, Active, Active(1.0), Const(64))
-end
-
-using CUDA
-if CUDA.functional()
-    include("cuda.jl")
 end
