@@ -1028,7 +1028,7 @@ end
 end
 
 using CUDA
-if CUDA.functional() && VERSION >= v"1.7.0
+if CUDA.functional() && VERSION >= v"1.7.0"
     include("cuda.jl")
 end
 
