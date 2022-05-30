@@ -308,15 +308,15 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
+function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}) where width
 
     tt′ = Tuple{}
     args = ()
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), width)
+    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), Val(width))
 
-    taperef = Ref{Core.LLVMPtr{UInt8, 0}}(C_NULL)
+    taperef = Ref{Core.LLVMPtr{UInt8, 0}}(Base.reinterpret(Core.LLVMPtr{UInt8, 0}, C_NULL))
 
     function fclosure()
         res = forward()
@@ -1534,7 +1534,7 @@ end
 
 @static if VERSION < v"1.8-"
 else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end])))
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
@@ -1581,7 +1581,7 @@ end
 
 @static if VERSION < v"1.8-"
 else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end])))
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
