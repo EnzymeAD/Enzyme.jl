@@ -31,7 +31,7 @@ end
 function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types);
                           optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
                           raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
-    JuliaContext() do ctx
+    @dispose ctx = JuliaContext() begin
         llvmf, _ = reflect(func, A, types; optimize, run_enzyme, second_stage, ctx)
 
         str = ccall(:jl_dump_function_ir, Ref{String},
@@ -43,7 +43,7 @@ end
 enzyme_code_llvm(@nospecialize(func), @nospecialize(A), @nospecialize(types); kwargs...) = enzyme_code_llvm(stdout, func, A, types; kwargs...)
 
 function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types))
-    JuliaContext() do ctx
+    @dispose ctx = JuliaContext() begin
         _, mod = reflect(func, A, types; ctx)
         str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
         print(io, str)

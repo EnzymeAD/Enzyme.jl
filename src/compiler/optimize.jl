@@ -1,7 +1,7 @@
 function optimize!(mod::LLVM.Module, tm)
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
-    ModulePassManager() do pm
+    @dispose pm = ModulePassManager() begin
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
@@ -218,13 +218,13 @@ function post_optimze!(mod, tm, machine=true)
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
-    LLVM.ModulePassManager() do pm
+    LLVM.@dispose pm = ModulePassManager() begin
         addTargetPasses!(pm, tm)
         addOptimizationPasses!(pm)
         run!(pm, mod)
     end
     if machine
-        LLVM.ModulePassManager() do pm
+        LLVM.@dispose pm = ModulePassManager() begin
             addJuliaLegalizationPasses!(pm, true)
             addMachinePasses!(pm)
             run!(pm, mod)
