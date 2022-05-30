@@ -3677,7 +3677,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     if sret
     	returnRoots = deserves_rooting(RT)
 		if returnRoots
-			@warn "Returned rooting not fully handled, segfault likely"
+			GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
 		end
     end
 
