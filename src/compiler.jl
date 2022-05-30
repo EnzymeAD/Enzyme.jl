@@ -259,6 +259,22 @@ struct Return3
     ret3::Any
 end
 
+function permit_inlining!(f::LLVM.Function)
+    for bb in blocks(f), inst in instructions(bb)
+        # remove illegal invariant.load and jtbaa_const invariants
+        if isa(inst, LLVM.LoadInst)
+            md = metadata(inst)
+            if haskey(md, LLVM.MD_tbaa)
+                modified = LLVM.Metadata(ccall((:EnzymeMakeNonConstTBAA, API.libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,), md[LLVM.MD_tbaa]))
+                setindex!(md, modified, LLVM.MD_tbaa)
+            end
+            if haskey(md, LLVM.MD_invariant_load)
+                delete!(md, LLVM.MD_invariant_load)
+            end
+        end
+    end
+end
+
 function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     tt′ = Tuple{}
     args = ()
@@ -1272,23 +1288,31 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkT
     return
 end
 
-function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Core.LLVMPtr{UInt8, 0} where ThunkTy
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Ptr{Core.LLVMPtr{UInt8, 0}} where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
-    # @safe_show "starting augfwd", thunk
-    # flush(stdout)
-	tres = thunk()
-    ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, tres[1])
-	# @safe_show ntape, Base.Threads.threadid()
-	# flush(stdout)
-    return ntape
+    
+    tapes = Base.unsafe_convert(Ptr{Core.LLVMPtr{UInt8, 0}}, Libc.malloc(sizeof(Core.LLVMPtr{UInt8, 0})*Base.Threads.nthreads()))
+
+    function fwd()
+        tres = thunk()
+        ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, tres[1])
+        tid = Base.Threads.threadid()
+        unsafe_store!(tapes, ntape, tid)
+    end
+    Base.Threads.threading_run(fwd)
+    return tapes
 end
 
-function runtime_pfor_rev(func, ptr, dfunc, ::Type{AdjointThunk{F, RT, TT, Width, DF}}, ntape::Core.LLVMPtr{UInt8, 0}) where {F, Width, DF, RT, TT}
-    # @safe_show "pre run", func, dfunc
-    # flush(stdout)
-    # enzyme_call(ptr, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, func, dfunc, ntape)
-    # @safe_show "post run", func, dfunc
-    # flush(stdout)
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{AdjointThunk{F, RT, TT, Width, DF}}, tapes::Ptr{Core.LLVMPtr{UInt8, 0}}) where {F, Width, DF, RT, TT}
+    
+    thunk = AdjointThunk{F, RT, TT, Width, DF}(func, ptr, dfunc)
+    function rev()
+        tid = Base.Threads.threadid()
+        thunk(unsafe_load(tapes, tid))
+    end
+    Base.Threads.threading_run(rev)
+    Libc.free(tapes)
+    
     return nothing
 end
 
@@ -1303,18 +1327,19 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid whe
     return
 end
 
-function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Ptr{Ptr{Cvoid}} where ThunkTy
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Ptr{Core.LLVMPtr{UInt8, 0}} where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
-    tapes = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, Libc.malloc(sizeof(Ptr{Cvoid})*Base.Threads.nthreads()))
+    tapes = Base.unsafe_convert(Ptr{Core.LLVMPtr{UInt8, 0}}, Libc.malloc(sizeof(Core.LLVMPtr{UInt8, 0})*Base.Threads.nthreads()))
 
     function fwd(tid)
-        unsafe_store!(tapes, thunk(Const(tid))[1], tid)
+        ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, thunk(Const(tid))[1])
+        unsafe_store!(tapes, ntape, tid)
     end
     Base.Threads.threading_run(fwd, dynamic)
     return tapes
 end
 
-function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes::Ptr{Ptr{Cvoid}}, dynamic) where ThunkTy
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes::Ptr{Core.LLVMPtr{UInt8, 0}}, dynamic) where ThunkTy
     thunk = ThunkTy(func, ptr, dfunc)
     function rev(tid)
         thunk(Const(tid), unsafe_load(tapes, tid))
@@ -1380,6 +1405,7 @@ end
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm; ctx))
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
+            permit_inlining!(functions(mod)[fwdmodenm])
         end
 
         thunkTy = ForwardModeThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
@@ -1395,9 +1421,11 @@ end
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm; ctx))
             push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
+            permit_inlining!(functions(mod)[augfwdnm])
 
             push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
             push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
+            permit_inlining!(functions(mod)[adjointnm])
         end
 
         if mode == API.DEM_ReverseModePrimal
@@ -1449,6 +1477,7 @@ else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
+    permit_inlining!(entry)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
 @static if VERSION < v"1.8-"
@@ -1519,11 +1548,8 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 else
     tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
 end
-    @safe_show funcT, thunkTy
-    flush(stdout)
-    @safe_show code_typed_by_type(Tuple{typeof(runtime_pfor_augfwd), funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}})
-    flush(stdout)
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
+    permit_inlining!(entry)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
 @static if VERSION < v"1.8-"
@@ -1534,9 +1560,6 @@ end
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
-    @safe_show entry
-    @safe_show tape, vals
-    flush(stdout)
 
     emit_gc_preserve_end(B, token)
 
@@ -1566,18 +1589,15 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Core.LLVMPtr{UInt8, 0} }
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}} }
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Ptr{Cvoid}}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
+    permit_inlining!(entry)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
-    
-	@safe_show entry
 
     push!(vals, tape)
-    @safe_show vals
-    flush(stdout)
 
 @static if VERSION < v"1.8-"
 else
@@ -3205,7 +3225,6 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         if wrap
           augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed)
         end
-		@safe_show "wrapped", wrap, augmented_primalf
 
         # TODOs:
         # 1. Handle mutable or !pointerfree arguments by introducing caching
@@ -4196,9 +4215,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
-	@safe_show mod
-	flush(stdout)
-
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
 end
 
@@ -4351,8 +4367,6 @@ end
         push!(sret_types, Core.LLVMPtr{UInt8,0})
     end
 
-	@safe_show rettype, returnPrimal
-    
         if !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
             jlRT = eltype(rettype)
             if typeof(jlRT) == UnionAll
@@ -4370,8 +4384,6 @@ end
                 end
             end
         end
-	@safe_show sret_types
-	flush(stdout)
 
 	# calls fptr
 	ctx = LLVM.Context()
