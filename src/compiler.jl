@@ -316,7 +316,7 @@ function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     rt = Core.Compiler.return_type(fn, tt)
     forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), width)
 
-    taperef = Ref{Ptr{Cvoid}}(C_NULL)
+    taperef = Ref{Core.LLVMPtr{UInt8, 0}}(C_NULL)
 
     function fclosure()
         res = forward()
