@@ -1393,11 +1393,11 @@ end
 
     funcT = mi.specTypes.parameters[2]
 
-    @static if VERSION >= v"1.8"
-      e_tt = Tuple{Const{Bool}}
-    else
-      e_tt = Tuple{}
-    end
+@static if VERSION < v"1.8-"
+    e_tt = Tuple{}
+else
+    e_tt = Tuple{Const{Int}}
+end
     eprimal, eadjoint = fspec(funcT, e_tt)
 
     # TODO: Clean this up and add to `nested_codegen!` asa feature
@@ -1539,7 +1539,6 @@ else
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
-
     tape = LLVM.call!(B, entry, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
 
