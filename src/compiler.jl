@@ -1456,6 +1456,9 @@ end
 
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
         v = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))
+        if mode == API.DEM_ReverseModeGradient
+            v = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, v, B))
+        end
         push!(vals, v)
         push!(to_preserve, v)
     end
@@ -1464,6 +1467,9 @@ end
 
     if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
         v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
+        if mode == API.DEM_ReverseModeGradient
+            v = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, v, B))
+        end
         push!(vals, v)
         push!(to_preserve, v)
     end
