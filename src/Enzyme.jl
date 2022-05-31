@@ -269,10 +269,10 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
             forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), width, #=ModifiedBetween=#Val(false))
             res = forward(args′...)
             tape = res[1]
-            if res[3] isa Base.RefValue
-                res[3][] += one(eltype(typeof(res[3])))
+            if res[2] isa Base.RefValue
+                res[2][] += one(eltype(typeof(res[2])))
             else
-                res[3] += one(eltype(typeof(res[3])))
+                res[2] += one(eltype(typeof(res[2])))
             end
             return adjoint(args′..., tape)
         end
