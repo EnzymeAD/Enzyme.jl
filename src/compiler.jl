@@ -1499,7 +1499,8 @@ end
 
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    LLVM.call!(B, entry, vals)
+    cal = LLVM.call!(B, entry, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
 
     emit_gc_preserve_end(B, token)
 
@@ -1534,12 +1535,13 @@ end
 
 @static if VERSION < v"1.8-"
 else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end])))
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
 
     tape = LLVM.call!(B, entry, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
 
     emit_gc_preserve_end(B, token)
 
@@ -1581,12 +1583,13 @@ end
 
 @static if VERSION < v"1.8-"
 else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end])))
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
 
-    LLVM.call!(B, entry, vals)
+    cal = LLVM.call!(B, entry, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
 
     emit_gc_preserve_end(B, token)
     return nothing
