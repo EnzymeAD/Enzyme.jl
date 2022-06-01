@@ -952,6 +952,8 @@ end
 	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
 	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
 
+    @test jac == Enzyme.jacobian(Forward, inout, [2.0, 3.0])
+
 	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
 	@test length(jac) == 3
 	@test jac[1] ≈ [ 0.0, 1.0]

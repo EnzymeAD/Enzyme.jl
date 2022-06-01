@@ -634,11 +634,11 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 # output
 
-((3.0, 2.0),)
+(3.0, 2.0)
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
-    autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
+    only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow)))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -703,7 +703,7 @@ grad = jacobian(Forward, f, [2.0, 3.0])
 
 # output
 
-(([3.0, 0.0], [2.0, 1.0]),)
+([3.0, 0.0], [2.0, 1.0])
 ```
 """
 @inline function jacobian(::ForwardMode, args...; kwargs...)
