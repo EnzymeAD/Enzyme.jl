@@ -641,20 +641,6 @@ end
     @test shadow_a_out ≈ Float64[1.0, 1.0, 2.0, 2.0]
 end
 
-# TODO on 1.8 having `Inactive threads` after `UndefVar` leads to a GC verification bug
-@testset "Inactive threads" begin
-    function thr_inactive(x, y)
-        if x
-            Threads.@threads for N in 1:5:20
-                println("The number of this iteration is $N")
-            end
-        end
-        y
-    end
-    @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1]
-    @test 1.0 ≈ autodiff(Forward, thr_inactive, false, Duplicated(2.14, 1.0))[1]
-end
-
 @testset "UndefVar" begin
     function f_undef(x, y)
         if x
