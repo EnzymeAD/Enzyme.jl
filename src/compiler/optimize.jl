@@ -70,7 +70,7 @@ end
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
-    # @show "omod", mod
+    # @safe_show "omod", mod
     # flush(stdout)
     # flush(stderr)
 end
@@ -215,7 +215,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
 end
 
 function post_optimze!(mod, tm, machine=true)
-    # @show "pre_post", mod
+    # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
     LLVM.ModulePassManager() do pm
@@ -230,7 +230,7 @@ function post_optimze!(mod, tm, machine=true)
             run!(pm, mod)
         end
     end
-    # @show "post_mod", mod
+    # @safe_show "post_mod", mod
     # flush(stdout)
     # flush(stderr)
 end

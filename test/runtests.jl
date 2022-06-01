@@ -41,12 +41,12 @@ end
 include("abi.jl")
 include("typetree.jl")
 
+f0(x) = 1.0 + x
 @testset "Internal tests" begin
-    f(x) = 1.0 + x
-    thunk_a = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
-    thunk_b = Enzyme.Compiler.thunk(f, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
-    thunk_c = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
-    thunk_d = Enzyme.Compiler.thunk(f, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_a = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_b = Enzyme.Compiler.thunk(f0, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_c = Enzyme.Compiler.thunk(f0, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
+    thunk_d = Enzyme.Compiler.thunk(f0, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test_broken thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -55,7 +55,7 @@ include("typetree.jl")
     @test thunk_a(Active(2.0), 2.0) == (2.0,)
     @test thunk_b(Const(2.0)) === ()
 
-    forward, pullback = Enzyme.Compiler.thunk(f, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+    forward, pullback = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -65,13 +65,12 @@ end
     Enzyme.Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
         x ^ 2
     end
-    f(x) = 1.0 + x
     sprint() do io
-        Enzyme.Compiler.enzyme_code_native(io, f, Active, Tuple{Active{Float64}})
+        Enzyme.Compiler.enzyme_code_native(io, f0, Active, Tuple{Active{Float64}})
     end
 
     sprint() do io
-        Enzyme.Compiler.enzyme_code_llvm(io, f, Active, Tuple{Active{Float64}})
+        Enzyme.Compiler.enzyme_code_llvm(io, f0, Active, Tuple{Active{Float64}})
     end
 end
 
@@ -643,28 +642,17 @@ end
 end
 
 @testset "UndefVar" begin
-    function f(x, y)
+    function f_undef(x, y)
         if x
             undefinedfnthowmagic()
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f, false, Active(2.14))[1]
-    @test_throws Base.UndefVarError autodiff(Reverse, f, true, Active(2.14))
+    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1]
+    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
     
-    @test 1.0 ≈ autodiff(Forward, f, false, Duplicated(2.14, 1.0))[1]
-    @test_throws Base.UndefVarError autodiff(Forward, f, true, Duplicated(2.14, 1.0))
-
-    function foo(x, y)
-        if x
-            Threads.@threads for N in 1:5:20
-                println("The number of this iteration is $N")
-            end
-        end
-        y
-    end
-    @test 1.0 ≈ autodiff(Reverse, foo, false, Active(2.14))[1]
-    @test 1.0 ≈ autodiff(Forward, foo, false, Duplicated(2.14, 1.0))[1]
+    @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
+    @test_throws Base.UndefVarError autodiff(Forward, f_undef, true, Duplicated(2.14, 1.0))
 end
 
 @testset "Return GC error" begin

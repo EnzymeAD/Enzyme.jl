@@ -97,3 +97,17 @@ end
     Enzyme.autodiff(Reverse, psquare2, Duplicated(xs, dxs), Duplicated(xs, dxs))
     @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
 end
+
+# TODO on 1.8 having `Inactive threads` after `UndefVar` in the main `runtest.jl` leads to a GC verification bug
+@testset "Inactive threads" begin
+    function thr_inactive(x, y)
+        if x
+            Threads.@threads for N in 1:5:20
+                println("The number of this iteration is $N")
+            end
+        end
+        y
+    end
+    @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1]
+    @test 1.0 ≈ autodiff(Forward, thr_inactive, false, Duplicated(2.14, 1.0))[1]
+end

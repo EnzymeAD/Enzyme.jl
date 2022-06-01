@@ -106,7 +106,7 @@ function julia_activity(source_types, FTs, ops, gutils, tape::Bool)
       push!(dup_args, T)
     end
     codegen_i = 2
-
+    
     for source_typ in source_types[3:end]
         if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             continue
@@ -163,7 +163,6 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
             if kind(fattr) == "enzymejl_mi"
                 ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
                 mi = Base.unsafe_pointer_to_objref(ptr)
-                break
             end
             if kind(fattr) == "enzymejl_augforward"
                 forwardnm = value(fattr)
@@ -187,18 +186,19 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
         else
           RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
         end
-        eprimal, eadjoint = fspec(Core.Compiler.singleton_type(funcT), e_tt)
-
+        eprimal, eadjoint = fspec(funcT, e_tt)
+        
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true, #=shadowfunc=#false, #=abiwrap=#false, #=modifiedBetween=#true)
+        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
+                        #=shadowfunc=#false, #=abiwrap=#false, #=modifiedBetween=#true, #=returnPrimal=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
-
+        
         cmod, adjointnm, forwardnm = _thunk(ejob)
         LLVM.link!(mod, cmod)
         attributes = function_attributes(llvmfn)
-        push!(attributes, StringAttribute("enzymejl_forward", forwardnm; ctx))
+        push!(attributes, StringAttribute("enzymejl_augforward", forwardnm; ctx))
         push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
         attributes = function_attributes(llvmfn)
         push!(function_attributes(functions(mod)[forwardnm]), EnumAttribute("alwaysinline"; ctx))
@@ -212,7 +212,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
 
     # 5) Call the function
     B = LLVM.Builder(B)
-
+    
     T_int64 = LLVM.Int64Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
@@ -221,7 +221,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
 
     # count
 	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
-
+    
     # function
     run_fn = functions(mod)[tape === nothing ? forwardnm : adjointnm]
     push!(vals, ptrtoint!(B, run_fn, llvmtype(LLVM.ConstantInt(Int(0); ctx))))
@@ -229,10 +229,10 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape)
     if tape !== nothing
         push!(vals, tape)
     end
-
+    
     EB = LLVM.Builder(ctx)
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
+    
     i = 2
     for source_typ in mi.specTypes.parameters[3:end]
         if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
