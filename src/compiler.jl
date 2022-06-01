@@ -1419,8 +1419,8 @@ end
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
             permit_inlining!(functions(mod)[fwdmodenm])
         end
-
-        thunkTy = ForwardModeThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(false)}
+        dfuncT = dupClosure ? funcT : Nothing
+        thunkTy = ForwardModeThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, #=returnPrimal=#Val(false)}
         subfunc = functions(mod)[fwdmodenm]
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
@@ -1441,10 +1441,12 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing, #=returnPrimal=#Val(true)}
+            dfuncT = dupClosure ? funcT : Nothing
+            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, #=returnPrimal=#Val(true)}
             subfunc = functions(mod)[augfwdnm]
        else
-            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dupClosure ? funcT : Nothing}
+            dfuncT = dupClosure ? funcT : Nothing
+            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT}
             subfunc = functions(mod)[adjointnm]
         end
     else
@@ -1465,7 +1467,7 @@ end
 
     push!(vals, ptrtoint!(B, subfunc, convert(LLVMType, Ptr{Cvoid}; ctx)))
 
-    if !GPUCompiler.isghosttype(funcT) && !Core.Compiler.isconstType(funcT)
+    if !GPUCompiler.isghosttype(dfuncT) && !Core.Compiler.isconstType(dfuncT)
         v = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B))
         if mode == API.DEM_ReverseModeGradient
             v = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, v, B))
@@ -1474,7 +1476,7 @@ end
         push!(to_preserve, v)
     end
 
-    return funcT, vals, thunkTy, to_preserve
+    return funcT, dfuncT, vals, thunkTy, to_preserve
 end
 
 function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -1487,12 +1489,12 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     B = LLVM.Builder(B)
 
-    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
+    funcT, dfuncT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}}
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_fwd, tt)
     permit_inlining!(entry)
@@ -1528,12 +1530,12 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     B = LLVM.Builder(B)
 
-    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
+    funcT, dfuncT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}}
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
     permit_inlining!(entry)
@@ -1573,12 +1575,12 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     B = LLVM.Builder(B)
 
-    funcT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
+    funcT, dfuncT, vals, thunkTy, to_preserve = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}} }
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}} }
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, funcT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Ptr{Core.LLVMPtr{UInt8, 0}}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
     permit_inlining!(entry)
