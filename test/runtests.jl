@@ -77,7 +77,7 @@ end
 using  Documenter
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 @testset "DocTests" begin
-#     doctest(Enzyme; manual = false)
+    doctest(Enzyme; manual = false)
 end
 
 # @testset "Split Tape" begin
