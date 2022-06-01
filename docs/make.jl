@@ -34,6 +34,6 @@ makedocs(;
 
 deploydocs(;
     repo="github.com/EnzymeAD/Enzyme.jl",
-    devbranch = "master",
+    devbranch = "main",
     push_preview = true,
 )
