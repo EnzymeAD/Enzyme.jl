@@ -934,29 +934,32 @@ end
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
     end
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
-	@test length(jac) == 3
-	@test jac[1] ≈ [ 0.0, 1.0]
-	@test jac[2] ≈ [ 4.0, 0.0]
-	@test jac[3] ≈ [12.0, 0.0]
-	
-	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(1))
-	@test length(jac) == 2
-	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
-	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
+
+    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(1))
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
 
     @test jac == Enzyme.jacobian(Forward, inout, [2.0, 3.0])
+    @test jac == ForwardDiff.jacobian(inout, [2.0, 3.0])
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
-	@test length(jac) == 3
-	@test jac[1] ≈ [ 0.0, 1.0]
-	@test jac[2] ≈ [ 4.0, 0.0]
-	@test jac[3] ≈ [12.0, 0.0]
-	
-	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(2))
-	@test length(jac) == 2
-	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
-	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
+
+    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(2))
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
 
     function f_test_1(A, x)
         u = A*x[2:end] .+ x[1]
@@ -984,12 +987,38 @@ end
     x = ones(6)
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
     u = Vector{Float64}(undef, 5)
-    @test J_r_1(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    @test_broken J_r_2(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    
-	# TODO fix forward vector bugs
-    # @test J_f_1(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
-    # @test J_f_2(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
+
+    @test J_r_1(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
+
+    @test J_r_2(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
+   
+    @test J_f_1(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
+
+    @test J_f_2(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
 
     # Bug on (augmented) forward pass deducing if
 	# shadow value is used
