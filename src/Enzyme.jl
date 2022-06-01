@@ -268,6 +268,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
         if !allocatedinline(rt)
             forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), width, #=ModifiedBetween=#Val(false))
             res = forward(args′...)
+            @assert length(res) == 2
             tape = res[1]
             if res[2] isa Base.RefValue
                 res[2][] += one(eltype(typeof(res[2])))
