@@ -1500,7 +1500,7 @@ end
 
 @static if VERSION < v"1.8-"
 else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[end])))
+    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
 end
 
     token = emit_gc_preserve_begin(B, to_preserve)
