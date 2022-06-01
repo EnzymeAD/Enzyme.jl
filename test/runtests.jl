@@ -642,17 +642,17 @@ end
 end
 
 @testset "UndefVar" begin
-    function f(x, y)
+    function f_undef(x, y)
         if x
             undefinedfnthowmagic()
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f, false, Active(2.14))[1]
-    @test_throws Base.UndefVarError autodiff(Reverse, f, true, Active(2.14))
+    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1]
+    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
     
-    @test 1.0 ≈ autodiff(Forward, f, false, Duplicated(2.14, 1.0))[1]
-    @test_throws Base.UndefVarError autodiff(Forward, f, true, Duplicated(2.14, 1.0))
+    @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
+    @test_throws Base.UndefVarError autodiff(Forward, f_undef, true, Duplicated(2.14, 1.0))
 
     function foo(x, y)
         if x
