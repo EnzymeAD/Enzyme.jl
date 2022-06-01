@@ -103,14 +103,7 @@ end
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
     test_scalar(log2, 1.0)
-    try
-        test_scalar(log1p, 1.0)
-    catch e
-        # TODO: Re-enable after JLL bump
-        if e isa Enzyme.Compiler.LLVM.LLVMException
-            @test_broken false
-        end
-    end
+    test_scalar(log1p, 1.0)
 
     test_scalar(log10, 1.0)
 
