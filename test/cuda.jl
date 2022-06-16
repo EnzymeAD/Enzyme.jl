@@ -23,3 +23,20 @@ end
     @cuda threads=length(A) grad_mul_kernel(A, dA)
     @test all(dA .== 2)
 end
+
+function val_kernel!(_, ::Val{N}) where N
+    return nothing
+end
+
+function dval_kernel!(du, ::Val{N}) where N
+    Enzyme.autodiff_deferred(val_kernel!, Const, du, Val(N))
+    return nothing
+end
+
+# Test for https://github.com/EnzymeAD/Enzyme.jl/issues/358
+@testset "Test val kernel" begin
+    n = 10
+    u = CUDA.rand(n)
+    dzdu = CUDA.rand(n)
+    @cuda threads=4 dval_kernel!(Duplicated(u, dzdu), Val(n))
+end
