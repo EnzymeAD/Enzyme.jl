@@ -187,31 +187,30 @@ import .Compiler: CompilationException
     end
 end
 
-@inline function same_or_one(args::Vararg{Any, N}) where N
-    current = -1
-    for arg in args
-        if arg isa BatchDuplicated
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
-        elseif arg isa BatchDuplicatedNoNeed
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
-        end
-    end
-
+@inline function same_or_one_helper(current, next)
     if current == -1
-        current = 1
+        return next
+    elseif current == next
+        return next
+    else
+        error("Multiple distinct batch sizes")
+        return -1
     end
-
-    return current
 end
 
+@inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
+
+@inline function same_or_one(args...)
+    res = same_or_one_rec(-1, args...)
+    if res == -1
+        return 1
+    else
+        return res
+    end
+end
 """
     autodiff(::ReverseMode, f, Activity, args...)
 
