@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.10.0"
+version = "0.10.1"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -18,7 +18,7 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 [compat]
 Adapt = "3.3"
 CEnum = "0.4"
-Enzyme_jll = "0.0.32"
+Enzyme_jll = "0.0.32, 0.0.33"
 GPUCompiler = "0.15, 0.16"
 LLVM = "4.1"
 ObjectFile = "0.3"
