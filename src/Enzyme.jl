@@ -187,29 +187,35 @@ import .Compiler: CompilationException
     end
 end
 
-@inline function same_or_one(args::Vararg{Any, N}) where N
-    current = -1
-    for arg in args
-        if arg isa BatchDuplicated
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
-        elseif arg isa BatchDuplicatedNoNeed
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
+function is_batch(current, arg)
+    if arg isa BatchDuplicated
+        if current == -1
+            current = batch_size(arg)
+        else
+            @assert current == batch_size(arg)
+        end
+    elseif arg isa BatchDuplicatedNoNeed
+        if current == -1
+            current = batch_size(arg)
+        else
+            @assert current == batch_size(arg)
         end
     end
+    current
+end
 
-    if current == -1
-        current = 1
+@inline function same_or_one(current, arg, args::Tuple)
+    same_or_one(is_batch(current, arg), first(args), Base.tail(args))
+end
+
+@inline same_or_one(current, arg, ::Tuple{}) = is_batch(current, arg)
+
+@inline function same_or_one(args::Vararg)
+    current = -1
+    if !isempty(args)
+        current = same_or_one(current, first(args), Base.tail(args))
     end
-
-    return current
+    current == -1 ? 1 : current
 end
 
 """
