@@ -194,7 +194,6 @@ end
         return next
     else
         error("Multiple distinct batch sizes")
-        return -1
     end
 end
 
