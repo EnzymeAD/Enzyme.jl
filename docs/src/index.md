@@ -21,6 +21,26 @@ The Enzyme.jl API revolves around the function [`autodiff`](@ref), see it's docu
 
 ## Caveats / Known-issues
 
+### Activity of temporary storage
+
+If you have pass any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. 
+
+```julia
+function f(x, tmp, n)
+   tmp[1] = 1
+   for i in 1:n
+	   tmp[1] *= x
+   end
+   tmp[1]
+end
+
+# Incorrect [ returns (0.0,) ]
+Enzyme.autodiff(f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(5))
+
+# Correct [ returns (10.367999999999999,) == 1.2^4 * 5 ]
+Enzyme.autodiff(f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(5))
+```
+
 ### CUDA.jl support
 
 [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only support on Julia v1.7.0 and onwards. On 1.6 attempting to differentiate CUDA kernel functions, will not use device overloads
