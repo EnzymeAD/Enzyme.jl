@@ -4253,6 +4253,39 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 end
 
 ##
+# Box
+##
+
+mutable struct Box{T} <: Base.Ref{T}
+    x::T
+    Box{T}() where {T} = new()
+    Box{T}(x) where {T} = new(x)
+end
+
+Base.isassigned(x::Box) = isdefined(x, :x)
+Base.getindex(b::Box) = b.x
+Base.setindex(b::Box, x) = (b.x = x; b)
+
+function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
+    if Base.allocatedinline(T)
+        p = Base.pointer_from_objref(b)
+    elseif Base.isconcretetype(T) && ismutabletype(T)
+        p = Base.pointer_from_objref(b.x)
+    elseif !isassigned(b)
+        # TODO: if Box{AbstractInt}() the RefValue equivalent would lead to C_NULL
+        #       What is the semantics we want to have?
+        throw(Core.UndefRefError())
+    else
+        # If the slot is not leaf type, it could be either immutable or not.
+        # If it is actually an immutable, then we can't take it's pointer directly
+        # Instead, explicitly load the pointer from the `RefValue`,
+        # which also ensures this returns same pointer as the one rooted in the `RefValue` object.
+        p = Base.pointerref(Ptr{Ptr{Cvoid}}(Base.pointer_from_objref(b)), 1, Core.sizeof(Ptr{Cvoid}))
+    end
+    return p
+end
+
+##
 # Thunk
 ##
 
@@ -4473,48 +4506,47 @@ end
     if !isempty(sret_types)
 		# Any case needed since this cannot be included inside a tuple
         if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
+            msrets = (:($(Symbol(:ref, i)) = Box{$x}()) for (i, x) in enumerate(sret_types))
+            gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
+            tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
+            voidptrs = [:(Ptr{$x}) for x in sret_types]
+            tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
+            results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
+            return quote
+                Base.@_inline_meta
 
-        msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
-        gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
-        tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
-        voidptrs = [:(Ptr{$x}) for x in sret_types]
-        tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
-        results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
-        return quote
-            Base.@_inline_meta
-
-            let $(msrets...)
-            GC.@preserve $(gcsrets...) begin
-                $(tptrs...)
-                Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid},
-                    $(voidptrs...),
-                    $(types...)},
-                    fptr,
-                    $(tptrres...),
-                    $(ccexprs...))
+                let $(msrets...)
+                    GC.@preserve $(gcsrets...) begin
+                        $(tptrs...)
+                        Base.llvmcall(($ir, $fn), Cvoid,
+                            Tuple{Ptr{Cvoid},
+                            $(voidptrs...),
+                            $(types...)},
+                            fptr,
+                            $(tptrres...),
+                            $(ccexprs...))
+                    end
+                    return ( $(results...), )
+                end
             end
-            return ( $(results...), )
-            end
-        end
-
         else
             return quote
                 Base.@_inline_meta
-                    sret = Ref{$(Tuple{sret_types...})}()
-                    GC.@preserve sret begin
-                       tret = Base.pointer_from_objref(sret)
-                       Base.llvmcall(($ir, $fn), Cvoid,
-                        Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                        fptr, tret, $(ccexprs...))
-                    end
-                    sret[]
+                sret = Box{$(Tuple{sret_types...})}()
+                GC.@preserve sret begin
+                    # FIXME: Should this go through `unsafe_convert`?
+                    tret = Base.pointer_from_objref(sret)
+                    Base.llvmcall(($ir, $fn), Cvoid,
+                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                    fptr, tret, $(ccexprs...))
+                end
+                sret[]
             end
         end
     else
         return quote
             Base.@_inline_meta
-	    Base.llvmcall(($ir, $fn), Cvoid,
+            Base.llvmcall(($ir, $fn), Cvoid,
                 Tuple{Ptr{Cvoid}, $(types...),},
                 fptr, $(ccexprs...))
             return ()

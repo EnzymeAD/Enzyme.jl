@@ -389,6 +389,39 @@ mybesselj1(z) = mybesselj(1, z)
     end
 end
 
+# Ensure that this returns an error, and not a crash
+# https://github.com/EnzymeAD/Enzyme.jl/issues/368
+abstract type TensorProductBasis <: Function end
+
+struct LegendreBasis <: TensorProductBasis
+    n::Int
+end
+
+function (basis::LegendreBasis)(x)
+    return x
+end
+
+struct MyTensorLayer
+    model::Array{TensorProductBasis}
+end
+
+function fn(layer::MyTensorLayer, x)
+    model = layer.model
+    return model[1](x)
+end
+
+const nn = MyTensorLayer([LegendreBasis(10)])
+
+function dxdt_pred(x)
+  return fn(nn, x)
+end
+
+@testset "AbstractType calling convention" begin
+    dxdt_pred(1.0)
+
+    @test_throws Core.UndefRefError Enzyme.autodiff(dxdt_pred, Active(1.0))
+end
+
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
     include("packages/specialfunctions.jl")
