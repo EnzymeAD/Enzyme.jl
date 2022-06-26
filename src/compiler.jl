@@ -4130,10 +4130,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     parallel = Threads.nthreads() > 1
     process_module = false
+    device_module = false
     if parent_job !== nothing
         if parent_job.target isa GPUCompiler.PTXCompilerTarget ||
            parent_job.target isa GPUCompiler.GCNCompilerTarget
             parallel = true
+            device_module = true
         end
         if parent_job.target isa GPUCompiler.GCNCompilerTarget
            process_module = true
@@ -4215,7 +4217,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf_name = name(augmented_primalf)
     end
 
-    restore_lookups(mod)
+    if !device_module
+        # Don't restore pointers when we are doing GPU compilation
+        restore_lookups(mod)
+    end
     
     if parent_job !== nothing
         reinsert_gcmarker!(adjointf)
