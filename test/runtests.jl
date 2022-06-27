@@ -74,11 +74,6 @@ end
     end
 end
 
-using  Documenter
-DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
-@testset "DocTests" begin
-    doctest(Enzyme; manual = false)
-end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -1083,6 +1078,13 @@ end
 
     autodiff(Forward, foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
+
+using  Documenter
+DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+@testset "DocTests" begin
+    doctest(Enzyme; manual = false)
+end
+
 
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
