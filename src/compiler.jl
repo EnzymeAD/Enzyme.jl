@@ -46,7 +46,9 @@ const known_ops = Dict(
 
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
-    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_box_int64", "jl_box_int32",
+    "ijl_box_int64", "ijl_box_int32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
     "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
     "jl_breakpoint",
@@ -2942,7 +2944,9 @@ function annotate!(mod, mode)
         end
     end
 
-    for boxfn in ("jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64", "julia.gc_alloc_obj",
+    for boxfn in ("julia.gc_alloc_obj",
+                  "jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64",
+                  "ijl_box_float32", "ijl_box_float64", "ijl_box_int32", "ijl_box_int64",
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
                   "jl_f_tuple", "ijl_f_tuple")
