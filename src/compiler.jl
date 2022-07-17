@@ -3897,6 +3897,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
     
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#true)
+        run!(pm, mod)
+    end
+    
     primalf = meta.entry
     check_ir(job, mod)
     if API.EnzymeBitcodeReplacement(mod) != 0
@@ -4146,11 +4151,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     # annotate
     annotate!(mod, mode)
     
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, #=Begin=#true)
-        run!(pm, mod)
-    end
-
     # Run early pipeline
     optimize!(mod, target_machine)
 
