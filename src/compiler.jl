@@ -4145,6 +4145,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # annotate
     annotate!(mod, mode)
+    
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#true)
+        run!(pm, mod)
+    end
 
     # Run early pipeline
     optimize!(mod, target_machine)
@@ -4180,6 +4185,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         adjointf = primalf
         augmented_primalf = nothing
+    end
+    
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#false)
+        run!(pm, mod)
     end
 
     for (fname, lnk) in custom

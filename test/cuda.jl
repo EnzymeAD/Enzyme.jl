@@ -24,6 +24,28 @@ end
     @test all(dA .== 2)
 end
 
+function cos_kernel(A)
+    i = threadIdx().x
+    if i <= length(A)
+        A[i] = cos(A[i])
+    end
+    return nothing
+end
+
+function grad_cos_kernel(A, dA)
+    Enzyme.autodiff_deferred(cos_kernel, Const, Duplicated(A, dA))
+    return nothing
+end
+
+@testset "cos_kernel" begin
+    A = CUDA.ones(64,)
+    @cuda threads=length(A) cos_kernel(A)
+    dA = similar(A)
+    dA .= 1
+    @cuda threads=length(A) grad_cos_kernel(A, dA)
+    @test all(dA .== -sin(1))
+end
+
 function val_kernel!(_, ::Val{N}) where N
     return nothing
 end
