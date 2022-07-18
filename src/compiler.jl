@@ -3895,6 +3895,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         primal_job = similar(parent_job, job.source)
     end
+    
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
     
     LLVM.ModulePassManager() do pm
@@ -4186,11 +4187,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
-    
+
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#false)
         run!(pm, mod)
     end
+    API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue

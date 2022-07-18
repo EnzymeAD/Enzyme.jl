@@ -368,4 +368,8 @@ function AddPreserveNVVMPass!(pm, i8)
     ccall((:AddPreserveNVVMPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,UInt8), pm, i8)
 end
 
+function EnzymeReplaceFunctionImplementation(mod)
+    ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
+end
+
 end
