@@ -1118,6 +1118,6 @@ end
     data = Float64[1.,2.,3.,4.]
 	ddata = ones(4)
 	autodiff(Forward, rs, Duplicated(data, ddata))
-	@test ddata ≈ [3.0, 1.0, 1.0, 2.0]
+	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
 
 end
