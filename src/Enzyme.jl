@@ -2,7 +2,9 @@ module Enzyme
 
 export Forward, Reverse
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export Batch
 export autodiff, jacobian, gradient, gradient!
+export autobatch
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -107,6 +109,17 @@ batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
+    Batch(xs)
+
+For batching multiple inputs simultaneously.
+Argument should be a tuple of the several values of the same type.
+"""
+struct Batch{T,N}
+    val::NTuple{N,T}
+end
+Adapt.adapt_structure(to, x::Batch) = Batch(adapt(to, x.val))
+
+"""
     abstract type Mode
 
 Abstract type for what differentiation mode will be used.
@@ -201,6 +214,8 @@ end
 @inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Batch{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
 
