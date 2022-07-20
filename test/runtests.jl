@@ -1099,3 +1099,25 @@ using Random
     autodiff(f_rand, Active, Active(1.0))
     autodiff(f_randn, Active, Active(1.0), Const(64))
 end
+
+@testset "Reshape" begin
+
+	function rs(x)
+		y = reshape(x, 2, 2)
+		y[1,1] *= y[1, 2]
+		y[2, 2] *= y[2, 1]
+		nothing
+	end
+
+    data = Float64[1.,2.,3.,4.]
+	ddata = ones(4)
+
+	autodiff(rs, Duplicated(data, ddata))
+	@test ddata ≈ [3.0, 5.0, 2.0, 2.0]
+	
+    data = Float64[1.,2.,3.,4.]
+	ddata = ones(4)
+	autodiff(Forward, rs, Duplicated(data, ddata))
+	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
+
+end
