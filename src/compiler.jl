@@ -1279,7 +1279,7 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, clean=false, validate=false, ctx)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
     entry = name(meta.entry)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
