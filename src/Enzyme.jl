@@ -1,7 +1,7 @@
 module Enzyme
 
 export Forward, Reverse
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export Const, Active, Dual, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export autodiff, jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
@@ -67,6 +67,14 @@ struct Duplicated{T} <: Annotation{T}
     dval::T
 end
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
+
+"""
+    Dual(x, ∂f_∂x)
+
+Mark a function argument `x` of [`fwddiff`](@ref) as dual, Enzyme will
+auto-differentiate in respect to such arguments, with `dx` acting as the derivative of `x`.
+"""
+const Dual = Duplicated
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
