@@ -1133,7 +1133,10 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
 	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
 
     @test x ≈ [3.0]
     @test w ≈ [1.0]
