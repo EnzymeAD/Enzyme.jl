@@ -1119,5 +1119,45 @@ end
 	ddata = ones(4)
 	autodiff(Forward, rs, Duplicated(data, ddata))
 	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
+end
 
+@testset "Const arg" begin
+	x = Float32[3]
+	w = Float32[1]
+	dw = zero(w)
+
+	function inactiveArg(w, x, cond)
+	   if cond
+		  x = copy(x)
+	   end
+	  @inbounds w[1] * x[1]
+	end
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
+
+    @test x ≈ [3.0]
+    @test w ≈ [1.0]
+    @test dw ≈ [3.0]
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+
+    x = Float32[3]
+
+    function loss(w, x, cond)
+      dest = Array{Float32}(undef, 1)
+      r = cond ? copy(x) : x
+      res = @inbounds w[1] * r[1]
+      @inbounds dest[1] = res
+      res
+    end
+
+    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
+    
+    @test x ≈ [3.0]
+    @test dw[1] ≈ 3.0
 end
