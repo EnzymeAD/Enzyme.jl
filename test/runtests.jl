@@ -101,6 +101,7 @@ end
     test_scalar(log1p, 1.0)
 
     test_scalar(log10, 1.0)
+    test_scalar(Base.FastMath.exp_fast, 1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == (0.5,)
 end
