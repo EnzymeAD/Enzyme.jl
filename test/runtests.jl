@@ -1238,4 +1238,13 @@ end
     
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+    c = ones(3)
+    inner(e) = c .+ e
+    res = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated([0.], [1.]))
+    # Requires JLL bump
+    @test_broken x ≈ [1.0]    
+    Enzyme.API.runtimeActivity!(false)
 end

@@ -1790,12 +1790,24 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 
     if width == 1
         shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
+        if API.runtimeActivity()
+            prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+            shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), shadowres, prev)
+            API.moveBefore(prev, shadowres)
+        end
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
         for idx in 1:width
-            shadowres = insert_value!(B, shadowres, LLVM.call!(B, LLVM.called_value(orig), [
-                            extract_value!(B, shadowin, idx-1)
-                            ]), idx-1)
+            ev = extract_value!(B, shadowin, idx-1)
+            callv = LLVM.call!(B, LLVM.called_value(orig), [ev])
+            if API.runtimeActivity()
+                prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+                callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), callv, prev)
+                if idx == 1
+                    API.moveBefore(prev, callv)
+                end
+            end
+            shadowres = insert_value!(B, shadowres, callv, idx-1)
         end
     end
  
@@ -1911,30 +1923,16 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     return nothing
 end
 
-function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid   
+    arraycopy_fwd(B, OrigCI, gutils, normalR, shadowR)
+
+    shadowres = LLVM.Value(unsafe_load(shadowR))
     
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
-    
-    B = LLVM.Builder(B)
-
-    shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
-    
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    if width == 1
-        shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
-    else
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
-        for idx in 1:width
-            shadowres = insert_value!(B, shadowres, LLVM.call!(B, LLVM.called_value(orig), [
-                            extract_value!(B, shadowin, idx-1)
-                            ]), idx-1)
-        end
-    end
-    unsafe_store!(shadowR, shadowres.ref)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-      arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils, shadowres)
+      arraycopy_common(#=fwd=#true, LLVM.Builder(B), orig, origops[1], gutils, shadowres)
     end
 	
 	return nothing
