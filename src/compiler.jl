@@ -1282,7 +1282,7 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
     entry = name(meta.entry)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
@@ -3912,7 +3912,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         primal_job = similar(parent_job, job.source)
     end
+    
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
+    
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#true)
+        run!(pm, mod)
+    end
     
     primalf = meta.entry
     check_ir(job, mod)
@@ -4162,7 +4168,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # annotate
     annotate!(mod, mode)
-
+    
     # Run early pipeline
     optimize!(mod, target_machine)
 
@@ -4198,6 +4204,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         adjointf = primalf
         augmented_primalf = nothing
     end
+
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#false)
+        run!(pm, mod)
+    end
+    API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
