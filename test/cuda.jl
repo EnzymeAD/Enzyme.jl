@@ -43,7 +43,7 @@ end
     dA = similar(A)
     dA .= 1
     @cuda threads=length(A) grad_exp_kernel(A, dA)
-    @test_throws all(dA .== exp(1))
+    @test all(dA .== exp(1))
 end
 
 function cos_kernel(A)
@@ -65,7 +65,7 @@ end
     dA = similar(A)
     dA .= 1
     @cuda threads=length(A) grad_cos_kernel(A, dA)
-    @test_throws all(dA .== -sin(1))
+    @test all(dA .== -sin(1))
 end
 
 function val_kernel!(_, ::Val{N}) where N
