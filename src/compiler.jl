@@ -4044,7 +4044,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                   ])
             continue
         end
-        # Since this is noreturn, it can't write to any operations in the function
+        # Since this is noreturn and it can't write to any operations in the function
         # in a way accessible by the function. Ideally the attributor should actually
         # handle this and similar not impacting the read/write behavior of the calling
         # fn, but it doesn't presently so for now we will ensure this by hand
