@@ -256,6 +256,16 @@ end
     @test dx == [1.0, 0.0]
 end
 
+@testset "Advanced array tests sq" begin
+    function arsumsq(f::Array{T}) where T
+        return sum(f) * sum(f)
+    end
+    inp = Float64[1.0, 2.0]
+    dinp = Float64[0.0, 0.0]
+    autodiff(arsumsq, Active, Duplicated(inp, dinp))
+    @test inp ≈ Float64[1.0, 2.0]
+    @test dinp ≈ Float64[6.0, 6.0]
+end
 
 @testset "Bithacks" begin
     function fneg(x::Float64)
