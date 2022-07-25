@@ -33,7 +33,7 @@ function exp_kernel(A)
 end
 
 function grad_exp_kernel(A, dA)
-    Enzyme.autodiff_deferred(cos_kernel, Const, Duplicated(A, dA))
+    Enzyme.autodiff_deferred(exp_kernel, Const, Duplicated(A, dA))
     return nothing
 end
 
