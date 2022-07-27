@@ -2307,54 +2307,61 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 end
 
 function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    origops = collect(operands(orig))
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+    if shadowR != C_NULL
+        orig = LLVM.Instruction(OrigCI)
+        origops = collect(operands(orig))
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+            B = LLVM.Builder(B)
 
 
-        shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
-        if width == 1
-            args = LLVM.Value[
-                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
-                              shadowin
-                              ]
-            for a in origops[3:end-1]
-                push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
-            end
-
-            shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
-            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
-        else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
-            for idx in 1:width
+            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+            if width == 1
                 args = LLVM.Value[
                                   LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
-                                  extract_value!(B, shadowin, idx-1)
+                                  shadowin
                                   ]
                 for a in origops[3:end-1]
                     push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
                 end
-                tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+
+                shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
                 conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
-                shadowres = insert_value!(B, shadowres, tmp, idx-1)
+                LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
+            else
+                shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
+                for idx in 1:width
+                    args = LLVM.Value[
+                                      LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                                      extract_value!(B, shadowin, idx-1)
+                                      ]
+                    for a in origops[3:end-1]
+                        push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
+                    end
+                    tmp = LLVM.call!(B, LLVM.called_value(orig), args)
+                    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                    LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
+                    shadowres = insert_value!(B, shadowres, tmp, idx-1)
+                end
             end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    else
-        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-        if width == 1
-            shadowres = normal
+            unsafe_store!(shadowR, shadowres.ref)
         else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(normal))))
-            for idx in 1:width
-                shadowres = insert_value!(B, shadowres, normal, idx-1)
+            if unsafe_load(normalR) == C_NULL
+                @show LLVM.parent(LLVM.parent(orig))
+                @show LLVM.parent(LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.parent(orig))))
+                @show orig
             end
+            normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(normal))))
+                for idx in 1:width
+                    shadowres = insert_value!(B, shadowres, normal, idx-1)
+                end
+            end
+            unsafe_store!(shadowR, shadowres.ref)
         end
-        unsafe_store!(shadowR, shadowres.ref)
     end
     return nothing
 end
