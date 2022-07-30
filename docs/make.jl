@@ -22,6 +22,9 @@ makedocs(;
     ),
     pages = [
         "Home" => "index.md",
+        "Tutorials" => [
+            "Box Model" => "tutorials/box.md"
+        ],
         "API" => "api.md",
         "Implementing pullbacks" => "pullbacks.md",
         "For developers" => "dev_docs.md",
