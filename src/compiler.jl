@@ -1282,7 +1282,7 @@ function nested_codegen!(mod::LLVM.Module, f, tt)
     params = Compiler.PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)
 
-    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
+    otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
     entry = name(meta.entry)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
@@ -3085,6 +3085,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     dl  = string(LLVM.datalayout(mod))
     F   = adjoint.f
 
+
     tt = [adjoint.tt.parameters...,]
 
     if eltype(rt) === Union{}
@@ -3913,7 +3914,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primal_job = similar(parent_job, job.source)
     end
     
-    mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
+    mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
     
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
