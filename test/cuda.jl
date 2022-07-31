@@ -18,6 +18,7 @@ end
 @testset "mul_kernel" begin
     A = CUDA.ones(64,)
     @cuda threads=length(A) mul_kernel(A)
+    A = CUDA.ones(64,)
     dA = similar(A)
     dA .= 1
     @cuda threads=length(A) grad_mul_kernel(A, dA)
@@ -40,10 +41,11 @@ end
 @testset "exp_kernel" begin
     A = CUDA.ones(64,)
     @cuda threads=length(A) exp_kernel(A)
+    A = CUDA.ones(64,)
     dA = similar(A)
     dA .= 1
     @cuda threads=length(A) grad_exp_kernel(A, dA)
-    @test all(dA .== exp(1))
+    @test all(dA .== exp(1.f0))
 end
 
 function cos_kernel(A)
@@ -62,10 +64,11 @@ end
 @testset "cos_kernel" begin
     A = CUDA.ones(64,)
     @cuda threads=length(A) cos_kernel(A)
+    A = CUDA.ones(64,)
     dA = similar(A)
     dA .= 1
     @cuda threads=length(A) grad_cos_kernel(A, dA)
-    @test all(dA .== -sin(1))
+    @test all(dA .≈ -sin(1.f0))
 end
 
 function val_kernel!(_, ::Val{N}) where N
