@@ -2663,8 +2663,23 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     throw(AssertionError("Unknown errtype"))
 end
 
+function julia_allocator(B, LLVMType, Count, Align)
+    return LLVM.API.LLVMValueRef(C_NULL)
+end
+
+function julia_deallocator(B, Obj)
+    return LLVM.API.LLVMValueRef(C_NULL)
+end
+
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
+    if API.EnzymeHasCustomAllocatorSupport()
+        API.EnzymeSetCustomAllocator(@cfunction(
+            julia_allocator, LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+        API.EnzymeSetCustomDeallocator(@cfunction(
+            julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+    end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
