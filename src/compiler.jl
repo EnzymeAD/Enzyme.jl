@@ -2664,11 +2664,31 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
 end
 
 function julia_allocator(B, LLVMType, Count, Align)
-    return LLVM.API.LLVMValueRef(C_NULL)
+    B = LLVM.Builder(B)
+    Count = LLVM.Value(Count)
+    Align = LLVM.Value(Align)
+    LLVMType = LLVM.LLVMType(LLVMType)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    ctx = context(mod)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    intrinsic_typ = LLVM.FunctionType(ptr8, [llvmtype(Count)])
+    mallocF = LLVM.Function(mod, "malloc", intrinsic_typ)
+    mem = call!(B, mallocF, [mul!(B, Count, Align)])
+    mem = pointercast!(B, mem, LLVM.PointerType(LLVMType, 0))
+    return LLVM.API.LLVMValueRef(mem.ref)
 end
 
 function julia_deallocator(B, Obj)
-    return LLVM.API.LLVMValueRef(C_NULL)
+    B = LLVM.Builder(B)
+    Obj = LLVM.Value(Obj)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    ctx = context(mod)
+    T_void = convert(LLVM.LLVMType, Nothing; ctx)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    intrinsic_typ = LLVM.FunctionType(T_void, [ptr8])
+    freeF = LLVM.Function(mod, "free", intrinsic_typ)
+    callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
+    return LLVM.API.LLVMValueRef(callf.ref)
 end
 
 function __init__()
