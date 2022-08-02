@@ -2669,10 +2669,13 @@ function julia_allocator(B, LLVMType, Count, Align)
     Align = LLVM.Value(Align)
     LLVMType = LLVM.LLVMType(LLVMType)
     mod = LLVM.parent(LLVM.parent(position(B)))
-    ctx = context(mod)
-    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-    intrinsic_typ = LLVM.FunctionType(ptr8, [llvmtype(Count)])
-    mallocF = LLVM.Function(mod, "malloc", intrinsic_typ)
+
+    mallocF = get_function!(mod, "malloc") do mod, ctx, name
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        intrinsic_typ = LLVM.FunctionType(ptr8, [llvmtype(Count)])
+        LLVM.Function(mod, name, intrinsic_typ)
+    end
+
     mem = call!(B, mallocF, [mul!(B, Count, Align)])
     mem = pointercast!(B, mem, LLVM.PointerType(LLVMType, 0))
     return LLVM.API.LLVMValueRef(mem.ref)
@@ -2683,10 +2686,12 @@ function julia_deallocator(B, Obj)
     Obj = LLVM.Value(Obj)
     mod = LLVM.parent(LLVM.parent(position(B)))
     ctx = context(mod)
-    T_void = convert(LLVM.LLVMType, Nothing; ctx)
     ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-    intrinsic_typ = LLVM.FunctionType(T_void, [ptr8])
-    freeF = LLVM.Function(mod, "free", intrinsic_typ)
+    freeF = get_function!(mod, "free") do mod, ctx, name
+        T_void = convert(LLVM.LLVMType, Nothing; ctx)
+        intrinsic_typ = LLVM.FunctionType(T_void, [ptr8])
+        LLVM.Function(mod, name, intrinsic_typ)
+    end
     callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
     return LLVM.API.LLVMValueRef(callf.ref)
 end
