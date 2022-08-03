@@ -17,7 +17,7 @@
 # ```math
 # \begin{aligned}
 #    U &= u_0 \left\{ \rho_2 - \left[ \rho_1 + (1 - \delta) \rho_3 \right] \right\} \\
-#    \rho_i &= -\alpha T_i + \beta S_i, \; \; \; \; i = 1, 2, 3 \\
+#    \rho_i &= -\alpha T_i + \beta S_i, \; \; \; \; i = 1, 2, 3
 # \end{align}
 # ```
 #
@@ -184,7 +184,6 @@ function timestep_func(fld_now, fld_old, u, dt)
     end 
 
     return fld_new 
-
 end 
 
 # ## Define forward functions
@@ -205,30 +204,26 @@ function forward_func(fld_old, fld_now, dt, M)
     states_unsmooth = [state_old];                      
     states_smooth = [state_old]
 
-for t = 1:M
+    for t = 1:M
+        rho_now = rho_func(state_now)
+        u_now = U_func(rho_now)
+        state_new = timestep_func(state_now, state_old, u_now, dt)
 
-    rho_now = rho_func(state_now)
-    u_now = U_func(rho_now)
-    state_new = timestep_func(state_now, state_old, u_now, dt)
+        ## Robert filter smoother (needed for stability)
+        for j = 1:6
+            state_now[j] = state_now[j] + robert_filter_coeff * (state_new[j] - 2.0 * state_now[j] + state_old[j])
+        end 
 
-    ## Robert filter smoother (needed for stability)
-    for j = 1:6
-        state_now[j] = state_now[j] + robert_filter_coeff * (state_new[j] - 2.0 * state_now[j] + state_old[j])
-    end 
+        push!(states_smooth, copy(state_now))
+        push!(states_unsmooth, copy(state_new))
 
-    push!(states_smooth, copy(state_now))
-    push!(states_unsmooth, copy(state_new))
+        ## cycle the "now, new, old" states 
 
-    ## cycle the "now, new, old" states 
+        state_old = state_now 
+        state_now = state_new 
+    end
 
-    state_old = state_now 
-    state_now = state_new 
-
-
-end
-
-return states_smooth, states_unsmooth
-
+    return states_smooth, states_unsmooth
 end
 
 # Next, we have the Enzyme-designed forward function. This is what we'll actually
@@ -255,7 +250,7 @@ function forward_func_4_AD(in_now, in_old, out_old, out_now)
 end
 
 # Two key differences:
-# 1) `forward_func_4_AD`` now returns nothing, but is rather a function of both its Input
+# 1) `forward_func_4_AD` now returns nothing, but is rather a function of both its input
 #    and output.
 # 2) All operations are now inlined, meaning we compute the entries of the input vector
 #    individually.
@@ -265,8 +260,8 @@ end
 # # Example 1: Simply using Enzyme
 
 # For the first example let's just compute the gradient of our forward function and 
-# examine the output. We'll just run the model for one step, and take a dt of ten 
-# days. The initial conditions of the system are given as Tbar and Sbar. 
+# examine the output. We'll just run the model for one step, and take a `dt` of ten 
+# days. The initial conditions of the system are given as `Tbar` and `Sbar`. 
 
 const Tbar = [20.0; 1.0; 1.0]
 const Sbar = [35.5; 34.5; 34.5]
@@ -282,8 +277,8 @@ out_old = zeros(6); dout_old = ones(6)
 autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar; Sbar], din_old), 
                     Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));
 
-# In order to run Enzyme on `forward_func_4_AD``, we've needed to provide quite a few 
-# placeholders, and wrap everything in Duplicated as all components of our function 
+# In order to run Enzyme on `forward_func_4_AD`, we've needed to provide quite a few 
+# placeholders, and wrap everything in [`Duplicated`](@ref) as all components of our function 
 # are vectors, not scalars. Let's go through and see what Enzyme did with all 
 # of those placeholders. 
 
@@ -296,7 +291,7 @@ autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar;
 @show states_smooth[2], states_unsmooth[2]
 
 # we see that Enzyme has computed and stored exactly the output of the 
-# forward step. Next, let's look at `din_now``: 
+# forward step. Next, let's look at `din_now`: 
 
 @show din_now 
 
@@ -344,7 +339,7 @@ autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([T
 # \frac{\partial J}{\partial \mathbf{x}(0)}
 # ```
 #
-# where x(t) is the state of the model at time t. If we think about x(t_f) as solely depending on the 
+# where `x(t)`` is the state of the model at time t. If we think about `x(t_f)`` as solely depending on the 
 # initial condition, then this derivative is really 
 #
 # ```math
@@ -398,7 +393,7 @@ states_smooth, states_unsmooth = forward_func(copy([Tbar; Sbar]), copy([Tbar; Sb
 adjoint_now, adjoint_old = ad_calc(states_unsmooth, states_smooth, M);
 
 # And we're done! We were interested in sensitivity to the initial salinity of box 
-# two, which will live in what we've called adjoint_old. Checking this value we see
+# two, which will live in what we've called `adjoint_old`. Checking this value we see
 
 @show adjoint_old[5]
 
@@ -463,6 +458,6 @@ end
 
 @show abs.(diffs .- adjoint_old[5])./adjoint_old[5]
 
-# and we get down to a percent difference on the order of 1e-5, showing Enzyme calculated
+# and we get down to a percent difference on the order of ``1e-5``, showing Enzyme calculated
 # the correct derivative. Success! 
 
