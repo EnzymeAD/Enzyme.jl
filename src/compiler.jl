@@ -3922,7 +3922,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         ts_ctx = ctx
         ctx = context(mod)
     end
-    @assert ts_ctx isa Union{Nothing, LLVM.ThreadSafeContext}
 
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
