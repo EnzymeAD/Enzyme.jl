@@ -3915,7 +3915,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
-    
+    if ctx !== nothing && ctx isa LLVM.Context
+        @assert ctx == context(mod)
+        ts_ctx = nothing
+    else
+        ts_ctx = ctx
+        ctx = context(mod)
+    end
+
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
         run!(pm, mod)
@@ -3984,7 +3991,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    @assert ctx == context(mod)
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
 
