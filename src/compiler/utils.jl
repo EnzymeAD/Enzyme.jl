@@ -1,22 +1,30 @@
 
-function get_function!(builderF, mod, name)
+function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
     if haskey(functions(mod), name)
-        return functions(mod)[name]
+        F = functions(mod)[name]
+        PT = LLVM.PointerType(FT)
+        if llvmtype(F) != PT
+            F = LLVM.const_pointercast(F, PT)
+        end
     else
-        return builderF(mod, context(mod), name)
+        F = LLVM.Function(mod, name, FT)
+        for attr in attrs
+            push!(function_attributes(F), attr)
+        end
     end
+    return F
 end
+
+function get_function!(builderF, mod::LLVM.Module, name)
+    get_function!(mod, name, builderF(context(mod)))
+end
+
+
+T_ppjlvalue(ctx) = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[]; ctx)))
 
 if VERSION < v"1.7.0-DEV.1205"
 
-declare_ptls!(mod) = get_function!(mod, "julia.ptls_states") do mod, ctx, name
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_pjlvalue = LLVM.PointerType(T_jlvalue)
-    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
-
-    funcT = LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue))
-    LLVM.Function(mod, name, funcT)
-end
+declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
 
 function emit_ptls!(B)
     curent_bb = position(B)
@@ -56,14 +64,7 @@ end
 
 else
 
-declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack") do mod, ctx, name
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_pjlvalue = LLVM.PointerType(T_jlvalue)
-    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
-
-    funcT = LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue))
-    LLVM.Function(mod, name, funcT)
-end
+declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
 
 function emit_pgcstack(B)
     curent_bb = position(B)

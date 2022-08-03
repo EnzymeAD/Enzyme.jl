@@ -134,7 +134,7 @@ macro safe_show(exs...)
     return blk
 end
 
-declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, name
+declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     
@@ -143,8 +143,7 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, n
 
 	#TODO make size_t > 32 => 64, else 32
 	T_size = LLVM.IntType((sizeof(Csize_t)*8) > 32 ? 64 : 32; ctx)
-    funcT = LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
-    LLVM.Function(mod, name, funcT)
+    LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
 end
 function emit_allocobj!(B, T, size)
     curent_bb = position(B)
@@ -168,12 +167,11 @@ end
 function emit_allocobj!(B, T)
     emit_allocobj!(B, T, sizeof(T))
 end
-declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do mod, ctx, name
+declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 11) 
     T_pjlvalue = LLVM.PointerType(T_jlvalue)
-    funcT = LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
-    LLVM.Function(mod, name, funcT)
+    LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
 end
 function emit_pointerfromobjref!(B, T)
     curent_bb = position(B)
@@ -819,10 +817,7 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    func = get_function!(mod, "llvm.julia.gc_preserve_begin") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true)
-        LLVM.Function(mod, name, funcT)
-    end
+    func = get_function!(mod, "llvm.julia.gc_preserve_begin", LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true))
 
     token = call!(B, func, args)
     return token
@@ -834,10 +829,7 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    func = get_function!(mod, "llvm.julia.gc_preserve_end") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)])
-        LLVM.Function(mod, name, funcT)
-    end
+    func = get_function!(mod, "llvm.julia.gc_preserve_end", LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)]))
 
     call!(B, func, [token])
     return
@@ -1228,12 +1220,8 @@ function emit_error(B::LLVM.Builder, string)
     ctx = context(mod)
 
     # 1. get the error function
-    func = get_function!(mod, "jl_error") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
-        func = LLVM.Function(mod, name, funcT)
-        push!(function_attributes(func), EnumAttribute("noreturn"; ctx))
-        return func
-    end
+    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
+    func = get_function!(mod, "jl_error", funcT, [EnumAttribute("noreturn"; ctx)])
 
     # 2. Call error function and insert unreachable
     call!(B, func, LLVM.Value[globalstring_ptr!(B, string)])
@@ -2663,8 +2651,52 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     throw(AssertionError("Unknown errtype"))
 end
 
+function julia_allocator(B, LLVMType, Count, Align)
+    B = LLVM.Builder(B)
+    Count = LLVM.Value(Count)
+    Align = LLVM.Value(Align)
+    LLVMType = LLVM.LLVMType(LLVMType)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+
+    ctx = context(mod)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
+
+    mem = call!(B, mallocF, [mul!(B, Count, Align)])
+    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("noalias"; ctx))
+    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("nonnull"; ctx))
+    if isa(Count, LLVM.ConstantInt)
+        val = convert(UInt64, Align)
+        val *= convert(UInt64, Count)
+        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable", val; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable_or_null", val; ctx))
+    end
+    mem = pointercast!(B, mem, LLVM.PointerType(LLVMType, 0))
+    return LLVM.API.LLVMValueRef(mem.ref)
+end
+
+function julia_deallocator(B, Obj)
+    B = LLVM.Builder(B)
+    Obj = LLVM.Value(Obj)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    ctx = context(mod)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    T_void = LLVM.VoidType(ctx)
+    freeF = get_function!(mod, "free", LLVM.FunctionType(T_void, [ptr8]))
+    callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
+    LLVM.API.LLVMAddCallSiteAttribute(callf, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nonnull"; ctx))
+    return LLVM.API.LLVMValueRef(callf.ref)
+end
+
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
+    if API.EnzymeHasCustomAllocatorSupport()
+        API.EnzymeSetCustomAllocator(@cfunction(
+            julia_allocator, LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+        API.EnzymeSetCustomDeallocator(@cfunction(
+            julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+    end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),

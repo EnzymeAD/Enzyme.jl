@@ -350,8 +350,27 @@ function EnzymeGradientUtilsInvertedPointersToString(gutils)
 end
 
 function EnzymeSetHandler(handler)
-    ptr = cglobal((:CustomErrorHandler, libEnzyme))
-    unsafe_store!(convert(Ptr{Ptr{Cvoid}}, ptr), handler)
+    ptr = cglobal((:CustomErrorHandler, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+
+function EnzymeSetCustomAllocator(handler)
+    ptr = cglobal((:CustomAllocator, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeSetCustomDeallocator(handler)
+    ptr = cglobal((:CustomDeallocator, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+
+function EnzymeHasCustomAllocatorSupport()
+    try
+        EnzymeSetCustomAllocator(C_NULL)
+        EnzymeSetCustomDeallocator(C_NULL)
+    catch
+        return false
+    end
+    return true
 end
 
 function __init__()
