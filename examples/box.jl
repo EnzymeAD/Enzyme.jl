@@ -21,21 +21,21 @@
 # ```
 # for the **transport** U and **densities** ``\rho``, and then the time derivatives
 # ```math
-#\begin{aligned}
+# \begin{aligned}
 #    \dot{T_1} &= U(T_3 - T_1)/V_1 + \gamma (T_1^* - T_1 ) & \dot{S_1} &= U(S_3 - S_1)/V_1 + FW_1/V_1 \\
 #    \dot{T_2} &= U(T_1 - T_2)/V_2 + \gamma (T_2^* - T_2 ) & \dot{S_2} &= U(S_1 - S_2)/V_2 + FW_2/V_2 \\
 #    \dot{T_3} &= U(T_2 - T_3)/V_3 & \dot{S_3} &= U(S_2 - S_3)/V_3 
-#\end{aligned}
-#```
+# \end{aligned}
+# ```
 # for positive transport, ``U > 0``, and 
 # ```math
 # \begin{aligned}
 #    \dot{T_1} &= U(T_2 - T_1)/V_1 + \gamma (T_1^* - T_1) & \dot{S_1} &= U(S_2 - S_1)/V_1 + FW_1/V_1 \\
 #    \dot{T_2} &= U(T_3 - T_2)/V_2 + \gamma (T_2^* - T_2 ) & \dot{S_2} &= U(S_3 - S_2)/V_2 + FW_2/V_2 \\
 #    \dot{T_3} &= U(T_1 - T_3)/V_3 & \dot{S_3} &= U(S_1 - S_3)/V_3 
-#\end{aligned}
-#```
-#for ``U \leq 0``.
+# \end{aligned}
+# ```
+# for ``U \leq 0``.
 # The only force driving our system is a density gradient generated via temperature
 # and salinity differences between the boxes. This makes it a really easy 
 # model to play around with! With this in mind, the model is run 
