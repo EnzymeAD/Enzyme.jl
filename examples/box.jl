@@ -18,7 +18,7 @@
 # \begin{aligned}
 #    U &= u_0 \left\{ \rho_2 - \left[ \rho_1 + (1 - \delta) \rho_3 \right] \right\} \\
 #    \rho_i &= -\alpha T_i + \beta S_i, \; \; \; \; i = 1, 2, 3
-# \end{align}
+# \end{aligned}
 # ```
 #
 # for the **transport** U and **densities** ``\rho``, and then the time derivatives
@@ -458,6 +458,6 @@ end
 
 @show abs.(diffs .- adjoint_old[5])./adjoint_old[5]
 
-# and we get down to a percent difference on the order of ``1e-5``, showing Enzyme calculated
+# and we get down to a percent difference on the order of ``1e^{-5}``, showing Enzyme calculated
 # the correct derivative. Success! 
 
