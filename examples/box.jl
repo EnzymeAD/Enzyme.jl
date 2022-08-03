@@ -13,13 +13,16 @@
 # The Stommel box model can be viewed as a watered down full ocean model. In our example, we have three
 # boxes (Box One, Box Two, and Box Three) and we model the transport of fluid between 
 # them. The full equations of our system are given by:
+#
 # ```math
 # \begin{aligned}
 #    U &= u_0 \left\{ \rho_2 - \left[ \rho_1 + (1 - \delta) \rho_3 \right] \right\} \\
 #    \rho_i &= -\alpha T_i + \beta S_i, \; \; \; \; i = 1, 2, 3 \\
 # \end{align}
 # ```
+#
 # for the **transport** U and **densities** ``\rho``, and then the time derivatives
+#
 # ```math
 # \begin{aligned}
 #    \dot{T_1} &= U(T_3 - T_1)/V_1 + \gamma (T_1^* - T_1 ) & \dot{S_1} &= U(S_3 - S_1)/V_1 + FW_1/V_1 \\
@@ -27,7 +30,9 @@
 #    \dot{T_3} &= U(T_2 - T_3)/V_3 & \dot{S_3} &= U(S_2 - S_3)/V_3 
 # \end{aligned}
 # ```
+#
 # for positive transport, ``U > 0``, and 
+#
 # ```math
 # \begin{aligned}
 #    \dot{T_1} &= U(T_2 - T_1)/V_1 + \gamma (T_1^* - T_1) & \dot{S_1} &= U(S_2 - S_1)/V_1 + FW_1/V_1 \\
@@ -35,6 +40,7 @@
 #    \dot{T_3} &= U(T_1 - T_3)/V_3 & \dot{S_3} &= U(S_1 - S_3)/V_3 
 # \end{aligned}
 # ```
+#
 # for ``U \leq 0``.
 # The only force driving our system is a density gradient generated via temperature
 # and salinity differences between the boxes. This makes it a really easy 
@@ -249,7 +255,7 @@ function forward_func_4_AD(in_now, in_old, out_old, out_now)
 end
 
 # Two key differences:
-# 1) forward_func_4_AD now returns nothing, but is rather a function of both its Input
+# 1) `forward_func_4_AD`` now returns nothing, but is rather a function of both its Input
 #    and output.
 # 2) All operations are now inlined, meaning we compute the entries of the input vector
 #    individually.
@@ -268,7 +274,7 @@ const Sbar = [35.5; 34.5; 34.5]
 ## Running the model one step forward
 states_smooth, states_unsmooth = forward_func(copy([Tbar; Sbar]), copy([Tbar; Sbar]), 10*day, 1)
     
-## Run Enzyme one time on forward_func_4_AD
+## Run Enzyme one time on `forward_func_4_AD``
 din_now = zeros(6)
 din_old = zeros(6)
 out_now = zeros(6); dout_now = ones(6)
@@ -276,7 +282,7 @@ out_old = zeros(6); dout_old = ones(6)
 autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar; Sbar], din_old), 
                     Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));
 
-# In order to run Enzyme on forward_func_4_AD, we've needed to provide quite a few 
+# In order to run Enzyme on `forward_func_4_AD``, we've needed to provide quite a few 
 # placeholders, and wrap everything in Duplicated as all components of our function 
 # are vectors, not scalars. Let's go through and see what Enzyme did with all 
 # of those placeholders. 
@@ -290,7 +296,7 @@ autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar;
 @show states_smooth[2], states_unsmooth[2]
 
 # we see that Enzyme has computed and stored exactly the output of the 
-# forward step. Next, let's look at din_now: 
+# forward step. Next, let's look at `din_now``: 
 
 @show din_now 
 
@@ -334,16 +340,16 @@ autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([T
 # ```
 # we want Enzyme to calculate the derivative 
 #
-#```math
+# ```math
 # \frac{\partial J}{\partial \mathbf{x}(0)}
-#```
+# ```
 #
 # where x(t) is the state of the model at time t. If we think about x(t_f) as solely depending on the 
 # initial condition, then this derivative is really 
 #
-#```math
+# ```math
 # \frac{\partial J}{\partial \mathbf{x}(0)} = \frac{\partial}{\partial \mathbf{x}(0)} \left( (1,0,0,0,0,0)^T \cdot L(\ldots(L(\mathbf{x}(0)))) \right) 
-#```
+# ```
 #
 # with L(x(t)) = x(t + dt), i.e. one forward step. One could expand this derivative with the chain rule (and it would be very complicated), but really this 
 # is where Enzyme comes in. Each run of autodiff on our forward function is one piece of this big chain rule done for us! We also note that the chain rule
