@@ -3917,7 +3917,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
     if ctx !== nothing && ctx isa LLVM.Context
         @assert ctx == context(mod)
-        # Otherwise ctx is a TSCtx
+        ts_ctx = nothing
     else
         ts_ctx = ctx
         ctx = context(mod)
