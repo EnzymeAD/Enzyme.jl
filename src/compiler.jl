@@ -3069,14 +3069,104 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     throw(AssertionError("Unknown errtype"))
 end
 
+function any_jltypes(Type::LLVM.PointerType)
+    if 10 <= LLVM.addrspace(Type) <= 12
+        return true
+    else
+        # do we care about {} addrspace(11)**
+        return false
+    end
+end
+
+any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
+any_jltypes(Type::LLVM.ArrayType) = any_jltypes(eltype(Type))
+any_jltypes(::LLVM.IntegerType) = false
+any_jltypes(::LLVM.FloatingPointType) = false
+
+mutable struct EnzymeTape{U}
+    data::U
+end
+
+function to_tape_type(Type::LLVM.PointerType)
+    if 10 <= LLVM.addrspace(Type) <= 12
+        return Any
+    else
+        return UInt # do we need something more precise?
+    end
+end
+
+to_tape_type(Type::LLVM.StructType) = Tuple{map(to_tape_type, LLVM.elements(Type))...}
+to_tape_type(Type::LLVM.ArrayType) = NTuple{Int(length(Type)), to_tape_type(eltype(Type))}
+function to_tape_type(Type::LLVM.IntegerType)
+    N = width(Type)
+    if N == 8
+        return UInt8
+    elseif N == 16
+        return UInt16
+    elseif N == 32
+        return UInt32
+    elseif N == 64 
+        return UInt64
+    elseif N == 128
+        return UInt128
+    else
+        error("Can't construct tape type for $N")
+    end
+end
+
+to_tape_type(::LLVM.LLVMHalf) = Float16
+to_tape_type(::LLVM.LLVMFloat) = Float32
+to_tape_type(::LLVM.LLVMDouble) = Float64
+to_tape_type(::LLVM.LLVMFP128) = Float128
+
+const Tracked = 10
+
 function julia_allocator(B, LLVMType, Count, Align)
     B = LLVM.Builder(B)
     Count = LLVM.Value(Count)
     Align = LLVM.Value(Align)
     LLVMType = LLVM.LLVMType(LLVMType)
-    mod = LLVM.parent(LLVM.parent(position(B)))
 
+    func = LLVM.parent(position(B))
+    mod = LLVM.parent(func)
     ctx = context(mod)
+
+    if any_jltypes(LLVMType)
+        @assert Count isa LLVM.ConstantInt
+        @assert convert(Int, Count) == 1
+
+        @assert Align isa LLVM.ConstantInt
+        @safe_show Align
+        # @assert convert(Int, Align) <= 16 # max alignment given by Julia's GC
+        # What do we do when we want a higher alignment?
+
+        # TODO(@wsmoses) Align seems to be sizeof?
+        # at least that's how it is used in the malloc case
+
+        TT = to_tape_type(LLVMType)
+
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
+
+        T_size_t = convert(LLVM.LLVMType, Int; ctx)
+        alloc_obj = get_function!(mod, "julia.gc_alloc_obj", LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue]))
+
+        pgcstack = get_pgcstack(func)
+        # TODO: Calculate that constant... see get_current_task
+        ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(-12; ctx)])
+
+        # Obtain tag
+        tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape{TT})); ctx) # do we need to root the EnzymeTape{TT}
+        tag = LLVM.const_inttoptr(tag, T_prjlvalue)
+        obj = call!(B, alloc_obj, [ct, Align, tag])
+        # TODO annotations
+
+        mem = pointercast!(B, obj, LLVM.PointerType(LLVMType, Tracked))
+        return LLVM.API.LLVMValueRef(mem.ref)
+    end
+
+
     ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
     mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
 
@@ -3098,11 +3188,16 @@ function julia_deallocator(B, Obj)
     Obj = LLVM.Value(Obj)
     mod = LLVM.parent(LLVM.parent(position(B)))
     ctx = context(mod)
-    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    
     T_void = LLVM.VoidType(ctx)
-    freeF = get_function!(mod, "free", LLVM.FunctionType(T_void, [ptr8]))
-    callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
-    LLVM.API.LLVMAddCallSiteAttribute(callf, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nonnull"; ctx))
+    if any_jltypes(LLVM.llvmtype(Obj))
+        callf = LLVM.UndefValue(T_Void)
+    else
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        freeF = get_function!(mod, "free", LLVM.FunctionType(T_void, [ptr8]))
+        callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
+        LLVM.API.LLVMAddCallSiteAttribute(callf, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nonnull"; ctx))
+    end
     return LLVM.API.LLVMValueRef(callf.ref)
 end
 
