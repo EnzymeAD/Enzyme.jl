@@ -311,6 +311,11 @@ function strictAliasing!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function runtimeActivity!(val)
+    ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function typeWarning!(val)
     ptr = cglobal((:EnzymeTypeWarning, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
@@ -345,8 +350,27 @@ function EnzymeGradientUtilsInvertedPointersToString(gutils)
 end
 
 function EnzymeSetHandler(handler)
-    ptr = cglobal((:CustomErrorHandler, libEnzyme))
-    unsafe_store!(convert(Ptr{Ptr{Cvoid}}, ptr), handler)
+    ptr = cglobal((:CustomErrorHandler, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+
+function EnzymeSetCustomAllocator(handler)
+    ptr = cglobal((:CustomAllocator, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeSetCustomDeallocator(handler)
+    ptr = cglobal((:CustomDeallocator, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+
+function EnzymeHasCustomAllocatorSupport()
+    try
+        EnzymeSetCustomAllocator(C_NULL)
+        EnzymeSetCustomDeallocator(C_NULL)
+    catch
+        return false
+    end
+    return true
 end
 
 function __init__()
@@ -362,6 +386,14 @@ end
 
 function SetMustCache!(i1)
     ccall((:EnzymeSetMustCache, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
+end
+
+function AddPreserveNVVMPass!(pm, i8)
+    ccall((:AddPreserveNVVMPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,UInt8), pm, i8)
+end
+
+function EnzymeReplaceFunctionImplementation(mod)
+    ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
 
 end

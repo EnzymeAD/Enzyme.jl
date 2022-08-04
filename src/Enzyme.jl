@@ -5,6 +5,8 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 export autodiff, jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
+using LinearAlgebra
+
 # Independent code, must be loaded before "compiler.jl"
 include("pmap.jl")
 
@@ -185,31 +187,31 @@ import .Compiler: CompilationException
     end
 end
 
-@inline function same_or_one(args::Vararg{Any, N}) where N
-    current = -1
-    for arg in args
-        if arg isa BatchDuplicated
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
-        elseif arg isa BatchDuplicatedNoNeed
-            if current == -1
-                current = batch_size(arg)
-            else
-                @assert current == batch_size(arg)
-            end
-        end
-    end
-
+@inline function same_or_one_helper(current, next)
     if current == -1
-        current = 1
+        return next
+    elseif current == next
+        return next
+    else
+        error("Multiple distinct batch sizes")
     end
-
-    return current
 end
 
+@inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
+
+@inline function same_or_one(args...)
+    res = same_or_one_rec(-1, args...)
+    if res == -1
+        return 1
+    else
+        return res
+    end
+end
 """
     autodiff(::ReverseMode, f, Activity, args...)
 
@@ -634,11 +636,11 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 # output
 
-((3.0, 2.0),)
+(3.0, 2.0)
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
-    autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))
+    only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow)))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -703,11 +705,14 @@ grad = jacobian(Forward, f, [2.0, 3.0])
 
 # output
 
-(([3.0, 0.0], [2.0, 1.0]),)
+2×2 Matrix{Float64}:
+ 3.0  2.0
+ 0.0  1.0
 ```
 """
 @inline function jacobian(::ForwardMode, args...; kwargs...)
-    gradient(Forward, args...; kwargs...)
+    cols = gradient(Forward, args...; kwargs...)
+    reduce(hcat, cols)
 end
 
 """
@@ -715,8 +720,7 @@ end
 
 Compute the jacobian of an array-input function `f` using (potentially vector)
 reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
-denotes the number of outputs `f` will return in an array. Note that the result
-of this is the transpose of the Forward [`jacobian`](@ref)
+denotes the number of outputs `f` will return in an array.
 
 Example:
 
@@ -727,7 +731,9 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
 # output
 
-([3.0, 2.0], [0.0, 1.0])
+2×2 Matrix{Float64}:
+ 3.0  2.0
+ 0.0  1.0
 ```
 """
 @inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
@@ -763,7 +769,8 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
         (i == num ? adjoint2 : adjoint)(BatchDuplicated(x, dx), tape)
         return dx
     end
-    tupleconcat(tmp...)
+    rows = tupleconcat(tmp...)
+    mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
 @inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {n_out_val}
@@ -771,7 +778,7 @@ end
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
     primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
-    ntuple(n_outs) do i
+    rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
         res = primal(Duplicated(x, dx))
@@ -780,6 +787,7 @@ end
         adjoint(Duplicated(x, dx), tape)
         return dx
     end
+    mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
 

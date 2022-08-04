@@ -34,6 +34,7 @@ const known_ops = Dict(
     Base.cos => (:cos, 1),
     Base.tan => (:tan, 1),
     Base.exp => (:exp, 1),
+    Base.FastMath.exp_fast => (:exp, 1),
     Base.log => (:log, 1),
     Base.log1p => (:log1p, 1),
     Base.log2 => (:log2, 1),
@@ -46,7 +47,9 @@ const known_ops = Dict(
 
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
-    "julia.ptls_states", "julia.write_barrier", "julia.typeof", "jl_box_int64", "jl_box_int32",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_box_int64", "jl_box_int32",
+    "ijl_box_int64", "ijl_box_int32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
     "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
     "jl_breakpoint",
@@ -131,7 +134,7 @@ macro safe_show(exs...)
     return blk
 end
 
-declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, name
+declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     
@@ -140,8 +143,7 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do mod, ctx, n
 
 	#TODO make size_t > 32 => 64, else 32
 	T_size = LLVM.IntType((sizeof(Csize_t)*8) > 32 ? 64 : 32; ctx)
-    funcT = LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
-    LLVM.Function(mod, name, funcT)
+    LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_ppjlvalue), T_size, T_prjlvalue])
 end
 function emit_allocobj!(B, T, size)
     curent_bb = position(B)
@@ -165,12 +167,11 @@ end
 function emit_allocobj!(B, T)
     emit_allocobj!(B, T, sizeof(T))
 end
-declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do mod, ctx, name
+declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 11) 
     T_pjlvalue = LLVM.PointerType(T_jlvalue)
-    funcT = LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
-    LLVM.Function(mod, name, funcT)
+    LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
 end
 function emit_pointerfromobjref!(B, T)
     curent_bb = position(B)
@@ -816,10 +817,7 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    func = get_function!(mod, "llvm.julia.gc_preserve_begin") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true)
-        LLVM.Function(mod, name, funcT)
-    end
+    func = get_function!(mod, "llvm.julia.gc_preserve_begin", LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true))
 
     token = call!(B, func, args)
     return token
@@ -831,10 +829,7 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     mod = LLVM.parent(fn)
     ctx = context(mod)
 
-    func = get_function!(mod, "llvm.julia.gc_preserve_end") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)])
-        LLVM.Function(mod, name, funcT)
-    end
+    func = get_function!(mod, "llvm.julia.gc_preserve_end", LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)]))
 
     call!(B, func, [token])
     return
@@ -1225,12 +1220,8 @@ function emit_error(B::LLVM.Builder, string)
     ctx = context(mod)
 
     # 1. get the error function
-    func = get_function!(mod, "jl_error") do mod, ctx, name
-        funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
-        func = LLVM.Function(mod, name, funcT)
-        push!(function_attributes(func), EnumAttribute("noreturn"; ctx))
-        return func
-    end
+    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
+    func = get_function!(mod, "jl_error", funcT, [EnumAttribute("noreturn"; ctx)])
 
     # 2. Call error function and insert unreachable
     call!(B, func, LLVM.Value[globalstring_ptr!(B, string)])
@@ -1927,8 +1918,10 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         end
     end
     unsafe_store!(shadowR, shadowres.ref)
-    
-    arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils, shadowres)
+
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+      arraycopy_common(#=fwd=#true, B, orig, origops[1], gutils, shadowres)
+    end
 	
 	return nothing
 end
@@ -1936,7 +1929,11 @@ end
 function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
-    arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+      arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
+    end
+
     return nothing
 end
 
@@ -1979,7 +1976,6 @@ function arrayreshape_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 end
 
 function arrayreshape_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for jl_array_reshape")
     return nothing
 end
 
@@ -2632,7 +2628,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         ir = sprint(io->show(io, parent_scope(val)))
     end
     if errtype == API.ET_NoDerivative
-        data = API.EnzymeGradientUtilsRef(data)
         throw(NoDerivativeException(msg, ir, bt))
     elseif errtype == API.ET_NoShadow
         data = API.EnzymeGradientUtilsRef(data)
@@ -2656,8 +2651,52 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     throw(AssertionError("Unknown errtype"))
 end
 
+function julia_allocator(B, LLVMType, Count, Align)
+    B = LLVM.Builder(B)
+    Count = LLVM.Value(Count)
+    Align = LLVM.Value(Align)
+    LLVMType = LLVM.LLVMType(LLVMType)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+
+    ctx = context(mod)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
+
+    mem = call!(B, mallocF, [mul!(B, Count, Align)])
+    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("noalias"; ctx))
+    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("nonnull"; ctx))
+    if isa(Count, LLVM.ConstantInt)
+        val = convert(UInt64, Align)
+        val *= convert(UInt64, Count)
+        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable", val; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable_or_null", val; ctx))
+    end
+    mem = pointercast!(B, mem, LLVM.PointerType(LLVMType, 0))
+    return LLVM.API.LLVMValueRef(mem.ref)
+end
+
+function julia_deallocator(B, Obj)
+    B = LLVM.Builder(B)
+    Obj = LLVM.Value(Obj)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    ctx = context(mod)
+    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+    T_void = LLVM.VoidType(ctx)
+    freeF = get_function!(mod, "free", LLVM.FunctionType(T_void, [ptr8]))
+    callf = call!(B, freeF, [pointercast!(B, Obj, ptr8)])
+    LLVM.API.LLVMAddCallSiteAttribute(callf, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nonnull"; ctx))
+    return LLVM.API.LLVMValueRef(callf.ref)
+end
+
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
+    if API.EnzymeHasCustomAllocatorSupport()
+        API.EnzymeSetCustomAllocator(@cfunction(
+            julia_allocator, LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+        API.EnzymeSetCustomDeallocator(@cfunction(
+            julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+    end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef})),
@@ -2942,7 +2981,9 @@ function annotate!(mod, mode)
         end
     end
 
-    for boxfn in ("jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64", "julia.gc_alloc_obj",
+    for boxfn in ("julia.gc_alloc_obj",
+                  "jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64",
+                  "ijl_box_float32", "ijl_box_float64", "ijl_box_int32", "ijl_box_int64",
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
                   "jl_f_tuple", "ijl_f_tuple")
@@ -2950,6 +2991,14 @@ function annotate!(mod, mode)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+        end
+    end
+    
+    for boxfn in ("jl_array_copy", "ijl_array_copy")
+        if haskey(fns, boxfn)
+            fn = fns[boxfn]
+            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblemem_or_argmemonly", 0; ctx))
         end
     end
 
@@ -3067,6 +3116,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
     F   = adjoint.f
+
 
     tt = [adjoint.tt.parameters...,]
 
@@ -3895,7 +3945,20 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         primal_job = similar(parent_job, job.source)
     end
-    mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, validate=false, parent_job=parent_job, ctx)
+    
+    mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
+    if ctx !== nothing && ctx isa LLVM.Context
+        @assert ctx == context(mod)
+        ts_ctx = nothing
+    else
+        ts_ctx = ctx
+        ctx = context(mod)
+    end
+
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#true)
+        run!(pm, mod)
+    end
     
     primalf = meta.entry
     check_ir(job, mod)
@@ -3960,7 +4023,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    @assert ctx == context(mod)
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
 
@@ -4025,6 +4087,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     StringAttribute("enzyme_shouldrecompute"; ctx),
                     StringAttribute("enzyme_inactive"; ctx),
                                   ])
+            continue
+        end
+        # Since this is noreturn and it can't write to any operations in the function
+        # in a way accessible by the function. Ideally the attributor should actually
+        # handle this and similar not impacting the read/write behavior of the calling
+        # fn, but it doesn't presently so for now we will ensure this by hand
+        if func == Base.Checked.throw_overflowerr_binaryop
+            llvmfn = functions(mod)[k.specfunc]
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx), EnumAttribute("readonly"; ctx)])
             continue
         end
         if in(func, InactiveFunctions)
@@ -4130,10 +4201,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     parallel = Threads.nthreads() > 1
     process_module = false
+    device_module = false
     if parent_job !== nothing
         if parent_job.target isa GPUCompiler.PTXCompilerTarget ||
            parent_job.target isa GPUCompiler.GCNCompilerTarget
             parallel = true
+            device_module = true
         end
         if parent_job.target isa GPUCompiler.GCNCompilerTarget
            process_module = true
@@ -4143,7 +4216,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # annotate
     annotate!(mod, mode)
-
+    
     # Run early pipeline
     optimize!(mod, target_machine)
 
@@ -4180,6 +4253,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf = nothing
     end
 
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, #=Begin=#false)
+        run!(pm, mod)
+    end
+    API.EnzymeReplaceFunctionImplementation(mod)
+
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
         f = functions(mod)[fname]
@@ -4215,7 +4294,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         augmented_primalf_name = name(augmented_primalf)
     end
 
-    restore_lookups(mod)
+    if !device_module
+        # Don't restore pointers when we are doing GPU compilation
+        restore_lookups(mod)
+    end
     
     if parent_job !== nothing
         reinsert_gcmarker!(adjointf)
@@ -4245,6 +4327,39 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled)
+end
+
+##
+# Box
+##
+
+mutable struct Box{T} <: Base.Ref{T}
+    x::T
+    Box{T}() where {T} = new()
+    Box{T}(x) where {T} = new(x)
+end
+
+Base.isassigned(x::Box) = isdefined(x, :x)
+Base.getindex(b::Box) = b.x
+Base.setindex(b::Box, x) = (b.x = x; b)
+
+function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
+    if Base.allocatedinline(T)
+        p = Base.pointer_from_objref(b)
+    elseif Base.isconcretetype(T) && ismutabletype(T)
+        p = Base.pointer_from_objref(b.x)
+    elseif !isassigned(b)
+        # TODO: if Box{AbstractInt}() the RefValue equivalent would lead to C_NULL
+        #       What is the semantics we want to have?
+        throw(Core.UndefRefError())
+    else
+        # If the slot is not leaf type, it could be either immutable or not.
+        # If it is actually an immutable, then we can't take it's pointer directly
+        # Instead, explicitly load the pointer from the `RefValue`,
+        # which also ensures this returns same pointer as the one rooted in the `RefValue` object.
+        p = Base.pointerref(Ptr{Ptr{Cvoid}}(Base.pointer_from_objref(b)), 1, Core.sizeof(Ptr{Cvoid}))
+    end
+    return p
 end
 
 ##
@@ -4468,48 +4583,47 @@ end
     if !isempty(sret_types)
 		# Any case needed since this cannot be included inside a tuple
         if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
+            msrets = (:($(Symbol(:ref, i)) = Box{$x}()) for (i, x) in enumerate(sret_types))
+            gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
+            tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
+            voidptrs = [:(Ptr{$x}) for x in sret_types]
+            tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
+            results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
+            return quote
+                Base.@_inline_meta
 
-        msrets = (:($(Symbol(:ref, i)) = Ref{$x}()) for (i, x) in enumerate(sret_types))
-        gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
-        tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
-        voidptrs = [:(Ptr{$x}) for x in sret_types]
-        tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
-        results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
-        return quote
-            Base.@_inline_meta
-
-            let $(msrets...)
-            GC.@preserve $(gcsrets...) begin
-                $(tptrs...)
-                Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid},
-                    $(voidptrs...),
-                    $(types...)},
-                    fptr,
-                    $(tptrres...),
-                    $(ccexprs...))
+                let $(msrets...)
+                    GC.@preserve $(gcsrets...) begin
+                        $(tptrs...)
+                        Base.llvmcall(($ir, $fn), Cvoid,
+                            Tuple{Ptr{Cvoid},
+                            $(voidptrs...),
+                            $(types...)},
+                            fptr,
+                            $(tptrres...),
+                            $(ccexprs...))
+                    end
+                    return ( $(results...), )
+                end
             end
-            return ( $(results...), )
-            end
-        end
-
         else
             return quote
                 Base.@_inline_meta
-                    sret = Ref{$(Tuple{sret_types...})}()
-                    GC.@preserve sret begin
-                       tret = Base.pointer_from_objref(sret)
-                       Base.llvmcall(($ir, $fn), Cvoid,
-                        Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                        fptr, tret, $(ccexprs...))
-                    end
-                    sret[]
+                sret = Box{$(Tuple{sret_types...})}()
+                GC.@preserve sret begin
+                    # FIXME: Should this go through `unsafe_convert`?
+                    tret = Base.pointer_from_objref(sret)
+                    Base.llvmcall(($ir, $fn), Cvoid,
+                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                    fptr, tret, $(ccexprs...))
+                end
+                sret[]
             end
         end
     else
         return quote
             Base.@_inline_meta
-	    Base.llvmcall(($ir, $fn), Cvoid,
+            Base.llvmcall(($ir, $fn), Cvoid,
                 Tuple{Ptr{Cvoid}, $(types...),},
                 fptr, $(ccexprs...))
             return ()

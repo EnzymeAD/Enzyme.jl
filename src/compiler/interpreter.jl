@@ -66,9 +66,11 @@ if isdefined(Base.Experimental, Symbol("@overlay"))
 Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 else
-using GPUCompiler: WorldOverlayMethodTable
-Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
-    WorldOverlayMethodTable(interp.world)
+
+# On 1.6- CUDA.jl will poison the method table at the end of the world
+# using GPUCompiler: WorldOverlayMethodTable
+# Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
+#     WorldOverlayMethodTable(interp.world)
 end
 
 const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(Enzyme.pmap),
@@ -82,7 +84,7 @@ function is_primitive_func(@nospecialize(TT))
        return true
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
-       ft === typeof(Base.tan) || ft === typeof(Base.exp) || 
+       ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) || 
        ft === typeof(Base.log) ||
        ft === typeof(Base.log1p) ||
        ft === typeof(Base.log2) ||

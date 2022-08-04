@@ -74,11 +74,6 @@ end
     end
 end
 
-using  Documenter
-DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
-@testset "DocTests" begin
-    doctest(Enzyme; manual = false)
-end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -103,16 +98,10 @@ end
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
     test_scalar(log2, 1.0)
-    try
-        test_scalar(log1p, 1.0)
-    catch e
-        # TODO: Re-enable after JLL bump
-        if e isa Enzyme.Compiler.LLVM.LLVMException
-            @test_broken false
-        end
-    end
+    test_scalar(log1p, 1.0)
 
     test_scalar(log10, 1.0)
+    test_scalar(Base.FastMath.exp_fast, 1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == (0.5,)
 end
@@ -267,6 +256,16 @@ end
     @test dx == [1.0, 0.0]
 end
 
+@testset "Advanced array tests sq" begin
+    function arsumsq(f::Array{T}) where T
+        return sum(f) * sum(f)
+    end
+    inp = Float64[1.0, 2.0]
+    dinp = Float64[0.0, 0.0]
+    autodiff(arsumsq, Active, Duplicated(inp, dinp))
+    @test inp ≈ Float64[1.0, 2.0]
+    @test dinp ≈ Float64[6.0, 6.0]
+end
 
 @testset "Bithacks" begin
     function fneg(x::Float64)
@@ -394,6 +393,39 @@ mybesselj1(z) = mybesselj(1, z)
         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
     end
+end
+
+# Ensure that this returns an error, and not a crash
+# https://github.com/EnzymeAD/Enzyme.jl/issues/368
+abstract type TensorProductBasis <: Function end
+
+struct LegendreBasis <: TensorProductBasis
+    n::Int
+end
+
+function (basis::LegendreBasis)(x)
+    return x
+end
+
+struct MyTensorLayer
+    model::Array{TensorProductBasis}
+end
+
+function fn(layer::MyTensorLayer, x)
+    model = layer.model
+    return model[1](x)
+end
+
+const nn = MyTensorLayer([LegendreBasis(10)])
+
+function dxdt_pred(x)
+  return fn(nn, x)
+end
+
+@testset "AbstractType calling convention" begin
+    dxdt_pred(1.0)
+
+    @test_throws Core.UndefRefError Enzyme.autodiff(dxdt_pred, Active(1.0))
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
@@ -551,9 +583,9 @@ end
 
     x = [2.0]
     dx = [0.0]
-    Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx))
-    @test 0 ≈ x[1]
-    @test -0.4161468365471424 ≈ dx[1]
+    @test_throws Core.UndefRefError Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx))
+    @test_broken 0 ≈ x[1]
+    @test_broken -0.4161468365471424 ≈ dx[1]
 end
 
 @testset "invoke" begin
@@ -941,27 +973,32 @@ end
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
     end
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
-	@test length(jac) == 3
-	@test jac[1] ≈ [ 0.0, 1.0]
-	@test jac[2] ≈ [ 4.0, 0.0]
-	@test jac[3] ≈ [12.0, 0.0]
-	
-	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(1))
-	@test length(jac) == 2
-	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
-	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
 
-	jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
-	@test length(jac) == 3
-	@test jac[1] ≈ [ 0.0, 1.0]
-	@test jac[2] ≈ [ 4.0, 0.0]
-	@test jac[3] ≈ [12.0, 0.0]
-	
-	jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(2))
-	@test length(jac) == 2
-	@test jac[1] ≈ [ 0.0,  4.0, 12.0]
-	@test jac[2] ≈ [ 1.0,  0.0,  0.0]
+    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(1))
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
+
+    @test jac == Enzyme.jacobian(Forward, inout, [2.0, 3.0])
+    @test jac == ForwardDiff.jacobian(inout, [2.0, 3.0])
+
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
+
+    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], Val(2))
+    @test size(jac) == (3, 2)
+    @test jac ≈ [ 0.0   1.0;
+                  4.0   0.0;
+                  12.0  0.0]
 
     function f_test_1(A, x)
         u = A*x[2:end] .+ x[1]
@@ -989,12 +1026,38 @@ end
     x = ones(6)
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
     u = Vector{Float64}(undef, 5)
-    @test J_r_1(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    @test_broken J_r_2(A, x) == ([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    
-	# TODO fix forward vector bugs
-    # @test J_f_1(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
-    # @test J_f_2(A, x) == (([1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]),)
+
+    # @test J_r_1(A, x) == [
+    #     1.0  1.0  0.0  0.0  0.0  0.0;
+    #     1.0  0.0  1.0  0.0  0.0  0.0;
+    #     1.0  0.0  0.0  1.0  0.0  0.0;
+    #     1.0  0.0  0.0  0.0  1.0  0.0;
+    #     1.0  0.0  0.0  0.0  0.0  1.0;
+    # ]
+
+    @test_broken J_r_2(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
+   
+    # Function fails verification in test/CI
+    # @test J_f_1(A, x) == [
+    #     1.0  1.0  0.0  0.0  0.0  0.0;
+    #     1.0  0.0  1.0  0.0  0.0  0.0;
+    #     1.0  0.0  0.0  1.0  0.0  0.0;
+    #     1.0  0.0  0.0  0.0  1.0  0.0;
+    #     1.0  0.0  0.0  0.0  0.0  1.0;
+    # ]
+    # @test J_f_2(A, x) == [
+    #     1.0  1.0  0.0  0.0  0.0  0.0;
+    #     1.0  0.0  1.0  0.0  0.0  0.0;
+    #     1.0  0.0  0.0  1.0  0.0  0.0;
+    #     1.0  0.0  0.0  0.0  1.0  0.0;
+    #     1.0  0.0  0.0  0.0  0.0  1.0;
+    # ]
 
     # Bug on (augmented) forward pass deducing if
 	# shadow value is used
@@ -1027,6 +1090,18 @@ end
     autodiff(Forward, foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
+using  Documenter
+DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+@testset "DocTests" begin
+    doctest(Enzyme; manual = false)
+end
+
+
+using CUDA
+if CUDA.functional() && VERSION >= v"1.7.0"
+    include("cuda.jl")
+end
+
 using Random
 
 @testset "Random" begin
@@ -1036,7 +1111,64 @@ using Random
     autodiff(f_randn, Active, Active(1.0), Const(64))
 end
 
-using CUDA
-if CUDA.functional()
-    include("cuda.jl")
+@testset "Reshape" begin
+
+	function rs(x)
+		y = reshape(x, 2, 2)
+		y[1,1] *= y[1, 2]
+		y[2, 2] *= y[2, 1]
+		nothing
+	end
+
+    data = Float64[1.,2.,3.,4.]
+	ddata = ones(4)
+
+	autodiff(rs, Duplicated(data, ddata))
+	@test ddata ≈ [3.0, 5.0, 2.0, 2.0]
+	
+    data = Float64[1.,2.,3.,4.]
+	ddata = ones(4)
+	autodiff(Forward, rs, Duplicated(data, ddata))
+	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
+end
+
+@testset "Const arg" begin
+	x = Float32[3]
+	w = Float32[1]
+	dw = zero(w)
+
+	function inactiveArg(w, x, cond)
+	   if cond
+		  x = copy(x)
+	   end
+	  @inbounds w[1] * x[1]
+	end
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
+
+    @test x ≈ [3.0]
+    @test w ≈ [1.0]
+    @test dw ≈ [3.0]
+
+    # It would be nice to get this right without enabling this
+    Enzyme.API.runtimeActivity!(true)
+
+    x = Float32[3]
+
+    function loss(w, x, cond)
+      dest = Array{Float32}(undef, 1)
+      r = cond ? copy(x) : x
+      res = @inbounds w[1] * r[1]
+      @inbounds dest[1] = res
+      res
+    end
+
+    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))
+    Enzyme.API.runtimeActivity!(false)
+    
+    @test x ≈ [3.0]
+    @test dw[1] ≈ 3.0
 end
