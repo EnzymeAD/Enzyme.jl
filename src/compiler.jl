@@ -3889,14 +3889,14 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         throw(LLVM.LLVMException("broken function"))
     end
 
-	ModulePassManager() do pm
+	@dispose pm = ModulePassManager() begin
         always_inliner!(pm)
         run!(pm, mod)
     end
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
     end
-    ModulePassManager() do pm
+    @dispose pm = ModulePassManager() begin
         # Kill the temporary staging function
         global_dce!(pm)
         global_optimizer!(pm)
@@ -3963,7 +3963,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     primalf = meta.entry
     check_ir(job, mod)
     if API.EnzymeBitcodeReplacement(mod) != 0
-        ModulePassManager() do pm
+        @dispose pm = ModulePassManager() begin
             instruction_combining!(pm)
             run!(pm, mod)
         end
@@ -4006,7 +4006,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
         
-        ModulePassManager() do pm
+        @dispose pm = ModulePassManager() begin
             always_inliner!(pm)
             run!(pm, mod)
         end
@@ -4017,7 +4017,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
         GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
-        ModulePassManager() do pm
+        @dispose pm = ModulePassManager() begin
             global_optimizer!(pm)
             run!(pm, mod)
         end
@@ -4238,7 +4238,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 push!(toremove, name(f))
             end
         end 
-        ModulePassManager() do pm
+        @dispose pm = ModulePassManager() begin
             always_inliner!(pm)
             run!(pm, mod)
         end
