@@ -5,6 +5,24 @@ using Documenter
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 
+# Generate examples
+
+using Literate
+
+const EXAMPLES_DIR = joinpath(@__DIR__, "..", "examples")
+const OUTPUT_DIR = joinpath(@__DIR__, "src/generated")
+
+examples = Pair{String,String}[
+    "Box model" => "box"
+]
+
+for (_, name) in examples
+    example_filepath = joinpath(EXAMPLES_DIR, string(name, ".jl"))
+    Literate.markdown(example_filepath, OUTPUT_DIR, documenter = true)
+end
+
+examples = [title => joinpath("generated", string(name, ".md")) for (title, name) in examples]
+
 makedocs(;
     modules=[Enzyme],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
@@ -22,9 +40,7 @@ makedocs(;
     ),
     pages = [
         "Home" => "index.md",
-        "Tutorials" => [
-            "Box Model" => "tutorials/box.md"
-        ],
+        "Examples" => examples,
         "API" => "api.md",
         "Implementing pullbacks" => "pullbacks.md",
         "For developers" => "dev_docs.md",
