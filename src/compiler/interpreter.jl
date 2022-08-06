@@ -85,6 +85,9 @@ function is_primitive_func(@nospecialize(TT))
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
        ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) || 
+       ft === typeof(Base.exp10) ||
+       ft === typeof(Base.exp2) ||
+       ft === typeof(Base.expm1) ||
        ft === typeof(Base.log) ||
        ft === typeof(Base.log1p) ||
        ft === typeof(Base.log2) ||
