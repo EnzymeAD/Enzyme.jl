@@ -2313,7 +2313,7 @@ function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
         orig = LLVM.Instruction(OrigCI)
         origops = collect(operands(orig))
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+        if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
             B = LLVM.Builder(B)
 
 
@@ -2358,6 +2358,52 @@ function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
                 end
             end
             unsafe_store!(shadowR, shadowres.ref)
+        end
+    end
+    return nothing
+end
+function jl_getfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+  jl_getfield_fwd(B, OrigCI, gutils, normalR, shadowR)
+end
+function jl_getfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid 
+    orig = LLVM.Instruction(OrigCI)
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        origops = collect(operands(orig))
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
+            B = LLVM.Builder(B)
+
+            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+            shadowout = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
+			callval = LLVM.called_value(orig)
+			callval = first(operands(callval))::LLVM.Function
+        	funcT = eltype(llvmtype(callval)::LLVM.PointerType)::LLVM.FunctionType
+			setF = get_function!(LLVM.parent(callval), "jl_f_setfield", funcT)
+			setF = LLVM.const_pointercast(setF, LLVM.PointerType(LLVM.FunctionType(llvmtype(orig), LLVM.LLVMType[]; vararg=true)))
+            if width == 1
+                args = LLVM.Value[
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                                  shadowin
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+								  shadowout
+                                  ]
+                shadowres = LLVM.call!(B, setF, args)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
+            else
+                shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
+                for idx in 1:width
+                    args = LLVM.Value[
+                                      LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                                      extract_value!(B, shadowin, idx-1)
+                                      LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                                      extract_value!(B, shadowout, idx-1)
+                                      ]
+                    tmp = LLVM.call!(B, setF, args)
+                    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                    LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
+                end
+            end
         end
     end
     return nothing
@@ -2429,7 +2475,6 @@ function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
 end
 
 function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_f_setfield")
     return nothing
 end
 
@@ -2875,8 +2920,8 @@ function __init__()
     )
     register_handler!(
         ("jl_f_getfield",),
-        nothing,
-        nothing,
+        @cfunction(jl_getfield_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(jl_getfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_getfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
@@ -3002,6 +3047,14 @@ function annotate!(mod, mode)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
             push!(function_attributes(fn), LLVM.StringAttribute("inaccessiblememonly"; ctx))
+        end
+    end
+
+    for fname in ("jl_f_getfield",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
         end
     end
 

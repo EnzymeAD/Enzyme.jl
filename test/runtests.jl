@@ -867,6 +867,34 @@ end
     end
 end
 
+@testset "GetField" begin
+    mutable struct MyType
+       x::Float64
+    end
+
+    function f(v::MyType, fld)
+       x = getfield(v, fld)
+       x = x::Float64
+       2 * x
+    end
+
+    x = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(f, Active, Duplicated(x, dx), Const(:x))
+    @test x.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    
+    x = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(f, Active, BatchDuplicated(x, dx, dx2), Const(:x))
+    @test x.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 2.0
+end
+
 @testset "BLAS" begin
     x = [2.0, 3.0]
     dx = [0.2,0.3]
