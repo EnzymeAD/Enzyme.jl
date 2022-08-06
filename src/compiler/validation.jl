@@ -74,7 +74,9 @@ module FFI
             "jl_reshape_array","ijl_reshape_array",
             "jl_matching_methods", "ijl_matching_methods",
             "jl_array_sizehint", "ijl_array_sizehint",
-            "jl_get_keyword_sorter", "ijl_get_keyword_sorter"
+            "jl_get_keyword_sorter", "ijl_get_keyword_sorter",
+            "jl_ptr_to_array",
+            "jl_ptr_to_array_1d"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)

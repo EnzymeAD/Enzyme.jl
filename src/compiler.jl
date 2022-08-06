@@ -63,7 +63,9 @@ const inactivefns = Set{String}((
     "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
     "jl_matching_methods", "ijl_matching_methods",
     "jl_excstack_state", "jl_current_exception",
-    "memhash_seed"
+    "memhash_seed",
+    "jl_f__typevar", "ijl_f__typevar",
+    "jl_f_isa", "ijl_f_isa"
     # "jl_"
 ))
 
@@ -2346,12 +2348,7 @@ function jl_getfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
             end
             unsafe_store!(shadowR, shadowres.ref)
         else
-            if unsafe_load(normalR) == C_NULL
-                @show LLVM.parent(LLVM.parent(orig))
-                @show LLVM.parent(LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.parent(orig))))
-                @show orig
-            end
-            normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+            normal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
             if width == 1
                 shadowres = normal
             else
@@ -2698,8 +2695,30 @@ function julia_deallocator(B, Obj)
     return LLVM.API.LLVMValueRef(callf.ref)
 end
 
+function emit_inacterror(B, V, orig)
+    B = LLVM.Builder(B)
+    curent_bb = position(B)
+    orig = LLVM.Value(orig)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = context(mod)
+    
+    bt = GPUCompiler.backtrace(orig)
+    bts = sprint(io->Base.show_backtrace(io, bt))
+    fmt = globalstring_ptr!(B, "%s:\nBacktrace\n"*bts)
+
+    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))], vararg=true)
+    func = get_function!(mod, "jl_errorf", funcT, [EnumAttribute("noreturn"; ctx)])
+
+    call!(B, func, LLVM.Value[fmt, LLVM.Value(V)])
+    return nothing
+end
+
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
+    if API.EnzymeHasCustomInactiveSupport()
+      API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+    end
     if API.EnzymeHasCustomAllocatorSupport()
         API.EnzymeSetCustomAllocator(@cfunction(
             julia_allocator, LLVM.API.LLVMValueRef,
