@@ -958,6 +958,7 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         sret = allocate_sret!(gutils, 2, ctx)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        @assert width == 1
         llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
         _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
@@ -991,6 +992,7 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     sret = allocate_sret!(gutils, 3, ctx)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    @assert width == 1
     llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
@@ -1021,6 +1023,7 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     @assert tape !== C_NULL
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    @assert width == 1
     llvmf = nested_codegen!(mod, runtime_generic_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
     _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
 
@@ -1050,6 +1053,7 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         sret = allocate_sret!(gutils, 2, ctx)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        @assert width == 1
         llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
         _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
@@ -1085,6 +1089,7 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         sret = allocate_sret!(gutils, 2, ctx)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        @assert width == 1
         llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
         _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
 
@@ -1121,6 +1126,7 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         B = LLVM.Builder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        @assert width == 1
         llvmf = nested_codegen!(mod, runtime_invoke_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
         _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
 
@@ -1145,6 +1151,7 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     sret = allocate_sret!(gutils, 2, ctx)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    @assert width == 1
     llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
 
@@ -1179,6 +1186,7 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
     sret = allocate_sret!(gutils, 3, ctx)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    @assert width == 1
     llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
 
@@ -1208,6 +1216,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    @assert width == 1
     llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
     _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, true; tape)
 
