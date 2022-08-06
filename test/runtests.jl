@@ -893,6 +893,28 @@ end
     @test x.x ≈ 3.0
     @test dx.x ≈ 2.0
     @test dx2.x ≈ 2.0
+
+    mutable struct MyType2
+       x::Float64
+       y::Float64
+    end
+
+    function f(v::MyType2, fld, fld2)
+       x = getfield(v, fld)
+       x = x::Float64
+       r = 2 * x
+       x = setfield!(v, fld2, r)
+       return nothing
+    end
+
+    x = MyType2(3.0, 642.0)
+    dx = MyType2(1.2, 541.0)
+
+    Enzyme.autodiff(Forward, f, Duplicated(x, dx), Const(:x), Const(:y))
+    @test x.x ≈ 3.0
+    @test x.y ≈ 6.0
+    @test dx.x ≈ 1.2
+    @test dx.y ≈ 2.4
 end
 
 @testset "BLAS" begin

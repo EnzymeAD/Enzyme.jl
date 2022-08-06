@@ -2456,11 +2456,48 @@ function jl_f__apply_iterate_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
     return nothing
 end
 
-function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_f_setfield")
+function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
+    end
+    
+    orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[4]) == 0
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+        B = LLVM.Builder(B)
+        shadowin = if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
+            LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+        else
+            LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+        end
+
+        shadowout = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[4], B))
+        if width == 1
+            args = LLVM.Value[
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                              shadowin
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                              shadowout
+                              ]
+            shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
+            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
+        else
+            for idx in 1:width
+                args = LLVM.Value[
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                                  extract_value!(B, shadowin, idx-1)
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                                  extract_value!(B, shadowout, idx-1)
+                                  ]
+                tmp = LLVM.call!(B, setF, args)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
+            end
+        end
     end
     return nothing
 end
