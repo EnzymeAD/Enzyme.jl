@@ -3083,8 +3083,8 @@ any_jltypes(Type::LLVM.ArrayType) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 
-mutable struct EnzymeTape{U}
-    data::U
+mutable struct EnzymeTape{N, U}
+    data::NTuple{N, U}
 end
 
 function to_tape_type(Type::LLVM.PointerType)
@@ -3121,33 +3121,54 @@ to_tape_type(::LLVM.LLVMFP128) = Float128
 
 const Tracked = 10
 
-function julia_allocator(B, LLVMType, Count, Align)
+function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef)
     B = LLVM.Builder(B)
     Count = LLVM.Value(Count)
-    Align = LLVM.Value(Align)
+    AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
+    julia_allocator(B, LLVMType, Count, AlignedSize)
+end
 
+function julia_allocator(B, LLVMType, Count, AlignedSize)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
     ctx = context(mod)
 
+    Size = mul!(B, Count, AlignedSize)
+
     if any_jltypes(LLVMType)
-        @assert Count isa LLVM.ConstantInt
-        @assert convert(Int, Count) == 1
-
-        @assert Align isa LLVM.ConstantInt
-        @safe_show Align
-        # @assert convert(Int, Align) <= 16 # max alignment given by Julia's GC
-        # What do we do when we want a higher alignment?
-
-        # TODO(@wsmoses) Align seems to be sizeof?
-        # at least that's how it is used in the malloc case
-
         TT = to_tape_type(LLVMType)
 
+        T_int32 = LLVM.Int32Type(ctx)
+        T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
+
+        if Count isa LLVM.ConstantInt
+            N = convert(Int, Count)
+            # Obtain tag
+            tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape{N, TT})); ctx) # do we need to root the EnzymeTape{N, TT}
+            tag = LLVM.const_inttoptr(tag, T_prjlvalue)
+        else
+            # TODO: Version switch to get jl_box_int64 and not call37...
+            box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+            boxed_count = call!(B, box_int64, [Count])
+
+            f_apply_type = get_function!(mod, "jl_f_apply_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_ppjlvalue, T_int32]))
+
+            FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue])
+            f_apply_type = bitcast!(B, f_apply_type, PointerType(FT))
+
+            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape)); ctx) # do we need to root the EnzymeTape
+            EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue)
+
+            TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx) # do we need to root the TT
+            TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue)
+
+            # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+            tag = call!(B, f_apply_type, [NULL, EnzymeTapeT, boxed_count, TapeT])
+        end
 
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
         alloc_obj = get_function!(mod, "julia.gc_alloc_obj", LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue]))
@@ -3156,42 +3177,42 @@ function julia_allocator(B, LLVMType, Count, Align)
         # TODO: Calculate that constant... see get_current_task
         ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(-12; ctx)])
 
-        # Obtain tag
-        tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape{TT})); ctx) # do we need to root the EnzymeTape{TT}
-        tag = LLVM.const_inttoptr(tag, T_prjlvalue)
         obj = call!(B, alloc_obj, [ct, Align, tag])
-        # TODO annotations
+        AS = Tracked
+    else
+        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
 
-        mem = pointercast!(B, obj, LLVM.PointerType(LLVMType, Tracked))
-        return LLVM.API.LLVMValueRef(mem.ref)
+        obj = call!(B, mallocF, [Size])
+        AS = 0
     end
 
-
-    ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-    mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
-
-    mem = call!(B, mallocF, [mul!(B, Count, Align)])
-    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("noalias"; ctx))
-    LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("nonnull"; ctx))
+    LLVM.API.LLVMAddCallSiteAttribute(obj, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("noalias"; ctx))
+    LLVM.API.LLVMAddCallSiteAttribute(obj, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("nonnull"; ctx))
     if isa(Count, LLVM.ConstantInt)
-        val = convert(UInt64, Align)
+        val = convert(UInt64, AlignedSize)
         val *= convert(UInt64, Count)
-        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable", val; ctx))
-        LLVM.API.LLVMAddCallSiteAttribute(mem, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable_or_null", val; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(obj, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable", val; ctx))
+        LLVM.API.LLVMAddCallSiteAttribute(obj, LLVM.API.LLVMAttributeReturnIndex, EnumAttribute("dereferenceable_or_null", val; ctx))
     end
-    mem = pointercast!(B, mem, LLVM.PointerType(LLVMType, 0))
+
+    mem = pointercast!(B, obj, LLVM.PointerType(LLVMType, AS))
     return LLVM.API.LLVMValueRef(mem.ref)
 end
 
-function julia_deallocator(B, Obj)
+function julia_deallocator(::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRef)
     B = LLVM.Builder(B)
     Obj = LLVM.Value(Obj)
+    julia_deallocator(B, Obj)
+end
+
+function julia_deallocator(B, Obj)
     mod = LLVM.parent(LLVM.parent(position(B)))
     ctx = context(mod)
     
     T_void = LLVM.VoidType(ctx)
     if any_jltypes(LLVM.llvmtype(Obj))
-        callf = LLVM.UndefValue(T_Void)
+        return LLVM.API.LLVMValueRef(C_NULL)
     else
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
         freeF = get_function!(mod, "free", LLVM.FunctionType(T_void, [ptr8]))

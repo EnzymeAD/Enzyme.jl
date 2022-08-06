@@ -41,6 +41,14 @@ end
 include("abi.jl")
 include("typetree.jl")
 
+# Codgen tests
+import LLVM_jll
+@testset "Codegen" begin
+    # TODO use Python_jll?
+    cmd = `$(joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")) -v $(joinpath(@__DIR__, "codegen"))`
+    @test success(pipeline(cmd; stderr, stdout))
+end
+
 f0(x) = 1.0 + x
 @testset "Internal tests" begin
     thunk_a = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
