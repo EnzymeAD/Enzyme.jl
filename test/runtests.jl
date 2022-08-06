@@ -18,6 +18,14 @@ using LinearAlgebra
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+# Codegen tests
+import LLVM_jll
+@testset "Codegen" begin
+    # TODO use Python_jll?
+    cmd = `$(joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")) -DJULIA=$(joinpath(Sys.BINDIR, Base.julia_exename())) -v -a $(joinpath(@__DIR__, "codegen"))`
+    @test success(pipeline(cmd; stderr, stdout))
+end
+
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(Reverse, f, Active, Active(x))
@@ -41,13 +49,7 @@ end
 include("abi.jl")
 include("typetree.jl")
 
-# Codgen tests
-import LLVM_jll
-@testset "Codegen" begin
-    # TODO use Python_jll?
-    cmd = `$(joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")) -v $(joinpath(@__DIR__, "codegen"))`
-    @test success(pipeline(cmd; stderr, stdout))
-end
+
 
 f0(x) = 1.0 + x
 @testset "Internal tests" begin
