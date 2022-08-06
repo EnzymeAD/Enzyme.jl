@@ -3145,13 +3145,15 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
             # Obtain tag
             tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape{N, TT})); ctx) # do we need to root the EnzymeTape{N, TT}
-            tag = LLVM.const_inttoptr(tag, T_prjlvalue)
+            tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
+            tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
         else
             # TODO: Version switch to get jl_box_int64 and not call37...
             box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
@@ -3163,10 +3165,12 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             f_apply_type = bitcast!(B, f_apply_type, PointerType(FT))
 
             EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape)); ctx) # do we need to root the EnzymeTape
-            EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue)
+            EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
+            EnzymeTapeT = LLVM.const_addrspacecast(EnzymeTapeT, T_prjlvalue)
 
             TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx) # do we need to root the TT
-            TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue)
+            TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue_UT)
+            TapeT = LLVM.const_addrspacecast(TapeT, T_prjlvalue)
 
             # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
             tag = call!(B, f_apply_type, [NULL, EnzymeTapeT, boxed_count, TapeT])
@@ -3175,11 +3179,11 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
         alloc_obj = get_function!(mod, "julia.gc_alloc_obj", LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue]))
 
-        pgcstack = get_pgcstack(func)
+        pgcstack = reinsert_gcmarker!(func)
         # TODO: Calculate that constant... see get_current_task
         ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(-12; ctx)])
 
-        obj = call!(B, alloc_obj, [ct, Align, tag])
+        obj = call!(B, alloc_obj, [ct, AlignedSize, tag])
         AS = Tracked
     else
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
@@ -3617,6 +3621,9 @@ end
 
 function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     inst = LLVM.Instruction(val)
+    if API.HasFromStack(inst)
+        return UInt8(false)
+    end
     ce = operands(inst)[3]
     while isa(ce, ConstantExpr)
         ce = operands(ce)[1]

@@ -416,6 +416,10 @@ function SetMustCache!(i1)
     ccall((:EnzymeSetMustCache, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
 end
 
+function HasFromStack(i1)
+    ccall((:EnzymeHasFromStack, libEnzyme),UInt8,(LLVM.API.LLVMValueRef,), i1) != 0
+end
+
 function AddPreserveNVVMPass!(pm, i8)
     ccall((:AddPreserveNVVMPass, libEnzyme),Cvoid,(LLVM.API.LLVMPassManagerRef,UInt8), pm, i8)
 end
