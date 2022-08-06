@@ -3200,13 +3200,13 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
     return LLVM.API.LLVMValueRef(mem.ref)
 end
 
-function julia_deallocator(::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRef)
+function julia_deallocator(B::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRef)
     B = LLVM.Builder(B)
     Obj = LLVM.Value(Obj)
     julia_deallocator(B, Obj)
 end
 
-function julia_deallocator(B, Obj)
+function julia_deallocator(B::LLVM.Builder, Obj::LLVM.Value)
     mod = LLVM.parent(LLVM.parent(position(B)))
     ctx = context(mod)
     
