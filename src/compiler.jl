@@ -3099,7 +3099,9 @@ to_tape_type(Type::LLVM.StructType) = Tuple{map(to_tape_type, LLVM.elements(Type
 to_tape_type(Type::LLVM.ArrayType) = NTuple{Int(length(Type)), to_tape_type(eltype(Type))}
 function to_tape_type(Type::LLVM.IntegerType)
     N = width(Type)
-    if N == 8
+    if N == 1
+        return Bool
+    elseif N == 8
         return UInt8
     elseif N == 16
         return UInt16
