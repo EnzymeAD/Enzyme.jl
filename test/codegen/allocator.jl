@@ -38,7 +38,7 @@ LLVM.Context() do ctx
         create_ir!(ctx, mod, "simple_dynamic", LLVM.DoubleType(ctx), nothing, LLVM.ConstantInt(8; ctx))
 # CHECK-LABEL: define void @simple_dynamic(i64 %0) {
 # CHECK-NEXT: entry:
-# CHECK-NEXT:   %1 = mul i64 %0, 8
+# CHECK-NEXT:   %1 = mul nuw i64 %0, 8
 # CHECK-NEXT:   %2 = call noalias nonnull i8* @malloc(i64 %1)
 # CHECK-NEXT:   %3 = bitcast i8* %2 to double*
 # CHECK-NEXT:   %4 = bitcast double* %3 to i8*
@@ -74,7 +74,7 @@ LLVM.Context() do ctx
 # CHECK-LABEL: define void @jltype_dynamic(i64 %0) {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = call {}*** @julia.get_pgcstack()
-# CHECK-NEXT:   %2 = mul i64 %0, 8
+# CHECK-NEXT:   %2 = mul nuw i64 %0, 8
 # CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
 # CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**

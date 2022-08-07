@@ -3142,7 +3142,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
     mod = LLVM.parent(func)
     ctx = context(mod)
 
-    Size = mul!(B, Count, AlignedSize)
+    Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
 
     if any_jltypes(LLVMType)
         TT = to_tape_type(LLVMType)
