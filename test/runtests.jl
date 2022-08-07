@@ -18,11 +18,25 @@ using LinearAlgebra
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
-# Codegen tests
 import LLVM_jll
+# TODO: Add to LLVM_jll
+function lit(; adjust_PATH=true, adjust_LIBPATH=true)
+    lit_path = joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")
+    env = LLVM_jll.JLLWrappers.adjust_ENV!(
+            copy(ENV),
+            LLVM_jll.PATH[],
+            LLVM_jll.LIBPATH[],
+            adjust_PATH,
+            adjust_LIBPATH,
+        )
+    return Cmd(Cmd([lit_path]); env)
+end
+
+# Codegen tests
 @testset "Codegen" begin
+    julia = joinpath(Sys.BINDIR, Base.julia_exename())
     # TODO use Python_jll?
-    cmd = `$(joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")) -DJULIA=$(joinpath(Sys.BINDIR, Base.julia_exename())) -v -a $(joinpath(@__DIR__, "codegen"))`
+    cmd = `$(lit()) -DJULIA=$(julia) -v -a $(joinpath(@__DIR__, "codegen"))`
     @test success(pipeline(cmd; stderr, stdout))
 end
 
