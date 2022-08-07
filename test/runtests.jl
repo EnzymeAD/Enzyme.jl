@@ -879,9 +879,9 @@ end
     #    2 * x
     # end
     
-    # function gf2(v::MyType, fld)
+    # function gf2(v::MyType, fld, fld2)
     #    x = getfield(v, fld)
-    #    y = getfield(v, fld)
+    #    y = getfield(v, fld2)
     #    x + y
     # end
 
@@ -895,7 +895,7 @@ end
     # x = MyType(3.0)
     # dx = MyType(0.0)
 
-    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x))
+    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
     # @test x.x ≈ 3.0
     # @test dx.x ≈ 2.0
     # 
@@ -921,14 +921,14 @@ end
        return nothing
     end
 
-    x = MyType2(3.0, 642.0)
-    dx = MyType2(1.2, 541.0)
+    mt2 = MyType2(3.0, 642.0)
+    dmt2 = MyType2(1.2, 541.0)
 
-    Enzyme.autodiff(Forward, sf2, Duplicated(x, dx), Const(:x), Const(:y))
-    @test x.x ≈ 3.0
-    @test x.y ≈ 6.0
-    @test dx.x ≈ 1.2
-    @test dx.y ≈ 2.4
+    Enzyme.autodiff(Forward, sf2, Duplicated(mt2, dmt2), Const(:x), Const(:y))
+    @test mt2.x ≈ 3.0
+    @test mt2.y ≈ 6.0
+    @test dmt2.x ≈ 1.2
+    @test dmt2.y ≈ 2.4
 end
 
 @testset "BLAS" begin
