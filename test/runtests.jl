@@ -19,6 +19,7 @@ using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
 import LLVM_jll
+using LLVM
 # TODO: Add to LLVM_jll
 function lit(; adjust_PATH=true, adjust_LIBPATH=true)
     lit_path = joinpath(LLVM_jll.artifact_dir, "tools", "lit", "lit.py")
@@ -30,6 +31,44 @@ function lit(; adjust_PATH=true, adjust_LIBPATH=true)
             adjust_LIBPATH,
         )
     return Cmd(Cmd([lit_path]); env)
+end
+
+@testset "EnzymeTape" begin
+    LLVM.Context() do ctx        
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
+        T_int32 = LLVM.Int32Type(ctx)
+
+        TT = Enzyme.Compiler.tape_type(LLVM.StructType([T_prjlvalue]; ctx))
+        @test sizeof(TT) == sizeof(Int)
+        @test fieldtype(TT, 1) == Any
+
+        ETT = Enzyme.Compiler.EnzymeTape{1, TT}
+        @test sizeof(ETT) == sizeof(TT)
+        ETT = Enzyme.Compiler.EnzymeTape{2, TT}
+        @test sizeof(ETT) == 2*sizeof(TT)
+
+        TT = Enzyme.Compiler.tape_type(LLVM.StructType([T_prjlvalue, T_int32]; ctx))
+        @test sizeof(TT) == 2*sizeof(Int) # alignment 
+        @test fieldtype(TT, 1) == Any
+        @test fieldtype(TT, 2) == UInt32
+
+        ETT = Enzyme.Compiler.EnzymeTape{1, TT}
+        @test sizeof(ETT) == sizeof(TT)
+        ETT = Enzyme.Compiler.EnzymeTape{2, TT}
+        @test sizeof(ETT) == 2*sizeof(TT)
+
+        TT = Enzyme.Compiler.tape_type(LLVM.StructType([T_prjlvalue, T_int32, T_int32]; ctx))
+        @test sizeof(TT) == (Int == Int64 ? 2*sizeof(Int) : 3*sizeof(Int))  # alignment 
+        @test fieldtype(TT, 1) == Any
+        @test fieldtype(TT, 2) == UInt32
+        @test fieldtype(TT, 3) == UInt32
+
+        ETT = Enzyme.Compiler.EnzymeTape{1, TT}
+        @test sizeof(ETT) == sizeof(TT)
+        ETT = Enzyme.Compiler.EnzymeTape{2, TT}
+        @test sizeof(ETT) == 2*sizeof(TT)
+    end
 end
 
 # Codegen tests

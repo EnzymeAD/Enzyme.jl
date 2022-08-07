@@ -3083,8 +3083,34 @@ any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(T
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 
-mutable struct EnzymeTape{N, U}
-    data::NTuple{N, U}
+nfields(Type::LLVM.StructType) = length(LLVM.elements(Type))
+nfields(Type::LLVM.VectorType) = size(Type)
+nfields(Type::LLVM.ArrayType) = length(Type)
+nfields(Type::LLVM.PointerType) = 1
+
+abstract type AbstractEnzymeTape end
+
+mutable struct EnzymeTape{N, T<:AbstractEnzymeTape} <: AbstractEnzymeTape
+    data::NTuple{N, T}
+end
+
+const TapeTypes = Dict{String, DataType}()
+
+tape_type(LLVMType) = Base.get!(TapeTypes, string(LLVMType)) do
+    # Generate a new immutable tape desciptor...
+    parameters = Core.svec()
+    N = nfields(LLVMType)
+    fnames = Core.svec(ntuple(i->Symbol(string(i)), N)...)
+    ftypes = to_tape_type(LLVMType).parameters
+    attrs = Core.svec()
+
+    name = gensym("EnzymeTape")
+
+    ndt = ccall(:jl_new_datatype, Any, (Any, Any, Any, Any, Any, Any, Any, Cint, Cint, Cint),
+                name, @__MODULE__, AbstractEnzymeTape, parameters, fnames, ftypes, attrs, false, false, nfields(LLVMType))
+
+    ccall(:jl_set_const, Cvoid, (Any, Any, Any), @__MODULE__, name, ndt.name.wrapper)
+    return ndt
 end
 
 base_type(T::UnionAll) = base_type(T.body)
@@ -3146,8 +3172,6 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
     Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
 
     if any_jltypes(LLVMType)
-        TT = to_tape_type(LLVMType)
-
         T_int32 = LLVM.Int32Type(ctx)
         T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
@@ -3156,10 +3180,16 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
+        TT = tape_type(LLVMType)
+        @assert sizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
+
+            ETT = EnzymeTape{N, TT}
+            @assert sizeof(ETT) <= N*convert(Int, AlignedSize)
+
             # Obtain tag
-            tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(EnzymeTape{N, TT})); ctx) # do we need to root the EnzymeTape{N, TT}
+            tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
             tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
             tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
         else
@@ -3172,11 +3202,11 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue])
             f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
 
-            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(base_type(EnzymeTape))); ctx) # do we need to root the EnzymeTape
+            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(base_type(EnzymeTape))); ctx)
             EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
             EnzymeTapeT = LLVM.const_addrspacecast(EnzymeTapeT, T_prjlvalue)
 
-            TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx) # do we need to root the TT
+            TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx)
             TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue_UT)
             TapeT = LLVM.const_addrspacecast(TapeT, T_prjlvalue)
 
