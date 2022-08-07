@@ -3079,7 +3079,7 @@ function any_jltypes(Type::LLVM.PointerType)
 end
 
 any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
-any_jltypes(Type::LLVM.ArrayType) = any_jltypes(eltype(Type))
+any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 
@@ -3100,6 +3100,7 @@ end
 
 to_tape_type(Type::LLVM.StructType) = Tuple{map(to_tape_type, LLVM.elements(Type))...}
 to_tape_type(Type::LLVM.ArrayType) = NTuple{Int(length(Type)), to_tape_type(eltype(Type))}
+to_tape_type(Type::LLVM.VectorType) = NTuple{Int(size(Type)), to_tape_type(eltype(Type))}
 function to_tape_type(Type::LLVM.IntegerType)
     N = width(Type)
     if N == 1

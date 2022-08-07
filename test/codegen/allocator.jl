@@ -84,6 +84,20 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
 
+        create_ir!(ctx, mod, "jltype_dynamic_vec", LLVM.VectorType(T_prjlvalue, 2), nothing, LLVM.ConstantInt(16; ctx))
+# CHECK-LABEL: define void @jltype_dynamic_vec(i64 %0) {
+# CHECK-NEXT: entry:
+# CHECK-NEXT:   %1 = call {}*** @julia.get_pgcstack()
+# CHECK-NEXT:   %2 = mul nuw i64 %0, 16
+# CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
+# CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
+# CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**
+# CHECK-NEXT:   %6 = getelementptr inbounds {}*, {}** %5, i64 -12
+# CHECK-NEXT:   %7 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}** %6, i64 16, {} addrspace(10)* %4)
+# CHECK-NEXT:   %8 = bitcast {} addrspace(10)* %7 to <2 x {} addrspace(10)*> addrspace(10)*
+# CHECK-NEXT:   ret void
+# CHECK-NEXT: }
+
         write(stdout, string(mod))
     end
 end
