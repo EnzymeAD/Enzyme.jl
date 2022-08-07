@@ -867,6 +867,70 @@ end
     end
 end
 
+@testset "GetField" begin
+    # TODO
+    # mutable struct MyType
+    #    x::Float64
+    # end
+
+    # function gf(v::MyType, fld)
+    #    x = getfield(v, fld)
+    #    x = x::Float64
+    #    2 * x
+    # end
+    
+    # function gf2(v::MyType, fld, fld2)
+    #    x = getfield(v, fld)
+    #    y = getfield(v, fld2)
+    #    x + y
+    # end
+
+    # x = MyType(3.0)
+    # dx = MyType(0.0)
+
+    # Enzyme.autodiff(gf, Active, Duplicated(x, dx), Const(:x))
+    # @test x.x ≈ 3.0
+    # @test dx.x ≈ 2.0
+    
+    # x = MyType(3.0)
+    # dx = MyType(0.0)
+
+    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
+    # @test x.x ≈ 3.0
+    # @test dx.x ≈ 2.0
+    # 
+    # x = MyType(3.0)
+    # dx = MyType(0.0)
+    # dx2 = MyType(0.0)
+
+    # Enzyme.autodiff(gf, Active, BatchDuplicated(x, dx, dx2), Const(:x))
+    # @test x.x ≈ 3.0
+    # @test dx.x ≈ 2.0
+    # @test dx2.x ≈ 2.0
+
+    mutable struct MyType2
+       x::Float64
+       y::Float64
+    end
+
+    function sf2(v::MyType2, fld, fld2)
+       x = getfield(v, fld)
+       x = x::Float64
+       r = 2 * x
+       x = setfield!(v, fld2, r)
+       return nothing
+    end
+
+    mt2 = MyType2(3.0, 642.0)
+    dmt2 = MyType2(1.2, 541.0)
+
+    Enzyme.autodiff(Forward, sf2, Duplicated(mt2, dmt2), Const(:x), Const(:y))
+    @test mt2.x ≈ 3.0
+    @test mt2.y ≈ 6.0
+    @test dmt2.x ≈ 1.2
+    @test dmt2.y ≈ 2.4
+end
+
 @testset "BLAS" begin
     x = [2.0, 3.0]
     dx = [0.2,0.3]

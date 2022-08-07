@@ -353,6 +353,18 @@ function EnzymeSetHandler(handler)
     ptr = cglobal((:CustomErrorHandler, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
+function EnzymeSetRuntimeInactiveError(handler)
+    ptr = cglobal((:CustomRuntimeInactiveError, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeHasCustomInactiveSupport()
+    try
+        EnzymeSetRuntimeInactiveError(C_NULL)
+    catch
+        return false
+    end
+    return true
+end
 
 function EnzymeSetCustomAllocator(handler)
     ptr = cglobal((:CustomAllocator, libEnzyme), Ptr{Ptr{Cvoid}})
