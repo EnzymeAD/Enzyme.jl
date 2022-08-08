@@ -397,8 +397,8 @@ function __init__()
     zcache!(true)
 end
 
-function moveBefore(i1, i2)
-    ccall((:EnzymeMoveBefore, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef), i1, i2)
+function moveBefore(i1, i2, BR)
+    ccall((:EnzymeMoveBefore, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef), i1, i2, BR)
 end
 
 function SetMustCache!(i1)

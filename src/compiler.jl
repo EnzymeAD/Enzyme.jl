@@ -1793,7 +1793,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         if API.runtimeActivity()
             prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
             shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), shadowres, prev)
-            API.moveBefore(prev, shadowres)
+            API.moveBefore(prev, shadowres, C_NULL)
         end
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
@@ -1804,7 +1804,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
                 prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
                 callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), callv, prev)
                 if idx == 1
-                    API.moveBefore(prev, callv)
+                    API.moveBefore(prev, callv, C_NULL)
                 end
             end
             shadowres = insert_value!(B, shadowres, callv, idx-1)
@@ -2526,7 +2526,7 @@ end
 function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     err = emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_get_binding_or_error")
-    API.moveBefore(CI, err)
+    API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
     if shadowR != C_NULL && normal !== nothing
@@ -2548,7 +2548,7 @@ end
 function get_binding_or_error_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
-    API.moveBefore(CI, err)
+    API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -2574,7 +2574,7 @@ end
 function finalizer_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    API.moveBefore(CI, err)
+    API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -2586,7 +2586,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     # err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    # API.moveBefore(CI, err)
+    # API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
