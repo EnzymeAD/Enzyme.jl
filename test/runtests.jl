@@ -73,10 +73,12 @@ end
 
 # Codegen tests
 @testset "Codegen" begin
-    julia = joinpath(Sys.BINDIR, Base.julia_exename())
-    # TODO use Python_jll?
-    cmd = `$(lit()) -DJULIA=$(julia) -v -a $(joinpath(@__DIR__, "codegen"))`
-    @test success(pipeline(cmd; stderr, stdout))
+    if !Sys.iswindows()
+        julia = joinpath(Sys.BINDIR, Base.julia_exename())
+        # TODO use Python_jll?
+        cmd = `$(lit()) -DJULIA=$(julia) -v -a $(joinpath(@__DIR__, "codegen"))`
+        @test success(pipeline(cmd; stderr, stdout))
+    end
 end
 
 # Test against FiniteDifferences
