@@ -62,7 +62,7 @@ LLVM.Context() do ctx
         create_ir!(ctx, mod, "jltype", T_prjlvalue, LLVM.ConstantInt(1; ctx), LLVM.ConstantInt(8; ctx))
 # CHECK-LABEL: define void @jltype() {
 # CHECK-NEXT: entry:
-# CHECK-NEXT:   %0 = call {}*** @julia.get_pgcstack()
+# CHECK-NEXT:   %0 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
 # CHECK-NEXT:   %1 = bitcast {}*** %0 to {}**
 # CHECK-NEXT:   %2 = getelementptr inbounds {}*, {}** %1, i64 -12
 # CHECK-NEXT:   %3 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) {} addrspace(10)* @julia.gc_alloc_obj({}** %2, i64 8, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
@@ -73,7 +73,7 @@ LLVM.Context() do ctx
         create_ir!(ctx, mod, "jltype_dynamic", T_prjlvalue, nothing, LLVM.ConstantInt(8; ctx))
 # CHECK-LABEL: define void @jltype_dynamic(i64 %0) {
 # CHECK-NEXT: entry:
-# CHECK-NEXT:   %1 = call {}*** @julia.get_pgcstack()
+# CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
 # CHECK-NEXT:   %2 = mul nuw i64 %0, 8
 # CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
@@ -87,7 +87,7 @@ LLVM.Context() do ctx
         create_ir!(ctx, mod, "jltype_dynamic_vec", LLVM.VectorType(T_prjlvalue, 2), nothing, LLVM.ConstantInt(16; ctx))
 # CHECK-LABEL: define void @jltype_dynamic_vec(i64 %0) {
 # CHECK-NEXT: entry:
-# CHECK-NEXT:   %1 = call {}*** @julia.get_pgcstack()
+# CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
 # CHECK-NEXT:   %2 = mul nuw i64 %0, 16
 # CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
