@@ -3232,7 +3232,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
         alloc_obj = get_function!(mod, "julia.gc_alloc_obj", LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue]))
 
-        pgcstack = reinsert_gcmarker!(func)
+        pgcstack = reinsert_gcmarker!(func, B)
         ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(current_task_offset(); ctx)])
 
         obj = call!(B, alloc_obj, [ct, AlignedSize, tag])
