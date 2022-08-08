@@ -46,7 +46,7 @@ function get_ptls(func)
     return nothing
 end
 
-function reinsert_gcmarker!(func)
+function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if ptls === nothing
         B = Builder(context(LLVM.parent(func)))
@@ -58,6 +58,11 @@ function reinsert_gcmarker!(func)
         end
         emit_ptls!(B)
 	else
+        entry_bb = first(blocks(func))
+        fst = first(instructions(entry_bb))
+        if fst != ptls
+            API.moveBefore(ptls, fst, PB === nothing ? C_NULL : PB.ref)
+        end
 		ptls
     end
 end
@@ -86,7 +91,7 @@ function get_pgcstack(func)
     return nothing
 end
 
-function reinsert_gcmarker!(func)
+function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
         B = Builder(context(LLVM.parent(func)))
@@ -98,6 +103,11 @@ function reinsert_gcmarker!(func)
         end
         emit_pgcstack(B)
 	else
+        entry_bb = first(blocks(func))
+        fst = first(instructions(entry_bb))
+        if fst != pgs
+            API.moveBefore(pgs, fst, PB === nothing ? C_NULL : PB.ref)
+        end
 		pgs
     end
 end
