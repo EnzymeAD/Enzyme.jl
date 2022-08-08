@@ -3106,8 +3106,13 @@ tape_type(LLVMType) = Base.get!(TapeTypes, string(LLVMType)) do
 
     name = gensym("EnzymeTape")
 
+if VERSION >= v"1.7.0-DEV.1230"
     ndt = ccall(:jl_new_datatype, Any, (Any, Any, Any, Any, Any, Any, Any, Cint, Cint, Cint),
                 name, @__MODULE__, AbstractEnzymeTape, parameters, fnames, ftypes, attrs, false, false, nfields(LLVMType))
+else
+    ndt = ccall(:jl_new_datatype, Any, (Any, Any, Any, Any, Any, Any, Cint, Cint, Cint),
+                name, @__MODULE__, AbstractEnzymeTape, parameters, fnames, ftypes, false, false, nfields(LLVMType))
+end
 
     ccall(:jl_set_const, Cvoid, (Any, Any, Any), @__MODULE__, name, ndt.name.wrapper)
     return ndt
