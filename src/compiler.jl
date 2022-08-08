@@ -3101,7 +3101,12 @@ tape_type(LLVMType) = Base.get!(TapeTypes, string(LLVMType)) do
     parameters = Core.svec()
     N = nfields(LLVMType)
     fnames = Core.svec(ntuple(i->Symbol(string(i)), N)...)
-    ftypes = to_tape_type(LLVMType).parameters
+    TT = to_tape_type(LLVMType)
+    if TT <: Tuple
+        ftypes = Core.svec(to_tape_type(LLVMType).parameters...)
+    else
+        ftypes = Core.svec(TT)
+    end
     attrs = Core.svec()
 
     name = gensym("EnzymeTape")
@@ -3186,6 +3191,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
         TT = tape_type(LLVMType)
+        if sizeof(TT) != convert(Int, AlignedSize)
+            @safe_show LLVMType
+            GPUCompiler.@safe_warn "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) sizeof(TT) fieldtypes(TT)
+        end
         @assert sizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
