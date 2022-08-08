@@ -1234,7 +1234,7 @@ end
 
     c = ones(3)
     inner(e) = c .+ e
-    fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
+    fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]    
     @test fres ≈ [1.0, 1.0, 1.0]    
 end
