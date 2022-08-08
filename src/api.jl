@@ -316,6 +316,11 @@ function runtimeActivity!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function runtimeActivity()
+    ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
+    return EnzymeGetCLBool(ptr) != 0
+end
+
 function typeWarning!(val)
     ptr = cglobal((:EnzymeTypeWarning, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)

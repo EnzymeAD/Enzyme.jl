@@ -1199,7 +1199,7 @@ end
 	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
 end
 
-@testset "Const arg" begin
+@testset "Copy Broadcast arg" begin
 	x = Float32[3]
 	w = Float32[1]
 	dw = zero(w)
@@ -1211,17 +1211,11 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
-    # It would be nice to get this right without enabling this
-    Enzyme.API.runtimeActivity!(true)
 	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
-    Enzyme.API.runtimeActivity!(false)
 
     @test x ≈ [3.0]
     @test w ≈ [1.0]
     @test dw ≈ [3.0]
-
-    # It would be nice to get this right without enabling this
-    Enzyme.API.runtimeActivity!(true)
 
     x = Float32[3]
 
@@ -1234,8 +1228,13 @@ end
     end
 
     dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))
-    Enzyme.API.runtimeActivity!(false)
     
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
+
+    c = ones(3)
+    inner(e) = c .+ e
+    fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
+    @test c ≈ [1.0, 1.0, 1.0]    
+    @test fres ≈ [1.0, 1.0, 1.0]    
 end
