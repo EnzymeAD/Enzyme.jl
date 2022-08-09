@@ -4746,7 +4746,7 @@ end
         else
             return quote
                 Base.@_inline_meta
-                sret = Box{$(Tuple{sret_types...})}()
+                sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
                 GC.@preserve sret begin
                     # FIXME: Should this go through `unsafe_convert`?
                     tret = Base.pointer_from_objref(sret)
@@ -4754,7 +4754,7 @@ end
                     Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
                     fptr, tret, $(ccexprs...))
                 end
-                sret[]
+                values(sret[])
             end
         end
     else

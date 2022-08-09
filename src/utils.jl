@@ -12,3 +12,5 @@ if VERSION <= v"1.6"
 else
     import Base: allocatedinline
 end
+
+AnonymousStruct(::Type{U}) where U<:Tuple = NamedTuple{ntuple(i->Symbol(i), Val(length(U.parameters))), U}
