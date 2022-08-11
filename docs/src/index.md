@@ -66,4 +66,5 @@ da=sparse([0.0])
 da=sparsevec([1],[0.0])
 
 Enzyme.autodiff(Reverse,f,Active,Duplicated(a,da))
+@show da
 ```
