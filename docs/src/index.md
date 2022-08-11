@@ -48,7 +48,7 @@ correctly and thus return fundamentally wrong results.
 
 ### Sparse Arrays
 
-At the momment there is no support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
+At the momment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
 
 ```julia
 using SparseArrays
