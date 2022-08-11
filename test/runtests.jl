@@ -426,9 +426,7 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
-    dxdt_pred(1.0)
-
-    @test_throws Core.UndefRefError Enzyme.autodiff(dxdt_pred, Active(1.0))
+    @test 1.0 ≈ Enzyme.autodiff(dxdt_pred, Active(1.0))[1]
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
