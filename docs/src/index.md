@@ -45,3 +45,26 @@ Enzyme.autodiff(f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Flo
 
 [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only support on Julia v1.7.0 and onwards. On 1.6 attempting to differentiate CUDA kernel functions, will not use device overloads
 correctly and thus return fundamentally wrong results.
+
+### Sparse Arrays
+
+At the momment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
+
+```julia
+using SparseArrays
+
+a=sparse([2.0])
+f(a)=sum(a)
+
+# Incorrect: SparseMatrixCSC drops explicit zeros
+# returns 1-element SparseVector{Float64, Int64} with 0 stored entries
+da=sparse([0.0])
+
+# Correct: Prevent SparseMatrixCSC from dropping zeros
+# returns 1-element SparseVector{Float64, Int64} with 1 stored entry:
+#  [1]  =  1.0
+da=sparsevec([1],[0.0])
+
+Enzyme.autodiff(Reverse,f,Active,Duplicated(a,da))
+@show da
+```
