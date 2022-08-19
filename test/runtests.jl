@@ -970,6 +970,15 @@ end
     @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
+
+    function double_push(x)
+        a = [0.5]
+        push!(a, 1.0)
+        push!(a, 1.0)
+        return x
+    end
+    y, = Enzyme.autodiff(double_push,Active(1.0))
+    @test y == 1.0
 end
 
 @testset "Batch Forward" begin
