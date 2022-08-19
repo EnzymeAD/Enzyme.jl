@@ -4479,8 +4479,9 @@ end
 Base.isassigned(x::Box) = isdefined(x, :x)
 Base.getindex(b::Box) = b.x
 Base.setindex(b::Box, x) = (b.x = x; b)
+Base.eltype(::Box{T}) where T = T
 
-function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
+function Base.unsafe_convert(::Type{Cvoid}, b::Box{T}) where T
     if Base.allocatedinline(T)
         p = Base.pointer_from_objref(b)
     elseif Base.isconcretetype(T) && ismutabletype(T)
@@ -4498,6 +4499,8 @@ function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
     end
     return p
 end
+
+Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T = Base.unsafe_convert(Ptr{T}, Base.unsafe_convert(Ptr{Cvoid}, b))
 
 ##
 # Thunk
@@ -4702,11 +4705,10 @@ end
             Base.@_inline_meta
             sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
             GC.@preserve sret begin
-                # FIXME: Should this go through `unsafe_convert`?
-                tret = Base.pointer_from_objref(sret)
+                sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
                 Base.llvmcall(($ir, $fn), Cvoid,
                 Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                fptr, tret, $(ccexprs...))
+                fptr, sret_p, $(ccexprs...))
             end
             values(sret[])
         end
