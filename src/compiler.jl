@@ -4710,6 +4710,9 @@ end
                 Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
                 fptr, sret_p, $(ccexprs...))
             end
+            # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
+            # We might find undefined fields here and when we try to load from them
+            # Julia will throw an exception.
             values(sret[])
         end
     else
