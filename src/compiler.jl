@@ -4479,8 +4479,9 @@ end
 Base.isassigned(x::Box) = isdefined(x, :x)
 Base.getindex(b::Box) = b.x
 Base.setindex(b::Box, x) = (b.x = x; b)
+Base.eltype(::Box{T}) where T = T
 
-function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
+function Base.unsafe_convert(::Type{Ptr{Cvoid}}, b::Box{T}) where T
     if Base.allocatedinline(T)
         p = Base.pointer_from_objref(b)
     elseif Base.isconcretetype(T) && ismutabletype(T)
@@ -4498,6 +4499,8 @@ function Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T
     end
     return p
 end
+
+Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T = Base.unsafe_convert(Ptr{T}, Base.unsafe_convert(Ptr{Cvoid}, b))
 
 ##
 # Thunk
@@ -4672,13 +4675,7 @@ end
     if !isempty(sret_types)
       llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
-        for T in reverse(llsret_types) 
-          pushfirst!(llvmtys, convert(LLVMType, Ptr{T}; ctx)) # LLVM.PointerType(T))
-        end
-      else
-        pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
-      end
+      pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
@@ -4694,22 +4691,8 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = collect(params)
-        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
-            callparams = params[(length(sret_types)+1):end]
-            alloc = LLVM.alloca!(builder, T_sjoint)
-            pushfirst!(callparams, alloc)
-		elseif !isempty(sret_types)
-			callparams[1] = LLVM.inttoptr!(builder, callparams[1], LLVM.PointerType(T_sjoint))
-        end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
-        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
-            for (i, (parm, sret)) in enumerate(zip(params[1:length(sret_types)], llsret_types))
-                out = LLVM.load!(builder, LLVM.gep!(builder, alloc, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)]))
-                parm = LLVM.inttoptr!(builder, parm, LLVM.PointerType(sret))
-                LLVM.store!(builder, out, parm)
-            end
-		end
         ret!(builder)
 	end
 
@@ -4718,44 +4701,19 @@ end
 
     @assert length(types) == length(ccexprs)
     if !isempty(sret_types)
-		# Any case needed since this cannot be included inside a tuple
-        if in(Any, sret_types) || !allocatedinline(Tuple{sret_types...})
-            msrets = (:($(Symbol(:ref, i)) = Box{$x}()) for (i, x) in enumerate(sret_types))
-            gcsrets = (:($(Symbol(:ref, i))) for (i, x) in enumerate(sret_types))
-            tptrs = [:($(Symbol(:tptr, i)) = Base.unsafe_convert(Ptr{$x}, $(Symbol(:ref,i)) ) ) for (i, x) in enumerate(sret_types)]
-            voidptrs = [:(Ptr{$x}) for x in sret_types]
-            tptrres = (:($(Symbol(:tptr, i)) ) for (i, x) in enumerate(sret_types))
-            results = (:($(Symbol(:ref, i))[] ) for (i, x) in enumerate(sret_types))
-            return quote
-                Base.@_inline_meta
-
-                let $(msrets...)
-                    GC.@preserve $(gcsrets...) begin
-                        $(tptrs...)
-                        Base.llvmcall(($ir, $fn), Cvoid,
-                            Tuple{Ptr{Cvoid},
-                            $(voidptrs...),
-                            $(types...)},
-                            fptr,
-                            $(tptrres...),
-                            $(ccexprs...))
-                    end
-                    return ( $(results...), )
-                end
+        return quote
+            Base.@_inline_meta
+            sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
+            GC.@preserve sret begin
+                sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
+                Base.llvmcall(($ir, $fn), Cvoid,
+                Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                fptr, sret_p, $(ccexprs...))
             end
-        else
-            return quote
-                Base.@_inline_meta
-                sret = Box{$(Tuple{sret_types...})}()
-                GC.@preserve sret begin
-                    # FIXME: Should this go through `unsafe_convert`?
-                    tret = Base.pointer_from_objref(sret)
-                    Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                    fptr, tret, $(ccexprs...))
-                end
-                sret[]
-            end
+            # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
+            # We might find undefined fields here and when we try to load from them
+            # Julia will throw an exception.
+            values(sret[])
         end
     else
         return quote
