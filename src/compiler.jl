@@ -4481,7 +4481,7 @@ Base.getindex(b::Box) = b.x
 Base.setindex(b::Box, x) = (b.x = x; b)
 Base.eltype(::Box{T}) where T = T
 
-function Base.unsafe_convert(::Type{Cvoid}, b::Box{T}) where T
+function Base.unsafe_convert(::Type{Ptr{Cvoid}}, b::Box{T}) where T
     if Base.allocatedinline(T)
         p = Base.pointer_from_objref(b)
     elseif Base.isconcretetype(T) && ismutabletype(T)
