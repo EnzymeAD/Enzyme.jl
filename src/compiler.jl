@@ -4992,6 +4992,33 @@ end
 
 Base.unsafe_convert(::Type{Ptr{T}}, b::Box{T}) where T = Base.unsafe_convert(Ptr{T}, Base.unsafe_convert(Ptr{Cvoid}, b))
 
+function detect_undef_values(box::Box{T}) where T
+    if isassigned(box)
+        return
+    end
+    ptr = Base.unsafe_convert(Ptr{Cvoid}, box)
+    @assert Base.allocatedinline(T) # Otherwise we already have bigger problems.
+    for idx in 1:Base.fieldcount(T)
+        offset = Base.fieldoffset(T, idx)
+        fieldT = Base.fieldtype(T, idx)
+        if !Base.allocatedinline(fieldT)
+            field_ptr = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, ptr+offset)
+            if Base.unsafe_load(field_ptr) == C_NULL
+                error("Field $idx of type $fieldT is undefined in $T")
+                # We can't set a garbage pointer here since we are going to load it momentarily
+                # and GC would crash on us.
+                # Alternative is to make up a fictious_value instead of a garbage pointer
+                # But we need recursive setfield! on an immutable stored inside a mutable
+                # Base.unsafe_store!(field_ptr, reinterpret(Ptr{Cvoid}, UInt(0xdeadbeef))) # Store something obviously wrong
+            end
+        elseif !Base.datatype_pointerfree(fieldT)
+            @show fieldT # TODO recurse?
+            @assert(false, "Please open a bug-report on Enzyme.jl Github issue tracker")
+        end
+    end
+    return
+end
+
 ##
 # Thunk
 ##
@@ -5213,6 +5240,7 @@ end
             # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
             # We might find undefined fields here and when we try to load from them
             # Julia will throw an exception.
+            detect_undef_values(sret)
             values(sret[])
         end
     else
