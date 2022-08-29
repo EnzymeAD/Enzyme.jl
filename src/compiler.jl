@@ -899,6 +899,10 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
 
     cal = LLVM.call!(B, llvmf, vals)
+    if sret !== nothing
+        attr = TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
+        LLVM.API.LLVMAddCallSiteAttribute(cal, 1, attr)
+    end
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     
     if length(to_preserve) != 0
@@ -930,23 +934,21 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N, ctx)
     end
 end
 
-function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
     ctx = LLVM.context(orig)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        @assert conv == 37
 
         B = LLVM.Builder(B)
     
         width = API.EnzymeGradientUtilsGetWidth(gutils)
+        
         sret = allocate_sret!(gutils, 1+width, ctx)
 
-        generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+        generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
 
         if shadowR != C_NULL
             if width == 1
@@ -970,23 +972,26 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         end
     end
 
+end
+
+function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    @assert conv == 37
+    common_generic_fwd(1, B, OrigCI, gutils, normalR, shadowR)
     return nothing
 end
-function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+
+function common_generic_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
     ctx = LLVM.context(orig)
 
-    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-    @assert conv == 37
-
     B = LLVM.Builder(B)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     sret = allocate_sret!(gutils, 2+width, ctx)
-
-    generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+    generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
 
         if shadowR != C_NULL
             if width == 1
@@ -1012,20 +1017,95 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1+width; ctx)]))
     unsafe_store!(tapeR, tape.ref)
 
+end
+
+function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    
+    @assert conv == 37
+
+    common_generic_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+
+    return nothing
+end
+
+function common_generic_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+    B = LLVM.Builder(B)
+    ctx = LLVM.context(orig)
+
+    @assert tape !== C_NULL
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape)
+
     return nothing
 end
 
 function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
 
-    B = LLVM.Builder(B)
-    ctx = LLVM.context(orig)
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+    
+    @assert conv == 37
 
-    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#1, ctx, B, true; tape)
-
+    common_generic_rev(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
     return nothing
 end
 
+function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_apply_generic",))
+            common_generic_fwd(2, B, OrigCI, gutils, normalR, shadowR)
+            return nothing
+        end
+    end
+    
+    @assert false "jl_call calling convention not implemented yet", orig
+    
+    return nothing
+end
+
+function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+   
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_apply_generic",))
+            common_generic_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
+            return nothing
+        end
+    end
+
+    @assert false "jl_call calling convention not implemented yet", orig
+    
+    return nothing
+end
+
+function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_apply_generic",))
+            common_generic_rev(2, B, OrigCI, gutils, tape)
+            return nothing
+        end
+    end
+    
+    @assert false "jl_call calling convention not implemented yet", orig
+
+    return nothing
+end
 
 function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
@@ -1276,9 +1356,17 @@ function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     return nothing
 end
 
+const ctxToThreadSafe = Dict{LLVM.Context, LLVM.ThreadSafeContext}()
+
 function nested_codegen!(mod::LLVM.Module, f, tt)
     # TODO: Put a cache here index on `mod` and f->tt
+
     ctx = LLVM.context(mod)
+
+if VERSION < v"1.9-"
+else
+    ctx = ctxToThreadSafe[ctx]
+end
     funcspec = FunctionSpec(f, tt, #=kernel=# false, #=name=# nothing)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
@@ -2889,6 +2977,12 @@ function __init__()
         @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
     )
     register_handler!(
+        ("julia.call",),
+        @cfunction(jlcall_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(jlcall_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(jlcall_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),
         @cfunction(generic_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(generic_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
@@ -4266,6 +4360,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         ts_ctx = ctx
         ctx = context(mod)
+        ctxToThreadSafe[ctx] = ts_ctx
     end
 
     LLVM.ModulePassManager() do pm
@@ -4584,6 +4679,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     else
         adjointf = primalf
         augmented_primalf = nothing
+    end
+
+    if ts_ctx !== nothing
+        delete!(ctxToThreadSafe, ctx)
     end
 
     LLVM.ModulePassManager() do pm
