@@ -901,7 +901,11 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     cal = LLVM.call!(B, llvmf, vals)
     if sret !== nothing
-        attr = TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
+        attr = if LLVM.version().major >= 8
+            TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
+        else
+            EnumAttribute("sret"; ctx)
+        end
         LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
     end
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
@@ -1053,7 +1057,7 @@ function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     
     @assert conv == 37
 
-    common_generic_rev(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+    common_generic_rev(1, B, OrigCI, gutils, tape)
     return nothing
 end
 
@@ -1811,7 +1815,11 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     cal = LLVM.call!(B, fun, vals)
     
-    attr = TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
+    attr = if LLVM.version().major >= 8
+        TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
+    else
+        EnumAttribute("sret"; ctx)
+    end
     LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
 
     if shadowR != C_NULL
@@ -1837,16 +1845,31 @@ function set_task_tid_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     ops = collect(operands(orig))[1:end-1]
     if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
-        nops =LLVM.API.LLVMValueRef[
-                   API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B),
-                   API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]),
-        ]
-        valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
-        cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), nops, length(nops), orig, valTys, length(valTys), B, #=lookup=#false)
 
-        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+        inv = API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        if width == 1
+            nops =LLVM.API.LLVMValueRef[inv,
+                                        API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])]
+            valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
+            cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), nops, length(nops), orig, valTys, length(valTys), B, #=lookup=#false)
+
+            API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+            LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+        else
+            for idx in 1:width
+                nops =LLVM.API.LLVMValueRef[extract_value(B, inv, idx-1),
+                                            API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])]
+                valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
+                cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), nops, length(nops), orig, valTys, length(valTys), B, #=lookup=#false)
+
+                API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+            end
+        end
+
     end
     return nothing
 end
