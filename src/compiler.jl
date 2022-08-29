@@ -901,7 +901,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     cal = LLVM.call!(B, llvmf, vals)
     if sret !== nothing
-        attr = if LLVM.version().major >= 8
+        attr = if LLVM.version().major >= 12
             TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
         else
             EnumAttribute("sret"; ctx)
@@ -1815,7 +1815,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     cal = LLVM.call!(B, fun, vals)
     
-    attr = if LLVM.version().major >= 8
+    attr = if LLVM.version().major >= 12
         TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
     else
         EnumAttribute("sret"; ctx)
