@@ -901,7 +901,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     cal = LLVM.call!(B, llvmf, vals)
     if sret !== nothing
         attr = TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
-        LLVM.API.LLVMAddCallSiteAttribute(cal, 1, attr)
+        LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
     end
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     
