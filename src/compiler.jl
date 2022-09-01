@@ -250,14 +250,11 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         tot = LLVM.add!(b, tot, prod)
     end
 
-    i1 = LLVM.IntType(1; ctx)
     i8 = LLVM.IntType(8; ctx)
     toset = get_array_data(b, anti)
-    memtys = LLVM.LLVMType[llvmtype(toset), LLVM.llvmtype(tot)]
-    memset = LLVM.Function(mod, LLVM.Intrinsic("llvm.memset"), memtys)
-    memargs = LLVM.Value[toset, LLVM.ConstantInt(i8, 0, false), tot, LLVM.ConstantInt(i1, 0, false)]
 
-    mcall = LLVM.call!(b, memset, memargs)
+    mcall = LLVM.memset!(b, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+    
     ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
     return ref
 end
