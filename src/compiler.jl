@@ -1555,7 +1555,13 @@ end
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
-            cmod, fwdmodenm, _ = _thunk(ejob)
+    
+            jctx = ctx
+@static if VERSION < v"1.9-"
+else
+            jctx = ctxToThreadSafe[jctx]
+end
+            cmod, fwdmodenm, _ = _thunk(ejob, jctx)
             LLVM.link!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm; ctx))
@@ -1571,7 +1577,12 @@ end
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
-            cmod, adjointnm, augfwdnm = _thunk(ejob)
+            jctx = ctx
+@static if VERSION < v"1.9-"
+else
+            jctx = ctxToThreadSafe[jctx]
+end
+            cmod, adjointnm, augfwdnm = _thunk(ejob, jctx)
             LLVM.link!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm; ctx))
@@ -5169,11 +5180,13 @@ function _link(job, (mod, adjoint_name, primal_name, ctx))
 end
 
 # actual compilation
-function _thunk(job)
+function _thunk(job, ctx=nothing)
     params = job.params
 
     # TODO: on 1.9, this actually creates a context. cache those.
-    ctx = JuliaContext()
+    if ctx === nothing
+        ctx = JuliaContext()
+    end
     mod, meta = codegen(:llvm, job; optimize=false, ctx)
 
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
