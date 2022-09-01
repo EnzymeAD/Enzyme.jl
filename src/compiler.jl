@@ -3939,8 +3939,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     params = [parameters(llvm_f)...]
     target =  !isempty(T_JuliaSRet) ? 2 : 1
 
-    intrinsic_typ = LLVM.FunctionType(T_void, [ptr8, LLVM.IntType(8; ctx), LLVM.IntType(64; ctx), LLVM.IntType(1; ctx)])
-    memsetIntr = LLVM.Function(mod, "llvm.memset.p0i8.i64", intrinsic_typ)
     LLVM.Builder(ctx) do builder
         entry = BasicBlock(llvm_f, "entry"; ctx)
         position!(builder, entry)
@@ -3980,11 +3978,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     cst = pointercast!(builder, ptr, ptr8)
                     push!(realparms, ptr)
 
-                    cparms = LLVM.Value[cst,
-                    LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
-                    LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
-                    LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)]
-                    call!(builder, memsetIntr, cparms)
+                    LLVM.memset!(builder, cst,  LLVM.ConstantInt(LLVM.IntType(8; ctx), 0),
+                                                LLVM.ConstantInt(LLVM.IntType(64; ctx), LLVM.storage_size(dl, Base.eltype(LLVM.llvmtype(ptr)) )),
+                                                #=align=#0 )
                 end
                 activeNum += 1
             elseif T <: Duplicated || T <: DuplicatedNoNeed
