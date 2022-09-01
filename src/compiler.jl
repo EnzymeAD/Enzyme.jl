@@ -4459,6 +4459,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
     
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
+    inserted_ts = false
     if ctx !== nothing && ctx isa LLVM.Context
         @assert ctx == context(mod)
         ts_ctx = nothing
@@ -4467,7 +4468,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         ctx = context(mod)
 @static if VERSION < v"1.9-"
 else
-        ctxToThreadSafe[ctx] = ts_ctx
+        if !in(ctx, keys(ctxToThreadSafe))
+            ctxToThreadSafe[ctx] = ts_ctx
+            inserted_ts = true
+        end
 end
     end
 
@@ -4792,7 +4796,9 @@ end
     if ts_ctx !== nothing
 @static if VERSION < v"1.9-"
 else
-        delete!(ctxToThreadSafe, ctx)
+        if inserted_ts
+            delete!(ctxToThreadSafe, ctx)
+        end
 end
     end
 
