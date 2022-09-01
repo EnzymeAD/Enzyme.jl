@@ -1188,11 +1188,11 @@ function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
-        if in(name, ("ijl_apply_generic",))
+        if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             common_generic_fwd(2, B, OrigCI, gutils, normalR, shadowR)
             return nothing
         end
-        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest"))
+        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest", "jl_f__apply_latest", "jl_f__call_latest"))
             common_apply_latest_fwd(2, B, OrigCI, gutils, normalR, shadowR)
             return nothing
         end
@@ -1209,11 +1209,11 @@ function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
-        if in(name, ("ijl_apply_generic",))
+        if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             common_generic_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
             return nothing
         end
-        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest"))
+        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest", "jl_f__apply_latest", "jl_f__call_latest"))
             common_apply_latest_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
             return nothing
         end
@@ -1230,11 +1230,11 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
-        if in(name, ("ijl_apply_generic",))
+        if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             common_generic_rev(2, B, OrigCI, gutils, tape)
             return nothing
         end
-        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest"))
+        if in(name, ("ijl_f__apply_latest", "ijl_f__call_latest", "jl_f__apply_latest", "jl_f__call_latest"))
             common_apply_latest_rev(2, B, OrigCI, gutils, tape)
             return nothing
         end
