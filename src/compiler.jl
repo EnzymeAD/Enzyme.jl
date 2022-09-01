@@ -1066,9 +1066,9 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
     B = LLVM.Builder(B)
-    sret = allocate_sret!(gutils, 2, ctx)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    sret = allocate_sret!(gutils, 1+width, ctx)
     generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
 
     if shadowR != C_NULL
@@ -1106,10 +1106,9 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
 
     B = LLVM.Builder(B)
 
-    sret = allocate_sret!(gutils, 3, ctx)
-
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offet+1, ctx, B, false; sret)
+    sret = allocate_sret!(gutils, 2+width, ctx)
+    generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
 
     if shadowR != C_NULL
         if width == 1
@@ -1245,7 +1244,58 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     return nothing
 end
 
-function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function jlcall2_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_invoke", "jl_invoke"))
+            common_invoke_fwd(2, B, OrigCI, gutils, normalR, shadowR)
+            return nothing
+        end
+    end
+    
+    @assert false "jl_call calling convention not implemented yet", orig
+    
+    return nothing
+end
+
+function jlcall2_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+   
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_invoke", "jl_invoke"))
+            common_invoke_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
+            return nothing
+        end
+    end
+
+    @assert false "jl_call calling convention not implemented yet", orig
+    
+    return nothing
+end
+
+function jlcall2_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        name = LLVM.name(F)
+        if in(name, ("ijl_invoke", "jl_invoke"))
+            common_invoke_rev(2, B, OrigCI, gutils, tape)
+            return nothing
+        end
+    end
+    
+    @assert false "jl_call calling convention not implemented yet", orig
+
+    return nothing
+end
+
+function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
@@ -1253,18 +1303,10 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
         ctx = LLVM.context(orig)
 
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
-
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         sret = allocate_sret!(gutils, 1+width, ctx)
-
-        generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+        generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
         
         if shadowR != C_NULL
             if width == 1
@@ -1290,7 +1332,8 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
     return nothing
 end
-function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+
+function common_invoke_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
@@ -1299,14 +1342,11 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         ctx = LLVM.context(orig)
 
         conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        @assert conv == 38
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         sret = allocate_sret!(gutils, 2+width, ctx)
-
-        generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+        generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
         
         if shadowR != C_NULL
             if width == 1
@@ -1336,21 +1376,56 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     return nothing
 end
 
-function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
         ctx = LLVM.context(orig)
-        
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        @assert conv == 38
 
         B = LLVM.Builder(B)
 
-        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#1, ctx, B, true; tape)
+        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape)
     end
 
+    return nothing
+end
+
+function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+        if conv != 38
+            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
+        end
+        @assert conv == 38
+    common_invoke_fwd(1, B, OrigCI, gutils, normalR, shadowR)
+    return nothing
+end
+
+function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+        if conv != 38
+            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
+        end
+        @assert conv == 38
+    common_invoke_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+    return nothing
+end
+
+function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+
+        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
+        if conv != 38
+            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
+        end
+        @assert conv == 38
+    common_invoke_rev(1, B, OrigCI, gutils, tape)
     return nothing
 end
 
@@ -3084,6 +3159,12 @@ function __init__()
         @cfunction(jlcall_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jlcall_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jlcall_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+    )
+    register_handler!(
+        ("julia.call2",),
+        @cfunction(jlcall2_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
+        @cfunction(jlcall2_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(jlcall2_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),
