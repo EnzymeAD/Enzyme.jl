@@ -983,6 +983,24 @@ end
     end
     y, = Enzyme.autodiff(double_push,Active(1.0))
     @test y == 1.0
+    
+    function aloss(a, arr)
+        for i in 1:2500
+            push!(arr, a)
+        end
+        return @inbounds arr[2500]
+    end
+    arr = Float64[]
+    darr = Float64[]
+
+    y = autodiff(
+        Reverse,
+        aloss,
+        Active,
+        Active(1.0),
+        Duplicated(arr, darr)
+    )[1]
+    @test y == 1.0
 end
 
 @testset "Batch Forward" begin
