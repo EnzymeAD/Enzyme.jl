@@ -250,16 +250,79 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     i1 = LLVM.IntType(1; ctx)
     i8 = LLVM.IntType(8; ctx)
-    ptrty = LLVM.PointerType(i8) #, LLVM.addrspace(LLVM.llvmtype(anti)))
-    toset = LLVM.load!(b, LLVM.pointercast!(b, anti, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(anti)))))
-
-    memtys = LLVM.LLVMType[ptrty, LLVM.llvmtype(tot)]
+    toset = get_array_data(b, anti)
+    memtys = LLVM.LLVMType[llvmtype(toset), LLVM.llvmtype(tot)]
     memset = LLVM.Function(mod, LLVM.Intrinsic("llvm.memset"), memtys)
     memargs = LLVM.Value[toset, LLVM.ConstantInt(i8, 0, false), tot, LLVM.ConstantInt(i1, 0, false)]
 
     mcall = LLVM.call!(b, memset, memargs)
     ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
     return ref
+end
+
+function get_array_struct(ctx)
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     void *data;
+# #ifdef STORE_ARRAY_LEN (just true new newer versions)
+# 	size_t length;
+# #endif
+#     jl_array_flags_t flags;
+#     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
+#     uint32_t offset;  // for 1-d only. does not need to get big.
+#     size_t nrows;
+#     union {
+#         // 1d
+#         size_t maxsize;
+#         // Nd
+#         size_t ncols;
+#     };
+#     // other dim sizes go here for ndims > 2
+# 
+#     // followed by alignment padding and inline data, or owner pointer
+# } jl_array_t;
+    
+    i8 = LLVM.IntType(8; ctx)
+    ptrty = LLVM.PointerType(i8, 13)
+    sizeT = LLVM.IntType(8*sizeof(Csize_t); ctx)
+    arrayFlags = LLVM.IntType(16; ctx)
+    elsz = LLVM.IntType(16; ctx)
+    off = LLVM.IntType(32; ctx)
+    nrows = LLVM.IntType(8*sizeof(Csize_t); ctx)
+    
+    return LLVM.StructType([ptrty, sizeT, arrayFlags, elsz, off, nrows]; packed=true, ctx)
+end
+
+function get_array_data(B, array)
+    ctx = LLVM.context(array)
+    i8 = LLVM.IntType(8; ctx)
+    ptrty = LLVM.PointerType(i8, 13)
+    array = LLVM.pointercast!(B, array, LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.llvmtype(array))))
+    return LLVM.load!(B, array)
+end
+
+function get_array_elsz(B, array)
+    ctx = LLVM.context(array)
+    ST = get_array_struct(ctx)
+    array = LLVM.pointercast!(B, array, LLVM.PointerType(ST, LLVM.addrspace(LLVM.llvmtype(array))))
+    v = inbounds_gep!(B, array, LLVM.Value[LLVM.ConstantInt(Int32(0); ctx), LLVM.ConstantInt(Int32(3); ctx)])
+    return LLVM.load!(B, v)
+end
+
+function get_array_len(B, array)
+    ctx = LLVM.context(array)
+    ST = get_array_struct(ctx)
+    array = LLVM.pointercast!(B, array, LLVM.PointerType(ST, LLVM.addrspace(LLVM.llvmtype(array))))
+    v = inbounds_gep!(B, array, LLVM.Value[LLVM.ConstantInt(Int32(0); ctx), LLVM.ConstantInt(Int32(1); ctx)])
+    return LLVM.load!(B, v)
+end
+
+function get_array_nrows(B, array)
+    ctx = LLVM.context(array)
+    ST = get_array_struct(ctx)
+    array = LLVM.pointercast!(B, array, LLVM.PointerType(ST, LLVM.addrspace(LLVM.llvmtype(array))))
+    v = inbounds_gep!(B, array, LLVM.Value[LLVM.ConstantInt(Int32(0); ctx), LLVM.ConstantInt(Int32(5); ctx)])
+    return LLVM.load!(B, v)
 end
 
 function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValueRef, Fn::LLVM.API.LLVMValueRef)::LLVM.API.LLVMValueRef
@@ -1876,16 +1939,10 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         position!(B0, nextInst)
     end
     
-    actualOp = pointercast!(B0, actualOp, LLVM.PointerType(LLVM.IntType(8; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
-
-    elSize = gep!(B0, actualOp, [LLVM.ConstantInt(LLVM.IntType(64; ctx), off)])
-    elSize = pointercast!(B0, elSize, LLVM.PointerType(LLVM.IntType(16; ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
-    elSize = LLVM.load!(B0, elSize)
+    elSize = get_array_elsz(B0, actualOp)
     elSize = LLVM.zext!(B0, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
 
-    len = gep!(B0, actualOp, [LLVM.ConstantInt(LLVM.IntType(64; ctx), sizeof(Cstring))])
-    len = pointercast!(B0, len, LLVM.PointerType(LLVM.IntType(8*sizeof(Csize_t); ctx), LLVM.addrspace(LLVM.llvmtype(actualOp))))
-    len = LLVM.load!(B0, len)
+    len = get_array_len(B0, actualOp)
 
     length = LLVM.mul!(B0, len, elSize)
     isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
@@ -1905,8 +1962,8 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if width == 1
     
-    shadowsrc = load!(B, bitcast!(B, shadowsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowsrc)))))
-    shadowdst = load!(B, bitcast!(B, shadowdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(shadowdst)))))
+    shadowsrc = get_array_data(B, shadowsrc)
+    shadowdst = get_array_data(B, shadowdst)
 
     API.sub_transfer(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
     
@@ -2223,8 +2280,56 @@ function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     return nothing
 end
 
+
 function jl_array_grow_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    jl_array_grow_end_fwd(B, OrigCI, gutils, normalR, shadowR)
+    orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+        B = LLVM.Builder(B)
+
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+        shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
+        ctx = LLVM.context(orig)
+        i8 = LLVM.IntType(8; ctx)
+        
+        inc = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+        
+        al = 0
+        
+        if width == 1
+            anti = shadowin
+            
+            idx = get_array_nrows(B, anti)
+            elsz = zext!(B, get_array_elsz(B, anti), llvmtype(idx))
+            off = mul!(B, idx, elsz)
+            tot = mul!(B, inc, elsz)
+            
+            args = LLVM.Value[anti, inc]
+            LLVM.call!(B, LLVM.called_value(orig), args)
+
+            toset = get_array_data(B, anti)
+            toset = gep!(B, toset, LLVM.Value[off])
+            mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+        else
+            for idx in 1:width
+                anti = extract_value!(B, shadowin, idx-1)
+
+                idx = get_array_nrows(B, anti)
+                elsz = zext!(B, get_array_elsz(B, anti), llvmtype(idx))
+                off = mul!(B, idx, elsz)
+                tot = mul!(B, inc, elsz)
+                
+                args = LLVM.Value[anti, inc]
+                LLVM.call!(B, LLVM.called_value(orig), args)
+
+                toset = get_array_data(B, anti)
+                toset = gep!(B, toset, LLVM.Value[off])
+                mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+            end
+        end
+    end
+
     return nothing
 end
 
