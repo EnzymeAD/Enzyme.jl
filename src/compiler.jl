@@ -3642,8 +3642,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     end
      
     rtt = typetree(RT, ctx, dl)
-
-
+    
     if sret
         merge!(rtt, TypeTree(API.DT_Pointer, ctx))
         only!(rtt, -1)
@@ -4261,7 +4260,8 @@ function CountTrackedPointers(T)
 end
 
 # must deserve sret
-function deserves_rooting(T)
+function deserves_rooting(T, ctx)
+    T = convert(LLVMType, T ; ctx)
 	tracked = CountTrackedPointers(T)
 	@assert !tracked.derived
 	if tracked.count != 0 && !tracked.all
