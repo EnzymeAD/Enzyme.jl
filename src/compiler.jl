@@ -222,7 +222,6 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     end
 
     isunboxed = allocatedinline(typ)
-    elsz = sizeof(typ)
 
     isunion = typ isa Union
 
@@ -232,6 +231,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         elsz = sizeof(Ptr{Cvoid})
         al = elsz;
     else
+        elsz = sizeof(typ)
         al = 1 # check
         elsz = LLT_ALIGN(elsz, al)
     end
@@ -3255,7 +3255,8 @@ function annotate!(mod, mode)
         end
     end
 
-    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
+    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
+                "jl_eqtable_get", "ijl_eqtable_get")
         if haskey(fns, rfn)
             fn = fns[rfn]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
