@@ -4260,8 +4260,7 @@ function CountTrackedPointers(T)
 end
 
 # must deserve sret
-function deserves_rooting(T, ctx)
-    T = convert(LLVMType, T ; ctx)
+function deserves_rooting(T)
 	tracked = CountTrackedPointers(T)
 	@assert !tracked.derived
 	if tracked.count != 0 && !tracked.all
