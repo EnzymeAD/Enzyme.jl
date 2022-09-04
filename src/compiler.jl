@@ -3393,7 +3393,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     sret = is_sret(RT, ctx) 
     returnRoots = false
     if sret
-        lRT = eltype(llvmtype(first(parameters(entry_f))))
+        lRT = eltype(llvmtype(ops[1]))
     	returnRoots = deserves_rooting(lRT)
     end
 
