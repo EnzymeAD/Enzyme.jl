@@ -3,7 +3,7 @@ module Compiler
 import ..Enzyme
 import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
                Annotation, guess_activity, eltype, 
-               API, TypeTree, typetree, only!, shift!, data0!,
+               API, TypeTree, typetree, only!, shift!, data0!, merge!,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline
 
 using Enzyme
@@ -224,7 +224,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     isunboxed = allocatedinline(typ)
     elsz = sizeof(typ)
 
-    isunion = typ <: Union
+    isunion = typ isa Union
 
     LLT_ALIGN(x, sz) = (((x) + (sz)-1) & ~((sz)-1))
 
@@ -3357,7 +3357,89 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal)
+function enzyme_custom_extract_mi(orig)
+    mi = nothing
+    job = nothing
+    for fattr in collect(function_attributes(LLVM.called_value(orig)))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_mi"
+                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                mi = Base.unsafe_pointer_to_objref(ptr)
+            end
+            if kind(fattr) == "enzymejl_job"
+                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                job = Base.unsafe_pointer_to_objref(ptr)[]
+            end
+        end
+    end
+    if mi === nothing
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig, LLVM.called_value(orig)
+    end
+    return mi, job
+end
+
+function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ctx = LLVM.context(inst)
+
+    mi, job = enzyme_custom_extract_mi(inst)
+
+    ops = collect(operands(inst))
+    called = ops[end]
+    
+    interp = GPUCompiler.get_interpreter(job)
+    RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+    
+    sret = is_sret(RT, ctx) 
+    returnRoots = false
+    if sret
+        lRT = eltype(llvmtype(ops[1]))
+    	returnRoots = deserves_rooting(lRT)
+    end
+
+    jlargs = classify_arguments(mi.specTypes, eltype(llvmtype(called)), sret, returnRoots)
+
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+    
+    for arg in jlargs
+        if arg.cc == GPUCompiler.GHOST
+            continue
+        end
+   
+        op_idx = arg.codegen.i
+        rest = typetree(arg.typ, ctx, dl)
+        if arg.cc == GPUCompiler.BITS_REF
+            merge!(rest, TypeTree(API.DT_Pointer, ctx))
+            only!(rest, -1)
+        else
+            # canonicalize wrt size
+        end
+        API.EnzymeMergeTypeTree(unsafe_load(args, op_idx), rest)
+    end
+     
+    rtt = typetree(RT, ctx, dl)
+
+
+    if sret
+        merge!(rtt, TypeTree(API.DT_Pointer, ctx))
+        only!(rtt, -1)
+        API.EnzymeMergeTypeTree(unsafe_load(args, 1), rtt)
+        if returnRoots
+            allpointer = TypeTree(API.DT_Pointer, -1, ctx)
+            API.EnzymeMergeTypeTree(unsafe_load(args, 2), allpointer)
+        end
+    else
+        if GPUCompiler.deserves_retbox(RT)
+            merge!(rtt, TypeTree(API.DT_Pointer, ctx))
+            only!(rtt, -1)
+        end
+        API.EnzymeMergeTypeTree(ret, rtt)
+    end
+    
+    return UInt8(false)
+end
+
+function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules)
     rt  = job.params.rt
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
@@ -3525,11 +3607,16 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
     )
+    for jl in jlrules
+        rules[jl] = @cfunction(julia_type_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+    end
 
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree(GPUCompiler.deserves_argbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+    retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -3963,6 +4050,53 @@ function deserves_rooting(T)
 	return false
 end
 
+function for_each_uniontype_small(f, ty)
+    if ty isa Union
+        for_each_uniontype_small(f, ty.a)
+        for_each_uniontype_small(f, ty.b)
+        return
+    end
+    if Base.datatype_pointerfree(ty)
+        f(ty)
+        return
+    end
+end
+
+# From https://github.com/JuliaLang/julia/blob/038d31463f0ef744c8308bdbe87339b9c3f0b890/src/cgutils.cpp#L3108
+function union_alloca_type(UT)
+    nbytes = 0
+    function inner(jlrettype)
+        if !(Base.issingletontype(jlrettype) &&isa(jlrettype, DataType))
+           nbytes = max(nbytes, sizeof(jlrettype)) 
+        end
+    end
+    for_each_uniontype_small(inner, UT)
+    return nbytes
+end
+
+# From https://github.com/JuliaLang/julia/blob/e6bf81f39a202eedc7bd4f310c1ab60b5b86c251/src/codegen.cpp#L6447
+function is_sret(jlrettype, ctx)
+    if jlrettype === Union{}
+        # jlrettype == (jl_value_t*)jl_bottom_type
+        return false
+    elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
+        # jl_is_structtype(jlrettype) && jl_is_datatype_singleton((jl_datatype_t*)jlrettype)
+        return false
+    elseif jlrettype isa Union # jl_is_uniontype(jlrettype)
+        if union_alloca_type(jlrettype) > 0
+            # sret, also a regular return here
+            return true
+        end
+        return false
+    elseif !GPUCompiler.deserves_retbox(jlrettype)
+        rt = convert(LLVMType, jlrettype ; ctx)
+        if !isa(rt, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, rt)
+            return true
+        end
+    end
+    return false
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
     ctx = context(mod)
@@ -3972,15 +4106,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
-    sret = false
-    if !isempty(parameters(entry_f)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(entry_f, 1))))
-        # TODO sret is now TypeAttribute
-        RT = eltype(llvmtype(first(parameters(entry_f))))
-        sret = true
-    end
+    sret = is_sret(actualRetType, ctx)
     
     returnRoots = false
     if sret
+        RT = eltype(llvmtype(first(parameters(entry_f))))
     	returnRoots = deserves_rooting(RT)
 		if returnRoots
 			GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
@@ -3992,9 +4122,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         arg.cc != GPUCompiler.GHOST
     end
     @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end]) 
-
-    # TODO use rettype for sret calculation instead
-    rettype = actualRetType
     
 	# if returnRoots
 	# 	push!(wrapper_types, llvmtype(parameters(entry_f)[1+sret]))
@@ -4271,6 +4398,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
+    
+    foundTys = Dict{String, Tuple{LLVM.FunctionType, Core.MethodInstance}}()
+
+    jobref = Ref(job)
 
     actualRetType = nothing
     for (mi, k) in meta.compiled
@@ -4301,6 +4432,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             must_wrap |= llvmfn == primalf
             nothing
         end
+        
+        foundTys[k_name] = (eltype(llvmtype(llvmfn)), mi)
 
         Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
         func = getfield(jlmod, name)
@@ -4459,7 +4592,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-
     # annotate
     annotate!(mod, mode)
     
@@ -4472,7 +4604,22 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal)
+        jlrules = String[]
+        for (fname, (ftyp, mi)) in foundTys
+            haskey(functions(mod), fname) || continue
+            f = functions(mod)[fname]
+            if eltype(llvmtype(f)) != ftyp
+                continue
+            end
+            attributes = function_attributes(f)
+            push!(attributes, StringAttribute("enzymejl_mi", string(convert(Int, pointer_from_objref(mi))); ctx))
+            push!(attributes, StringAttribute("enzymejl_job", string(convert(Int, pointer_from_objref(jobref))); ctx))
+            push!(jlrules, fname)
+        end
+
+        GC.@preserve jobref begin
+            adjointf, augmented_primalf = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules)
+        end
         toremove = []
         # Inline the wrapper
         for f in functions(mod)

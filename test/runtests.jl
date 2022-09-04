@@ -962,6 +962,18 @@ end
     # TODO: Add test for NoShadowException
 end
 
+@testset "Union return" begin
+    function unionret(a, out, cond)
+        if cond
+            out[] = a
+        end
+    end
+
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    @test 1.0 ≈ Enzyme.autodiff(unionret, Active(2.0), Duplicated(out, dout), true)[1]
+end
+
 @testset "Array push" begin
 
     function pusher(x, y)
