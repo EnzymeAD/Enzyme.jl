@@ -139,6 +139,9 @@ include("api.jl")
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
     return Const{T}
 end
+@inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+    return Const{Union{}}
+end
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}

@@ -613,6 +613,14 @@ end
     @test 5.0 ≈ dx[1]
 end
 
+@testset "Dynamic Val Construction" begin
+
+    dyn_f(::Val{D}) where D = prod(D)
+    dyn_mwe(x, t) = x / dyn_f(Val(t))
+
+    @test 0.5 ≈ Enzyme.autodiff(dyn_mwe, Active, Active(1.0), Const((1, 2)))[1]
+end
+
 @testset "broadcast" begin
     A = rand(10); B = rand(10); R = similar(A)
     dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)

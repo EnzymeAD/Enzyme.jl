@@ -89,6 +89,7 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Base.eps,
                                Base.nextfloat,
                                Base.prevfloat,
+                               Base.Val,
                                Core.kwfunc,
                                Random.rand,
                                Random.rand!,
@@ -420,35 +421,40 @@ struct Tape
     resT::DataType
 end
 
-function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
-                             width)
+function wrap_annotated_args(forwardMode, start, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
     __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
     args = Any[]
     
-    for i in 1:arg_size
+    for i in start:arg_size
         p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            s = Base.unsafe_load(shadow_ptr, i)
-            # TODO if ptr(s) == ptr(p) => Const(p)
-            push!(args, Duplicated(p, s))
+        T = typeof(p)
+        if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+                push!(args, Active(p))
+            else
+                s = Base.unsafe_load(shadow_ptr, i)
+                push!(args, Duplicated(p, s))
+            end
         else
             push!(args, Const(p))
         end
     end
+    return args
+end
+
+function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
+                             width)
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    if rt == Union{} || rt == Any
+    annotation = guess_activity(rt, API.DEM_ForwardMode)
+    if annotation <: DuplicatedNoNeed
         annotation = Duplicated
-    else
-        annotation = guess_activity(rt, API.DEM_ForwardMode)
-        if annotation <: DuplicatedNoNeed
-            annotation = Duplicated
-        end
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
@@ -462,30 +468,9 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     end
 end
 
-
-
 function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                                 width)
-
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = Any[]
-    
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -517,33 +502,22 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
     else
         error("Unknown annotation")
     end
-
+    
     internal_tape = res[1]
     tape = Tape(adjoint, internal_tape, shadow_return, resT)
-
+    
     return Return3(origRet, ret2, tape)
 end
 
 function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
+    
     actives = []
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
+    for (i, p) in enumerate(args)
+        if typeof(p) <: Active
+            push!(actives, (shadow_ptr, i))
         end
     end
-
 
     tape = tape::Tape
 
@@ -578,19 +552,9 @@ end
 
 function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
                             width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
+    
     fn = Base.unsafe_load(arg_ptr, 1)
-    args = []
-    for i in 2:arg_size
-        val = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            # TODO use only for non mutable
-            push!(args, Duplicated(val, Base.unsafe_load(shadow_ptr, i)))
-        else
-            push!(args, Const(val))
-        end
-    end
 
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
@@ -620,31 +584,12 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
 end
 
 function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
 
     fn = Base.unsafe_load(arg_ptr, 1)
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
-
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = Any[]
-    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -683,29 +628,20 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
 end
 
 function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
+    
+    actives = []
+    for (i, p) in enumerate(args)
+        if typeof(p) <: Active
+            push!(actives, (shadow_ptr, i))
+        end
+    end
+    
     fn = Base.unsafe_load(arg_ptr, 1)
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
-
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
-    actives = []
-    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
-    
+ 
     tape = tape::Tape
 
     if tape.shadow_return !== nothing
@@ -739,21 +675,7 @@ function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
 end
 
 function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    args = Any[]
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            s = Base.unsafe_load(shadow_ptr, i)
-            push!(args, Duplicated(p, s))
-        else
-            push!(args, Const(p))
-        end
-    end
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -777,25 +699,7 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
 end
 
 function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    args = Any[]
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -833,21 +737,12 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr
 end
 
 function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, arg_size, width)
+    
     actives = []
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
+    for (i, p) in enumerate(args)
+        if typeof(p) <: Active
+            push!(actives, (shadow_ptr, i))
         end
     end
 
@@ -3479,7 +3374,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             if !(T <: Const)
-                error("Type of ghost or constant is marked as differentiable.")
+                error("Type of ghost or constant type "*string(T)*" is marked as differentiable.")
             end
             continue
         end
@@ -4908,29 +4803,32 @@ end
         push!(sret_types, Core.LLVMPtr{UInt8,0})
     end
 
-        if !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
-            jlRT = eltype(rettype)
-            if typeof(jlRT) == UnionAll
-              # Future improvement, add tye assertion on load
-              jlRT = DataType
-            end
-            if returnPrimal
-                push!(sret_types, jlRT)
-            end
-            if is_forward
-                if rettype <: Duplicated || rettype <: DuplicatedNoNeed
-                    push!(sret_types, jlRT)
-                elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-                    push!(sret_types, NTuple{width, jlRT})
-                end
-            end
+    jlRT = eltype(rettype)
+    if typeof(jlRT) == UnionAll
+      # Future improvement, add tye assertion on load
+      jlRT = DataType
+    end
+    if returnPrimal
+        push!(sret_types, jlRT)
+    end
+    if is_forward
+        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+            push!(sret_types, jlRT)
+        elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+            push!(sret_types, NTuple{width, jlRT})
         end
+    end
 
 	# calls fptr
 	ctx = LLVM.Context()
 	llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
     if !isempty(sret_types)
-      llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
+      llsret_types = LLVMType[]
+      for x in sret_types
+          if !(GPUCompiler.isghosttype(x) || Core.Compiler.isconstType(x))
+            push!(llsret_types, convert(LLVMType, x; ctx, allow_boxed=true))
+          end
+      end
       T_sjoint = LLVM.StructType(llsret_types; ctx)
       pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
 	end
