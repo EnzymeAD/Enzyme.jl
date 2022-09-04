@@ -224,7 +224,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     isunboxed = allocatedinline(typ)
     elsz = sizeof(typ)
 
-    isunion = typ <: Union
+    isunion = typ isa Union
 
     LLT_ALIGN(x, sz) = (((x) + (sz)-1) & ~((sz)-1))
 
@@ -3393,7 +3393,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     sret = is_sret(RT, ctx) 
     returnRoots = false
     if sret
-    	returnRoots = deserves_rooting(RT, ctx)
+        lRT = eltype(llvmtype(first(parameters(entry_f))))
+    	returnRoots = deserves_rooting(lRT)
     end
 
     jlargs = classify_arguments(mi.specTypes, eltype(llvmtype(called)), sret, returnRoots)
@@ -3615,7 +3616,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree(GPUCompiler.deserves_retbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+    retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -4040,8 +4041,7 @@ function CountTrackedPointers(T)
 end
 
 # must deserve sret
-function deserves_rooting(T, ctx)
-    T = convert(LLVMType, T ; ctx)
+function deserves_rooting(T)
 	tracked = CountTrackedPointers(T)
 	@assert !tracked.derived
 	if tracked.count != 0 && !tracked.all
@@ -4051,7 +4051,7 @@ function deserves_rooting(T, ctx)
 end
 
 function for_each_uniontype_small(f, ty)
-    if ty <: Union
+    if ty isa Union
         for_each_uniontype_small(f, ty.a)
         for_each_uniontype_small(f, ty.b)
         return
@@ -4082,7 +4082,7 @@ function is_sret(jlrettype, ctx)
     elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
         # jl_is_structtype(jlrettype) && jl_is_datatype_singleton((jl_datatype_t*)jlrettype)
         return false
-    elseif jlrettype <: Union # jl_is_uniontype(jlrettype)
+    elseif jlrettype isa Union # jl_is_uniontype(jlrettype)
         if union_alloca_type(jlrettype) > 0
             # sret, also a regular return here
             return true
@@ -4110,8 +4110,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     
     returnRoots = false
     if sret
-        RT = convert(LLVMType, actualRetType ; ctx)
-    	returnRoots = deserves_rooting(actualRetType, ctx)
+        RT = eltype(llvmtype(first(parameters(entry_f))))
+    	returnRoots = deserves_rooting(RT)
 		if returnRoots
 			GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
 		end
