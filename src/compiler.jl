@@ -3417,7 +3417,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     end
      
     rtt = typetree(RT, ctx, dl)
-    
+
+
     if sret
         merge!(rtt, TypeTree(API.DT_Pointer, ctx))
         only!(rtt, -1)
@@ -3427,6 +3428,10 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
             API.EnzymeMergeTypeTree(unsafe_load(args, 2), allpointer)
         end
     else
+        if GPUCompiler.deserves_retbox(RT)
+            merge!(rtt, TypeTree(API.DT_Pointer, ctx))
+            only!(rtt, -1)
+        end
         API.EnzymeMergeTypeTree(ret, rtt)
     end
     
@@ -3610,7 +3615,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree(GPUCompiler.deserves_argbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+    retTT = typetree(GPUCompiler.deserves_retbox(actualRetType) ? Ptr{actualRetType} : actualRetType, ctx, dl)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
