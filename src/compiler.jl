@@ -4960,9 +4960,15 @@ end
 # Box
 ##
 
+zeroof(::Type{T}) where T = Base.zero(T)
+zeroof(::Type{<:NamedTuple{names, TT}}) where {names, TT} = NamedTuple{names}(zeroof(TT))
+zeroof(::Type{TT}) where TT<:Tuple = (map(T->zeroof(T), TT.parameters)...,)
+zeroof(::Type{Symbol}) = Symbol("")
+zeroof(::Type{String}) = ""
+
 mutable struct Box{T} <: Base.Ref{T}
     x::T
-    Box{T}() where {T} = new()
+    Box{T}() where {T} = new(zeroof(T))
     Box{T}(x) where {T} = new(x)
 end
 
