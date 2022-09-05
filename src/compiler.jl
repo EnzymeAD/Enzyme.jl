@@ -818,6 +818,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     if length(ops) == 0
         vals = LLVM.Value[LLVM.Value(jl_fn), activity]
+        if tape !== nothing
+            push!(vals, LLVM.ConstantInt(Csize_t(0); ctx))
+        end
     else
         for (i, op) in enumerate(ops)
             idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
