@@ -1092,8 +1092,6 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
         unsafe_store!(normalR, normal.ref)
     end
 
-    emit_gc_preserve_end(B, token)
-
     return nothing
 end
 
