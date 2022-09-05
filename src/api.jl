@@ -235,6 +235,8 @@ function CreateLogic(postOpt=false)
     ccall((:CreateEnzymeLogic, libEnzyme), EnzymeLogicRef, (UInt8,), postOpt)
 end
 
+EnzymeLogicErasePreprocessedFunctions(logic) = ccall((:EnzymeLogicErasePreprocessedFunctions, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
+
 function ClearLogic(logic)
     ccall((:ClearEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
 end
