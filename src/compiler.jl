@@ -1133,7 +1133,7 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
 
     tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1+width; ctx)]))
     unsafe_store!(tapeR, tape.ref)
-
+    return nothing
 end
 
 function common_apply_latest_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
