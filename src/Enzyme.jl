@@ -139,6 +139,9 @@ include("api.jl")
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
     return Const{T}
 end
+@inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+    return Const{Union{}}
+end
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
@@ -648,7 +651,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
-    only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow)))
+    values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -685,7 +688,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 """
 @inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
     tmp = ntuple(length(shadow)) do i
-        autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1]
+        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     tupleconcat(tmp...)
 end

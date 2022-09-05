@@ -613,6 +613,89 @@ end
     @test 5.0 ≈ dx[1]
 end
 
+@testset "Batch Generics" begin
+    function mul2ip(y)
+        y[1] *= 2
+        return nothing
+    end
+
+    function fwdlatestfooip(y)
+        Base.invokelatest(mul2ip, y)
+    end
+
+    x = [1.0, 2.0, 3.0]
+    dx = [1.0, 1.0, 1.0]
+    dx2 = [10.0, 20.0, 30.0]
+
+    res = Enzyme.autodiff(Forward, fwdlatestfooip, Const, BatchDuplicated(x, (dx, dx2)))
+    @test 2.0 ≈ dx[1]
+    @test 20.0 ≈ dx2[1]
+
+    function mul2(y)
+        return y[1] * 2
+    end
+
+    function fwdlatestfoo(y)
+        Base.invokelatest(mul2, y)
+    end
+
+    x = [1.0, 2.0, 3.0]
+    dx = [1.0, 1.0, 1.0]
+    dx2 = [10.0, 20.0, 30.0]
+
+    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
+
+    @test 2.0 ≈ res[1][1]
+    @test 2.0 ≈ res[2][1]
+    @test 20.0 ≈ res[2][2]
+
+    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicatedNoNeed, BatchDuplicated(x, (dx, dx2)))
+    @test 2.0 ≈ res[1][1]
+    @test 20.0 ≈ res[1][2]
+
+
+    function revfoo(out, x)
+        out[] = x*x
+        nothing
+    end
+        
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(10.0)
+
+    res = Enzyme.autodiff(Reverse, revfoo, BatchDuplicated(out, (dout, dout2)), Active(2.0))
+    @test 4.0 ≈ res[1][1]
+    @test 40.0 ≈ res[1][2]
+    @test 0.0 ≈ dout[]
+    @test 0.0 ≈ dout2[]
+
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(10.0)
+
+    function rev_lq(y)
+        return y * y
+    end
+    function revfoo2(out, x)
+        out[] = Base.invokelatest(rev_lq, x)::Float64
+        nothing
+    end
+    res = Enzyme.autodiff(Reverse, revfoo2, BatchDuplicated(out, (dout, dout2)), Active(2.0))
+    @test 4.0 ≈ res[1][1]
+    @test 40.0 ≈ res[1][2]
+    @test 0.0 ≈ dout[]
+    @test 0.0 ≈ dout2[]
+
+end
+
+@testset "Dynamic Val Construction" begin
+
+    dyn_f(::Val{D}) where D = prod(D)
+    dyn_mwe(x, t) = x / dyn_f(Val(t))
+
+    @test 0.5 ≈ Enzyme.autodiff(dyn_mwe, Active, Active(1.0), Const((1, 2)))[1]
+end
+
 @testset "broadcast" begin
     A = rand(10); B = rand(10); R = similar(A)
     dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)

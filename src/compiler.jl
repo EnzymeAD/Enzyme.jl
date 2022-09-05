@@ -89,6 +89,7 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Base.eps,
                                Base.nextfloat,
                                Base.prevfloat,
+                               Base.Val,
                                Core.kwfunc,
                                Random.rand,
                                Random.rand!,
@@ -343,6 +344,7 @@ struct Return3
     ret2::Any
     ret3::Any
 end
+AnyArray(Length::Int64) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
 
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
@@ -420,34 +422,129 @@ struct Tape
     resT::DataType
 end
 
-function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
-                             width)
+@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::NamedTuple{A,B}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width,A,B}
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+    __activity = Base.unsafe_wrap(Array, activity_ptr, length(arg_ptr))
     args = Any[]
     
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            s = Base.unsafe_load(shadow_ptr, i)
-            # TODO if ptr(s) == ptr(p) => Const(p)
-            push!(args, Duplicated(p, s))
+    for i in start:length(arg_ptr)
+        p = arg_ptr[i]
+        T = typeof(p)
+        if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+                push!(args, Active(p))
+            else
+                if width == 1
+                    s = shadow_ptr[(i-1)*width + 1]
+                    push!(args, Duplicated(p, s))
+                else
+                    push!(args, BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], width)))
+                end
+            end
         else
             push!(args, Const(p))
         end
     end
+    return args
+end
+@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width,AddrSpace}
+    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
+    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
+    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
+    __activity = Base.unsafe_wrap(Array, activity_ptr, length(arg_ptr))
+    args = Any[]
+    
+    for i in start:length(arg_ptr)
+        p = arg_ptr[i]
+        T = typeof(p)
+        if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+                push!(args, Active(p))
+            else
+                if width == 1
+                    s = unsafe_load(shadow_ptr, (i-1)*width + 1)
+                    push!(args, Duplicated(p, s))
+                else
+                    push!(args, BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], width)))
+                end
+            end
+        else
+            push!(args, Const(p))
+        end
+    end
+    return args
+end
+
+@inline function common_interface_augfwd(annotation, forward, adjoint, args, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
+    res = forward(args...)
+
+    internal_tape = res[1]
+    
+    if length(res) == 1
+        resT = Nothing
+        shadow_return = nothing
+        tape = Tape(adjoint, internal_tape, shadow_return, resT)
+        if Width == 1
+            return ReturnType((nothing, nothing, tape))
+        else
+            return ReturnType((nothing, ntuple(i->nothing, width)..., tape))
+        end
+    end
+    if annotation <: Const
+        origRet = res[2]
+        resT = typeof(origRet)
+        shadow_return = nothing
+        tape = Tape(adjoint, internal_tape, shadow_return, resT)
+        if Width == 1
+            return ReturnType((origRet, origRet, tape))
+        else
+            return ReturnType((origRet, ntuple(i->origRet, width)..., tape))
+        end
+    end
+    if annotation <: Active
+        origRet = res[2]
+        resT = typeof(origRet)
+        if Width == 1
+            shadow_return = Ref(zero(resT))
+        else
+            shadow_return = ntuple(i->Ref(zero(resT)), width)
+        end
+        tape = Tape(adjoint, internal_tape, shadow_return, resT)
+        if Width == 1
+            return ReturnType((origRet, shadow_return, tape))
+        else
+            return ReturnType((origRet, shadow_return..., tape))
+        end
+    end
+    
+    @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
+    
+    origRet = res[2]
+    resT = typeof(origRet)
+    shadow_return = nothing
+    tape = Tape(adjoint, internal_tape, shadow_return, resT)
+    if Width == 1
+        return ReturnType((origRet, res[3], tape))
+    else
+        return ReturnType((origRet, ntuple(i->res[3], width)..., tape))
+    end
+end
+
+function runtime_generic_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
-    if rt == Union{} || rt == Any
-        annotation = Duplicated
-    else
-        annotation = guess_activity(rt, API.DEM_ForwardMode)
-        if annotation <: DuplicatedNoNeed
-            annotation = Duplicated
+    annotation = guess_activity(rt, API.DEM_ForwardMode)
+    if annotation <: DuplicatedNoNeed
+        annotation = Duplicated{rt}
+    end
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
         end
     end
 
@@ -455,37 +552,69 @@ function runtime_generic_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, a
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
-    if annotation == Duplicated
-        return Return2(res[1], res[2])
+
+    if length(res) == 0
+        return ReturnType(ntuple(i->nothing, Val(Width+1)))
+    end
+    if annotation <: Const
+        return ReturnType(ntuple(i->res[1], Val(Width+1)))
+    end
+
+    if Width == 1
+       return ReturnType((res[1], res[2]))
     else
-        return Return2(res[1], res[1])
+        return ReturnType((res[1], res[2]...))
     end
 end
 
-
-
-function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
-                                width)
-
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = Any[]
-    
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
+@inline function common_interface_rev(args, shadow_ptr, tape::Any, width::Val{Width}) where Width
+    actives = []
+    for (i, p) in enumerate(args)
+        if typeof(p) <: Active
+            push!(actives, i)
         end
     end
+
+    tape = tape::Tape
+
+    if tape.shadow_return !== nothing
+        if Width == 1
+            val = tape.shadow_return[]
+        else
+            val = ntuple(i->tape.shadow_return[i][], width)
+        end
+        push!(args, val)
+    end
+
+    push!(args, tape.internal_tape)
+
+    tup = tape.thunk(args...)
+    
+    for (d, i) in zip(tup, actives)
+        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
+        # they are not idempotent on the Julia level. We could "force" `a` to be
+        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+        for w in 1:Width
+            dd = if Width == 1
+                d
+            else
+                d[w]
+            end
+            a = unsafe_load(shadow_ptr, (i-1)*Width+w)
+            if a isa Base.RefValue
+                @assert eltype(a) == typeof(dd)
+                a[] += dd
+            else
+                ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, shadow_ptr), (i-1)*Width+w)
+                unsafe_store!(ref, dd+a)
+            end
+        end
+    end
+    return nothing
+end
+
+function runtime_generic_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -495,102 +624,18 @@ function runtime_generic_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    res = forward(args...)
-    if length(res) > 1
-      origRet = res[2]
-      resT = typeof(origRet)
-    else
-      origRet = nothing
-      resT = Nothing
-    end
-
-    if annotation <: Active
-        # This assumes that we have an Immutable object here that got passed as a boxed value
-        shadow_return = Ref(zero(resT))
-        ret2 = shadow_return
-    elseif annotation <: Const
-        shadow_return = nothing
-        ret2 = origRet
-    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
-        shadow_return = nothing
-        ret2 = res[3]
-    else
-        error("Unknown annotation")
-    end
-
-    internal_tape = res[1]
-    tape = Tape(adjoint, internal_tape, shadow_return, resT)
-
-    return Return3(origRet, ret2, tape)
+    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_generic_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
-    actives = []
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
-
-
-    tape = tape::Tape
-
-    if tape.shadow_return !== nothing
-        val = tape.shadow_return
-        if !(val isa tape.resT)
-            val = tape.shadow_return[]
-        end
-        push!(args, val)
-    end
-    if tape.internal_tape !== nothing
-        push!(args, tape.internal_tape)
-    end
-
-    tup = tape.thunk(args...)
-
-    for (d, (s, i)) in zip(tup, actives)
-        a = unsafe_load(s, i)
-        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-        # they are not idempotent on the Julia level. We could "force" `a` to be
-        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
-        if a isa Base.RefValue
-            @assert eltype(a) == typeof(d)
-            a[] += d
-        else
-            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-            unsafe_store!(ref, d+a)
-        end
-    end
-    return nothing
+function runtime_generic_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(args, shadow_ptr, tape, width)
 end
 
-function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32,
-                            width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    fn = Base.unsafe_load(arg_ptr, 1)
-    args = []
-    for i in 2:arg_size
-        val = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            # TODO use only for non mutable
-            push!(args, Duplicated(val, Base.unsafe_load(shadow_ptr, i)))
-        else
-            push!(args, Const(val))
-        end
-    end
+function runtime_invoke_fwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    
+    fn = arg_ptr[1]
 
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
@@ -603,6 +648,11 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
     if annotation <: DuplicatedNoNeed
         annotation = Duplicated{rt}
     end
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
 
@@ -610,41 +660,28 @@ function runtime_invoke_fwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, ac
                         #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
-    if annotation <: Duplicated
-        return Return2(res[1], res[2])
-    elseif length(res) > 0
-        return Return2(res[1], res[1])
+    
+    if length(res) == 0
+        return ReturnType(ntuple(i->nothing, Val(Width+1)))
+    end
+    if annotation <: Const
+        return ReturnType(ntuple(i->res[1], Val(Width+1)))
+    end
+
+    if Width == 1
+       return ReturnType((res[1], res[2]))
     else
-        return Return2(nothing, nothing)
+        return ReturnType((res[1], res[2]...))
     end
 end
 
-function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
+function runtime_invoke_augfwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
 
-    fn = Base.unsafe_load(arg_ptr, 1)
+    fn = arg_ptr[1]
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
-
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = Any[]
-    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -654,106 +691,16 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any},
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    res = forward(args...)
-    if length(res) > 1
-      origRet = res[2]
-      resT = typeof(origRet)
-    else
-      origRet = nothing
-      resT = Nothing
-    end
-
-    if annotation <: Active
-        # This assumes that we have an Immutable object here that got passed as a boxed value
-        shadow_return = Ref(zero(resT))
-        ret2 = shadow_return
-    elseif annotation <: Const
-        shadow_return = nothing
-        ret2 = origRet
-    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
-        shadow_return = nothing
-        ret2 = res[3]
-    else
-        error("Unknown annotation")
-    end
-
-    internal_tape = res[1]
-    tape = Tape(adjoint, internal_tape, shadow_return, resT)
-    return Return3(origRet, ret2, tape)
+    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_invoke_rev(mi::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-    fn = Base.unsafe_load(arg_ptr, 1)
-    
-    # TODO actually use the mi rather than fn
-    @assert in(mi.def, methods(fn))
-
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
-    actives = []
-    for (i, typ) in zip(2:arg_size, mi.specTypes.parameters[2:end])
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
-    
-    tape = tape::Tape
-
-    if tape.shadow_return !== nothing
-        val = tape.shadow_return
-        if !(val isa tape.resT)
-            val = tape.shadow_return[]
-        end
-        push!(args, val)
-    end
-    if tape.internal_tape !== nothing
-        push!(args, tape.internal_tape)
-    end
-
-    tup = tape.thunk(args...)
-
-    for (d, (s, i)) in zip(tup, actives)
-        a = unsafe_load(s, i)
-        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-        # they are not idempotent on the Julia level. We could "force" `a` to be
-        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
-        if a isa Base.RefValue
-            @assert eltype(a) == typeof(d)
-            a[] += d
-        else
-            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-            unsafe_store!(ref, d+a)
-        end
-    end
-    
-    return nothing
+function runtime_invoke_rev(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(args, shadow_ptr, tape, width)
 end
 
-function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    args = Any[]
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            s = Base.unsafe_load(shadow_ptr, i)
-            push!(args, Duplicated(p, s))
-        else
-            push!(args, Const(p))
-        end
-    end
+function runtime_apply_latest_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -761,126 +708,54 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{An
     if annotation <: DuplicatedNoNeed
         annotation = Duplicated{rt}
     end
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
                         #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
-    if annotation <: Duplicated
-       return Return2(res[1], res[2])
-    elseif length(res) > 0
-        return Return2(res[1], res[1])
+
+    if length(res) == 0
+        return ReturnType(ntuple(i->nothing, Val(Width+1)))
+    end
+    if annotation <: Const
+        return ReturnType(ntuple(i->res[1], Val(Width+1)))
+    end
+
+    if Width == 1
+       return ReturnType((res[1], res[2]))
     else
-        return Return2(nothing, nothing)
+        return ReturnType((res[1], res[2]...))
     end
 end
 
-function runtime_apply_latest_augfwd(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, width)
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-
-    args = Any[]
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
+function runtime_apply_latest_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
-    res = forward(args...)
-    if length(res) > 1
-      origRet = res[2]
-      resT = typeof(origRet)
-    else
-      origRet = nothing
-      resT = Nothing
-    end
-
-    if annotation <: Active
-        shadow_return = Ref(zero(resT))
-        ret2 = shadow_return
-    elseif annotation <: Const
-        shadow_return = nothing
-        ret2 = origRet
-    elseif annotation <: Duplicated ||  annotation <: DuplicatedNoNeed
-        shadow_return = nothing
-        ret2 = res[3]
-    else
-        error("Unknown annotation")
-    end
-    internal_tape = res[1]
-
-    tape = Tape(adjoint, internal_tape, shadow_return, resT)
-    return Return3(origRet, ret2, tape)
+    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_apply_latest_rev(fn::Any, arg_ptr::Ptr{Any}, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, arg_size::UInt32, tape::Any, width)
-    __activity = Base.unsafe_wrap(Array, activity_ptr, arg_size)
-    args = []
-    actives = []
-    for i in 1:arg_size
-        p = Base.unsafe_load(arg_ptr, i)
-        if __activity[i] != 0
-            if typeof(p) <: AbstractFloat || typeof(p) <: Complex{<:AbstractFloat}
-                push!(args, Active(p))
-                push!(actives, (shadow_ptr, i))
-            else
-                s = Base.unsafe_load(shadow_ptr, i)
-                push!(args, Duplicated(p, s))
-            end
-        else
-            push!(args, Const(p))
-        end
-    end
-
-    tape = tape::Tape
-
-    if tape.shadow_return !== nothing
-        val = tape.shadow_return
-        if !(val isa tape.resT)
-            val = tape.shadow_return[]
-        end
-        push!(args, val)
-    end
-    if tape.internal_tape !== nothing
-        push!(args, tape.internal_tape)
-    end
-
-    tup = tape.thunk(args...)
-
-    for (d, (s, i)) in zip(tup, actives)
-        a = unsafe_load(s, i)
-        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-        # they are not idempotent on the Julia level. We could "force" `a` to be
-        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
-        if a isa Base.RefValue
-            @assert eltype(a) == typeof(d)
-            a[] += d
-        else
-            ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, s), i)
-            unsafe_store!(ref, d+a)
-        end
-    end
-    
-    return nothing
+function runtime_apply_latest_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(args, shadow_ptr, tape, width)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
@@ -907,72 +782,104 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     return
 end
 
-function generic_setup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, fun, lookup; sret=nothing, tape=nothing)
+function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing)
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
+    ops = collect(operands(orig))[(start+1):end-1]
+    
+    if tape === nothing
+        llvmf = nested_codegen!(mod, func, Tuple{Any, AnyArray(length(ops)), AnyArray(Int64(width)*length(ops)), Ptr{UInt8}, Val{Int64(width)}, Val{ReturnType}})
+    else
+        llvmf = nested_codegen!(mod, func, Tuple{Any, AnyArray(length(ops)), Ptr{Any}, Ptr{UInt8}, Any, Val{Int64(width)}, Val{ReturnType}})
+    end
+
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
-    ops = collect(operands(orig))[(start+1):end-1]
 
     num = convert(UInt32, length(ops))
-    llnum = LLVM.ConstantInt(num; ctx)
 
     EB = LLVM.Builder(ctx)
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     # TODO: Optimization by emitting liverange
     primal = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
-    shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
+    shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num*width))
     activity = LLVM.alloca!(EB, LLVM.ArrayType(T_int8, num))
 
     jl_fn = API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start])
     if lookup
         jl_fn = API.EnzymeGradientUtilsLookup(gutils, jl_fn, B)
     end
-    vals = LLVM.Value[LLVM.Value(jl_fn), primal, shadow, activity, llnum]
 
-    # to_preserve = LLVM.Value[primal, shadow]
     to_preserve = LLVM.Value[]
 
-    for (i, op) in enumerate(ops)
-        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
-        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        if lookup
-            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+    if length(ops) == 0
+        vals = LLVM.Value[LLVM.Value(jl_fn), activity]
+        if tape !== nothing
+            push!(vals, LLVM.ConstantInt(Csize_t(0); ctx))
         end
-        push!(to_preserve, val)
-        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
-
-        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
-        activeC = LLVM.ConstantInt(T_int8, active)
-        LLVM.store!(B, activeC, LLVM.inbounds_gep!(B, activity, idx))
-
-        if active
-            inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+    else
+        for (i, op) in enumerate(ops)
+            idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
             if lookup
-                inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
+                val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
             end
-            push!(to_preserve, inverted)
-            LLVM.store!(B, inverted,
-                        LLVM.inbounds_gep!(B, shadow, idx))
-        else
-            LLVM.store!(B, LLVM.null(llvmtype(op)),
-                        LLVM.inbounds_gep!(B, shadow, idx))
+            
+            LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
+
+            active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+            activeC = LLVM.ConstantInt(T_int8, active)
+            LLVM.store!(B, activeC, LLVM.inbounds_gep!(B, activity, idx))
+
+            inverted = nothing
+
+            if active
+                inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+                if lookup
+                    inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
+                end
+            end
+
+            for w in 1:width
+                
+                ev = LLVM.null(llvmtype(op))
+                if inverted !== nothing
+                    if width == 1
+                        ev = inverted
+                    else
+                        ev = extract_value!(B, inverted, w-1)
+                    end
+                end
+
+                idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
+                LLVM.store!(B, ev,
+                            LLVM.inbounds_gep!(B, shadow, idx))
+            end
         end
+
+        primal = addrspacecast!(B, primal, LLVM.PointerType(eltype(llvmtype(primal)), 11))
+        if tape === nothing
+            shadow = addrspacecast!(B, shadow, LLVM.PointerType(eltype(llvmtype(shadow)), 11))
+        else
+            # TODO ROOT
+        end
+        
+        vals = LLVM.Value[LLVM.Value(jl_fn), primal, shadow, activity]
     end
 
     if tape !== nothing
         push!(vals, LLVM.Value(tape))
-        push!(to_preserve, LLVM.Value(tape))
     end
 
-    if sret !== nothing
+    if sret !== nothing && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
         pushfirst!(vals, sret)
     end
 
-    token = emit_gc_preserve_begin(B, to_preserve)
-
-    params = parameters(eltype(LLVM.llvmtype(fun)))
+    params = parameters(eltype(LLVM.llvmtype(llvmf)))
     for (i, val) in enumerate(vals)
         sourceT = LLVM.llvmtype(val)
         targetT = params[i]
@@ -987,10 +894,22 @@ function generic_setup(orig, gutils, start, ctx::LLVM.Context, B::LLVM.Builder, 
         end
     end
 
-    cal = LLVM.call!(B, fun, vals)
+    if length(to_preserve) != 0
+        token = emit_gc_preserve_begin(B, to_preserve)
+    end
+
+    cal = LLVM.call!(B, llvmf, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-   
-    return cal, token
+    
+    if length(to_preserve) != 0
+        token = emit_gc_preserve_end(B, to_preserve)
+    end
+    
+    if sret !== nothing && !any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
+        emit_error(B, "Illegal generic_setup")
+    end
+
+    return cal
 end
 
 function allocate_sret!(B::LLVM.Builder, N, ctx)
@@ -1015,7 +934,6 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
@@ -1024,15 +942,25 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
         @assert conv == 37
 
         B = LLVM.Builder(B)
-        sret = allocate_sret!(gutils, 2, ctx)
-
+    
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        @assert width == 1 "jl_apply_generic forward vector mode not implemented yet"
-        llvmf = nested_codegen!(mod, runtime_generic_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-        _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
+        sret = allocate_sret!(gutils, 1+width, ctx)
+
+        generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
 
         if shadowR != C_NULL
-            shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
             unsafe_store!(shadowR, shadow.ref)
         end
 
@@ -1040,8 +968,6 @@ function generic_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
             normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
             unsafe_store!(normalR, normal.ref)
         end
-
-        emit_gc_preserve_end(B, token)
     end
 
     return nothing
@@ -1050,7 +976,6 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1058,45 +983,45 @@ function generic_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     @assert conv == 37
 
     B = LLVM.Builder(B)
-    sret = allocate_sret!(gutils, 3, ctx)
-
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    @assert width == 1 "jl_apply_generic augmented forward vector mode not implemented yet"
-    llvmf = nested_codegen!(mod, runtime_generic_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
+    sret = allocate_sret!(gutils, 2+width, ctx)
 
-    if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
-        unsafe_store!(shadowR, shadow.ref)
-    end
+    generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+
+        if shadowR != C_NULL
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
+            unsafe_store!(shadowR, shadow.ref)
+        end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1+width; ctx)]))
     unsafe_store!(tapeR, tape.ref)
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
 
 function generic_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
 
     B = LLVM.Builder(B)
+    ctx = LLVM.context(orig)
 
-    @assert tape !== C_NULL
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    @assert width == 1 "jl_apply_generic reverse vector mode not implemented yet"
-    llvmf = nested_codegen!(mod, runtime_generic_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
-
-    emit_gc_preserve_end(B, token)
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#1, ctx, B, true; tape)
 
     return nothing
 end
@@ -1108,7 +1033,6 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         ctx = LLVM.context(orig)
 
         conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1119,15 +1043,24 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         @assert conv == 38
 
         B = LLVM.Builder(B)
-        sret = allocate_sret!(gutils, 2, ctx)
-
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        @assert width == 1 "jl_invoke forward vector mode not implemented yet"
-        llvmf = nested_codegen!(mod, runtime_invoke_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-        _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
+        sret = allocate_sret!(gutils, 1+width, ctx)
 
+        generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+        
         if shadowR != C_NULL
-            shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
             unsafe_store!(shadowR, shadow.ref)
         end
 
@@ -1135,8 +1068,6 @@ function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
             normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
             unsafe_store!(normalR, normal.ref)
         end
-
-        emit_gc_preserve_end(B, token)
     end
 
     return nothing
@@ -1147,7 +1078,6 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         ctx = LLVM.context(orig)
 
         conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1155,15 +1085,24 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         @assert conv == 38
 
         B = LLVM.Builder(B)
-        sret = allocate_sret!(gutils, 2, ctx)
-
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        @assert width == 1 "jl_invoke augmented forward vector mode not implemented yet"
-        llvmf = nested_codegen!(mod, runtime_invoke_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-        _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, false; sret)
+        sret = allocate_sret!(gutils, 2+width, ctx)
 
+        generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#1, ctx, B, false; sret)
+        
         if shadowR != C_NULL
-            shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
             unsafe_store!(shadowR, shadow.ref)
         end
 
@@ -1172,10 +1111,8 @@ function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             unsafe_store!(normalR, normal.ref)
         end
 
-        tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
+        tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1+width; ctx)]))
         unsafe_store!(tapeR, tape.ref)
-
-        emit_gc_preserve_end(B, token)
     end
 
     return nothing
@@ -1185,7 +1122,6 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     orig = LLVM.Instruction(OrigCI)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
-        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         ctx = LLVM.context(orig)
         
         conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1194,12 +1130,7 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 
         B = LLVM.Builder(B)
 
-        width = API.EnzymeGradientUtilsGetWidth(gutils)
-        @assert width == 1 "jl_invoke reverse vector mode not implemented yet"
-        llvmf = nested_codegen!(mod, runtime_invoke_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
-        _, token = generic_setup(orig, gutils, #=start=#1, ctx, B, llvmf, true; tape)
-
-        emit_gc_preserve_end(B, token)
+        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#1, ctx, B, true; tape)
     end
 
     return nothing
@@ -1209,7 +1140,6 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1217,24 +1147,33 @@ function apply_latest_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     @assert conv == 37
 
     B = LLVM.Builder(B)
-    sret = allocate_sret!(gutils, 2, ctx)
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    sret = allocate_sret!(gutils, 1+width, ctx)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    @assert width == 1 "jl_apply_latest forward vector mode not implemented yet"
-    llvmf = nested_codegen!(mod, runtime_apply_latest_fwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
+    
+    generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#2, ctx, B, false; sret)
 
-    if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
-        unsafe_store!(shadowR, shadow.ref)
-    end
+        if shadowR != C_NULL
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
+            unsafe_store!(shadowR, shadow.ref)
+        end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
@@ -1243,7 +1182,6 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
     orig = LLVM.Instruction(OrigCI)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1252,27 +1190,34 @@ function apply_latest_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVa
 
     B = LLVM.Builder(B)
 
-    sret = allocate_sret!(gutils, 3, ctx)
-
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    @assert width == 1 "jl_apply_latest augmented forward vector mode not implemented yet"
-    llvmf = nested_codegen!(mod, runtime_apply_latest_augfwd, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, false; sret)
+    sret = allocate_sret!(gutils, 2+width, ctx)
 
-    if shadowR != C_NULL
-        shadow = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
-        unsafe_store!(shadowR, shadow.ref)
-    end
+    generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#2, ctx, B, false; sret)
+
+        if shadowR != C_NULL
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+                shadow = LLVM.load!(B, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i; ctx)])
+                    ld = LLVM.load!(B, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
+                end
+            end
+            unsafe_store!(shadowR, shadow.ref)
+        end
 
     if normalR != C_NULL
         normal = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
 
-    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(2; ctx)]))
+    tape = LLVM.load!(B, LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1+width; ctx)]))
     unsafe_store!(tapeR, tape.ref)
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
@@ -1283,13 +1228,7 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 
     B = LLVM.Builder(B)
 
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    @assert width == 1 "jl_apply_latest reverse vector mode not implemented yet"
-    llvmf = nested_codegen!(mod, runtime_apply_latest_rev, Tuple{Any, Ptr{Any}, Ptr{Any}, Ptr{UInt8}, UInt32, Any, Val{width}})
-    _, token = generic_setup(orig, gutils, #=start=#2, ctx, B, llvmf, true; tape)
-
-    emit_gc_preserve_end(B, token)
+    generic_setup(orig, runtime_apply_latest_rev, Nothing, gutils, #=start=#2, ctx, B, true; tape)
 
     return nothing
 end
@@ -3479,7 +3418,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             if !(T <: Const)
-                error("Type of ghost or constant is marked as differentiable.")
+                error("Type of ghost or constant type "*string(T)*" is marked as differentiable.")
             end
             continue
         end
@@ -3742,7 +3681,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
         @assert allocatedinline(actualRetType)
-        push!(T_wrapperargs, convert(LLVMType, actualRetType; ctx))
+        push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, actualRetType; ctx))))
     end
 
     data    = Array{Int64}(undef, 3)
@@ -4799,6 +4738,7 @@ end
     rettype  = rt.parameters[1]
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
+
     if rettype <: Active
         @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
     elseif rettype <: Const
@@ -4892,7 +4832,11 @@ end
     if is_adjoint && rettype <: Active
         # TODO handle batch width
         @assert allocatedinline(eltype(rettype))
-        push!(types, eltype(rettype))
+        if width == 1
+            push!(types, eltype(rettype))
+        else
+            push!(types, NTuple{width, eltype(rettype)})
+        end
         idx = length(argtypes) + 1
         push!(ccexprs, argexprs[idx])
     end
@@ -4908,29 +4852,34 @@ end
         push!(sret_types, Core.LLVMPtr{UInt8,0})
     end
 
-        if !(GPUCompiler.isghosttype(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)))
-            jlRT = eltype(rettype)
-            if typeof(jlRT) == UnionAll
-              # Future improvement, add tye assertion on load
-              jlRT = DataType
-            end
-            if returnPrimal
-                push!(sret_types, jlRT)
-            end
-            if is_forward
-                if rettype <: Duplicated || rettype <: DuplicatedNoNeed
-                    push!(sret_types, jlRT)
-                elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-                    push!(sret_types, NTuple{width, jlRT})
-                end
-            end
+    jlRT = eltype(rettype)
+    if typeof(jlRT) == UnionAll
+      # Future improvement, add tye assertion on load
+      jlRT = DataType
+    end
+    if returnPrimal
+        push!(sret_types, jlRT)
+    end
+    if is_forward
+        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+            push!(sret_types, jlRT)
+        elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+            push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
         end
+    end
 
 	# calls fptr
 	ctx = LLVM.Context()
 	llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
+    llsret_types = LLVMType[]
     if !isempty(sret_types)
-      llsret_types = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in sret_types]
+      for x in sret_types
+          if !(GPUCompiler.isghosttype(x) || Core.Compiler.isconstType(x))
+            push!(llsret_types, convert(LLVMType, x; ctx, allow_boxed=true))
+          end
+      end
+    end
+    if !isempty(llsret_types)
       T_sjoint = LLVM.StructType(llsret_types; ctx)
       pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
 	end
@@ -4957,7 +4906,7 @@ end
 	fn = LLVM.name(llvm_f)
 
     @assert length(types) == length(ccexprs)
-    if !isempty(sret_types)
+    if !isempty(llsret_types)
         return quote
             Base.@_inline_meta
             sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
@@ -4975,10 +4924,11 @@ end
     else
         return quote
             Base.@_inline_meta
+            sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
             Base.llvmcall(($ir, $fn), Cvoid,
                 Tuple{Ptr{Cvoid}, $(types...),},
                 fptr, $(ccexprs...))
-            return ()
+            return values(sret[])
         end
     end
 end
