@@ -429,7 +429,7 @@ end
     
     for i in start:length(arg_ptr)
         p = arg_ptr[i]
-        T = typeof(p)
+        T = Core.Typeof(p)
         if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 push!(args, Active(p))
@@ -456,7 +456,7 @@ end
     
     for i in start:length(arg_ptr)
         p = arg_ptr[i]
-        T = typeof(p)
+        T = Core.Typeof(p)
         if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 push!(args, Active(p))
@@ -618,7 +618,7 @@ function runtime_generic_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
-
+    
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
@@ -3896,6 +3896,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     else
         @assert "Unhandled derivative mode", mode
     end
+    API.EnzymeLogicErasePreprocessedFunctions(logic)
     return adjointf, augmented_primalf
 end
 
