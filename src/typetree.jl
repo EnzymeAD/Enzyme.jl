@@ -175,6 +175,10 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
         error("$T is unknown leaf")
     end
 
+    if !Base.isconcretetype(T)
+        return TypeTree(API.DT_Pointer, -1, ctx)
+    end
+
     tt = TypeTree()
     for f in 1:fieldcount(T)
         offset  = fieldoffset(T, f)
