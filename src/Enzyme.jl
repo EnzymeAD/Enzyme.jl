@@ -647,7 +647,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 # output
 
-(3.0, 2.0)
+(1 = 3.0, 2 = 2.0)
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
@@ -683,7 +683,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 
 # output
 
-(3.0, 2.0)
+(1 = 3.0, 2 = 2.0)
 ```
 """
 @inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
