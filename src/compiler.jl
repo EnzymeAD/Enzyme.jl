@@ -3394,6 +3394,23 @@ function annotate!(mod, mode)
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+            end            
         end
     end
 
@@ -3448,22 +3465,33 @@ function annotate!(mod, mode)
                   "ijl_box_float32", "ijl_box_float64", "ijl_box_int32", "ijl_box_int64",
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
-                  "jl_f_tuple", "ijl_f_tuple")
+                  "jl_array_copy", "ijl_array_copy",
+                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0; ctx))
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+            end            
         end
     end
     
-    for boxfn in ("jl_array_copy", "ijl_array_copy")
-        if haskey(fns, boxfn)
-            fn = fns[boxfn]
-            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblemem_or_argmemonly", 0; ctx))
-        end
-    end
-
     for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
         if haskey(fns, gc)
             fn = fns[gc]
