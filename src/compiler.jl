@@ -2596,7 +2596,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         called_value = origops[end]
         funcT = eltype(llvmtype(called_value)::LLVM.PointerType)::LLVM.FunctionType
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-        delf = get_function!(mod, "jl_array_grow_end", funcT)
+        delF = get_function!(mod, "jl_array_grow_end", funcT)
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
         shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowin, B))
