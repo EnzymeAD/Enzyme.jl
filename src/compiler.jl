@@ -912,7 +912,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
     
     if sret !== nothing && !any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        emit_error(B, "Illegal generic_setup")
+        emit_error(B, orig, "Illegal generic_setup")
     end
 
     return cal
@@ -1427,7 +1427,7 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     return nothing
 end
 
-function emit_error(B::LLVM.Builder, string)
+function emit_error(B::LLVM.Builder, orig, string)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1436,6 +1436,16 @@ function emit_error(B::LLVM.Builder, string)
     # 1. get the error function
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
     func = get_function!(mod, "jl_error", funcT, [EnumAttribute("noreturn"; ctx)])
+
+
+    if orig !== nothing
+        bt = GPUCompiler.backtrace(orig)
+        function printBT(io)
+            print(io,"\nCaused by:")
+            Base.show_backtrace(io, bt)
+        end
+        string*=sprint(io->Base.show_backtrace(io, bt)) 
+    end
 
     # 2. Call error function and insert unreachable
     call!(B, func, LLVM.Value[globalstring_ptr!(B, string)])
@@ -2112,7 +2122,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         # sval = Base.unsafe_string(ip)
         # API.EnzymeStringFree(ip)
         GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt) orig=string(orig)
-        emit_error(B, "Enzyme: Unknown concrete type in arraycopy_common")
+        emit_error(B, orig, "Enzyme: Unknown concrete type in arraycopy_common")
         return nothing
     end
 
@@ -2297,7 +2307,7 @@ function f_tuple_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 end
 
 function apply_iterate_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2308,12 +2318,12 @@ function apply_iterate_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 end
 
 function apply_iterate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
     return nothing
 end
 
 function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented augmented forward for jl_new_struct")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_new_struct")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2324,7 +2334,7 @@ function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 end
 
 function new_structv_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: Not yet implemented reverse for jl_new_struct")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
     return nothing
 end
 
@@ -2621,7 +2631,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         end
         
         # GPUCompiler.@safe_warn "Not applying memsetUnknown concrete type" tt=string(tt)
-        emit_error(B, "Not applying memset on reverse of jl_array_del_end")
+        emit_error(B, orig, "Not applying memset on reverse of jl_array_del_end")
         # memset(data + idx * elsz, 0, inc * elsz);
     end
     return nothing
@@ -2686,6 +2696,8 @@ function jl_getfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 end
 function jl_getfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid 
     orig = LLVM.Instruction(OrigCI)
+    emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
+
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
         origops = collect(operands(orig))
         width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -2767,7 +2779,7 @@ function jl_array_sizehint_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 end
 
 function jl_f__apply_iterate_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -2822,7 +2834,7 @@ function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
 end
 
 function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_f_setfield")
+    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -2831,13 +2843,14 @@ function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
 end
 
 function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-  emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_f_setfield")
+  emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
   return nothing
 end
 
 function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
-    err = emit_error(LLVM.Builder(B), "Enzyme: unhandled forward for jl_get_binding_or_error")
+    orig = LLVM.Instruction(OrigCI)
+    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
@@ -2859,7 +2872,8 @@ end
 
 function get_binding_or_error_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
-    err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
+    orig = LLVM.Instruction(OrigCI)
+    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2879,13 +2893,15 @@ function get_binding_or_error_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.AP
 end
 
 function get_binding_or_error_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_get_binding_or_error")
+    orig = LLVM.Instruction(OrigCI)
+    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
     return nothing
 end
 
 function finalizer_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
-    err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    orig = LLVM.Instruction(OrigCI)
+    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2897,7 +2913,7 @@ end
 function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
-    # err = emit_error(LLVM.Builder(B), "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    # err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
     # API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2913,7 +2929,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 end
 
 function finalizer_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    # emit_error(LLVM.Builder(B), "Enzyme: unhandled reverse for jl_gc_add_finalizer_th")
+    # emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_gc_add_finalizer_th")
     return nothing
 end
 
@@ -4599,7 +4615,7 @@ end
                     entry = BasicBlock(f, "entry"; ctx)
                     b = Builder(ctx)
                     position!(b, entry)
-                    emit_error(b, "BLAS Error")
+                    emit_error(b, nothing, "BLAS Error")
                     ret!(b)
                 end
             end
