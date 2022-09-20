@@ -3088,40 +3088,11 @@ nfields(Type::LLVM.VectorType) = size(Type)
 nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
-abstract type AbstractEnzymeTape end
-
-mutable struct EnzymeTape{N, T<:AbstractEnzymeTape} <: AbstractEnzymeTape
+mutable struct EnzymeTape{N, T}
     data::NTuple{N, T}
 end
 
 const TapeTypes = Dict{String, DataType}()
-
-tape_type(LLVMType) = Base.get!(TapeTypes, string(LLVMType)) do
-    # Generate a new immutable tape desciptor...
-    parameters = Core.svec()
-    N = nfields(LLVMType)
-    fnames = Core.svec(ntuple(i->Symbol(string(i)), N)...)
-    TT = to_tape_type(LLVMType)
-    if TT <: Tuple
-        ftypes = Core.svec(to_tape_type(LLVMType).parameters...)
-    else
-        ftypes = Core.svec(TT)
-    end
-    attrs = Core.svec()
-
-    name = gensym("EnzymeTape")
-
-if VERSION >= v"1.7.0-DEV.1230"
-    ndt = ccall(:jl_new_datatype, Any, (Any, Any, Any, Any, Any, Any, Any, Cint, Cint, Cint),
-                name, @__MODULE__, AbstractEnzymeTape, parameters, fnames, ftypes, attrs, false, false, nfields(LLVMType))
-else
-    ndt = ccall(:jl_new_datatype, Any, (Any, Any, Any, Any, Any, Any, Cint, Cint, Cint),
-                name, @__MODULE__, AbstractEnzymeTape, parameters, fnames, ftypes, false, false, nfields(LLVMType))
-end
-
-    ccall(:jl_set_const, Cvoid, (Any, Any, Any), @__MODULE__, name, ndt.name.wrapper)
-    return ndt
-end
 
 base_type(T::UnionAll) = base_type(T.body)
 base_type(T::DataType) = T
@@ -3134,9 +3105,10 @@ function to_tape_type(Type::LLVM.PointerType)
     end
 end
 
-to_tape_type(Type::LLVM.StructType) = Tuple{map(to_tape_type, LLVM.elements(Type))...}
-to_tape_type(Type::LLVM.ArrayType) = NTuple{Int(length(Type)), to_tape_type(eltype(Type))}
-to_tape_type(Type::LLVM.VectorType) = NTuple{Int(size(Type)), to_tape_type(eltype(Type))}
+to_tape_type(Type::LLVM.StructType) = AnonymousStruct(Tuple{map(to_tape_type, LLVM.elements(Type))...})
+to_tape_type(Type::LLVM.ArrayType) = AnonymousStruct(NTuple{Int(length(Type)), to_tape_type(eltype(Type))})
+to_tape_type(Type::LLVM.VectorType) = AnonymousStruct(NTuple{Int(size(Type)), to_tape_type(eltype(Type))})
+
 function to_tape_type(Type::LLVM.IntegerType)
     N = width(Type)
     if N == 1
@@ -3160,6 +3132,14 @@ to_tape_type(::LLVM.LLVMHalf) = Float16
 to_tape_type(::LLVM.LLVMFloat) = Float32
 to_tape_type(::LLVM.LLVMDouble) = Float64
 to_tape_type(::LLVM.LLVMFP128) = Float128
+
+function tape_type(LLVMType) 
+    TT = to_tape_type(LLVMType)
+    if TT == Any
+        return AnonymousStruct(Tuple{TT})
+    end
+    return TT
+end
 
 const Tracked = 10
 
