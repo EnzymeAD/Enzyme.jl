@@ -52,6 +52,28 @@ const known_ops = Dict(
     Base.FastMath.tanh_fast => (:tanh, 1)
 )
 
+const nofreefns = Set{String}((
+    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_box_int64", "jl_box_int32",
+    "ijl_box_int64", "ijl_box_int32",
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
+    "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
+    "jl_breakpoint",
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
+    "jl_f_fieldtype",
+    "jl_symbol_n",
+    "jl_stored_inline", "ijl_stored_inline",
+    "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
+    "jl_matching_methods", "ijl_matching_methods",
+    "jl_excstack_state", "ijl_excstack_state", 
+    "jl_current_exception", "ijl_current_exception",
+    "memhash_seed",
+    "jl_f__typevar", "ijl_f__typevar",
+    "jl_f_isa", "ijl_f_isa",
+    "jl_set_task_threadpoolid", "ijl_set_task_threadpoolid"
+))
+
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
@@ -66,7 +88,8 @@ const inactivefns = Set{String}((
     "jl_stored_inline", "ijl_stored_inline",
     "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
     "jl_matching_methods", "ijl_matching_methods",
-    "jl_excstack_state", "jl_current_exception",
+    "jl_excstack_state", "ijl_excstack_state", 
+    "jl_current_exception", "ijl_current_exception",
     "memhash_seed",
     "jl_f__typevar", "ijl_f__typevar",
     "jl_f_isa", "ijl_f_isa",
@@ -1389,40 +1412,16 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 end
 
 function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_fwd(1, B, OrigCI, gutils, normalR, shadowR)
     return nothing
 end
 
 function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
     return nothing
 end
 
 function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_rev(1, B, OrigCI, gutils, tape)
     return nothing
 end
@@ -2606,7 +2605,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         called_value = origops[end]
         funcT = eltype(llvmtype(called_value)::LLVM.PointerType)::LLVM.FunctionType
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-        delf = get_function!(mod, "jl_array_grow_end", funcT)
+        delF = get_function!(mod, "jl_array_grow_end", funcT)
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
         shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, shadowin, B))
@@ -3417,6 +3416,13 @@ function annotate!(mod, mode)
             push!(function_attributes(fn), inactive)
         end
     end
+    
+    for fname in nofreefns
+        if haskey(fname, inactivefn)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+        end
+    end
 
     for activefn in activefns
         if haskey(fns, activefn)
@@ -3433,7 +3439,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("jl_excstack_state",)
+    for fname in ("jl_excstack_state","ijl_excstack_state")
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
@@ -3838,6 +3844,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_excstack_state" => @cfunction(int_return_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_excstack_state" => @cfunction(int_return_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.except_enter" => @cfunction(int_return_rule,
@@ -4290,7 +4299,7 @@ function for_each_uniontype_small(f, ty)
         for_each_uniontype_small(f, ty.b)
         return
     end
-    if Base.datatype_pointerfree(ty)
+    if Base.isconcretetype(ty) && ismutabletype(ty) && Base.datatype_pointerfree(ty)
         f(ty)
         return
     end
