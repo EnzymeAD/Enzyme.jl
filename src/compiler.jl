@@ -3163,9 +3163,12 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
     SI = LLVM.Instruction(SI)
     v = operands(SI)[1]
     if any_jltypes(llvmtype(v))
+        p = operands(SI)[2]
+        ctx = LLVM.context(v)
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+        v = bitcast!(B, v, T_prjlvalue)
         r = emit_writebarrier!(B, v)
-        @safe_show SI, r
-        flush(stdout)
         return LLVM.API.LLVMValueRef(r.ref)
     end
     return C_NULL
