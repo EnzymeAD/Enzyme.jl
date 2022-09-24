@@ -193,6 +193,18 @@ function emit_pointerfromobjref!(B, T)
     return call!(B, func, [T])
 end
 
+declare_writebarrier!(mod) = get_function!(mod, "julia.write_barrier") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(LLVM.VoidType(ctx), [T_prjlvalue]; vararg=true)
+end
+function emit_writebarrier!(B, T)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    func = declare_writebarrier!(mod)
+    return call!(B, func, [T])
+end
 
 function array_inner(::Type{<:Array{T}}) where T
     return T
@@ -3146,6 +3158,19 @@ const Tracked = 10
 # TODO: Calculate that constant... see get_current_task
 current_task_offset() = -12
 
+function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef)::LLVM.API.LLVMValueRef
+    B = LLVM.Builder(B)
+    SI = LLVM.Instruction(SI)
+    v = operands(SI)[1]
+    if any_jltypes(llvmtype(v))
+        r = emit_writebarrier!(B, v)
+        @safe_show SI, r
+        flush(stdout)
+        return LLVM.API.LLVMValueRef(r.ref)
+    end
+    return C_NULL
+end
+
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef)
     B = LLVM.Builder(B)
     Count = LLVM.Value(Count)
@@ -3290,6 +3315,9 @@ function __init__()
             (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
         API.EnzymeSetCustomDeallocator(@cfunction(
             julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+        API.EnzymeSetPostCacheStore(@cfunction(
+            julia_post_cache_store, LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
