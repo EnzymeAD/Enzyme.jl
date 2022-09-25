@@ -79,7 +79,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
 # CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**
 # CHECK-NEXT:   %6 = getelementptr inbounds {}*, {}** %5, i64 -12
-# CHECK-NEXT:   %7 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}** %6, i64 8, {} addrspace(10)* %4)
+# CHECK-NEXT:   %7 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}** %6, i64 %2, {} addrspace(10)* %4)
 # CHECK-NEXT:   %8 = bitcast {} addrspace(10)* %7 to {} addrspace(10)* addrspace(10)*
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
@@ -93,7 +93,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
 # CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**
 # CHECK-NEXT:   %6 = getelementptr inbounds {}*, {}** %5, i64 -12
-# CHECK-NEXT:   %7 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}** %6, i64 16, {} addrspace(10)* %4)
+# CHECK-NEXT:   %7 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}** %6, i64 %2, {} addrspace(10)* %4)
 # CHECK-NEXT:   %8 = bitcast {} addrspace(10)* %7 to <2 x {} addrspace(10)*> addrspace(10)*
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }

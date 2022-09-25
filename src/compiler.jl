@@ -203,7 +203,7 @@ function emit_writebarrier!(B, T)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
     func = declare_writebarrier!(mod)
-    return call!(B, func, [T])
+    return call!(B, func, T)
 end
 
 function array_inner(::Type{<:Array{T}}) where T
@@ -3162,13 +3162,51 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
     B = LLVM.Builder(B)
     SI = LLVM.Instruction(SI)
     v = operands(SI)[1]
-    if any_jltypes(llvmtype(v))
-        p = operands(SI)[2]
+    p = operands(SI)[2]
+    while true
+        if isa(p, LLVM.GetElementPtrInst) || isa(p, LLVM.BitCastInst) || isa(p, LLVM.AddrSpaceCastInst)
+            p = operands(p)[1]
+            continue
+        end
+        break
+    end
+    if any_jltypes(llvmtype(v)) && !isa(p, LLVM.AllocaInst)
         ctx = LLVM.context(v)
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
         v = bitcast!(B, v, T_prjlvalue)
-        r = emit_writebarrier!(B, v)
+        p = bitcast!(B, p, T_prjlvalue)
+        
+        vals = LLVM.Value[p]
+        todo = [v]
+        while length(todo) != 0
+            cur = pop!(todo)
+            ty = llvmtype(cur)
+            if isa(ty, LLVM.PointerType)
+                if any_jltypes(ty)
+                    push!(vals, cur)
+                end
+                continue
+            end
+            if isa(ty, LLVM.ArrayType)
+                if any_jltypes(ty)
+                    for i=1:length(ty)
+                        push!(todo, extract_value!(B, cur, i-1))
+                    end
+                end
+            end
+            if isa(ty, LLVM.StructType)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    if any_jltypes(t)
+                        push!(todo, extract_value!(B, cur, i-1))
+                    end
+                end
+                continue
+            end
+            GPUCompiler.@safe_warn "Enzyme illegal subtype", ty, cur, SI, p, v
+            @assert false
+        end
+        r = emit_writebarrier!(B, vals)
         return LLVM.API.LLVMValueRef(r.ref)
     end
     return C_NULL
@@ -3224,7 +3262,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue])
             f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
 
-            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(base_type(EnzymeTape))); ctx)
+            ptr = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), EnzymeTape)
+
+            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, ptr); ctx)
             EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
             EnzymeTapeT = LLVM.const_addrspacecast(EnzymeTapeT, T_prjlvalue)
 
@@ -3243,7 +3283,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         pgcstack = reinsert_gcmarker!(func, B)
         ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(current_task_offset(); ctx)])
 
-        obj = call!(B, alloc_obj, [ct, AlignedSize, tag])
+        obj = call!(B, alloc_obj, [ct, Size, tag])
         AS = Tracked
     else
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
