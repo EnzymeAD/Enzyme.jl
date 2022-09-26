@@ -3249,6 +3249,7 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
                         push!(todo, extract_value!(B, cur, i-1))
                     end
                 end
+                continue
             end
             if isa(ty, LLVM.StructType)
                 for (i, t) in enumerate(LLVM.elements(ty))
@@ -4449,7 +4450,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
-    @safe_show llvm_f
     return llvm_f
 end
 
@@ -5524,8 +5524,6 @@ end
 		call!(builder, lfn, callparams)
         ret!(builder)
 	end
-
-    @safe_show TapeType, mod
 
 	ir = string(mod)
 	fn = LLVM.name(llvm_f)
