@@ -5401,12 +5401,13 @@ end
     i = 1
     for T in argtypes
         source_typ = eltype(T)
+        
+		expr = argexprs[i]
+        i+=1
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
             continue
         end
-        expr = argexprs[i]
-        i+=1
 
         isboxed = GPUCompiler.deserves_argbox(source_typ)
 
