@@ -381,8 +381,6 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     rt = Core.Compiler.return_type(fn, tt)
     forward = thunk(fn, dfn, Const, tt′, Val(API.DEM_ForwardMode), width)
 
-    taperef = Ref{Ptr{Cvoid}}(C_NULL)
-
     function fclosure()
         res = forward()
         if length(res) > 1
@@ -403,7 +401,7 @@ function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{
     rt = Core.Compiler.return_type(fn, tt)
     forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), Val(width))
 
-    taperef = Ref{Core.LLVMPtr{UInt8, 0}}(Base.reinterpret(Core.LLVMPtr{UInt8, 0}, C_NULL))
+    taperef = Ref{Any}()
 
     function fclosure()
         res = forward()
@@ -1574,19 +1572,18 @@ end
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic) where ThunkTy
     TapeType = GetTapeType(ThunkTy)
     thunk = ThunkTy(func, ptr, dfunc)
-    tapes = if TapeType == Core.LLVMPtr{UInt8, 0}
-        Base.unsafe_convert(Ptr{Core.LLVMPtr{UInt8, 0}}, Libc.malloc(sizeof(Core.LLVMPtr{UInt8, 0})*Base.Threads.nthreads()))
-    else
+    tapes = if any_jltypes(TapeType)
         Vector{TapeType}(undef, Base.Threads.nthreads())
+    else
+        Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*Base.Threads.nthreads()))
     end
 
     function fwd(tid)
         tres = thunk(Const(tid))
-        if TapeType == Core.LLVMPtr{UInt8,0}
+        if !any_jltypes(TapeType)
             unsafe_store!(tapes, tres[1], tid)
         else
-            tapes[tid] = tres[1]
-            # @inbounds tapes[tid] = tres[1]
+            @inbounds tapes[tid] = tres[1]
         end
     end
     Base.Threads.threading_run(fwd, dynamic)
@@ -1597,16 +1594,15 @@ function runtime_pfor_rev(func, ptr, dfunc, TT::Type{ThunkTy}, tapes, dynamic) w
     TapeType = GetTapeType(ThunkTy)
     thunk = ThunkTy(func, ptr, dfunc)
     function rev(tid)
-        tres = if TapeType == Core.LLVMPtr{UInt8,0}
+        tres = if !any_jltypes(TapeType)
             unsafe_load(tapes, tid)
         else
-            tapes[tid]
-            # @inbounds tapes[tid]
+            @inbounds tapes[tid]
         end
         thunk(Const(tid), tres)
     end
     Base.Threads.threading_run(rev, dynamic)
-    if TapeType == Core.LLVMPtr{UInt8,0}
+    if !any_jltypes(TapeType)
         Libc.free(tapes)
     end
     return nothing
@@ -1846,8 +1842,8 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     funcT, dfuncT, vals, thunkTy, to_preserve, TapeType = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
-    STT = if TapeType == Core.LLVMPtr{UInt8, 0}
-        Ptr{Core.LLVMPtr{UInt8, 0}}
+    STT = if !any_jltypes(TapeType)
+        Ptr{TapeType}
     else
         Vector{TapeType}
     end
@@ -3132,6 +3128,15 @@ any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
 any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
+
+
+@inline any_jltypes(::Type{Nothing}) = false
+@inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
+@inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{NTuple{Size, T}}) where {Size, T} = any_jltypes(T)
+@inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
+@inline any_jltypes(::Type{Any}) = true
+@inline any_jltypes(::Type{NamedTuple{A,B}}) where {A,B} = any(any_jltypes(b) for b in B.parameters)
 
 nfields(Type::LLVM.StructType) = length(LLVM.elements(Type))
 nfields(Type::LLVM.VectorType) = size(Type)
@@ -5317,16 +5322,21 @@ struct Thunk
 end
 
 @inline (thunk::CombinedAdjointThunk{F, RT, TT, Width, DF, ReturnPrimal})(args...) where {F, Width, DF, RT, TT, ReturnPrimal} =
-   enzyme_call(thunk.adjoint, CombinedAdjointThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, Cvoid, args...)
 
 @inline (thunk::ForwardModeThunk{F, RT, TT, Width, DF, ReturnPrimal})(args...) where {F, Width, DF, RT, TT, ReturnPrimal} =
-   enzyme_call(thunk.adjoint, ForwardModeThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, Cvoid, args...)
 
 @inline (thunk::AdjointThunk{F, RT, TT, Width, DF, TapeT})(args...) where {F, Width, DF, RT, TT, TapeT} =
-   enzyme_call(thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
+enzyme_call(Val(false), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
+@inline raw_enzyme_call(thunk::AdjointThunk{F, RT, TT, Width, DF, TapeT}, args...) where {F, Width, DF, RT, TT, TapeT} =
+enzyme_call(Val(true), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
 
 @inline (thunk::AugmentedForwardThunk{F, RT, TT, Width, DF, ReturnPrimal, TapeT})(args...) where {F, Width, DF, RT, TT, ReturnPrimal, TapeT} =
-   enzyme_call(thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
+enzyme_call(Val(false), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
+@inline raw_enzyme_call(thunk::AugmentedForwardThunk{F, RT, TT, Width, DF, ReturnPrimal, TapeT}, args...) where {F, Width, DF, RT, TT, ReturnPrimal, TapeT} =
+enzyme_call(Val(true), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, thunk.fn, thunk.dfn, TapeT, args...)
+
 
 function jl_set_typeof(v::Ptr{Cvoid}, T)
     tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
@@ -5334,8 +5344,8 @@ function jl_set_typeof(v::Ptr{Cvoid}, T)
     return nothing
 end
 
-@generated function enzyme_call(fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
-        rt::Type{RT}, f::F, df::DF, ::Type{TapeType}, args::Vararg{Any, N}) where {F, T, RT, DF, TapeType, N, CC, width, returnPrimal}
+@generated function enzyme_call(::Val{RawCall}, fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
+        rt::Type{RT}, f::F, df::DF, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, F, T, RT, DF, TapeType, N, CC, width, returnPrimal}
 
     is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
     is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
@@ -5347,12 +5357,14 @@ end
     argtypes = DataType[argtt.parameters...]
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
 
-    if rettype <: Active
-        @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
-    elseif rettype <: Const
-        @assert length(argtypes)              + needs_tape == length(argexprs)
-    else
-        @assert length(argtypes)              + needs_tape == length(argexprs)
+    if !RawCall
+        if rettype <: Active
+            @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
+        elseif rettype <: Const
+            @assert length(argtypes)              + needs_tape == length(argexprs)
+        else
+            @assert length(argtypes)              + needs_tape == length(argexprs)
+        end
     end
 
     types = DataType[]
@@ -5386,16 +5398,24 @@ end
         end
     end
 
-    for (i, T) in enumerate(argtypes)
+    i = 1
+    for T in argtypes
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
             continue
         end
         expr = argexprs[i]
+        i+=1
 
         isboxed = GPUCompiler.deserves_argbox(source_typ)
-        argexpr = Expr(:., expr, QuoteNode(:val))
+
+        argexpr = if RawCall
+            expr
+        else
+            Expr(:., expr, QuoteNode(:val))
+        end
+
         if isboxed
             push!(types, Any)
         else
@@ -5415,7 +5435,12 @@ end
                 end
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
-            argexpr =  Expr(:., expr, QuoteNode(:dval))
+            if RawCall
+                argexpr = argexprs[i]
+                i+=1
+            else
+                argexpr = Expr(:., expr, QuoteNode(:dval))
+            end
             if isboxed
                 push!(types, Any)
             else
@@ -5423,7 +5448,12 @@ end
             end
             push!(ccexprs, argexpr)
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            argexpr =  Expr(:., expr, QuoteNode(:dval))
+            if RawCall
+                argexpr = argexprs[i]
+                i+=1
+            else
+                argexpr = Expr(:., expr, QuoteNode(:dval))
+            end
             isboxedvec = GPUCompiler.deserves_argbox(NTuple{width, source_typ})
             if isboxedvec
                 push!(types, Any)
@@ -5445,16 +5475,19 @@ end
         else
             push!(types, NTuple{width, eltype(rettype)})
         end
-        idx = length(argtypes) + 1
-        push!(ccexprs, argexprs[idx])
+        push!(ccexprs, argexprs[i])
+        i+=1
     end
 
     if needs_tape
         if !(GPUCompiler.isghosttype(TapeType) || Core.Compiler.isconstType(TapeType))
             push!(types, TapeType)
-            push!(ccexprs, last(argexprs))
+            push!(ccexprs, argexprs[i])
         end
+        i+=1
     end
+
+    @assert i == length(argexprs)+1
 
     # Tape
     if CC <: AugmentedForwardThunk 
