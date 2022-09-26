@@ -410,6 +410,25 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 replace_uses!(inst, replacement)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
+        elseif fn == "julia.call" || fn == "julia.call2"
+            dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+                while isa(flib, LLVM.ConstantExpr)
+                    flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
+                end
+                if isa(flib, ConstantInt)
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
+                    flib = Base.unsafe_pointer_to_objref(rep)
+                    if in(flib, InactiveFunctions)
+                        ofn = LLVM.parent(LLVM.parent(inst))
+                        mod = LLVM.parent(ofn)
+                        ctx = context(mod)
+                        inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                    end
+                end
+            end
         end
 
     elseif isa(dest, InlineAsm)

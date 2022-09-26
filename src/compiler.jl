@@ -3264,7 +3264,7 @@ function __init__()
         @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
-        ("jl_f_setfield",),
+        ("jl_f_setfield","ijl_f_setfield"),
         @cfunction(setfield_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(setfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(setfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
@@ -3276,12 +3276,13 @@ function __init__()
         @cfunction(f_tuple_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_f__apply_iterate",),
+        ("jl_f__apply_iterate","ijl_f__apply_iterate"),
         @cfunction(apply_iterate_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(apply_iterate_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
+        @cfunction(jl_f__apply_iterate_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_new_structv",),
+        ("jl_new_structv","ijl_new_structv"),
         @cfunction(new_structv_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(new_structv_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
@@ -3292,7 +3293,7 @@ function __init__()
         @cfunction(get_binding_or_error_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_gc_add_finalizer_th",),
+        ("jl_gc_add_finalizer_th","ijl_gc_add_finalizer_th"),
         @cfunction(finalizer_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(finalizer_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(finalizer_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
@@ -3310,16 +3311,10 @@ function __init__()
         @cfunction(jl_array_del_end_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_f_getfield",),
+        ("jl_f_getfield","ijl_f_getfield"),
         @cfunction(jl_getfield_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_getfield_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_getfield_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-    )
-    register_handler!(
-        ("jl_f__apply_iterate",),
-        nothing,
-        nothing,
-        @cfunction(jl_f__apply_iterate_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
         ("jl_array_sizehint","ijl_array_sizehint"),
@@ -3415,6 +3410,23 @@ function annotate!(mod, mode)
         if haskey(fns, inactivefn)
             fn = fns[inactivefn]
             push!(function_attributes(fn), inactive)
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+            end            
         end
     end
 
@@ -3469,22 +3481,33 @@ function annotate!(mod, mode)
                   "ijl_box_float32", "ijl_box_float64", "ijl_box_int32", "ijl_box_int64",
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
-                  "jl_f_tuple", "ijl_f_tuple")
+                  "jl_array_copy", "ijl_array_copy",
+                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
             push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0; ctx))
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+            end            
         end
     end
     
-    for boxfn in ("jl_array_copy", "ijl_array_copy")
-        if haskey(fns, boxfn)
-            fn = fns[boxfn]
-            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0; ctx))
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblemem_or_argmemonly", 0; ctx))
-        end
-    end
-
     for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
         if haskey(fns, gc)
             fn = fns[gc]
