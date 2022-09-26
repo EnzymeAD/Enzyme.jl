@@ -427,9 +427,9 @@ function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{
     return Return2(ftask, rtask)
 end
 
-struct Tape
+struct Tape{T}
     thunk::AdjointThunk
-    internal_tape::Core.LLVMPtr{UInt8, 0}
+    internal_tape::T
     shadow_return::Any
     resT::DataType
 end
