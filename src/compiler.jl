@@ -1531,26 +1531,38 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkT
     return
 end
 
-function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy})::Ptr{Core.LLVMPtr{UInt8, 0}} where ThunkTy
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}) where {ThunkTy, AnyJL}
+    TapeType = GetTapeType(ThunkTy)
     thunk = ThunkTy(func, ptr, dfunc)
-    
-    tapes = Base.unsafe_convert(Ptr{Core.LLVMPtr{UInt8, 0}}, Libc.malloc(sizeof(Core.LLVMPtr{UInt8, 0})*Base.Threads.nthreads()))
+    tapes = if AnyJL
+        Vector{TapeType}(undef, Base.Threads.nthreads())
+    else
+        Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*Base.Threads.nthreads()))
+    end
 
     function fwd()
         tres = thunk()
-        ntape = Base.reinterpret(Core.LLVMPtr{UInt8, 0}, tres[1])
         tid = Base.Threads.threadid()
-        unsafe_store!(tapes, ntape, tid)
+        if !AnyJL
+            unsafe_store!(tapes, tres[1], tid)
+        else
+            @inbounds tapes[tid] = tres[1]
+        end
     end
     Base.Threads.threading_run(fwd)
     return tapes
 end
 
-function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, tapes) where ThunkTy
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, tapes) where {ThunkTy, AnyJL}
     thunk = ThunkTy(func, ptr, dfunc)
     function rev()
         tid = Base.Threads.threadid()
-        thunk(unsafe_load(tapes, tid))
+        tres = if !AnyJL
+            unsafe_load(tapes, tid)
+        else
+            @inbounds tapes[tid]
+        end
+        thunk(tres)
     end
     Base.Threads.threading_run(rev)
     Libc.free(tapes)
@@ -1569,10 +1581,10 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid whe
     return
 end
 
-function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic) where ThunkTy
+function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, dynamic) where {ThunkTy, AnyJL}
     TapeType = GetTapeType(ThunkTy)
     thunk = ThunkTy(func, ptr, dfunc)
-    tapes = if any_jltypes(TapeType)
+    tapes = if AnyJL
         Vector{TapeType}(undef, Base.Threads.nthreads())
     else
         Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*Base.Threads.nthreads()))
@@ -1580,7 +1592,7 @@ function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic) where T
 
     function fwd(tid)
         tres = thunk(Const(tid))
-        if !any_jltypes(TapeType)
+        if !AnyJL
             unsafe_store!(tapes, tres[1], tid)
         else
             @inbounds tapes[tid] = tres[1]
@@ -1590,11 +1602,10 @@ function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic) where T
     return tapes
 end
 
-function runtime_pfor_rev(func, ptr, dfunc, TT::Type{ThunkTy}, tapes, dynamic) where ThunkTy
-    TapeType = GetTapeType(ThunkTy)
+function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, tapes, dynamic) where {ThunkTy, AnyJL}
     thunk = ThunkTy(func, ptr, dfunc)
     function rev(tid)
-        tres = if !any_jltypes(TapeType)
+        tres = if !AnyJL
             unsafe_load(tapes, tid)
         else
             @inbounds tapes[tid]
@@ -1602,7 +1613,7 @@ function runtime_pfor_rev(func, ptr, dfunc, TT::Type{ThunkTy}, tapes, dynamic) w
         thunk(Const(tid), tres)
     end
     Base.Threads.threading_run(rev, dynamic)
-    if !any_jltypes(TapeType)
+    if !AnyJL
         Libc.free(tapes)
     end
     return nothing
@@ -1798,9 +1809,9 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}}
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_augfwd, tt)
     permit_inlining!(entry)
@@ -1849,9 +1860,9 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     end
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, STT }
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, STT }
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, STT, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, STT, Bool}
 end
     entry = nested_codegen!(mod, runtime_pfor_rev, tt)
     permit_inlining!(entry)
