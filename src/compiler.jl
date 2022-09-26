@@ -3196,7 +3196,7 @@ const Tracked = 10
 # TODO: Calculate that constant... see get_current_task
 current_task_offset() = -12
 
-function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2::Ptr{LLVM.API.LLVMValueRef})::LLVM.API.LLVMValueRef
+function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::LLVM.API.LLVMValueRef
     B = LLVM.Builder(B)
     SI = LLVM.Instruction(SI)
     v = operands(SI)[1]
@@ -3213,7 +3213,9 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
         p = bitcast!(B, p, T_prjlvalue)
-        unsafe_store!(R2, p.ref)
+        if R2 != C_NULL
+            unsafe_store!(R2, p.ref)
+        end
         
         vals = LLVM.Value[p]
         todo = LLVM.Value[v]
@@ -3256,7 +3258,7 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     Count = LLVM.Value(Count)
     AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
-    julia_allocator(B, LLVMType, Count, AlignedSize)
+    return julia_allocator(B, LLVMType, Count, AlignedSize)
 end
 
 function julia_allocator(B, LLVMType, Count, AlignedSize)
@@ -4122,14 +4124,11 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-
-        @safe_show tape
         tape = LLVM.LLVMType(tape)
-        @safe_show tape
         if isa(tape, LLVM.PointerType) && addrspace(tape) == 0
             TapeType = Core.LLVMPtr{UInt8,0}
         else
-            TapeType = tape_type(tape)
+            TapeType = EnzymeTape{1, tape_type(tape)}
         end
 
         if wrap
@@ -4290,7 +4289,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # sret argument
     if !isempty(T_JuliaSRet)
-        pushfirst!(T_wrapperargs, LLVM.PointerType(LLVM.StructType(T_JuliaSRet; ctx)))
+        ST = LLVM.StructType(T_JuliaSRet; ctx)
+        pushfirst!(T_wrapperargs, LLVM.PointerType(ST, 10))
     end
 
     if needs_tape
@@ -4386,7 +4386,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     if data[i] != -1
                         eval = extract_value!(builder, val, data[i])
                     end
-                    store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
+                    ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
+                    si = store!(builder, eval, ptr)
+                    julia_post_cache_store(si.ref, builder.ref, C_NULL)
                     returnNum+=1
                 end
             end
@@ -4396,7 +4398,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 if length(T_JuliaSRet) > 1
                     eval = extract_value!(builder, val, returnNum)
                 end
-                store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)]))
+                ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
+                si = store!(builder, eval, ptr)
+                julia_post_cache_store(si.ref, builder.ref, C_NULL)
             end
         else
             activeNum = 0
@@ -4419,6 +4423,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
+    @safe_show llvm_f
     return llvm_f
 end
 
@@ -5418,6 +5423,10 @@ end
         push!(ccexprs, argexprs[idx])
     end
 
+    if TapeType != Core.LLVMPtr{UInt8, 0}
+        TapeType = Any
+    end
+
     if needs_tape
         # TODO
         push!(types, TapeType)
@@ -5458,7 +5467,8 @@ end
     end
     if !isempty(llsret_types)
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx)) # LLVM.PointerType(T_sjoint))
+      pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; allow_boxed=true, ctx))
+      # pushfirst!(llvmtys, convert(LLVMType, Any; allow_boxed=true, ctx))
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
@@ -5479,6 +5489,8 @@ end
         ret!(builder)
 	end
 
+    @safe_show TapeType, mod
+
 	ir = string(mod)
 	fn = LLVM.name(llvm_f)
 
@@ -5490,7 +5502,7 @@ end
             GC.@preserve sret begin
                 sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
                 Base.llvmcall(($ir, $fn), Cvoid,
-                Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                  Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
                 fptr, sret_p, $(ccexprs...))
             end
             # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
