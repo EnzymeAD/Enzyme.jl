@@ -261,6 +261,10 @@ function EnzymeExtractTapeTypeFromAugmentation(ret)
     ccall((:EnzymeExtractTapeTypeFromAugmentation, libEnzyme), LLVMTypeRef, (EnzymeAugmentedReturnPtr,), ret)
 end
 
+function EnzymeExtractUnderlyingTapeTypeFromAugmentation(ret)
+    ccall((:EnzymeExtractUnderlyingTapeTypeFromAugmentation, libEnzyme), LLVMTypeRef, (EnzymeAugmentedReturnPtr,), ret)
+end
+
 import Libdl
 function EnzymeSetCLBool(name, val)
     handle = Libdl.dlopen(libEnzyme)

@@ -3142,6 +3142,11 @@ mutable struct EnzymeTape{N, T}
     data::NTuple{N, T}
 end
 
+mutable struct EnzymeTapeToLoad{T}
+    data::T
+end
+Base.eltype(::EnzymeTapeToLoad{T}) where T = T
+
 const TapeTypes = Dict{String, DataType}()
 
 base_type(T::UnionAll) = base_type(T.body)
@@ -3151,7 +3156,7 @@ function to_tape_type(Type::LLVM.PointerType)
     if 10 <= LLVM.addrspace(Type) <= 12
         return Any
     else
-        return UInt # do we need something more precise?
+        return Core.LLVMPtr{to_tape_type(eltype(Type)), Int(LLVM.addrspace(Type))}
     end
 end
 
@@ -3185,12 +3190,21 @@ to_tape_type(::LLVM.LLVMFP128) = Float128
 
 function tape_type(LLVMType) 
     TT = to_tape_type(LLVMType)
-    if TT == Any
-        return AnonymousStruct(Tuple{TT})
-    end
     return TT
 end
 
+from_tape_type(::Type{T}, ctx) where T<:AbstractFloat = convert(LLVMType, T; ctx)
+from_tape_type(::Type{T}, ctx) where T<:Integer = convert(LLVMType, T; ctx)
+from_tape_type(::Type{NTuple{Size, T}}, ctx) where {Size, T} = LLVM.ArrayType(from_tape_type(T, ctx), Size)
+from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
+from_tape_type(::Type{Any}, ctx) where {T, Addr} = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
+function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
+    if length(B.parameters) >= 1 && all(B.parameters[1] == b for b in B.parameters)
+        return LLVM.ArrayType(from_tape_type(B.parameters[1], ctx), length(B.parameters))
+    else
+        return LLVM.StructType(LLVM.LLVMType[from_tape_type(b, ctx) for b in B.parameters]; ctx)
+    end
+end
 const Tracked = 10
 
 # TODO: Calculate that constant... see get_current_task
@@ -3277,16 +3291,18 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
+        esizeof(X) = X == Any ? sizeof(Int) : sizeof(X)
+
         TT = tape_type(LLVMType)
-        if sizeof(TT) != convert(Int, AlignedSize)
+        if esizeof(TT) != convert(Int, AlignedSize)
             @safe_show LLVMType
-            GPUCompiler.@safe_warn "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) sizeof(TT) fieldtypes(TT)
+            GPUCompiler.@safe_warn "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
         end
-        @assert sizeof(TT) == convert(Int, AlignedSize)
+        @assert esizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
 
-            ETT = EnzymeTape{N, TT}
+            ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
             @assert sizeof(ETT) <= N*convert(Int, AlignedSize)
 
             # Obtain tag
@@ -4119,16 +4135,19 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
             #=shadowReturnUsed=#shadowReturnUsed,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# true, width, #=atomicAdd=# parallel)
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, width, #=atomicAdd=# parallel)
 
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        tape = LLVM.LLVMType(tape)
-        if isa(tape, LLVM.PointerType) && addrspace(tape) == 0
-            TapeType = Core.LLVMPtr{UInt8,0}
+        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+        if utape != C_NULL
+            TapeType = EnzymeTapeToLoad{LLVMType(tape_type(utape))}
+            tape = utape
+        elseif tape != C_NULL
+            TapeType = tape_type(LLVMType(tape))
         else
-            TapeType = EnzymeTape{1, tape_type(tape)}
+            TapeType = Cvoid
         end
 
         if wrap
@@ -4252,8 +4271,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if existed[1] != 0
             tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
             push!(T_JuliaSRet, LLVM.LLVMType(tape))
-        else
-            error("Assuming always has a tape")
         end
         
         isboxed = GPUCompiler.deserves_argbox(actualRetType)
@@ -4294,7 +4311,16 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     end
 
     if needs_tape
-        push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeExtractTapeTypeFromAugmentation(augmented)))
+        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+        if utape != C_NULL
+            tape = utape
+        end
+        if tape != C_NULL
+            push!(T_wrapperargs, LLVM.LLVMType(tape))
+        else
+            needs_tape = false
+        end
     end
 
     FT = LLVM.FunctionType(T_void, T_wrapperargs)
@@ -5423,14 +5449,11 @@ end
         push!(ccexprs, argexprs[idx])
     end
 
-    if TapeType != Core.LLVMPtr{UInt8, 0}
-        TapeType = Any
-    end
-
     if needs_tape
-        # TODO
-        push!(types, TapeType)
-        push!(ccexprs, last(argexprs))
+        if !(GPUCompiler.isghosttype(TapeType) || Core.Compiler.isconstType(TapeType))
+            push!(types, TapeType)
+            push!(ccexprs, last(argexprs))
+        end
     end
 
     # Tape
@@ -5456,7 +5479,7 @@ end
 
 	# calls fptr
 	ctx = LLVM.Context()
-	llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
+    llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
     llsret_types = LLVMType[]
     if !isempty(sret_types)
       for x in sret_types
@@ -5484,6 +5507,19 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = collect(params)
+        if needs_tape && !(GPUCompiler.isghosttype(TapeType) || Core.Compiler.isconstType(TapeType))
+            tape = callparams[end]
+            if TapeType <: EnzymeTapeToLoad
+                llty = from_tape_type(eltype(TapeType), ctx)
+                tape = bitcast!(builder, LLVM.PointerType(llty, LLVM.addrspace(llvmtype(tape))))
+                tape = load!(builder, tape)
+                API.SetMustCache!(tape)
+                callparams[end] = tape
+            else
+                llty = from_tape_type(TapeType, ctx)
+                @assert llvmtype(tape) == llty
+            end
+        end
 		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
 		call!(builder, lfn, callparams)
         ret!(builder)
@@ -5667,18 +5703,22 @@ end
     thunk = cached_compilation(job, hash(hash(hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)), UInt64(ModifiedBetween)), UInt64(ReturnPrimal)), specid)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType
+        AugT = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF, Val(ReturnPrimal), TapeType}
+        AdjT = AdjointThunk{F, rt, adjoint.tt, Val{width}, DF, TapeType}
         return quote
-            augmented = AugmentedForwardThunk{F, $rt, $(adjoint.tt), Val{width} , DF, Val(ReturnPrimal), $(TapeType)}(f, $(thunk.primal), df)
-            adjoint  = AdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF}(f, $(thunk.adjoint), df, $(TapeType))
+            augmented = $AugT(f, $(thunk.primal), df)
+            adjoint  = $AdjT(f, $(thunk.adjoint), df)
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
+        CAdjT = CombinedAdjointThunk{F, rt, adjoint.tt, Val{width}, DF, Val(ReturnPrimal)}
         return quote
-            CombinedAdjointThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val(ReturnPrimal)}(f, $(thunk.adjoint), df)
+            $CAdjT(f, $(thunk.adjoint), df)
         end
     elseif Mode == API.DEM_ForwardMode
+        FMT = ForwardModeThunk{F, rt, adjoint.tt, Val{width}, DF, Val(ReturnPrimal)}
         return quote
-            ForwardModeThunk{F, $rt, $(adjoint.tt), Val{width}, DF, Val(ReturnPrimal)}(f, $(thunk.adjoint), df)
+            $FMT(f, $(thunk.adjoint), df)
         end
     else
         @assert false

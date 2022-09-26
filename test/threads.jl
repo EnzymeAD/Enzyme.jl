@@ -12,8 +12,20 @@ Enzyme.API.printall!(true)
     dx = [1.0, 1.0, 1.0]
     Enzyme.autodiff(Reverse, foo, Duplicated(x, dx))
 
+    @show length(x)
+    flush(stdout)
+    @show length(dx)
+    flush(stdout)
+    
+    @show x[1]
+    flush(stdout)
+
+    @show dx[1]
+    flush(stdout)
 
     @show x
+    flush(stdout)
 
     @show dx
+    flush(stdout)
 
