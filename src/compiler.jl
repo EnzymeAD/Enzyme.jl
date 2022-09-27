@@ -1565,8 +1565,9 @@ function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, tapes
         thunk(tres)
     end
     Base.Threads.threading_run(rev)
-    Libc.free(tapes)
-    
+    if !AnyJL
+        Libc.free(tapes)
+    end 
     return nothing
 end
 
