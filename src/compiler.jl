@@ -3379,17 +3379,25 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
                     [T_pint8, T_size_t, T_prjlvalue]))
         end
 
-        pgcstack = reinsert_gcmarker!(func, B)
-        ct = inbounds_gep!(B, 
-            bitcast!(B, pgcstack, T_ppjlvalue),
-            [LLVM.ConstantInt(current_task_offset(); ctx)])
-
-        if !needs_dynamic_size_workaround
-            obj = call!(B, alloc_obj, [ct, Size, tag])
+        if VERSION < v"1.7.0"
+            ptls = reinsert_gcmarker!(func, B)
         else
+            pgcstack = reinsert_gcmarker!(func, B)
+            ct = inbounds_gep!(B, 
+                bitcast!(B, pgcstack, T_ppjlvalue),
+                [LLVM.ConstantInt(current_task_offset(); ctx)])
             ptls_field = inbounds_gep!(B, 
                 ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
             ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
+        end
+
+        if !needs_dynamic_size_workaround
+            if VERSION < v"1.8.0"
+                obj = call!(B, alloc_obj, [ptls, Size, tag])
+            else
+                obj = call!(B, alloc_obj, [ct, Size, tag])
+            end
+        else
             obj = call!(B, alloc_obj, [ptls, Size, tag])
         end
         AS = Tracked
