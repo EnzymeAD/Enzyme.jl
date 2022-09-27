@@ -3364,7 +3364,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
                 # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
                 julia_call = get_function!(mod, "julia_call",
                     LLVM.FunctionType(T_prjlvalue, 
-                        [generic_FT, T_prjlvalue]; vararg=true))
+                                      [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
                 tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
             end
         end
