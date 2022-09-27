@@ -3332,7 +3332,11 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
         else
             # TODO: Version switch to get jl_box_int64 and not call37...
+        @static if VERSION < v"1.8-"
+            box_int64 = get_function!(mod, "jl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+        else
             box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+        end
             boxed_count = call!(B, box_int64, [Count])
 
             f_apply_type = get_function!(mod, "jl_f_apply_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32]))

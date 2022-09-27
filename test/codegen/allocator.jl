@@ -75,7 +75,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
 # CHECK-NEXT:   %2 = mul nuw i64 %0, 8
-# CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
+# CHECK-NEXT:   %3 = call {} addrspace(10)* @{{i?}}jl_box_int64(i64 %0)
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
 # CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**
 # CHECK-NEXT:   %6 = getelementptr inbounds {}*, {}** %5, i64 -12
@@ -89,7 +89,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
 # CHECK-NEXT:   %2 = mul nuw i64 %0, 16
-# CHECK-NEXT:   %3 = call {} addrspace(10)* @ijl_box_int64(i64 %0)
+# CHECK-NEXT:   %3 = call {} addrspace(10)* @{{i?}}jl_box_int64(i64 %0)
 # CHECK-NEXT:   %4 = call cc37 {} addrspace(10)* bitcast ({} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32)* @jl_f_apply_type to {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*)*)({} addrspace(10)* null, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*), {} addrspace(10)* %3, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 {{[0-9]+}} to {}*) to {} addrspace(10)*))
 # CHECK-NEXT:   %5 = bitcast {}*** %1 to {}**
 # CHECK-NEXT:   %6 = getelementptr inbounds {}*, {}** %5, i64 -12
