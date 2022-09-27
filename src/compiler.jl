@@ -3355,9 +3355,19 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue_UT)
             TapeT = LLVM.const_addrspacecast(TapeT, T_prjlvalue)
 
-            # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-            tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
-            LLVM.callconv!(tag, 37)
+            if VERSION < v"1.9.0-"
+                # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+                tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
+                LLVM.callconv!(tag, 37)
+            else
+                # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+                generic_FT = LLVM.FunctionType(T_prjlvalue, 
+                    [T_prjlvalue, T_pprjlvalue, T_int32]))
+                julia_call = get_function!(mod, "julia_call",
+                    LLVM.FunctionType(T_prjlvalue, 
+                        [generic_FT, T_prjlvalue]); vararg=true)
+                tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
+            end
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
