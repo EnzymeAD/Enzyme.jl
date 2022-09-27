@@ -3225,6 +3225,7 @@ const Tracked = 10
 
 # TODO: Calculate that constant... see get_current_task
 current_task_offset() = -12
+current_ptls_offset() = 14
 
 function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::LLVM.API.LLVMValueRef
     B = LLVM.Builder(B)
@@ -3300,6 +3301,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
     Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
 
     if any_jltypes(LLVMType)
+        T_int8 = LLVM.Int8Type(ctx)
         T_int32 = LLVM.Int32Type(ctx)
         T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
@@ -3307,6 +3309,8 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
         T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
         T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
         T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
+        T_pint8 = LLVM.PointerType(T_int8)
+        T_ppint8 = LLVM.PointerType(T_pint8)
 
         esizeof(X) = X == Any ? sizeof(Int) : sizeof(X)
 
@@ -3351,13 +3355,39 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
             LLVM.callconv!(tag, 37)
         end
 
+        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
+        @static if VERSION >= v"1.9.0-DEV.1439"
+            needs_dynamic_size_workaround = false
+        else
+            needs_dynamic_size_workaround = true
+        end
+
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
-        alloc_obj = get_function!(mod, "julia.gc_alloc_obj", LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue]))
+        if !needs_dynamic_size_workaround
+            # TODO Call declare_allocobj/emit_allocobj
+            alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
+                LLVM.FunctionType(T_prjlvalue, 
+                    [T_ppjlvalue, T_size_t, T_prjlvalue]))
+        else
+            # This doesn't allow for optimizations
+            alloc_obj = get_function!(mod, "jl_gc_alloc_typed",
+                LLVM.FunctionType(T_prjlvalue,
+                    [T_pint8, T_size_t, T_prjlvalue]))
+        end
 
         pgcstack = reinsert_gcmarker!(func, B)
-        ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(current_task_offset(); ctx)])
+        ct = inbounds_gep!(B, 
+            bitcast!(B, pgcstack, T_ppjlvalue),
+            [LLVM.ConstantInt(current_task_offset(); ctx)])
 
-        obj = call!(B, alloc_obj, [ct, Size, tag])
+        if !needs_dynamic_size_workaround
+            obj = call!(B, alloc_obj, [ct, Size, tag])
+        else
+            ptls_field = inbounds_gep!(B, 
+                ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
+            ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
+            obj = call!(B, alloc_obj, [ptls, Size, tag])
+        end
         AS = Tracked
     else
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
