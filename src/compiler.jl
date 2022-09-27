@@ -3781,7 +3781,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for boxfn in ("julia.gc_alloc_obj",
+    for boxfn in ("julia.gc_alloc_obj", "jl_gc_alloc_typed", "ijl_gc_alloc_typed",
                   "jl_box_float32", "jl_box_float64", "jl_box_int32", "jl_box_int64",
                   "ijl_box_float32", "ijl_box_float64", "ijl_box_int32", "ijl_box_int64",
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
