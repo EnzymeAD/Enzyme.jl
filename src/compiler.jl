@@ -3381,6 +3381,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize)
 
         if VERSION < v"1.7.0"
             ptls = reinsert_gcmarker!(func, B)
+            ptls = bitcast!(B, ptls, T_pint8)
         else
             pgcstack = reinsert_gcmarker!(func, B)
             ct = inbounds_gep!(B, 
