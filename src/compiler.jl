@@ -2364,6 +2364,7 @@ function f_tuple_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 end
 
 function apply_iterate_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -2375,11 +2376,13 @@ function apply_iterate_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 end
 
 function apply_iterate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
     return nothing
 end
 
 function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_new_struct")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -2391,6 +2394,7 @@ function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 end
 
 function new_structv_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
     return nothing
 end
@@ -2838,6 +2842,7 @@ function jl_array_sizehint_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 end
 
 function jl_f__apply_iterate_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2893,6 +2898,7 @@ function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
 end
 
 function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -2902,6 +2908,7 @@ function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
 end
 
 function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+  orig = LLVM.Instruction(OrigCI)
   emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
   return nothing
 end
