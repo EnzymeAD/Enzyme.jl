@@ -42,6 +42,13 @@ include("abi.jl")
 include("typetree.jl")
 
 f0(x) = 1.0 + x
+    function vrec(start, x)
+        if start > length(x)
+            return 1.0
+        else
+            return x[start] * vrec(start+1, x)
+        end
+    end
 @testset "Internal tests" begin
     thunk_a = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     thunk_b = Enzyme.Compiler.thunk(f0, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
@@ -56,6 +63,29 @@ f0(x) = 1.0 + x
     @test thunk_b(Const(2.0)) === ()
 
     forward, pullback = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+
+    @test forward(Active(2.0)) == (nothing,)
+    @test pullback(Active(2.0), 1.0, nothing) == (1.0,)
+    
+    function mul2(x)
+        x[1] * x[2]
+    end
+    d = Duplicated([3.0, 5.0], [0.0, 0.0])
+    
+    forward, pullback = Enzyme.Compiler.thunk(mul2, nothing, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+    res = forward(d)
+    @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
+    pullback(d, 1.0, res[1])
+    @test d.dval[1] ≈ 5.0
+    @test d.dval[2] ≈ 3.0 
+    
+    d = Duplicated([3.0, 5.0], [0.0, 0.0])
+    forward, pullback = Enzyme.Compiler.thunk(vrec, nothing, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+    res = forward(Const(Int(1)), d)
+    pullback(Const(1), d, 1.0, res[1])
+    @test d.dval[1] ≈ 5.0
+    @test d.dval[2] ≈ 3.0
+
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint

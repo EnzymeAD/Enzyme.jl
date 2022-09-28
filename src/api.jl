@@ -261,6 +261,10 @@ function EnzymeExtractTapeTypeFromAugmentation(ret)
     ccall((:EnzymeExtractTapeTypeFromAugmentation, libEnzyme), LLVMTypeRef, (EnzymeAugmentedReturnPtr,), ret)
 end
 
+function EnzymeExtractUnderlyingTapeTypeFromAugmentation(ret)
+    ccall((:EnzymeExtractUnderlyingTapeTypeFromAugmentation, libEnzyme), LLVMTypeRef, (EnzymeAugmentedReturnPtr,), ret)
+end
+
 import Libdl
 function EnzymeSetCLBool(name, val)
     handle = Libdl.dlopen(libEnzyme)
@@ -382,6 +386,11 @@ function EnzymeHasCustomInactiveSupport()
     return true
 end
 
+function EnzymeSetPostCacheStore(handler)
+    ptr = cglobal((:EnzymePostCacheStore, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+
 function EnzymeSetCustomAllocator(handler)
     ptr = cglobal((:CustomAllocator, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
@@ -414,6 +423,10 @@ end
 
 function SetMustCache!(i1)
     ccall((:EnzymeSetMustCache, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
+end
+
+function HasFromStack(i1)
+    ccall((:EnzymeHasFromStack, libEnzyme),UInt8,(LLVM.API.LLVMValueRef,), i1) != 0
 end
 
 function AddPreserveNVVMPass!(pm, i8)
