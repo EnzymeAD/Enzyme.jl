@@ -907,6 +907,18 @@ end
     @test 5.0 ≈ autodiff(Forward, (A,)->c * A, Duplicated(2.0, 1.0))[1]
 end
 
+@testset "Recursive GC" begin
+    function modf!(a)
+        as = [zero(a) for _ in 1:2]
+        a .+= sum(as)
+        return nothing
+    end
+
+    a = rand(5)
+    da = zero(a)
+    autodiff(modf!, Duplicated(a, da))
+end
+
 @testset "Type-instable capture" begin
     L = Array{Float64, 1}(undef, 2)
 

@@ -3313,22 +3313,29 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
     return C_NULL
 end
 
-function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef)
+function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
+    ctx = LLVM.Context(C)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    return T_prjlvalue.ref
+end
+
+function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8)
     B = LLVM.Builder(B)
     Count = LLVM.Value(Count)
     AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
-    return julia_allocator(B, LLVMType, Count, AlignedSize)
+    return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
 end
 
-function julia_allocator(B, LLVMType, Count, AlignedSize)
+function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
     ctx = context(mod)
 
     Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
 
-    if any_jltypes(LLVMType)
+    if any_jltypes(LLVMType) || IsDefault != 0
         T_int8 = LLVM.Int8Type(ctx)
         T_int32 = LLVM.Int32Type(ctx)
         T_int64 = LLVM.Int64Type(ctx)
@@ -3507,9 +3514,11 @@ function __init__()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
     end
     if API.EnzymeHasCustomAllocatorSupport()
+        API.EnzymeSetDefaultTapeType(@cfunction(
+                                                julia_default_tape_type, LLVM.API.LLVMTypeRef, (LLVM.API.LLVMContextRef,)))
         API.EnzymeSetCustomAllocator(@cfunction(
             julia_allocator, LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, UInt8)))
         API.EnzymeSetCustomDeallocator(@cfunction(
             julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
         API.EnzymeSetPostCacheStore(@cfunction(
