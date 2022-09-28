@@ -132,6 +132,11 @@ end
 
     test_scalar(log10, 1.0)
     test_scalar(Base.acos, 0.9)
+
+    test_scalar(Base.atan, 0.9)
+    @test autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[1] ≈ ForwardDiff.derivative(x->Base.atan(x, 3.4), 0.9)
+    @test autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[2] ≈ ForwardDiff.derivative(x->Base.atan(0.9, x), 3.4)
+
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
     test_scalar(Base.sinc, 2.2)
