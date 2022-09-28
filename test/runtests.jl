@@ -133,6 +133,7 @@ end
     test_scalar(log10, 1.0)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
+    test_scalar(Base.sinc, 2.2)
     test_scalar(Base.FastMath.sinh_fast, 1.0)
     test_scalar(Base.FastMath.cosh_fast, 1.0)
     test_scalar(Base.FastMath.exp_fast, 1.0)

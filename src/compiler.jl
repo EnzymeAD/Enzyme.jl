@@ -31,6 +31,7 @@ const known_ops = Dict(
     Base.cbrt => (:cbrt, 1),
     Base.sqrt => (:sqrt, 1),
     Base.sin => (:sin, 1),
+    Base.sinc => (:sincn, 1),
     Base.sincos => (:__fd_sincos_1, 1),
     Base.:^ => (:pow, 2),
     Base.cos => (:cos, 1),
