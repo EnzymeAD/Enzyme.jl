@@ -46,6 +46,7 @@ const known_ops = Dict(
     Base.log2 => (:log2, 1),
     Base.log10 => (:log10, 1),
     Base.asin => (:asin, 1),
+    Base.acos => (:acos, 1),
     Base.sinh => (:sinh, 1),
     Base.FastMath.sinh_fast => (:sinh, 1),
     Base.cosh => (:cosh, 1),

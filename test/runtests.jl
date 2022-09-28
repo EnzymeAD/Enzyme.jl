@@ -131,6 +131,7 @@ end
     test_scalar(log1p, 1.0)
 
     test_scalar(log10, 1.0)
+    test_scalar(Base.acos, 0.9)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
     test_scalar(Base.sinc, 2.2)
