@@ -95,6 +95,7 @@ function is_primitive_func(@nospecialize(TT))
        ft === typeof(Base.log10) ||
        ft === typeof(Base.asin) ||
        ft === typeof(Base.acos) ||
+       ft === typeof(Base.atan) ||
        ft === typeof(Base.sinh) || ft === typeof(Base.FastMath.sinh_fast) ||
        ft === typeof(Base.cosh) || ft === typeof(Base.FastMath.cosh_fast) ||
        ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
@@ -103,7 +104,7 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
-    if ft === typeof(Base.:^)
+    if ft === typeof(Base.:^) || ft === typeof(Base.atan)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
             return true
         end
