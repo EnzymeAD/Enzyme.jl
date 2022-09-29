@@ -391,6 +391,10 @@ function EnzymeSetPostCacheStore(handler)
     unsafe_store!(ptr, handler)
 end
 
+function EnzymeSetDefaultTapeType(handler)
+    ptr = cglobal((:EnzymeDefaultTapeType, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
 function EnzymeSetCustomAllocator(handler)
     ptr = cglobal((:CustomAllocator, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
