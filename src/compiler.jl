@@ -3838,6 +3838,7 @@ function annotate!(mod, mode)
             fn = fns[fname]
             # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
             push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0; ctx))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
         end
     end
 

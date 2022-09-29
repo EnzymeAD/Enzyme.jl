@@ -869,6 +869,28 @@ end
     autodiff(Forward, mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
 end
 
+@testset "GC Sret" begin
+    @noinline function _get_batch_statistics(x)
+        batchmean = @inbounds x[1]
+        return (x, x)
+    end
+
+    @noinline function _normalization_impl(x)
+        _stats = _get_batch_statistics(x)
+        return x
+    end
+
+    function gcloss(x)
+        _normalization_impl(x)[1]
+        return nothing
+    end
+
+    x = randn(10)
+    dx = zero(x)
+
+    Enzyme.autodiff(gcloss, Duplicated(x, dx))
+
+end
 
 @testset "Split GC" begin
     @noinline function bmat(x)
