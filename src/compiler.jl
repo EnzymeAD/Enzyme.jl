@@ -166,7 +166,7 @@ function emit_allocobj!(B, T, size)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-	ctx = context(mod)
+	ctx = LLVM.context(mod)
     func = declare_allocobj!(mod)
 	
 	T_size = parameters(eltype(llvmtype(func)))[2]
@@ -194,7 +194,7 @@ function emit_pointerfromobjref!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     func = declare_pointerfromobjref!(mod)
     return call!(B, func, [T])
 end
@@ -776,7 +776,7 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
 
     func = get_function!(mod, "llvm.julia.gc_preserve_begin", LLVM.FunctionType(LLVM.TokenType(ctx), vararg=true))
 
@@ -788,7 +788,7 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
 
     func = get_function!(mod, "llvm.julia.gc_preserve_end", LLVM.FunctionType(LLVM.VoidType(ctx), [LLVM.TokenType(ctx)]))
 
@@ -3328,6 +3328,7 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
 end
 
+using CUDA
 function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -3451,6 +3452,16 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
         mallocF = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(Count)]))
 
         obj = call!(B, mallocF, [Size])
+
+        function check(ptr::Core.LLVMPtr{UInt8,0})
+            # if ptr == C_NULL
+            CUDA.@cuprintf("ptr=%p\n", ptr)
+            # end
+            nothing
+        end
+        llvmf = nested_codegen!(mod, check, Tuple{Core.LLVMPtr{UInt8,0}})
+        call!(B, llvmf, [obj])
+
         AS = 0
     end
 
@@ -4979,11 +4990,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
     inserted_ts = false
     if ctx !== nothing && ctx isa LLVM.Context
-        @assert ctx == context(mod)
+        @assert ctx == LLVM.context(mod)
         ts_ctx = nothing
     else
         ts_ctx = ctx
-        ctx = context(mod)
+        ctx = LLVM.context(mod)
 @static if VERSION < v"1.9-"
 else
         if !in(ctx, keys(ctxToThreadSafe))
@@ -5383,7 +5394,7 @@ end
     end
 
     adjointf = functions(mod)[adjointf_name]
-    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=context(mod)))
+    push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0; ctx=LLVM.context(mod)))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
     end

@@ -36,7 +36,7 @@ end
         instruction_combining!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
-        loop_unroll!(pm)
+        # loop_unroll!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         gvn!(pm)
