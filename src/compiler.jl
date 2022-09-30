@@ -1522,7 +1522,7 @@ end
     job    = CompilerJob(target, funcspec, params)
 
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
-    entry = name(meta.entry)
+    entry = LLVM.name(meta.entry)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -3332,7 +3332,7 @@ using CUDA
 function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
 
     Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
 
@@ -3486,7 +3486,7 @@ end
 
 function julia_deallocator(B::LLVM.Builder, Obj::LLVM.Value)
     mod = LLVM.parent(LLVM.parent(position(B)))
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     
     T_void = LLVM.VoidType(ctx)
     if any_jltypes(LLVM.llvmtype(Obj))
@@ -3506,7 +3506,7 @@ function emit_inacterror(B, V, orig)
     orig = LLVM.Value(orig)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     
     bt = GPUCompiler.backtrace(orig)
     bts = sprint(io->Base.show_backtrace(io, bt))
@@ -3784,7 +3784,7 @@ end
 ##
 
 function annotate!(mod, mode)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
     active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
@@ -4088,7 +4088,7 @@ end
 
 function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules)
     rt  = job.params.rt
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     dl  = string(LLVM.datalayout(mod))
     F   = adjoint.f
 
@@ -4767,7 +4767,7 @@ end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
-    ctx = context(mod)
+    ctx = LLVM.context(mod)
     entry_ft = eltype(llvmtype(entry_f)::LLVM.PointerType)::LLVM.FunctionType
 
     RT = LLVM.return_type(entry_ft)
@@ -5023,7 +5023,7 @@ end
             end
             if !any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(f))))
                 push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
-                push!(toremove, name(f))
+                push!(toremove, LLVM.name(f))
             end
             todo = LLVM.CallInst[]
             for u in LLVM.uses(f)
@@ -5306,7 +5306,7 @@ end
             end
             if !any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(f))))
                 push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
-                push!(toremove, name(f))
+                push!(toremove, LLVM.name(f))
             end
         end 
         ModulePassManager() do pm
@@ -5367,11 +5367,11 @@ end
     end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)
-    adjointf_name = name(adjointf)
+    adjointf_name = LLVM.name(adjointf)
 
     if augmented_primalf !== nothing
         linkage!(augmented_primalf, LLVM.API.LLVMExternalLinkage)
-        augmented_primalf_name = name(augmented_primalf)
+        augmented_primalf_name = LLVM.name(augmented_primalf)
     end
 
     if !device_module
@@ -5773,10 +5773,10 @@ function _thunk(job, ctx=nothing)
 
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
-    adjoint_name = name(adjointf)
+    adjoint_name = LLVM.name(adjointf)
 
     if augmented_primalf !== nothing
-        primal_name = name(augmented_primalf)
+        primal_name = LLVM.name(augmented_primalf)
     else
         primal_name = nothing
     end

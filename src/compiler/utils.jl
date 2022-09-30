@@ -16,7 +16,7 @@ function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
 end
 
 function get_function!(builderF, mod::LLVM.Module, name)
-    get_function!(mod, name, builderF(context(mod)))
+    get_function!(mod, name, builderF(LLVM.context(mod)))
 end
 
 
@@ -24,7 +24,7 @@ T_ppjlvalue(ctx) = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[];
 
 if VERSION < v"1.7.0-DEV.1205"
 
-declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(LLVM.context(mod)))))
 
 function emit_ptls!(B)
     curent_bb = position(B)
@@ -49,7 +49,7 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if ptls === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = Builder(LLVM.context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
@@ -69,7 +69,7 @@ end
 
 else
 
-declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(LLVM.context(mod)))))
 
 function emit_pgcstack(B)
     curent_bb = position(B)
@@ -94,7 +94,7 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = Builder(LLVM.context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
