@@ -4,7 +4,7 @@ import ..Enzyme
 import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
                Annotation, guess_activity, eltype, 
                API, TypeTree, typetree, only!, shift!, data0!, merge!,
-               TypeAnalysis, FnTypeInfo, Logic, allocatedinline
+               TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 
 using Enzyme
 
@@ -58,6 +58,28 @@ const known_ops = Dict(
     Base.FastMath.tanh_fast => (:tanh, 1)
 )
 
+const nofreefns = Set{String}((
+    "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
+    "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_box_int64", "jl_box_int32",
+    "ijl_box_int64", "ijl_box_int32",
+    "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
+    "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
+    "jl_breakpoint",
+    "llvm.julia.gc_preserve_begin","llvm.julia.gc_preserve_end", "jl_get_ptls_states",
+    "jl_f_fieldtype",
+    "jl_symbol_n",
+    "jl_stored_inline", "ijl_stored_inline",
+    "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
+    "jl_matching_methods", "ijl_matching_methods",
+    "jl_excstack_state", "ijl_excstack_state", 
+    "jl_current_exception", "ijl_current_exception",
+    "memhash_seed",
+    "jl_f__typevar", "ijl_f__typevar",
+    "jl_f_isa", "ijl_f_isa",
+    "jl_set_task_threadpoolid", "ijl_set_task_threadpoolid"
+))
+
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
@@ -72,7 +94,8 @@ const inactivefns = Set{String}((
     "jl_stored_inline", "ijl_stored_inline",
     "jl_f_apply_type", "jl_f_issubtype", "jl_isa",
     "jl_matching_methods", "ijl_matching_methods",
-    "jl_excstack_state", "jl_current_exception",
+    "jl_excstack_state", "ijl_excstack_state", 
+    "jl_current_exception", "ijl_current_exception",
     "memhash_seed",
     "jl_f__typevar", "ijl_f__typevar",
     "jl_f_isa", "ijl_f_isa",
@@ -1408,40 +1431,16 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 end
 
 function invoke_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_fwd(1, B, OrigCI, gutils, normalR, shadowR)
     return nothing
 end
 
 function invoke_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
     return nothing
 end
 
 function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-
-        conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-        # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
-        if conv != 38
-            GPUCompiler.@safe_error "Illegal invoke convention ", orig, conv, API.EnzymeGradientUtilsIsConstantValue(gutils, orig),  API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig)
-        end
-        @assert conv == 38
     common_invoke_rev(1, B, OrigCI, gutils, tape)
     return nothing
 end
@@ -3781,9 +3780,9 @@ function annotate!(mod, mode)
     active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
 
-    for inactivefn in inactivefns
-        if haskey(fns, inactivefn)
-            fn = fns[inactivefn]
+    for fname in inactivefns
+        if haskey(fns, fname)
+            fn = fns[fname]
             push!(function_attributes(fn), inactive)
             for u in LLVM.uses(fn)
                 c = LLVM.user(u)
@@ -3804,10 +3803,17 @@ function annotate!(mod, mode)
             end            
         end
     end
+    
+    for fname in nofreefns
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+        end
+    end
 
-    for activefn in activefns
-        if haskey(fns, activefn)
-            fn = fns[activefn]
+    for fname in activefns
+        if haskey(fns, fname)
+            fn = fns[fname]
             push!(function_attributes(fn), active)
         end
     end
@@ -3820,7 +3826,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("jl_excstack_state",)
+    for fname in ("jl_excstack_state","ijl_excstack_state")
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
@@ -4240,6 +4246,9 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_excstack_state" => @cfunction(int_return_rule,
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+        "ijl_excstack_state" => @cfunction(int_return_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.except_enter" => @cfunction(int_return_rule,
@@ -4710,13 +4719,15 @@ function deserves_rooting(T)
 	return false
 end
 
+# https://github.com/JuliaLang/julia/blob/64378db18b512677fc6d3b012e6d1f02077af191/src/cgutils.cpp#L823
 function for_each_uniontype_small(f, ty)
     if ty isa Union
         for_each_uniontype_small(f, ty.a)
         for_each_uniontype_small(f, ty.b)
         return
     end
-    if Base.datatype_pointerfree(ty)
+    # https://github.com/JuliaLang/julia/blob/170d6439445c86e640214620dad3423d2bb42337/src/codegen.cpp#L1233
+    if Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
         f(ty)
         return
     end
@@ -4781,6 +4792,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
+    
     @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end]) 
     
 	# if returnRoots
