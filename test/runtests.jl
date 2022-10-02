@@ -893,8 +893,9 @@ end
     Enzyme.autodiff(gcloss, Duplicated(x, dx))
 end
 
+typeunknownvec = Float64[]
+
 @testset "GC Sret 2" begin
-    x = Float64[]
 
     struct AGriddedInterpolation{K<:Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
         knots::K
@@ -912,7 +913,7 @@ end
     end
 
     function cost(C::Vector{Float64})
-        zs = x
+        zs = typeunknownvec
         ainterpolate(zs)
         return nothing
     end
