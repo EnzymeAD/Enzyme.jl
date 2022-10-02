@@ -70,6 +70,41 @@ end
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
+    ctx = LLVM.context(mod)
+    for f in functions(mod)
+        if isempty(LLVM.blocks(f))
+            continue
+        end
+        for (i, a) in enumerate(parameters(f))
+            if isa(llvmtype(a), LLVM.PointerType)
+                todo = LLVM.Value[a]
+                seen = Set{LLVM.Value}()
+                mayread = false
+                while length(todo) > 0
+                    cur = pop!(todo)
+                    if in(cur, seen)
+                        continue
+                    end
+                    push!(seen, cur)
+                    
+                    if isa(cur, LLVM.StoreInst)
+                        continue
+                    end
+
+                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
+                        for u in LLVM.uses(cur)
+                            push!(todo, LLVM.user(u))
+                        end
+                        continue
+                    end
+                    mayread = true
+                end
+                if !mayread && !any(map(k->kind(k)==kind(EnumAttribute("readnone"; ctx)), collect(parameter_attributes(f, i))))
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("writeonly", 0; ctx))
+                end
+            end
+        end
+    end
     # @safe_show "omod", mod
     # flush(stdout)
     # flush(stderr)
