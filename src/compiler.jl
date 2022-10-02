@@ -4293,13 +4293,15 @@ function deserves_rooting(T)
 	return false
 end
 
+# https://github.com/JuliaLang/julia/blob/64378db18b512677fc6d3b012e6d1f02077af191/src/cgutils.cpp#L823
 function for_each_uniontype_small(f, ty)
     if ty isa Union
         for_each_uniontype_small(f, ty.a)
         for_each_uniontype_small(f, ty.b)
         return
     end
-    if Base.isconcretetype(ty) && Base.ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    # https://github.com/JuliaLang/julia/blob/170d6439445c86e640214620dad3423d2bb42337/src/codegen.cpp#L1233
+    if Base.isconcretetype(ty) && !Base.ismutabletype(ty) && Base.datatype_pointerfree(ty)
         f(ty)
         return
     end
@@ -4364,6 +4366,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
+    
     @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end]) 
     
 	# if returnRoots
