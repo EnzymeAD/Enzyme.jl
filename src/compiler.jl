@@ -4,7 +4,7 @@ import ..Enzyme
 import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
                Annotation, guess_activity, eltype, 
                API, TypeTree, typetree, only!, shift!, data0!, merge!,
-               TypeAnalysis, FnTypeInfo, Logic, allocatedinline
+               TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 
 using Enzyme
 
