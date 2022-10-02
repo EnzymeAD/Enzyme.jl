@@ -198,6 +198,10 @@ import .Compiler: CompilationException
     end
 end
 
+@inline any_active() = false
+@inline any_active(arg::Active{T}, args::Vararg{Any, N}) where {T, N} = true
+@inline any_active(arg, args::Vararg{Any, N}) where {T, N} = any_active(args...)
+
 @inline function same_or_one_helper(current, next)
     if current == -1
         return next
@@ -390,11 +394,15 @@ f(x) = x*x
 """
 @inline function autodiff(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
+    if any_active(args′...)
+        throw(ErrorException("Active arguments not allowed in forward mode"))
+    end
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
+
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
     thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width,
                                      #=ModifiedBetween=#Val(false), ReturnPrimal)
@@ -403,6 +411,9 @@ end
 
 @inline function autodiff(::ForwardMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
+    if any_active(args′...)
+        throw(ErrorException("Active arguments not allowed in forward mode"))
+    end
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = Val(same_or_one(args...))
     if A <: Active

@@ -762,6 +762,8 @@ end
     for i in 1:10
         @test 1.0 ≈ fo[i]
     end
+    
+    @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
 end
 
 @testset "GCPreserve" begin
