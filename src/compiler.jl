@@ -3410,23 +3410,23 @@ function annotate!(mod, mode)
     active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
 
-    for inactivefn in inactivefns
-        if haskey(fns, inactivefn)
-            fn = fns[inactivefn]
+    for fname in inactivefns
+        if haskey(fns, fname)
+            fn = fns[fname]
             push!(function_attributes(fn), inactive)
         end
     end
     
     for fname in nofreefns
-        if haskey(fname, inactivefns)
+        if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
         end
     end
 
-    for activefn in activefns
-        if haskey(fns, activefn)
-            fn = fns[activefn]
+    for fname in activefns
+        if haskey(fns, fname)
+            fn = fns[fname]
             push!(function_attributes(fn), active)
         end
     end
