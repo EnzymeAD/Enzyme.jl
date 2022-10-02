@@ -491,7 +491,7 @@ end
     return args
 end
 
-@inline function common_interface_augfwd(annotation, forward, adjoint, args, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
+@inline function common_interface_augfwd(annotation, forward, adjoint, args, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType} 
     res = forward(args...)
 
     internal_tape = res[1]
@@ -842,7 +842,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
             if lookup
                 val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
             end
-            
+    
             LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
 
             active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
@@ -866,6 +866,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
                         ev = inverted
                     else
                         ev = extract_value!(B, inverted, w-1)
+                    end
+                    if tape !== nothing
+                        push!(to_preserve, ev)
                     end
                 end
 
@@ -924,7 +927,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     
     if length(to_preserve) != 0
-        token = emit_gc_preserve_end(B, to_preserve)
+        emit_gc_preserve_end(B, token)
     end
     
     if sret !== nothing && !any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
@@ -5613,7 +5616,7 @@ end
     end
 
     @assert i == length(argexprs)+1
-
+            
     # Tape
     if CC <: AugmentedForwardThunk 
         push!(sret_types, TapeType)

@@ -94,7 +94,7 @@ end
                     end
                     
                     if isa(cur, LLVM.LoadInst)
-                        maywrite = true
+                        mayread = true
                         continue
                     end
 
