@@ -4299,7 +4299,7 @@ function for_each_uniontype_small(f, ty)
         for_each_uniontype_small(f, ty.b)
         return
     end
-    if Base.isconcretetype(ty) && ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    if Base.isconcretetype(ty) && Base.ismutabletype(ty) && Base.datatype_pointerfree(ty)
         f(ty)
         return
     end
@@ -5000,7 +5000,7 @@ Base.eltype(::Box{T}) where T = T
 function Base.unsafe_convert(::Type{Ptr{Cvoid}}, b::Box{T}) where T
     if Base.allocatedinline(T)
         p = Base.pointer_from_objref(b)
-    elseif Base.isconcretetype(T) && ismutabletype(T)
+    elseif Base.isconcretetype(T) && Base.ismutabletype(T)
         p = Base.pointer_from_objref(b.x)
     elseif !isassigned(b)
         # TODO: if Box{AbstractInt}() the RefValue equivalent would lead to C_NULL
