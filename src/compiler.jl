@@ -3418,7 +3418,7 @@ function annotate!(mod, mode)
     end
     
     for fname in nofreefns
-        if in(fname, inactivefns)
+        if haskey(fname, inactivefns)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
         end
