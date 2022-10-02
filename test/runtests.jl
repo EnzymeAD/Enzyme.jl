@@ -893,6 +893,36 @@ end
     Enzyme.autodiff(gcloss, Duplicated(x, dx))
 end
 
+typeunknownvec = Float64[]
+
+@testset "GC Sret 2" begin
+
+    struct AGriddedInterpolation{K<:Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
+        knots::K
+        v::Int64
+    end
+
+    function AGriddedInterpolation(A::AbstractArray{Float64, 1})
+        knots = (A,)
+        use(A)
+        AGriddedInterpolation{typeof(knots)}(knots, 2)
+    end
+
+    function ainterpolate(A::AbstractArray{Float64,1})
+        AGriddedInterpolation(A)
+    end
+
+    function cost(C::Vector{Float64})
+        zs = typeunknownvec
+        ainterpolate(zs)
+        return nothing
+    end
+
+    A = Float64[]
+    dA = Float64[]
+    autodiff(Reverse, cost, Const, Duplicated(A, dA))
+end
+
 @testset "No Decayed / GC" begin
     @noinline function deduplicate_knots!(knots)
         last_knot = first(knots)
