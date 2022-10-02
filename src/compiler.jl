@@ -3285,6 +3285,9 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
             ty = llvmtype(cur)
             if isa(ty, LLVM.PointerType)
                 if any_jltypes(ty)
+                    if addrspace(ty) != 10
+                        cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
+                    end
                     cur = bitcast!(B, cur, T_prjlvalue)
                     push!(vals, cur)
                 end
