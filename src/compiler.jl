@@ -3242,7 +3242,8 @@ end
 from_tape_type(::Type{T}, ctx) where T<:AbstractFloat = convert(LLVMType, T; ctx)
 from_tape_type(::Type{T}, ctx) where T<:Integer = convert(LLVMType, T; ctx)
 from_tape_type(::Type{NTuple{Size, T}}, ctx) where {Size, T} = LLVM.ArrayType(from_tape_type(T, ctx), Size)
-from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
+from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(UInt8, ctx), Addr)
+# from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
 from_tape_type(::Type{Any}, ctx) where {T, Addr} = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
 function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
     if length(B.parameters) >= 1 && all(B.parameters[1] == b for b in B.parameters)

@@ -891,7 +891,33 @@ end
     dx = zero(x)
 
     Enzyme.autodiff(gcloss, Duplicated(x, dx))
+end
 
+@testset "No Decayed / GC" begin
+    @noinline function deduplicate_knots!(knots)
+        last_knot = first(knots)
+        for i = eachindex(knots)
+            if i == 1
+                continue
+            end
+            if knots[i] == last_knot 
+                @warn knots[i]
+                @inbounds knots[i] *= knots[i]
+            else
+                last_knot = @inbounds knots[i]
+            end
+        end
+    end
+
+    function cost(C::Vector{Float64})
+        deduplicate_knots!(C)
+        @inbounds C[1] = 0
+        return nothing
+    end
+    A = Float64[1, 3, 3, 7]
+    dA = Float64[1, 1, 1, 1]
+    # TODO this currently hits a GC segfault, this should be enabled
+    # autodiff(Reverse, cost, Const, Duplicated(A, dA))
 end
 
 @testset "Split GC" begin
