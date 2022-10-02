@@ -80,6 +80,7 @@ end
                 todo = LLVM.Value[a]
                 seen = Set{LLVM.Value}()
                 mayread = false
+                maywrite = false
                 while length(todo) > 0
                     cur = pop!(todo)
                     if in(cur, seen)
@@ -88,6 +89,12 @@ end
                     push!(seen, cur)
                     
                     if isa(cur, LLVM.StoreInst)
+                        maywrite = true
+                        continue
+                    end
+                    
+                    if isa(cur, LLVM.LoadInst)
+                        maywrite = true
                         continue
                     end
 
@@ -98,10 +105,31 @@ end
                         continue
                     end
                     mayread = true
+                    maywrite = true
                 end
-                if !mayread && !any(map(k->kind(k)==kind(EnumAttribute("readnone"; ctx)), collect(parameter_attributes(f, i))))
+                if any(map(k->kind(k)==kind(EnumAttribute("readnone"; ctx)), collect(parameter_attributes(f, i))))
+                    mayread = false
+                    maywrite = false
+                end
+                if any(map(k->kind(k)==kind(EnumAttribute("readonly"; ctx)), collect(parameter_attributes(f, i))))
+                    maywrite = false
+                end
+                if any(map(k->kind(k)==kind(EnumAttribute("writeonly"; ctx)), collect(parameter_attributes(f, i))))
+                    mayread = false
+                end
+        
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readnone"; ctx)))
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readonly"; ctx)))
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("writeonly"; ctx)))
+
+                if !mayread && !maywrite
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readnone", 0; ctx))
+                elseif !mayread
                     push!(parameter_attributes(f, i), LLVM.EnumAttribute("writeonly", 0; ctx))
+                elseif !maywrite
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readonly", 0; ctx))
                 end
+
             end
         end
     end
