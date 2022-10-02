@@ -1,3 +1,121 @@
+# If there is a phi node of a decayed value, Enzyme may need to cache it
+# Here we force all decayed pointer phis to first addrspace from 10
+function nodecayed_phis!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+    for f in functions(mod), bb in blocks(f)
+        todo = LLVM.PHIInst[]
+        nonphi = nothing
+        for inst in instructions(bb)
+            if !isa(inst, LLVM.PHIInst)
+                nonphi = inst
+                break
+            end
+            ty = llvmtype(inst)
+            if !isa(ty, LLVM.PointerType)
+                continue
+            end
+            if addrspace(ty) != 11
+                continue
+            end
+            push!(todo, inst)
+        end
+
+        for inst in todo
+            ty = llvmtype(inst)
+            nty = LLVM.PointerType(eltype(ty), 10)
+            nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            for (v, pb) in LLVM.incoming(inst)
+                b = Builder(ctx)
+                position!(b, terminator(pb))
+                while isa(v, LLVM.AddrSpaceCastInst)
+                    v = operands(v)[1]
+                end
+                if llvmtype(v) != nty
+                    v = addrspacecast!(b, v, nty)
+                end
+                push!(nvs, (v, pb))
+            end
+            nb = Builder(ctx)
+            position!(nb, inst)
+            nphi = phi!(nb, nty)
+            append!(LLVM.incoming(nphi), nvs)
+            
+            position!(nb, nonphi)
+            nphi = addrspacecast!(nb, nphi, ty)
+            replace_uses!(inst, nphi)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+    return nothing
+end
+
+function detect_writeonly!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+    for f in functions(mod)
+        if isempty(LLVM.blocks(f))
+            continue
+        end
+        for (i, a) in enumerate(parameters(f))
+            if isa(llvmtype(a), LLVM.PointerType)
+                todo = LLVM.Value[a]
+                seen = Set{LLVM.Value}()
+                mayread = false
+                maywrite = false
+                while length(todo) > 0
+                    cur = pop!(todo)
+                    if in(cur, seen)
+                        continue
+                    end
+                    push!(seen, cur)
+                    
+                    if isa(cur, LLVM.StoreInst)
+                        maywrite = true
+                        continue
+                    end
+                    
+                    if isa(cur, LLVM.LoadInst)
+                        mayread = true
+                        continue
+                    end
+
+                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
+                        for u in LLVM.uses(cur)
+                            push!(todo, LLVM.user(u))
+                        end
+                        continue
+                    end
+                    mayread = true
+                    maywrite = true
+                end
+                if any(map(k->kind(k)==kind(EnumAttribute("readnone"; ctx)), collect(parameter_attributes(f, i))))
+                    mayread = false
+                    maywrite = false
+                end
+                if any(map(k->kind(k)==kind(EnumAttribute("readonly"; ctx)), collect(parameter_attributes(f, i))))
+                    maywrite = false
+                end
+                if any(map(k->kind(k)==kind(EnumAttribute("writeonly"; ctx)), collect(parameter_attributes(f, i))))
+                    mayread = false
+                end
+        
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readnone"; ctx)))
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readonly"; ctx)))
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("writeonly"; ctx)))
+
+                if !mayread && !maywrite
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readnone", 0; ctx))
+                elseif !mayread
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("writeonly", 0; ctx))
+                elseif !maywrite
+                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readonly", 0; ctx))
+                end
+
+            end
+        end
+    end
+    return nothing
+end
+
 function optimize!(mod::LLVM.Module, tm)
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
@@ -70,69 +188,8 @@ end
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
-    ctx = LLVM.context(mod)
-    for f in functions(mod)
-        if isempty(LLVM.blocks(f))
-            continue
-        end
-        for (i, a) in enumerate(parameters(f))
-            if isa(llvmtype(a), LLVM.PointerType)
-                todo = LLVM.Value[a]
-                seen = Set{LLVM.Value}()
-                mayread = false
-                maywrite = false
-                while length(todo) > 0
-                    cur = pop!(todo)
-                    if in(cur, seen)
-                        continue
-                    end
-                    push!(seen, cur)
-                    
-                    if isa(cur, LLVM.StoreInst)
-                        maywrite = true
-                        continue
-                    end
-                    
-                    if isa(cur, LLVM.LoadInst)
-                        mayread = true
-                        continue
-                    end
-
-                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
-                        for u in LLVM.uses(cur)
-                            push!(todo, LLVM.user(u))
-                        end
-                        continue
-                    end
-                    mayread = true
-                    maywrite = true
-                end
-                if any(map(k->kind(k)==kind(EnumAttribute("readnone"; ctx)), collect(parameter_attributes(f, i))))
-                    mayread = false
-                    maywrite = false
-                end
-                if any(map(k->kind(k)==kind(EnumAttribute("readonly"; ctx)), collect(parameter_attributes(f, i))))
-                    maywrite = false
-                end
-                if any(map(k->kind(k)==kind(EnumAttribute("writeonly"; ctx)), collect(parameter_attributes(f, i))))
-                    mayread = false
-                end
-        
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readnone"; ctx)))
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("readonly"; ctx)))
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, LLVM.API.LLVMAttributeIndex(i), kind(EnumAttribute("writeonly"; ctx)))
-
-                if !mayread && !maywrite
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readnone", 0; ctx))
-                elseif !mayread
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("writeonly", 0; ctx))
-                elseif !maywrite
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readonly", 0; ctx))
-                end
-
-            end
-        end
-    end
+    detect_writeonly!(mod)
+    nodecayed_phis!(mod)
     # @safe_show "omod", mod
     # flush(stdout)
     # flush(stderr)
