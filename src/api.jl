@@ -358,7 +358,8 @@ end
   ET_NoDerivative = 0,
   ET_NoShadow = 1,
   ET_IllegalTypeAnalysis = 2,
-  ET_NoType = 3
+  ET_NoType = 3,
+  ET_IllegalFirstPointer = 4
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
