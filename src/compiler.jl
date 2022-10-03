@@ -4527,6 +4527,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         @assert "Unhandled derivative mode", mode
     end
     API.EnzymeLogicErasePreprocessedFunctions(logic)
+    fix_decayaddr!(mod)
     return adjointf, augmented_primalf, TapeType
 end
 

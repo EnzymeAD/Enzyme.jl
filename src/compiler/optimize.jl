@@ -49,6 +49,99 @@ function nodecayed_phis!(mod::LLVM.Module)
     return nothing
 end
 
+function fix_decayaddr!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+    for f in functions(mod)
+        invalid = LLVM.AddrSpaceCastInst[]
+        for bb in blocks(f), inst in instructions(bb)
+            if !isa(inst, LLVM.AddrSpaceCastInst)
+                continue
+            end
+            prety = llvmtype(operands(inst)[1])
+            postty = llvmtype(inst)
+            if addrspace(prety) != 10
+                continue
+            end
+            if addrspace(postty) != 0
+                continue
+            end
+            push!(invalid, inst)
+        end
+
+        for inst in invalid
+            temp = nothing
+            for u in LLVM.uses(inst)
+                st = LLVM.user(u)
+                if !isa(st, LLVM.CallInst)
+                    throw(AssertionError("illegal decay of noncall"))
+                end
+                fop = operands(st)[end]
+                mayread = false
+                maywrite = false
+                sret = true
+                for (i, v) in enumerate(operands(st)[1:end-1])
+                    if v == inst
+                        readnone = false
+                        readonly = false
+                        writeonly = false
+                        t_sret = false
+                        for a in collect(parameter_attributes(fop, i))
+                            if kind(a) == kind(EnumAttribute("sret"; ctx))
+                                t_sret = true
+                            end
+                            if kind(a) == kind(StringAttribute("enzyme_sret"; ctx))
+                                t_sret = true
+                            end
+                            # if kind(a) == kind(StringAttribute("enzyme_sret_v"; ctx))
+                            #     t_sret = true
+                            # end
+                            if kind(a) == kind(EnumAttribute("readonly"; ctx))
+                                readonly = true
+                            end
+                            if kind(a) == kind(EnumAttribute("readnone"; ctx))
+                                readnone = true
+                            end
+                            if kind(a) == kind(EnumAttribute("writeonly"; ctx))
+                                writeonly = true
+                            end
+                        end
+                        if !t_sret
+                            sret = false
+                        end
+                        if readnone
+                            continue
+                        end
+                        if !readonly
+                            maywrite = true
+                        end
+                        if !writeonly
+                            mayread = true
+                        end
+                    end
+                end
+                @assert sret
+                @assert !mayread
+                
+                if temp === nothing
+                    nb = Builder(ctx)
+                    position!(nb, first(instructions(first(blocks(f)))))
+                    temp = alloca!(nb, eltype(llvmtype(inst)))
+                end
+                nb = Builder(ctx)
+                position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                ld = load!(nb, temp)
+                store!(nb, ld, operands(inst)[1])
+            end
+
+            if temp !== nothing
+                replace_uses!(inst, temp)
+            end
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+    return nothing
+end
+
 function detect_writeonly!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
     for f in functions(mod)
