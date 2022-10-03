@@ -75,8 +75,48 @@ function fix_decayaddr!(mod::LLVM.Module)
                 if !isa(st, LLVM.CallInst)
                     throw(AssertionError("illegal decay of noncall"))
                 end
-                # TODO memcpy
+                
                 fop = operands(st)[end]
+                
+                intr = LLVM.API.LLVMGetIntrinsicID(fop)
+
+                if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id || intr == LLVM.Intrinsic("llvm.memset").id
+                    newvs = LLVM.Value[]
+                    for (i, v) in enumerate(operands(st)[1:end-1])
+                        if v == inst
+                            LLVM.API.LLVMSetOperand(st, i-1, operands(inst)[1])
+                            push!(newvs, operands(inst)[1])
+                            continue
+                        end
+                        push!(newvs, v)
+                    end
+
+                    nb = Builder(ctx)
+                    position!(nb, st)
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id
+                        newi = memcpy!(nb, newvs[1], 0, newvs[2], 0, newvs[3])
+                    elseif intr == LLVM.Intrinsic("llvm.memmove").id
+                        newi = memmove!(nb, newvs[1], 0, newvs[2], 0, newvs[3])
+                    else
+                        newi = memset!(nb, newvs[1], newvs[2], newvs[3], 0)
+                    end
+
+                    for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(operands(st))-1)]...]
+                        count = LLVM.API.LLVMGetCallSiteAttributeCount(st, idx);
+                        
+                        Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
+                        LLVM.API.LLVMGetCallSiteAttributes(st, idx, Attrs)
+                        for j in 1:count
+                            LLVM.API.LLVMAddCallSiteAttribute(newi, idx, unsafe_load(Attrs, j))
+                        end
+                        Libc.free(Attrs)
+                    end
+            
+                    API.EnzymeCopyMetadata(newi, st)
+                    
+                    LLVM.API.LLVMInstructionEraseFromParent(st)
+                    continue 
+                end
                 mayread = false
                 maywrite = false
                 sret = true
