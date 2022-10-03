@@ -2161,6 +2161,17 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 end
 
 function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
+    
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
+    needsPrimal = needsPrimalP[] != 0
+    needsShadow = needsShadowP[] != 0
+    if !needsShadow
+        return nothing
+    end
+
     # size_t len = jl_array_len(ary);
     # size_t elsz = ary->elsize;
     # memcpy(new_ary->data, ary->data, len * elsz);
@@ -3394,11 +3405,12 @@ const Tracked = 10
 current_task_offset() = -12
 current_ptls_offset() = 14
 
-function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::LLVM.API.LLVMValueRef
+function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::Ptr{LLVM.API.LLVMValueRef}
     B = LLVM.Builder(B)
     SI = LLVM.Instruction(SI)
     v = operands(SI)[1]
     p = operands(SI)[2]
+    added = LLVM.API.LLVMValueRef[]
     while true
         if isa(p, LLVM.GetElementPtrInst) || isa(p, LLVM.BitCastInst) || isa(p, LLVM.AddrSpaceCastInst)
             p = operands(p)[1]
@@ -3411,9 +3423,7 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
         p = bitcast!(B, p, T_prjlvalue)
-        if R2 != C_NULL
-            unsafe_store!(R2, p.ref)
-        end
+        push!(added, p.ref)
         
         vals = LLVM.Value[p]
         todo = LLVM.Value[v]
@@ -3424,8 +3434,12 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
                 if any_jltypes(ty)
                     if addrspace(ty) != 10
                         cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
+                        push!(added, cur.ref)
                     end
-                    cur = bitcast!(B, cur, T_prjlvalue)
+                    if llvmtype(cur) != T_prjlvalue
+                        cur = bitcast!(B, cur, T_prjlvalue)
+                        push!(added, cur.ref)
+                    end
                     push!(vals, cur)
                 end
                 continue
@@ -3433,7 +3447,9 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
             if isa(ty, LLVM.ArrayType)
                 if any_jltypes(ty)
                     for i=1:length(ty)
-                        push!(todo, extract_value!(B, cur, i-1))
+                        ev = extract_value!(B, cur, i-1)
+                        push!(added, ev.ref)
+                        push!(todo, ev)
                     end
                 end
                 continue
@@ -3441,7 +3457,9 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
             if isa(ty, LLVM.StructType)
                 for (i, t) in enumerate(LLVM.elements(ty))
                     if any_jltypes(t)
-                        push!(todo, extract_value!(B, cur, i-1))
+                        ev = extract_value!(B, cur, i-1)
+                        push!(added, ev.ref)
+                        push!(todo, ev)
                     end
                 end
                 continue
@@ -3450,7 +3468,15 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
             @assert false
         end
         r = emit_writebarrier!(B, vals)
-        return LLVM.API.LLVMValueRef(r.ref)
+        push!(added, r.ref)
+    end
+    if R2 != C_NULL
+        unsafe_store!(R2, length(added))
+        ptr = Base.unsafe_convert(Ptr{LLVM.API.LLVMValueRef}, Libc.malloc(sizeof(LLVM.API.LLVMValueRef)*length(added)))
+        for (i, v) in enumerate(added)
+            unsafe_store!(ptr, v, i)
+        end
+        return ptr
     end
     return C_NULL
 end
@@ -3664,8 +3690,8 @@ function __init__()
         API.EnzymeSetCustomDeallocator(@cfunction(
             julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
         API.EnzymeSetPostCacheStore(@cfunction(
-            julia_post_cache_store, LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, Ptr{LLVM.API.LLVMValueRef})))
+             julia_post_cache_store, Ptr{LLVM.API.LLVMValueRef},
+            (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, Ptr{UInt64})))
     end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
