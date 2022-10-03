@@ -3225,6 +3225,25 @@ function Base.showerror(io::IO, ece::IllegalFirstPointerException)
     end
 end
 
+struct EnzymeInternalError <: CompilationException
+    msg::String
+    ir::Union{Nothing, String}
+    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
+end
+
+function Base.showerror(io::IO, ece::EnzymeInternalError)
+    print(io, "Enzyme compilation failed.\n")
+    if ece.ir !== nothing
+        print(io, "Current scope: \n")
+        print(io, ece.ir)
+    end
+    print(io, '\n', ece.msg, '\n')
+    if ece.bt !== nothing
+        Base.show_backtrace(io, ece.bt)
+        println(io)
+    end
+end
+
 parent_scope(val::LLVM.Function, depth=0) = depth==0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
@@ -3267,6 +3286,8 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(NoTypeException(msg, sval, ir, bt, val))
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
+    elseif errtype == API.ET_InternalError
+        throw(EnzymeInternalError(msg, ir, bt))
     end
     throw(AssertionError("Unknown errtype"))
 end
