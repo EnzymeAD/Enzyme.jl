@@ -75,6 +75,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 if !isa(st, LLVM.CallInst)
                     throw(AssertionError("illegal decay of noncall"))
                 end
+                # TODO memcpy
                 fop = operands(st)[end]
                 mayread = false
                 maywrite = false
@@ -119,18 +120,31 @@ function fix_decayaddr!(mod::LLVM.Module)
                         end
                     end
                 end
+                if !sret
+                    @safe_show f
+                    @safe_show inst, st, fop
+                    flush(stdout)
+                end
+                
                 @assert sret
-                @assert !mayread
                 
                 if temp === nothing
                     nb = Builder(ctx)
                     position!(nb, first(instructions(first(blocks(f)))))
                     temp = alloca!(nb, eltype(llvmtype(inst)))
                 end
-                nb = Builder(ctx)
-                position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                ld = load!(nb, temp)
-                store!(nb, ld, operands(inst)[1])
+                if mayread
+                    nb = Builder(ctx)
+                    position!(nb, st)
+                    ld = load!(nb, operands(inst)[1])
+                    store!(nb, ld, temp)
+                end
+                if maywrite
+                    nb = Builder(ctx)
+                    position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                    ld = load!(nb, temp)
+                    store!(nb, ld, operands(inst)[1])
+                end
             end
 
             if temp !== nothing
