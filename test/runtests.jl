@@ -920,7 +920,7 @@ typeunknownvec = Float64[]
 
     A = Float64[]
     dA = Float64[]
-    autodiff(Reverse, cost, Const, Duplicated(A, dA))
+    @test_throws Base.UndefVarError autodiff(Reverse, cost, Const, Duplicated(A, dA))
 end
 
 @testset "No Decayed / GC" begin

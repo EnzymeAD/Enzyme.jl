@@ -288,6 +288,11 @@ function printperf!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function printdiffuse!(val)
+    ptr = cglobal((:EnzymePrintDiffUse, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function printtype!(val)
     ptr = cglobal((:EnzymePrintType, libEnzyme))
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
