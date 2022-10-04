@@ -402,7 +402,7 @@ f(x) = x*x
 """
 @inline function autodiff(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
-    if any_active(args...)
+    if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
     tt′    = Tuple{map(Core.Typeof, args′)...}
@@ -419,7 +419,7 @@ end
 
 @inline function autodiff(::ForwardMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
-    if any_active(args...)
+    if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
     tt′    = Tuple{map(Core.Typeof, args′)...}
