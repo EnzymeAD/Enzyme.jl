@@ -4551,6 +4551,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     # Create Enzyme calling convention
     T_wrapperargs = LLVMType[] # Arguments of the wrapper
 
+    sret_types  = []  # Julia types of all returned variables
+    
     T_JuliaSRet = LLVMType[]  # Struct return of all objects
                               # + If the adjoint this will be all Active variables (includes all of T_EnzymeSRet)
                               # + If the forward, this will be ?return, ?shadowReturn, ?tape
@@ -4583,6 +4585,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 # Use deserves_argbox??
                 llvmT = LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, source_typ; ctx)))
                 push!(T_JuliaSRet, llvmT)
+                
+                if width == 1
+                    push!(sret_types, source_typ)
+                else
+                    push!(sret_types, NTuple{width, source_typ})
+                end
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
             @assert width == 1
@@ -4610,6 +4618,17 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             push!(T_JuliaSRet, LLVM.LLVMType(tape))
         end
         
+        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+        if utape != C_NULL
+            TapeType = EnzymeTapeToLoad{LLVMType(tape_type(utape))}
+        elseif tape != C_NULL
+            TapeType = tape_type(LLVMType(tape))
+        else
+            TapeType = Cvoid
+        end
+        push!(sret_types, TapeType)
+        
         isboxed = GPUCompiler.deserves_argbox(actualRetType)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
         
@@ -4617,6 +4636,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if existed[2] != 0 
             @assert returnPrimal
             push!(T_JuliaSRet, llvmT)
+            push!(sret_types, actualRetType)
         else
             @assert !returnPrimal
         end
@@ -4639,12 +4659,30 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
             end
         end
+        if returnPrimal
+            push!(T_JuliaSRet, actualRetType)
+        end
+        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+            push!(sret_types, actualRetType)
+        elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+            push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+        end
     end
+    
+    combinedReturn = AnonymousStruct(Tuple{sret_types...})
 
-    # sret argument
-    if !isempty(T_JuliaSRet)
-        ST = LLVM.StructType(T_JuliaSRet; ctx)
-        pushfirst!(T_wrapperargs, LLVM.PointerType(ST, 10))
+    uses_sret = is_sret(combinedReturn, ctx)
+   
+    jltype = convert(LLVM.LLVMType, combinedReturn; ctx)
+
+    returnRoots = false
+    if uses_sret
+    	returnRoots = deserves_rooting(jltype)
+		if returnRoots
+	        tracked = CountTrackedPointers(T)
+            pushfirst!(T_wrapperargs, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, tracked.count)))
+		end
+        pushfirst!(T_wrapperargs, LLVM.PointerType(jltype))
     end
 
     if needs_tape
@@ -4660,7 +4698,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
     end
 
-    FT = LLVM.FunctionType(T_void, T_wrapperargs)
+    FT = LLVM.FunctionType(uses_sret ? T_void : jltype , T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
     sfn = LLVM.get_subprogram(enzymefn)
     if sfn !== nothing
@@ -4676,10 +4714,18 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         position!(builder, entry)
 
         realparms = LLVM.Value[]
-        i = target
+        i = 1
 
-        if !isempty(T_JuliaSRet)
-            sret = params[1]
+        if uses_sret
+            sret = params[i]
+            i+=1
+        elseif jltype != T_void
+            sret = alloca!(builder, jltype)
+        end
+        rootRet = nothing
+        if returnRoots
+            rootRet = params[i]
+            i+=1
         end
 
         activeNum = 0
@@ -4706,6 +4752,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if isboxed
                     @assert !is_split
+                    # TODO replace with better enzyme_zero
                     ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)])
                     cst = pointercast!(builder, ptr, ptr8)
                     push!(realparms, ptr)
@@ -4750,8 +4797,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                         eval = extract_value!(builder, val, data[i])
                     end
                     ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
+                    ptr = pointercast!(builder, ptr, LLVM.PointerType(llvmtype(eval)))
                     si = store!(builder, eval, ptr)
-                    julia_post_cache_store(si.ref, builder.ref, C_NULL)
+                    # julia_post_cache_store(si.ref, builder.ref, C_NULL)
                     returnNum+=1
                 end
             end
@@ -4762,8 +4810,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     eval = extract_value!(builder, val, returnNum)
                 end
                 ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
+                ptr = pointercast!(builder, ptr, LLVM.PointerType(llvmtype(eval)))
                 si = store!(builder, eval, ptr)
-                julia_post_cache_store(si.ref, builder.ref, C_NULL)
+                # julia_post_cache_store(si.ref, builder.ref, C_NULL)
             end
         else
             activeNum = 0
@@ -4781,11 +4830,49 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 end
             end
         end
-        ret!(builder)
+        
+        if uses_sret
+            if returnRoots
+                count = 0
+                todo = [([LLVM.ConstantInt(LLVM.IntType(64; ctx), 0)], jltype)]
+                while length(todo) != 0
+                    path, ty = pop!(todo)
+                    if isa(ty, LLVM.PointerType)
+                        loc = gep!(builder, rootRet, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), count)])
+                        count+=1
+                        outloc = gep!(builder, sret, path)
+                        store!(builder, load!(builder, outloc), loc)
+                        continue
+                    end
+                    if isa(ty, LLVM.ArrayType) || isa(ty, LLVM.VectorType)
+                        if any_jltypes(ty)
+                            for i=1:length(ty)
+                                push!(todo, (path + [LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)], eltype(ty)))
+                            end
+                        end
+                        continue
+                    end
+                    if isa(ty, LLVM.StructType)
+                        for (i, t) in enumerate(LLVM.elements(ty))
+                            if any_jltypes(t)
+                                push!(todo, (path + [LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1)], t))
+                            end
+                        end
+                        continue
+                    end
+                end
+            end
+            ret!(builder)
+        elseif jltype != T_void
+            ret!(builder, load!(builder, sret))
+        else
+            ret!(builder)
+        end
     end
 
     # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
+    @safe_show llvm_f
     return llvm_f
 end
 
@@ -5856,15 +5943,28 @@ end
           end
       end
     end
-    if !isempty(llsret_types)
-      T_sjoint = LLVM.StructType(llsret_types; ctx)
-      # pushfirst!(llvmtys, LLVM.PointerType(T_sjoint, 10)) 
-      # pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; allow_boxed=true, ctx))
-      pushfirst!(llvmtys, convert(LLVMType, Any; allow_boxed=true, ctx))
-	end
-    pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+    
     T_void = convert(LLVMType, Nothing; ctx)
-    T_ret = T_void
+
+
+    combinedReturn = AnonymousStruct(Tuple{sret_types...})
+    uses_sret = is_sret(combinedReturn, ctx)
+    jltype = convert(LLVM.LLVMType, combinedReturn; ctx)
+    
+    pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
+
+    returnRoots = false
+    if uses_sret
+    	returnRoots = deserves_rooting(jltype)
+		if returnRoots
+	        tracked = CountTrackedPointers(T)
+            pushfirst!(llvmtys, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, tracked.count)))
+		end
+        pushfirst!(llvmtys, LLVM.PointerType(jltype))
+    end
+    
+
+    T_ret = uses_sret ? T_void : jltype
 	llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
 
 	mod = LLVM.parent(llvm_f)
@@ -5872,14 +5972,10 @@ end
 	LLVM.Builder(ctx) do builder
 		entry = BasicBlock(llvm_f, "entry"; ctx)
 		position!(builder, entry)
-		params = collect(LLVM.Value, parameters(llvm_f))
-		lfn = @inbounds params[1]
-		params = params[2:end]
-        callparams = collect(params)
-        if !isempty(llsret_types)
-            T_sjoint = LLVM.StructType(llsret_types; ctx)
-            callparams[1] = bitcast!(builder, callparams[1], LLVM.PointerType(T_sjoint, 10))
-        end
+		callparams = collect(LLVM.Value, parameters(llvm_f))
+        lfn = callparams[1+uses_sret+returnRoots]
+        deleteat!(callparams, 1+uses_sret+returnRoots)
+
         if needs_tape && !(GPUCompiler.isghosttype(TapeType) || Core.Compiler.isconstType(TapeType))
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
@@ -5893,34 +5989,52 @@ end
                 @assert llvmtype(tape) == llty
             end
         end
-		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_void, [llvmtype(x) for x in callparams])))
-		call!(builder, lfn, callparams)
-        ret!(builder)
+		lfn = inttoptr!(builder, lfn, LLVM.PointerType(LLVM.FunctionType(T_ret, [llvmtype(x) for x in callparams])))
+		r = call!(builder, lfn, callparams)
+        if T_ret != T_void
+            ret!(builder, r)
+        else
+            ret!(builder)
+        end
 	end
+
+    @safe_show uses_sret, returnRoots, jltype, combinedReturn, llvm_f
 
 	ir = string(mod)
 	fn = LLVM.name(llvm_f)
 
     @assert length(types) == length(ccexprs)
-    if !isempty(llsret_types)
+    if !uses_sret
+        return quote
+            Base.@_inline_meta
+                Base.llvmcall(($ir, $fn), $(AnonymousStruct(Tuple{sret_types...})),
+                    Tuple{Ptr{Cvoid}, $(types...)},
+                fptr, $(ccexprs...))
+        end
+    elseif uses_sret && !returnRoots
         return quote
             Base.@_inline_meta
             sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
-                Base.llvmcall(($ir, $fn), Cvoid,
-                    Tuple{Ptr{Cvoid}, Any, $(types...)},
-                fptr, sret, $(ccexprs...))
-            # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
-            # We might find undefined fields here and when we try to load from them
-            # Julia will throw an exception.
-            values(sret[])
+            GC.@preserve sret begin
+                sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
+            Base.llvmcall(($ir, $fn), Cvoid,
+                          Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                sret_p, fptr, $(ccexprs...))
+            end
+            return values(sret[])
         end
     else
         return quote
             Base.@_inline_meta
             sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
+            sret2 = Box{$(AnonymousStruct(NTuple{tracked.count, Any}))}()
+            GC.@preserve sret begin
+                sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
+                sret2_p = Base.unsafe_convert(Ptr{Cvoid}, sret2)
             Base.llvmcall(($ir, $fn), Cvoid,
-                Tuple{Ptr{Cvoid}, $(types...),},
-                fptr, $(ccexprs...))
+                          Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
+                sret_p, sret2_p, fptr, $(ccexprs...))
+            end
             return values(sret[])
         end
     end
