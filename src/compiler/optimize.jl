@@ -73,6 +73,9 @@ function fix_decayaddr!(mod::LLVM.Module)
             for u in LLVM.uses(inst)
                 st = LLVM.user(u)
                 if !isa(st, LLVM.CallInst)
+                    @show f
+                    @show inst
+                    @show st
                     throw(AssertionError("illegal decay of noncall"))
                 end
                 
