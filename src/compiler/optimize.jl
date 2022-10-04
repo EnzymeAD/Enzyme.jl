@@ -183,7 +183,8 @@ function fix_decayaddr!(mod::LLVM.Module)
                     nb = Builder(ctx)
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
                     ld = load!(nb, temp)
-                    store!(nb, ld, operands(inst)[1])
+                    si = store!(nb, ld, operands(inst)[1])
+                    julia_post_cache_store(si.ref, nb.ref, C_NULL)
                 end
             end
 
