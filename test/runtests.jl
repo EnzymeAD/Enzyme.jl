@@ -200,6 +200,12 @@ euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))
 test_scalar(euroad, 0.5)
 end
 
+@testset "Nested AD" begin
+    tonest(x,y) = (x + y)^2
+
+    @test Enzyme.autodiff(Forward, (x,y) -> Enzyme.fwddiff_deferred(tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+end
+
 @testset "Array tests" begin
 
     function arsum(f::Array{T}) where T

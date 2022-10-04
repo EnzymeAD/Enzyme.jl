@@ -5858,8 +5858,9 @@ end
     end
     if !isempty(llsret_types)
       T_sjoint = LLVM.StructType(llsret_types; ctx)
-      pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; allow_boxed=true, ctx))
-      # pushfirst!(llvmtys, convert(LLVMType, Any; allow_boxed=true, ctx))
+      # pushfirst!(llvmtys, LLVM.PointerType(T_sjoint, 10)) 
+      # pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; allow_boxed=true, ctx))
+      pushfirst!(llvmtys, convert(LLVMType, Any; allow_boxed=true, ctx))
 	end
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
@@ -5875,6 +5876,10 @@ end
 		lfn = @inbounds params[1]
 		params = params[2:end]
         callparams = collect(params)
+        if !isempty(llsret_types)
+            T_sjoint = LLVM.StructType(llsret_types; ctx)
+            callparams[1] = bitcast!(builder, callparams[1], LLVM.PointerType(T_sjoint, 10))
+        end
         if needs_tape && !(GPUCompiler.isghosttype(TapeType) || Core.Compiler.isconstType(TapeType))
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
@@ -5901,12 +5906,9 @@ end
         return quote
             Base.@_inline_meta
             sret = Box{$(AnonymousStruct(Tuple{sret_types...}))}()
-            GC.@preserve sret begin
-                sret_p = Base.unsafe_convert(Ptr{Cvoid}, sret)
                 Base.llvmcall(($ir, $fn), Cvoid,
-                  Tuple{Ptr{Cvoid}, Ptr{Cvoid}, $(types...)},
-                fptr, sret_p, $(ccexprs...))
-            end
+                    Tuple{Ptr{Cvoid}, Any, $(types...)},
+                fptr, sret, $(ccexprs...))
             # TODO: https://github.com/EnzymeAD/Enzyme.jl/issues/347
             # We might find undefined fields here and when we try to load from them
             # Julia will throw an exception.
