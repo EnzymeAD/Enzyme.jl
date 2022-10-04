@@ -81,7 +81,28 @@ const nofreefns = Set{String}((
     "jl_types_equal", "ijl_types_equal",
     "jl_invoke", "ijl_invoke",
     "jl_apply_generic", "ijl_apply_generic",
-    "jl_egal__unboxed", "julia.pointer_from_objref", "_platform_memcmp"
+    "jl_egal__unboxed", "julia.pointer_from_objref", "_platform_memcmp",
+    "memcmp",
+    "julia.except_enter",
+    "jl_array_grow_end",
+    "ijl_array_grow_end",
+    "jl_f_getfield",
+    "ijl_f_getfield",
+    "jl_pop_handler",
+    "ijl_pop_handler",
+    "jl_string_to_array",
+    "ijl_string_to_array",
+    "jl_alloc_string",
+    "ijl_alloc_string",
+    "getenv",
+    "jl_cstr_to_string",
+    "ijl_cstr_to_string",
+    "jl_symbol_n",
+    "ijl_symbol_n",
+    "uv_os_homedir",
+    "jl_array_to_string",
+    "ijl_array_to_string",
+    "pcre2_jit_compile_8"
 ))
 
 const inactivefns = Set{String}((
@@ -104,7 +125,20 @@ const inactivefns = Set{String}((
     "jl_f__typevar", "ijl_f__typevar",
     "jl_f_isa", "ijl_f_isa",
     "jl_set_task_threadpoolid", "ijl_set_task_threadpoolid",
-    "jl_types_equal", "ijl_types_equal"
+    "jl_types_equal", "ijl_types_equal",
+    "jl_string_to_array",
+    "ijl_string_to_array",
+    "jl_alloc_string",
+    "ijl_alloc_string",
+    "getenv",
+    "jl_cstr_to_string",
+    "ijl_cstr_to_string",
+    "jl_symbol_n",
+    "ijl_symbol_n",
+    "uv_os_homedir",
+    "jl_array_to_string",
+    "ijl_array_to_string",
+    "pcre2_jit_compile_8"
     # "jl_"
 ))
 
@@ -130,7 +164,9 @@ const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Random.rand!,
                                Random.randn,
                                Random.default_rng,
-                               Random.seed!
+                               Random.seed!,
+                               Base.thisind,
+                               Base.nextind
                                ])
 
 const activefns = Set{String}((
@@ -3618,7 +3654,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         end
         
         if ZI != C_NULL
-            unsafe_store!(ZI, LLVM.memset!(B, pointercast!(B, obj, LLVM.PointerType(T_int8, Tracked )),  LLVM.ConstantInt(T_int8, 0),
+            pc = pointercast!(B, obj, LLVM.PointerType(T_int8, Tracked ))
+            API.SetForMemSet!(pc)
+            unsafe_store!(ZI, LLVM.memset!(B, pc,  LLVM.ConstantInt(T_int8, 0),
                                                   Size, 
                                                  #=align=#0 ).ref)
         end

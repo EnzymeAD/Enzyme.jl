@@ -77,7 +77,8 @@ module FFI
             "jl_get_keyword_sorter", "ijl_get_keyword_sorter",
             "jl_ptr_to_array",
             "jl_ptr_to_array_1d",
-            "jl_eqtable_get", "ijl_eqtable_get"
+            "jl_eqtable_get", "ijl_eqtable_get",
+            "memcmp"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
