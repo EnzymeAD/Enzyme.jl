@@ -3319,7 +3319,7 @@ any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
 any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
-
+any_jltypes(::LLVM.VoidType) = false
 
 @inline any_jltypes(::Type{Nothing}) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
@@ -6064,11 +6064,20 @@ end
 	fn = LLVM.name(llvm_f)
 
     @assert length(types) == length(ccexprs)
-    return quote
-        Base.@_inline_meta
-            Base.llvmcall(($ir, $fn), $(Tuple{sret_types...}),
-                Tuple{Ptr{Cvoid}, $(types...)},
-                fptr, $(ccexprs...))
+    if any_jltypes(jltype)
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(($ir, $fn), $(AnonymousStruct(Tuple{sret_types...})),
+                    Tuple{Ptr{Cvoid}, $(types...)},
+                    fptr, $(ccexprs...))
+        end
+    else
+        return quote
+            Base.@_inline_meta
+                Base.llvmcall(($ir, $fn), $(Tuple{sret_types...}),
+                    Tuple{Ptr{Cvoid}, $(types...)},
+                    fptr, $(ccexprs...))
+        end
     end
 end
 
