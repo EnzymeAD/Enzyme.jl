@@ -78,7 +78,10 @@ const nofreefns = Set{String}((
     "jl_f__typevar", "ijl_f__typevar",
     "jl_f_isa", "ijl_f_isa",
     "jl_set_task_threadpoolid", "ijl_set_task_threadpoolid",
-    "jl_types_equal", "ijl_types_equal"
+    "jl_types_equal", "ijl_types_equal",
+    "jl_invoke", "ijl_invoke",
+    "jl_apply_generic", "ijl_apply_generic",
+    "jl_egal__unboxed", "julia.pointer_from_objref", "_platform_memcmp"
 ))
 
 const inactivefns = Set{String}((
