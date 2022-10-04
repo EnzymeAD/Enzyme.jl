@@ -4713,6 +4713,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
             end
         end
+        if returnPrimal
+            push!(sret_types, actualRetType)
+        end
         if rettype <: Duplicated || rettype <: DuplicatedNoNeed
             push!(sret_types, actualRetType)
         elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
