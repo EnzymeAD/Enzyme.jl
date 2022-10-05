@@ -530,7 +530,7 @@ end
     end
     return args
 end
-@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width,AddrSpace}
+@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width}
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
@@ -3433,7 +3433,7 @@ from_tape_type(::Type{T}, ctx) where T<:Integer = convert(LLVMType, T; ctx)
 from_tape_type(::Type{NTuple{Size, T}}, ctx) where {Size, T} = LLVM.ArrayType(from_tape_type(T, ctx), Size)
 from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(UInt8, ctx), Addr)
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
-from_tape_type(::Type{Any}, ctx) where {T, Addr} = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
+from_tape_type(::Type{Any}, ctx) = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
 function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
     if length(B.parameters) >= 1 && all(B.parameters[1] == b for b in B.parameters)
         return LLVM.ArrayType(from_tape_type(B.parameters[1], ctx), length(B.parameters))
