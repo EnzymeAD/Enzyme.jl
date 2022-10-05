@@ -76,7 +76,11 @@ end
 const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(Enzyme.pmap),
                             typeof(Base.to_tuple_type), typeof(Base.repr),
                             typeof(Random.rand), typeof(Random.rand!), typeof(Random.randn), typeof(Random.default_rng), typeof(Random.seed!),
-                            typeof(Base.thisind), typeof(Base.nextind)])
+                            typeof(Base.thisind), typeof(Base.nextind),
+                            typeof(Base.CoreLogging.logmsg_code),
+                            typeof(Base.CoreLogging.shouldlog),
+                            typeof(Base.CoreLogging.handle_message),
+                           ])
 
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false

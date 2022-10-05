@@ -144,6 +144,9 @@ const inactivefns = Set{String}((
 
 const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
                                Base.CoreLogging.shouldlog,
+                               Base.CoreLogging.current_logger,
+                               Base.CoreLogging.current_logger_for_env,
+                               Base.CoreLogging.handle_message,
                                Base.to_tuple_type,
                                Base.methods,
                                Base.println,
