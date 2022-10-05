@@ -286,12 +286,15 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
 @inline function autodiff(::ReverseMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
+    width = same_or_one(args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt)
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), width, #=ModifiedBetween=#Val(false))
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false))
             res = forward(args′...)
             @assert length(res) == 2
             tape = res[1]
@@ -305,7 +308,7 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), width)
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = eltype(Compiler.return_type(thunk))
@@ -317,8 +320,11 @@ end
 @inline function autodiff(::ReverseMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), width)
+    width = same_or_one(args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width))
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
@@ -406,13 +412,16 @@ f(x) = x*x
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
+    width = same_or_one(args′...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width,
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
@@ -423,12 +432,15 @@ end
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
     tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
+    width = same_or_one(args′...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
 
@@ -456,7 +468,10 @@ code, as well as high-order differentiation.
 @inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
+    width = same_or_one(args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     if A isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
@@ -471,8 +486,8 @@ code, as well as high-order differentiation.
     end
 
     ReturnPrimal = Val(false)
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(width), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
+    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -504,7 +519,10 @@ code, as well as high-order differentiation.
 @inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = Val(same_or_one(args...))
+    width = same_or_one(args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     if A isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
@@ -523,8 +541,8 @@ code, as well as high-order differentiation.
     end
 
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), ReturnPrimal)
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(width), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
+    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
     thunk(args′...)
 end
 
@@ -670,6 +688,9 @@ grad = gradient(Forward, f, [2.0, 3.0])
 ```
 """
 @inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
+    if length(x) == 0
+        return ()
+    end
     values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
 end
 
@@ -706,6 +727,9 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 ```
 """
 @inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
     tmp = ntuple(length(shadow)) do i
         values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
@@ -768,6 +792,10 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 """
 @inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
+    
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
