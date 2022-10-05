@@ -4869,7 +4869,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
                     ptr = pointercast!(builder, ptr, LLVM.PointerType(llvmtype(eval)))
                     si = store!(builder, eval, ptr)
-                    # julia_post_cache_store(si.ref, builder.ref, C_NULL)
                     returnNum+=1
                 end
             end
@@ -4882,7 +4881,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(llvmtype(eval)))
                 si = store!(builder, eval, ptr)
-                # julia_post_cache_store(si.ref, builder.ref, C_NULL)
             end
         else
             activeNum = 0
@@ -5993,12 +5991,6 @@ end
     returnRoots = false
     if uses_sret
     	returnRoots = deserves_rooting(jltype)
-		if returnRoots
-	        tracked = CountTrackedPointers(jltype)
-            # pushfirst!(llvmtys, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, tracked.count)))
-        
-            # pushfirst!(llvmtys, LLVM.PointerType(jltype))
-		end
     end
     
     pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
@@ -6023,50 +6015,8 @@ end
         deleteat!(callparams, 1)
 
         if returnRoots
-            T_int8 = LLVM.Int8Type(ctx)
-            T_int32 = LLVM.Int32Type(ctx)
-            T_int64 = LLVM.Int64Type(ctx)
-            T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-            T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-            T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
-            T_pint8 = LLVM.PointerType(T_int8)
-            T_ppint8 = LLVM.PointerType(T_pint8)
-
 	        tracked = CountTrackedPointers(jltype)
-            T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-            T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
             pushfirst!(callparams, alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count)))
-        
-            # T_size_t = convert(LLVM.LLVMType, Int; ctx)
-            # alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
-            #     LLVM.FunctionType(T_prjlvalue, 
-            #         [T_ppjlvalue, T_size_t, T_prjlvalue]))
-
-            # if VERSION < v"1.7.0"
-            #     ptls = reinsert_gcmarker!(llvm_f, builder)
-            #     ptls = bitcast!(B, ptls, T_pint8)
-            # else
-            #     pgcstack = reinsert_gcmarker!(llvm_f, builder)
-            #     ct = inbounds_gep!(builder, 
-            #         bitcast!(builder, pgcstack, T_ppjlvalue),
-            #         [LLVM.ConstantInt(current_task_offset(); ctx)])
-            #     ptls_field = inbounds_gep!(builder, 
-            #         ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
-            #     ptls = load!(builder, bitcast!(builder, ptls_field, T_ppint8))
-            # end
-            # 
-            # tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(Tuple{sret_types...})); ctx)  # do we need to root ETT
-            # tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
-            # tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
-
-            # Size = LLVM.ConstantInt(T_size_t, sizeof(combinedReturn))
-
-            # if VERSION < v"1.8.0"
-            #     obj = call!(builder, alloc_obj, [ptls, Size, tag])
-            # else
-            #     obj = call!(builder, alloc_obj, [ct, Size, tag])
-            # end
-
             pushfirst!(callparams, alloca!(builder, jltype))
         end
 
@@ -6093,9 +6043,6 @@ end
                 EnumAttribute("sret"; ctx)
             end
             LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
-            # st = store!(builder, load!(builder, callparams[1]), pointercast!(builder, obj, LLVM.PointerType(jltype, 10)))
-            #julia_post_cache_store(st.ref, builder.ref, C_NULL)
-            # r = obj
             r = load!(builder, callparams[1])
         end
 
