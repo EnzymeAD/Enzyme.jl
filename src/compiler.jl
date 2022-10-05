@@ -3620,9 +3620,15 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
         if !needs_dynamic_size_workaround
             # TODO Call declare_allocobj/emit_allocobj
-            alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
+            if VERSION < v"1.8.0"
+                alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
                 LLVM.FunctionType(T_prjlvalue, 
-                    [T_ppjlvalue, T_size_t, T_prjlvalue]))
+                    [T_pint8, T_size_t, T_prjlvalue]))
+            else
+                alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
+                    LLVM.FunctionType(T_prjlvalue, 
+                        [T_ppjlvalue, T_size_t, T_prjlvalue]))
+            end
         else
             # This doesn't allow for optimizations
             alloc_obj = get_function!(mod, "jl_gc_alloc_typed",
