@@ -442,6 +442,10 @@ function SetMustCache!(i1)
     ccall((:EnzymeSetMustCache, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
 end
 
+function SetForMemSet!(i1)
+    ccall((:EnzymeSetForMemSet, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,), i1)
+end
+
 function HasFromStack(i1)
     ccall((:EnzymeHasFromStack, libEnzyme),UInt8,(LLVM.API.LLVMValueRef,), i1) != 0
 end

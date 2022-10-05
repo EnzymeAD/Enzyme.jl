@@ -198,9 +198,17 @@ import .Compiler: CompilationException
     end
 end
 
-@inline any_active() = false
-@inline any_active(arg::Active{T}, args::Vararg{Any, N}) where {T, N} = true
-@inline any_active(arg, args::Vararg{Any, N}) where {T, N} = any_active(args...)
+@inline function any_active(args::Vararg{Any, N}) where N
+    any(ntuple(Val(N)) do i
+        Base.@_inline_meta
+        arg = @inbounds args[i]
+        if arg isa Active
+            return true
+        else
+            return false
+        end
+    end)
+end
 
 @inline function same_or_one_helper(current, next)
     if current == -1
