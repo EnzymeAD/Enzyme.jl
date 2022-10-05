@@ -952,8 +952,8 @@ end
     end
     A = Float64[1, 3, 3, 7]
     dA = Float64[1, 1, 1, 1]
-    # TODO this currently hits a GC segfault, this should be enabled
-    # autodiff(Reverse, cost, Const, Duplicated(A, dA))
+    autodiff(Reverse, cost, Const, Duplicated(A, dA))
+    @test dA ≈ [0.0, 1.0, 6.0, 1.0]
 end
 
 @testset "Split GC" begin
