@@ -1265,9 +1265,36 @@ function apply_latest_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     return nothing
 end
 
+function common_newstructv_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_new_struct")
+
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+
+function common_newstructv_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
+    return nothing
+end
+
+function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    common_newstructv_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+    return nothing
+end
+
+function new_structv_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    common_apply_latest_rev(1, B, OrigCI, gutils, tape)
+    return nothing
+end
+
 function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -1279,6 +1306,9 @@ function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
             common_apply_latest_fwd(2, B, OrigCI, gutils, normalR, shadowR)
             return nothing
         end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
+            return nothing
+        end
     end
     
     @assert false "jl_call calling convention not implemented yet", orig
@@ -1288,6 +1318,7 @@ end
 
 function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
    
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
@@ -1300,6 +1331,13 @@ function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             common_apply_latest_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
             return nothing
         end
+        if in(name, ("ijl_new_structv", "jl_new_structv"))
+            common_newstructv_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
+            return nothing
+        end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
+            return nothing
+        end
     end
 
     @assert false "jl_call calling convention not implemented yet", orig
@@ -1309,6 +1347,7 @@ end
 
 function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
     
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
@@ -1321,6 +1360,13 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
             common_apply_latest_rev(2, B, OrigCI, gutils, tape)
             return nothing
         end
+        if in(name, ("ijl_new_structv", "jl_new_structv"))
+            common_newstructv_rev(2, B, OrigCI, gutils, tape)
+            return nothing
+        end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
+            return nothing
+        end
     end
     
     @assert false "jl_call calling convention not implemented yet", orig
@@ -1330,12 +1376,16 @@ end
 
 function jlcall2_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
     
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
         if in(name, ("ijl_invoke", "jl_invoke"))
             common_invoke_fwd(2, B, OrigCI, gutils, normalR, shadowR)
+            return nothing
+        end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
             return nothing
         end
     end
@@ -1347,12 +1397,16 @@ end
 
 function jlcall2_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
    
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
         if in(name, ("ijl_invoke", "jl_invoke"))
             common_invoke_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
+            return nothing
+        end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
             return nothing
         end
     end
@@ -1364,12 +1418,16 @@ end
 
 function jlcall2_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(LLVM.parent(LLVM.parent(LLVM.parent(orig)))) 
     
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
         if in(name, ("ijl_invoke", "jl_invoke"))
             common_invoke_rev(2, B, OrigCI, gutils, tape)
+            return nothing
+        end
+        if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive"; ctx)), collect(function_attributes(F))))
             return nothing
         end
     end
@@ -2530,24 +2588,6 @@ end
 function apply_iterate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
-    return nothing
-end
-
-function new_structv_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_new_struct")
-
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
-    end
-
-    return nothing
-end
-
-function new_structv_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
     return nothing
 end
 
