@@ -284,6 +284,27 @@ end
     # @test dpar[:sub].d[:a].v ≈ 1.0 
 end
 
+let 
+    function loadsin(xp)
+        x = @inbounds xp[1]
+        @inbounds xp[1] = 0.0
+        sin(x)
+    end
+    global invsin
+    function invsin(xp)
+        xp = Base.invokelatest(convert, Vector{Float64}, xp)
+        loadsin(xp)
+    end
+    x = [2.0]
+end
+
+@testset "Struct return" begin
+    x = [2.0]
+    dx = [0.0]
+    @test Enzyme.autodiff(invsin, Active, Duplicated(x, dx)) == ()
+    @test dx[1] == -0.4161468365471424
+end
+
 function grad_closure(f, x)
     function noretval(x,res)
         y = f(x)
