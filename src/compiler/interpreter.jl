@@ -131,7 +131,7 @@ end
 
 import Core.Compiler: CallInfo
 function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
-    @nospecialize(src), @nospecialize(info::CallInfo) stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
+    @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     if is_primitive_func(mi.specTypes)
         return nothing
