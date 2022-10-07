@@ -90,7 +90,7 @@ function is_primitive_func(@nospecialize(TT))
     end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
        ft === typeof(Base.sinc) ||
-       ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) || 
+       ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) ||
        ft === typeof(Base.exp10) ||
        ft === typeof(Base.exp2) ||
        ft === typeof(Base.expm1) ||
@@ -126,21 +126,33 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
+# https://github.com/JuliaLang/julia/pull/46965
+@static if VERSION ≥ v"1.9.0-DEV.1535"
 
-# branch on https://github.com/JuliaLang/julia/pull/41328
-@static if isdefined(Core.Compiler, :is_stmt_inline)
-
-function Core.Compiler.inlining_policy(
-    interp::EnzymeInterpeter, @nospecialize(src), stmt_flag::UInt8,
-    mi::MethodInstance, argtypes::Vector{Any})
+import Core.Compiler: CallInfo
+function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
+    @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     if is_primitive_func(mi.specTypes)
         return nothing
     end
 
-    return Base.@invoke Core.Compiler.inlining_policy(
-        interp::AbstractInterpreter, src::Any, stmt_flag::UInt8,
-        mi::MethodInstance, argtypes::Vector{Any})
+    return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
+        src::Any, info::CallInfo, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
+end
+
+# https://github.com/JuliaLang/julia/pull/41328
+elseif isdefined(Core.Compiler, :is_stmt_inline)
+
+function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
+    @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
+
+    if is_primitive_func(mi.specTypes)
+        return nothing
+    end
+
+    return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
+        src::Any, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 end
 
 elseif isdefined(Core.Compiler, :inlining_policy)
