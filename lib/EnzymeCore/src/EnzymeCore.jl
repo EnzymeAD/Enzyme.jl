@@ -126,4 +126,6 @@ struct ForwardMode <: Mode
 end
 const Forward = ForwardMode()
 
+include("rules.jl")
+
 end # module EnzymeCore

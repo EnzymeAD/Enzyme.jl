@@ -40,8 +40,11 @@ end
 
 include("abi.jl")
 include("typetree.jl")
-include("rules.jl")
-include("rrules.jl")
+
+if Enzyme.EnyzmeRules.issupported()
+    include("rules.jl")
+    include("rrules.jl")
+end
 
 f0(x) = 1.0 + x
     function vrec(start, x)

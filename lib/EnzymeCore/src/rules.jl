@@ -1,10 +1,5 @@
 module EnzymeRules
 
-import ..Enzyme
-import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, Annotation
-
-function forward end
-
 """
 	augmented_primal(::typeof(f), args...)
 
@@ -13,13 +8,20 @@ Return the primal computation value and a tape
 function augmented_primal end
 
 """
+    forward
+
+Calculate the forward derivative
+"""
+function forward end
+
+"""
 Takes gradient of derivative, activity annotation, and tape
 """
 function reverse end
 
 import Core.Compiler: argtypes_to_type
 function has_frule(@nospecialize(TT), world=Base.get_world_counter())
-    atype = Tuple{typeof(EnzymeRules.forward), Type{TT}, Type, Vector{Type}}
+    atype = Tuple{typeof(forward), Type{TT}, Type, Vector{Type}}
 
     if VERSION < v"1.8.0-"
         res = ccall(:jl_gf_invoke_lookup, Any, (Any, UInt), atype, world)
@@ -31,7 +33,7 @@ function has_frule(@nospecialize(TT), world=Base.get_world_counter())
 end
 
 function has_rrule(@nospecialize(TT), world=Base.get_world_counter())
-    atype = Tuple{typeof(EnzymeRules.reverse), Type{TT}, Type, Vector{Type}, Bool, Bool, UInt64, Vector{Bool}}
+    atype = Tuple{typeof(reverse), Type{TT}, Type, Vector{Type}, Bool, Bool, UInt64, Vector{Bool}}
     
     if VERSION < v"1.8.0-"
         res = ccall(:jl_gf_invoke_lookup, Any, (Any, UInt), atype, world)
@@ -42,4 +44,12 @@ function has_rrule(@nospecialize(TT), world=Base.get_world_counter())
     return res !== nothing
 end
 
+function issupported()
+    @static if VERSION < v"1.7.0"
+        return false
+    else
+        return true
+    end
 end
+
+end # EnzymeRules

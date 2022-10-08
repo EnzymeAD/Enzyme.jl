@@ -5,11 +5,9 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, Bat
                Annotation, guess_activity, eltype, 
                API, TypeTree, typetree, only!, shift!, data0!, merge!,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
-import ..EnzymeRules
-
 using Enzyme
 
-import ..Enzyme: EnzymeRules
+import EnzymeCore: EnzymeRules
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
