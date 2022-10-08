@@ -1,6 +1,8 @@
 pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..")) # add Enzyme to environment stack
+pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..", "lib")) # add EnzymeCore to environment stack
 
 using Enzyme
+using EnzymeCore
 using Documenter
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
@@ -24,7 +26,7 @@ end
 examples = [title => joinpath("generated", string(name, ".md")) for (title, name) in examples]
 
 makedocs(;
-    modules=[Enzyme],
+    modules=[Enzyme, EnzymeCore],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
     repo="https://github.com/EnzymeAD/Enzyme.jl/blob/{commit}{path}#{line}",
     sitename="Enzyme.jl",

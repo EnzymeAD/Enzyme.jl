@@ -4,8 +4,8 @@ authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu
 version = "0.10.10"
 
 [deps]
-Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
@@ -16,7 +16,7 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
-Adapt = "3.3"
+EnzymeCore = "0.1"
 CEnum = "0.4"
 Enzyme_jll = "0.0.42"
 GPUCompiler = "0.16.2"

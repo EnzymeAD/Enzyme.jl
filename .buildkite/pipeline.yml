@@ -3,21 +3,66 @@ steps:
     plugins:
       - JuliaCI/julia#v1:
           version: "1.6"
-      - JuliaCI/julia-test#v1: ~
     agents:
       queue: "juliagpu"
       cuda: "*"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
+    commands: |
+      echo "--- Setup Julia packages"
+          julia --color=yes --project=. -e '
+              import Pkg
+              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+              '
+
+          echo "+++ Run tests"
+          julia --color=yes --project=. -e '
+            import Pkg
+            Pkg.test("Enzyme")
+            '
+
+steps:
+  - label: "Julia v1.7"
+    plugins:
+      - JuliaCI/julia#v1:
+          version: "1.7"
+    agents:
+      queue: "juliagpu"
+      cuda: "*"
+    if: build.message !~ /\[skip tests\]/
+    timeout_in_minutes: 60
+    commands: |
+      echo "--- Setup Julia packages"
+          julia --color=yes --project=. -e '
+              import Pkg
+              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+              '
+
+          echo "+++ Run tests"
+          julia --color=yes --project=. -e '
+            import Pkg
+            Pkg.test("Enzyme")
+            '
 
 steps:
   - label: "Julia v1"
     plugins:
       - JuliaCI/julia#v1:
           version: "1"
-      - JuliaCI/julia-test#v1: ~
     agents:
       queue: "juliagpu"
       cuda: "*"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
+    commands: |
+      echo "--- Setup Julia packages"
+          julia --color=yes --project=. -e '
+              import Pkg
+              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+              '
+
+          echo "+++ Run tests"
+          julia --color=yes --project=. -e '
+            import Pkg
+            Pkg.test("Enzyme")
+            '
