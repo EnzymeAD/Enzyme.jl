@@ -19,6 +19,7 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Pkg
+            Pkg.develop(path="lib/EnzymeCore")
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
       - run: |
