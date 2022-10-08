@@ -386,6 +386,23 @@ end
     @test Enzyme.autodiff(Forward, gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
+# dot product (https://github.com/EnzymeAD/Enzyme.jl/issues/495)
+@testset "Dot product" for T in (Float32, Float64)
+    xx = rand(T, 10)
+    grads = zeros(T, size(xx))
+    autodiff(Reverse, (y) -> mapreduce(x -> x*x, +, y), Duplicated(xx, grads))
+    @test xx .* 2 == grads
+
+    xx = rand(T, 10)
+    grads = zeros(T, size(xx))
+    autodiff(Reverse, (x) -> sum(x .* x), Duplicated(xx, grads))
+    @test xx .* 2 == grads
+
+    xx = rand(T, 10)
+    grads = zeros(T, size(xx))
+    autodiff(Reverse, (x) -> x' * x, Duplicated(xx, grads))
+    @test xx .* 2 == grads
+end
 
 @testset "Compare against" begin
     x = 3.0
