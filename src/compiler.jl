@@ -228,9 +228,6 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do ctx
     LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
 end
 
-# TODO: Calculate that constant... see get_current_task
-current_task_offset() = -12
-
 function emit_allocobj!(B, T, size)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -5939,7 +5936,7 @@ end
         k_name = GPUCompiler.safe_name(k.specfunc)
         has_custom_rule = false
         if mode == API.DEM_ForwardMode
-            has_custom_rule = EnzymeRules.has_frule(mi.specTypes)
+            has_custom_rule = EnzymeRules.has_frule_from_sig(mi.specTypes)
         else
             has_custom_rule = EnzymeRules.has_rrule(mi.specTypes)
         end

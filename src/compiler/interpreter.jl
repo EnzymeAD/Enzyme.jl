@@ -142,7 +142,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
         return nothing
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule(mi.specTypes, interp.world)
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
             return nothing
         end
     else

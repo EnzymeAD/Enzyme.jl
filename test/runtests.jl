@@ -43,17 +43,18 @@ include("typetree.jl")
 
 if Enzyme.EnyzmeRules.issupported()
     include("rules.jl")
-    include("rrules.jl")
+    # include("rrules.jl")
 end
 
 f0(x) = 1.0 + x
-    function vrec(start, x)
-        if start > length(x)
-            return 1.0
-        else
-            return x[start] * vrec(start+1, x)
-        end
+function vrec(start, x)
+    if start > length(x)
+        return 1.0
+    else
+        return x[start] * vrec(start+1, x)
     end
+end
+
 @testset "Internal tests" begin
     thunk_a = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
     thunk_b = Enzyme.Compiler.thunk(f0, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1))
