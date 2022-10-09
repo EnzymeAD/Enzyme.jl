@@ -20,12 +20,28 @@ the annotated function arguments.
 """
 function forward end
 
+struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
+const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+
+needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+width(::Config{<:Any, <:Any, Width}) where Width = Width
+overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+
+"""
+	augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+
+Return the primal computation value and a tape
+"""
+function augmented_primal end
+
 """
 Takes gradient of derivative, activity annotation, and tape
 """
 function reverse end
 
 _annotate(T::DataType) = TypeVar(gensym(), Annotation{T})
+_annotate(::Type{T}) where T = TypeVar(gensym(), Annotation{T})
 _annotate(VA::Core.TypeofVararg) = Core.TypeofVararg(_annotate(VA.T), VA.N)
 
 function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
