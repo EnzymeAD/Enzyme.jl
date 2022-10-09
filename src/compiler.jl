@@ -206,6 +206,7 @@ return_type(::AbstractThunk{F, RT, TT, Width, DF}) where {F, RT, TT, Width, DF} 
 
 using .JIT
 
+import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
 macro safe_show(exs...)
