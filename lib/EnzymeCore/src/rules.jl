@@ -42,7 +42,14 @@ function reverse end
 
 _annotate(T::DataType) = TypeVar(gensym(), Annotation{T})
 _annotate(::Type{T}) where T = TypeVar(gensym(), Annotation{T})
-_annotate(VA::Core.TypeofVararg) = Core.TypeofVararg(_annotate(VA.T), VA.N)
+function _annotate(VA::Core.TypeofVararg)
+    T = _annotate(VA.T)
+    if isdefined(VA, :N)
+        return Vararg{T, VA.N}
+    else
+        return Vararg{T}
+    end
+end
 
 function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     TT = Base.unwrap_unionall(TT)
