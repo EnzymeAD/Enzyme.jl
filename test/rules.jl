@@ -16,11 +16,11 @@ function forward(::Const{typeof(f)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDu
     return NTuple{N, T}(1000+2*x.val*dv for dv in x.dval)
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
+function forward(func::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
     return Duplicated(func.val(x.val), 100+2*x.val*x.dval)
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
+function forward(func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
     return BatchDuplicated(func.val(x.val), NTuple{N, T}(10000+2*x.val*dv for dv in x.dval))
 end
 

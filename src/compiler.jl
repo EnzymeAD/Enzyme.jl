@@ -2398,17 +2398,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    func = EnzymeRules.forward(mi.specTypes, RT, activity)
-    
-    if func == nothing
-        emit_error(B, "Enzyme: activity setting not provided for "*(string(RT))*" "*string(activity))
-        return
-    end
-
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    llvmf = nested_codegen!(mode, mod, func, Tuple{activity...})
+
+    insert!(activity, 2, Type{<:RT}) # TODO: Do we actually need RT in the rule?
+
+    llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, Tuple{activity...})
     
     sret = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))

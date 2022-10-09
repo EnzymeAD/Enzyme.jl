@@ -182,6 +182,7 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
     if EnzymeRules.has_frule(mi.specTypes) || EnzymeRules.has_rrule(mi.specTypes)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
+    @show state.interp
     ## TODO @vchuravy separate by mode like below
     # if state.inter.mode == API.DEM_ForwardMode
     #     if EnzymeRules.has_frule(mi.specTypes)
