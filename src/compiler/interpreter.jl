@@ -164,6 +164,15 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
     if is_primitive_func(mi.specTypes)
         return nothing
     end
+    if interp.mode == API.DEM_ForwardMode
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+            return nothing
+        end
+    else
+        if EnzymeRules.has_rrule(mi.specTypes, interp.world)
+            return nothing
+        end
+    end
 
     return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
         src::Any, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
@@ -179,20 +188,16 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
     if is_primitive_func(mi.specTypes) 
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
-    if EnzymeRules.has_frule(mi.specTypes) || EnzymeRules.has_rrule(mi.specTypes)
-        return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+    interp = state.interp
+    if interp.mode == API.DEM_ForwardMode
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+            return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+        end
+    else
+        if EnzymeRules.has_rrule(mi.specTypes, interp.world)
+            return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+        end
     end
-    @show state.interp
-    ## TODO @vchuravy separate by mode like below
-    # if state.inter.mode == API.DEM_ForwardMode
-    #     if EnzymeRules.has_frule(mi.specTypes)
-    #         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
-    #     end
-    # else
-    #     if EnzymeRules.has_rrule(mi.specTypes)
-    #         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
-    #     end
-    # end
 
     return Base.@invoke Core.Compiler.resolve_todo(
         todo::InliningTodo, state::InliningState)

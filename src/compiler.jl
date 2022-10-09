@@ -5935,8 +5935,14 @@ end
         has_custom_rule = false
         if mode == API.DEM_ForwardMode
             has_custom_rule = EnzymeRules.has_frule_from_sig(mi.specTypes)
+            if has_custom_rule
+                @safe_debug "Found frule for" mi.specTypes
+            end
         else
             has_custom_rule = EnzymeRules.has_rrule(mi.specTypes)
+            if has_custom_rule
+                @safe_debug "Found rrule for" mi.specTypes
+            end
         end
 
         if !(haskey(functions(mod), k_name) || has_custom_rule)
