@@ -2401,18 +2401,19 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    insert!(activity, 2, Type{<:RT}) # TODO: Do we actually need RT in the rule?
+    tt = copy(activity)
+    insert!(tt, 2, Type{RT})
 
-    llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, Tuple{activity...})
-    
+    llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, Tuple{tt...})
+
     sret = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
         sret = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[1])))
         pushfirst!(args, sret)
     end
 
-    for i in 1:length(args)
-        party =  llvmtype(parameters(llvmf)[i])
+    for i in eachindex(args)
+        party = llvmtype(parameters(llvmf)[i])
         if llvmtype(args[i]) == party
             continue
         end
