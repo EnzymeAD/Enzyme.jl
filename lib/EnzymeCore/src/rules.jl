@@ -25,10 +25,13 @@ Takes gradient of derivative, activity annotation, and tape
 """
 function reverse end
 
+_annotate(T::DataType) = TypeVar(gensym(), Annotation{T})
+_annotate(VA::Core.TypeofVararg) = Core.TypeofVararg(_annotate(VA.T), VA.N)
+
 function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     TT = Base.unwrap_unionall(TT)
     ft = TT.parameters[1]
-    tt = map(T -> TypeVar(gensym(), Annotation{T}), TT.parameters[2:end])
+    tt = map(_annotate, TT.parameters[2:end])
     TT = Tuple{<:Annotation{ft}, Type{<:Annotation}, tt...}
     isapplicable(forward, TT; world)
 end
