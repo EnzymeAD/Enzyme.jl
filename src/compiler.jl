@@ -207,6 +207,7 @@ return_type(::AbstractThunk{F, RT, TT, Width, DF}) where {F, RT, TT, Width, DF} 
 
 using .JIT
 
+import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
 macro safe_show(exs...)
@@ -2404,6 +2405,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     tt = copy(activity)
     insert!(tt, 2, Type{RT})
 
+    @safe_debug "Applying custom forward rule" tt
     llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, Tuple{tt...})
 
     sret = nothing
