@@ -3614,7 +3614,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             N = convert(Int, Count)
 
             ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
-            @assert sizeof(ETT) <= N*convert(Int, AlignedSize)
+            if sizeof(ETT) !=  N*convert(Int, AlignedSize)
+                @safe_error "Size of Enzyme tape is incorrect" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
+            end
 
             # Obtain tag
             tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
