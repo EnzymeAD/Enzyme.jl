@@ -3606,8 +3606,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
         TT = tape_type(LLVMType)
         if esizeof(TT) != convert(Int, AlignedSize)
-            @safe_show LLVMType
-            GPUCompiler.@safe_warn "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
+            GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
+            emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
+            return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
         end
         @assert esizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
@@ -3615,7 +3616,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
             ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
             if sizeof(ETT) !=  N*convert(Int, AlignedSize)
-                @safe_error "Size of Enzyme tape is incorrect" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
+                @safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
+                emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
+
+                return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
             end
 
             # Obtain tag
