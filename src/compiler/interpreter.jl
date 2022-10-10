@@ -146,7 +146,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
             return nothing
         end
     else
-        if EnzymeRules.has_rrule(mi.specTypes, interp.world)
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
             return nothing
         end
     end
@@ -169,7 +169,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
             return nothing
         end
     else
-        if EnzymeRules.has_rrule(mi.specTypes, interp.world)
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
             return nothing
         end
     end
@@ -194,7 +194,7 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     else
-        if EnzymeRules.has_rrule(mi.specTypes, interp.world)
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     end

@@ -5950,7 +5950,7 @@ end
                 @safe_debug "Found frule for" mi.specTypes
             end
         else
-            has_custom_rule = EnzymeRules.has_rrule(mi.specTypes)
+            has_custom_rule = EnzymeRules.has_rrule_from_sig(mi.specTypes; world)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
             end

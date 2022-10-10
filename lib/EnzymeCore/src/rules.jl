@@ -1,13 +1,8 @@
 module EnzymeRules
 
 import EnzymeCore: Annotation
-
-"""
-	augmented_primal(::typeof(f), args...)
-
-Return the primal computation value and a tape
-"""
-function augmented_primal end
+export Config, ConfigWidth
+export needs_primal, needs_shadow, width, overwritten
 
 """
     forward(func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
@@ -36,6 +31,8 @@ Return the primal computation value and a tape
 function augmented_primal end
 
 """
+    reverse(::Config, func::Annotation{typeof(f)}, dret::Annotation, tape, args::Annotation...)
+
 Takes gradient of derivative, activity annotation, and tape
 """
 function reverse end
@@ -57,6 +54,14 @@ function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     tt = map(_annotate, TT.parameters[2:end])
     TT = Tuple{<:Annotation{ft}, Type{<:Annotation}, tt...}
     isapplicable(forward, TT; world)
+end
+
+function has_rrule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
+    TT = Base.unwrap_unionall(TT)
+    ft = TT.parameters[1]
+    tt = map(_annotate, TT.parameters[2:end])
+    TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
+    isapplicable(reverse, TT; world)
 end
 
 function has_frule(@nospecialize(f); world=Base.get_world_counter())

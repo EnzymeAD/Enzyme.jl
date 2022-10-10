@@ -11,15 +11,8 @@ function f_ip(x)
    return nothing
 end
 
-import .EnzymeRules: augmented_primal, reverse#, Annotation, has_rrule, has_rrule_from_sig
+import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule, has_rrule_from_sig
 
-struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
-const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
-
-needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-width(::Config{<:Any, <:Any, Width}) where Width = Width
-overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
@@ -29,7 +22,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, x::Active, tape)
+function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -43,14 +36,19 @@ function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, 
     return (v,)
 end
 
-function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Const, x::Duplicated, tape)
+function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Const, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
     return ()
 end
 
+@testset "has_rrule" begin
+    @test has_rrule_from_sig(Base.signature_type(f, Tuple{Float64}))
+    @test has_rrule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
+end
+
 
 @testset "Custom Reverse Rules" begin
-        @test Enzyme.autodiff(Enzyme.Reverse, f, Active(2.0))[1] ≈ 104.0
+    @test Enzyme.autodiff(Enzyme.Reverse, f, Active(2.0))[1] ≈ 104.0
     @test Enzyme.autodiff(Enzyme.Reverse, x->f(x)^2, Active(2.0))[1] ≈ 42.0
 
     x = [2.0]
