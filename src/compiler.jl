@@ -2404,9 +2404,19 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     tt = copy(activity)
     insert!(tt, 2, Type{RT})
+    TT = Tuple{tt...}
 
-    @safe_debug "Applying custom forward rule" tt
-    llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, Tuple{tt...})
+    # TODO get world
+    world= Base.get_current_world()
+    if EnzymeRules.isapplicable(forward, TT; world)
+        @safe_debug "Applying custom forward rule" TT
+        llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT)
+    else
+        @safe_debug "No custom forward rule isapplicable for" TT
+        emit_error(B, "Enzyme: No custom rule was appliable for " * string(TT))
+        return nothing
+    end
+
 
     sret = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))

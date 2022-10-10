@@ -25,6 +25,9 @@ function forward(func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDupl
 end
 
 @testset "has_frule" begin
+    @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}))
+    @test has_frule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
+
     @test has_frule(f)
     @test has_frule(f, Duplicated)
     @test has_frule(f, DuplicatedNoNeed)
@@ -45,8 +48,6 @@ end
     @test has_frule(f, Tuple{<:Annotation})
     @test has_frule(f, Tuple{<:Annotation{Float64}})
     @test !has_frule(f, Tuple{<:Const})
-
-    @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}))
 end
 
 @testset "autodiff(Forward, ...) custom rules" begin
@@ -84,5 +85,8 @@ end
     @test vec ≈ [4.0]
     @test dvec ≈ [14.0]
 end
+
+# TODO: Test error for no frule applicable despite frule on Function.
+
 
 end # module ForwardRules
