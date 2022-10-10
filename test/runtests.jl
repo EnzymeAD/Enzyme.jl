@@ -1218,6 +1218,30 @@ end
     # TODO: Add test for NoShadowException
 end
 
+function objective!(x, loss, R)
+    for i in 1:1000
+        y = zeros(3)
+        y[1] = R[1,1] * x[1] + R[1,2] * x[2] + R[1,3] * x[3]
+
+        loss[] = y[1]
+    end
+    return nothing
+end;
+
+@testset "Static tape allocation" begin
+    x = zeros(3)
+    R = [1.0 0.0 0.0
+        0.0 1.0 0.0
+        0.0 0.0 1.0]
+    loss = Ref(0.0)
+    dloss = Ref(1.0)
+
+    autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), R)
+
+    @test loss[] ≈ 0.0
+    @show dloss[] ≈ 0.0
+end
+
 @testset "Union return" begin
     function unionret(a, out, cond)
         if cond

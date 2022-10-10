@@ -3466,6 +3466,9 @@ to_tape_type(::LLVM.LLVMFP128) = Float128
 
 function tape_type(LLVMType) 
     TT = to_tape_type(LLVMType)
+    if TT == Any
+        return AnonymousStruct(Tuple{Any})
+    end
     return TT
 end
 
