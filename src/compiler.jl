@@ -206,6 +206,7 @@ return_type(::AbstractThunk{F, RT, TT, Width, DF}) where {F, RT, TT, Width, DF} 
 
 using .JIT
 
+import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
 macro safe_show(exs...)
@@ -3465,6 +3466,9 @@ to_tape_type(::LLVM.LLVMFP128) = Float128
 
 function tape_type(LLVMType) 
     TT = to_tape_type(LLVMType)
+    if TT == Any
+        return AnonymousStruct(Tuple{Any})
+    end
     return TT
 end
 
@@ -3605,15 +3609,21 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
         TT = tape_type(LLVMType)
         if esizeof(TT) != convert(Int, AlignedSize)
-            @safe_show LLVMType
-            GPUCompiler.@safe_warn "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
+            GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize=convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
+            emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
+            return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
         end
         @assert esizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
 
             ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
-            @assert sizeof(ETT) <= N*convert(Int, AlignedSize)
+            if sizeof(ETT) !=  N*convert(Int, AlignedSize)
+                @safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
+                emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
+
+                return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
+            end
 
             # Obtain tag
             tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
