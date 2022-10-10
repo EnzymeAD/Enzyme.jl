@@ -5927,6 +5927,7 @@ end
     foundTys = Dict{String, Tuple{LLVM.FunctionType, Core.MethodInstance}}()
 
     jobref = Ref(job)
+    world = job.source.world
 
     actualRetType = nothing
     customDerivativeNames = String[]
@@ -5934,7 +5935,7 @@ end
         k_name = GPUCompiler.safe_name(k.specfunc)
         has_custom_rule = false
         if mode == API.DEM_ForwardMode
-            has_custom_rule = EnzymeRules.has_frule_from_sig(mi.specTypes)
+            has_custom_rule = EnzymeRules.has_frule_from_sig(mi.specTypes; world)
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
