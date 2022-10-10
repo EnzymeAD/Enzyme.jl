@@ -26,7 +26,9 @@ overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Over
 """
 	augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Return the primal computation value and a tape
+Must return a tuple of length 2.
+The first-value is primal value and the second is the tape. If no tape is
+required return `(val, nothing)`.
 """
 function augmented_primal end
 

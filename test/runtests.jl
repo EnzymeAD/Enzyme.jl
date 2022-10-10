@@ -43,7 +43,7 @@ include("typetree.jl")
 
 if Enzyme.EnyzmeRules.issupported()
     include("rules.jl")
-    # include("rrules.jl")
+    include("rrules.jl")
 end
 
 f0(x) = 1.0 + x

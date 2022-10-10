@@ -2336,7 +2336,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
     
     @assert op_idx-1 == length(ops)
 
-    return args, activity, overwritten, actives
+    return args, activity, (overwritten...,), actives
 end
 
 function enzyme_custom_setup_ret(gutils, orig, mi, job)
@@ -2408,12 +2408,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     # TODO get world
     world= Base.get_current_world()
-    if EnzymeRules.isapplicable(forward, TT; world)
+    if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
         @safe_debug "Applying custom forward rule" TT
         llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT)
     else
-        @safe_debug "No custom forward rule isapplicable for" TT
-        emit_error(B, "Enzyme: No custom rule was appliable for " * string(TT))
+        @safe_debug "No custom forward rule is applicable for" TT
+        emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
         return nothing
     end
 
@@ -2509,37 +2509,80 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    tup = EnzymeRules.reverse(mi.specTypes, RT, activity, needsPrimal, needsShadow, width, overwritten)
-     
-    if tup == nothing
-        emit_error(B, "Enzyme: activity setting not provided for "*(string(RT))*" "*string(activity))
+    # TODO get world
+    world = Base.get_world_counter()
+
+    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    augprimal_tt = copy(activity)
+    insert!(augprimal_tt, 2, Type{RT})
+    pushfirst!(augprimal_tt, C)
+    augprimal_TT = Tuple{augprimal_tt...}
+
+    @safe_show augprimal_TT
+    aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+    @safe_show aug_RT
+
+    if aug_RT === Union{} ||
+       aug_RT isa Union   ||
+       !(aug_RT <: Tuple) ||
+       length(aug_RT.parameters) != 2 
+
+        @safe_debug "Custom augmented_primal rule has invalid return type" TT=augprimal_TT RT=aug_RT
+        emit_error(B, orig, "Enzyme: Custom rule " * string(augprimal_TT) * " resulted in " * string(aug_RT))
         return C_NULL
     end
-    aug_func, rev_func, tapeType = tup
-    needsTape = !GPUCompiler.isghosttype(tapeType) && !Core.Compiler.isconstType(tapeType)
-    
-    tapeV = C_NULL
-    if forward && needsTape
-        tapeV = LLVM.UndefValue(convert(LLVMType, tapeType; ctx)).ref
-    end
+
+    TapeT = aug_RT.parameters[2]
+    @safe_show TapeT
 
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     if forward
-        llvmf = nested_codegen!(mode, mod, aug_func, Tuple{activity...})
-    else
-        argTys = copy(activity)
-        if RT <: Active
-            if width == 1
-                push!(argTys, RealRt)
-            else
-                push!(argTys, NTuple{RealRt, (Int64)width})
-            end
+        if EnzymeRules.isapplicable(EnzymeRules.augmented_primal, augprimal_TT; world)
+            @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
+            llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT)
+        else
+            @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
+            emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(augprimal_TT))
+            return C_NULL
         end
-        push!(argTys, tapeType)
-        llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...})
+    else
+        tt = copy(activity)
+        insert!(tt, 2, RT)
+        insert!(tt, 3, TapeT)
+        pushfirst!(tt, C)
+        TT = Tuple{tt...}
+
+        if EnzymeRules.isapplicable(EnzymeRules.reverse, TT; world)
+            @safe_debug "Applying custom reverse rule" TT
+            llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, TT)
+        else
+            @safe_debug "No custom reverse rule is applicable for" TT
+            emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
+            return C_NULL
+        end
     end
+     
+    needsTape = !GPUCompiler.isghosttype(TapeT) && !Core.Compiler.isconstType(TapeT)
+    
+    tapeV = C_NULL
+    if forward && needsTape
+        tapeV = LLVM.UndefValue(convert(LLVMType, TapeT; ctx)).ref
+    end
+
+    # if !forward
+    #     argTys = copy(activity)
+    #     if RT <: Active
+    #         if width == 1
+    #             push!(argTys, RealRt)
+    #         else
+    #             push!(argTys, NTuple{RealRt, (Int64)width})
+    #         end
+    #     end
+    #     push!(argTys, tapeType)
+    #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...})
+    # end
     
     sret = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))

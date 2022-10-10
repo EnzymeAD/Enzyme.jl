@@ -12,13 +12,13 @@ function f_ip(x)
 end
 
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule, has_rrule_from_sig
-
+using .EnzymeRules
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return (func.val(x.val), nothing)
     else
-        return (nothing, nothing) # or (nothing,)
+        return (nothing, nothing)
     end
 end
 
@@ -33,7 +33,7 @@ end
 function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     v = x.val[1]
     x.val[1] *= v
-    return (v,)
+    return (nothing, v)
 end
 
 function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Const, tape, x::Duplicated)
