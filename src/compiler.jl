@@ -3414,7 +3414,7 @@ nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
 mutable struct EnzymeTape{N, T}
-    data::NTuple{N, T}
+    data::NamedTuple{ntuple(i->Symbol(i), Val(N)), NTuple{N,T}}
 end
 
 mutable struct EnzymeTapeToLoad{T}
@@ -3613,7 +3613,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             N = convert(Int, Count)
 
             ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
-            @assert sizeof(ETT) <= N*convert(Int, AlignedSize)
+        
+            @show N, Count, ETT, sizeof(ETT)
+            
+            @assert sizeof(ETT) == N*convert(Int, AlignedSize)
 
             # Obtain tag
             tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
@@ -3683,7 +3686,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
                 LLVM.FunctionType(T_prjlvalue,
                     [T_pint8, T_size_t, T_prjlvalue]))
         end
-
+        
         if VERSION < v"1.7.0"
             ptls = reinsert_gcmarker!(func, B)
             ptls = bitcast!(B, ptls, T_pint8)
