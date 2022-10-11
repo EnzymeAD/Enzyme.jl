@@ -3,20 +3,20 @@
 ## Types and constants
 
 ```@index
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore]
 Order = [:type, :constant]
 ```
 
 ## Functions and macros
 
 ```@index
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore]
 Order = [:macro, :function]
 ```
 
 # Documentation
 
 ```@autodocs
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore]
 Order = [:module, :type, :constant, :macro, :function]
 ```

@@ -6,6 +6,10 @@ using EnzymeCore
 using Documenter
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+DocMeta.setdocmeta!(EnzymeCore, :DocTestSetup, :(using EnzymeCore); recursive=true)
+@eval EnzymeCore begin
+    const Enzyme = $(Enzyme)
+end
 
 # Generate examples
 

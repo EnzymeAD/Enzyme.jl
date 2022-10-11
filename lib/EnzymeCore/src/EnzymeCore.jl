@@ -10,7 +10,7 @@ function batch_size end
 """
     abstract type Annotation{T}
 
-Abstract type for [`autodiff`](@ref) function argument wrappers like
+Abstract type for [`autodiff`](@ref Enzyme.autodiff) function argument wrappers like
 [`Const`](@ref), [`Active`](@ref) and [`Duplicated`](@ref).
 """
 abstract type Annotation{T} end
@@ -19,7 +19,7 @@ Base.eltype(::Type{<:Annotation{T}}) where T = T
 """
     Const(x)
 
-Mark a function argument `x` of [`autodiff`](@ref) as constant,
+Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as constant,
 Enzyme will not auto-differentiate in respect `Const` arguments.
 """
 struct Const{T} <: Annotation{T}
@@ -33,7 +33,7 @@ Const(::Type{T}) where T = Const{Type{T}}(T)
 """
     Active(x)
 
-Mark a function argument `x` of [`autodiff`](@ref) as active,
+Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as active,
 Enzyme will auto-differentiate in respect `Active` arguments.
 
 !!! note
@@ -52,7 +52,7 @@ Active(i::Integer) = Active(float(i))
 """
     Duplicated(x, ∂f_∂x)
 
-Mark a function argument `x` of [`autodiff`](@ref) as duplicated, Enzyme will
+Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as duplicated, Enzyme will
 auto-differentiate in respect to such arguments, with `dx` acting as an
 accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 `∂f_∂x`.
