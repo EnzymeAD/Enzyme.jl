@@ -3586,6 +3586,10 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
+function throw_allocation_error(tag, jl_size, enz_size)
+    error("Enzyme: Allocation failed, size mismatch between Julia $(jl_size) and Enzyme $(enz_size) for $(tag)")
+end
+
 function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -3706,6 +3710,27 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
                 ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
             ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
         end
+
+        # TODO: Only do this in a debug mode?
+        addr = @cfunction(Base.sizeof, Int, (Any,))
+        addr = LLVM.ConstantInt(reinterpret(Int, addr); ctx)
+        sizeof_fn = LLVM.const_inttoptr(addr, LLVM.PointerType(LLVM.FunctionType(T_size_t, [T_prjlvalue])))
+        sz = call!(B, sizeof_fn, [tag])
+        cond = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, sz, Size)
+
+        bb_err = BasicBlock(fn, "err"; ctx)
+        bb_succ = BasicBlock(fn, "succ"; ctx)
+        br!(B, cond, bb_succ, bb_err)
+
+        position!(B, bb_err)
+        addr = @cfunction(throw_allocation_error, Cvoid, (Any, Int, Int))
+        addr = LLVM.ConstantInt(reinterpret(Int, addr); ctx)
+        alloc_err_fn = LLVM.const_inttoptr(addr, LLVM.PointerType(LLVM.FunctionType(T_void, [T_prjlvalue, T_size_t, T_size_t])))
+
+        call!(B, alloc_err_fn, [tag, sz, Size])
+        unreachable!(B)
+
+        position!(B, bb_succ)
 
         if !needs_dynamic_size_workaround
             if VERSION < v"1.8.0"
