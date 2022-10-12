@@ -1580,7 +1580,7 @@ end
 	grads = zero(ps)
 	for epoch=1:1000
 		fill!(grads, 0)
-		autodiff(Reverse, ldtnloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
+		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
 	end
 
 end
