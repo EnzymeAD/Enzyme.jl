@@ -3613,7 +3613,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
 
-            ETT = N == 1 ? EnzymeTapeToLoad{TT} : NTuple{N, TT}
+            ETT = N == 1 ? TT : NTuple{N, TT}
             if sizeof(ETT) !=  N*convert(Int, AlignedSize)
                 @safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
                 emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
