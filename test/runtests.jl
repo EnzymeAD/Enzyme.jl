@@ -455,6 +455,18 @@ end
     test_scalar(sumsincos, 1.0, rtol=1e-5, atol=1e-5)
 end
 
+@testset "BoxFloat" begin
+    function boxfloat(x)
+        x = ccall(:jl_box_float64, Any, (Float64,), x)
+        (sin(x)::Float64 + x)::Float64
+    end
+    @test 0.5838531634528576 ≈ Enzyme.autodiff(Reverse, boxfloat, Active, Active(2.0))[1]
+    @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, DuplicatedNoNeed, Duplicated(2.0, 1.0))[1]
+    res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 2.0)))[1]
+    @test 0.5838531634528576 ≈ res[1]
+    @test 1.1677063269057153 ≈ res[2]
+end
+
 """
     J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
 """
