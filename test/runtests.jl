@@ -1559,3 +1559,28 @@ end
     @test c ≈ [1.0, 1.0, 1.0]    
     @test fres ≈ [1.0, 1.0, 1.0]    
 end
+
+@testset "Large dynamic tape" begin
+	
+	function ldynloss(X, Y, ps, bs)
+		ll = 0.0f0
+		for (x, y) in zip(X, Y)
+			yhat = ps * x .+ bs
+			ll += (yhat[1] - y)^2
+		end
+		return ll
+	end
+
+	ps = randn(Float32, (1, 5))
+	bs = randn(Float32)
+
+	X = map(x->rand(Float32, 5), 1:1000)
+	Y = map(x->rand(Float32), 1:1000)
+
+	grads = zero(ps)
+	for epoch=1:1000
+		fill!(grads, 0)
+		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
+	end
+
+end

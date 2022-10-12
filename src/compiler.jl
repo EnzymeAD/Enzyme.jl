@@ -3414,10 +3414,6 @@ nfields(Type::LLVM.VectorType) = size(Type)
 nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
-mutable struct EnzymeTape{N, T}
-    data::NTuple{N, T}
-end
-
 mutable struct EnzymeTapeToLoad{T}
     data::T
 end
@@ -3617,7 +3613,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         if Count isa LLVM.ConstantInt
             N = convert(Int, Count)
 
-            ETT = N == 1 ? EnzymeTapeToLoad{TT} : EnzymeTape{N, TT}
+            ETT = N == 1 ? TT : NTuple{N, TT}
             if sizeof(ETT) !=  N*convert(Int, AlignedSize)
                 @safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
                 emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
@@ -3642,7 +3638,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             f_apply_type = get_function!(mod, "jl_f_apply_type", generic_FT)
 
 
-            ptr = unsafe_to_pointer(EnzymeTape)
+            ptr = unsafe_to_pointer(NTuple)
 
             EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, ptr); ctx)
             EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
