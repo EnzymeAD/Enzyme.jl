@@ -3349,19 +3349,20 @@ parent_scope(val::LLVM.Argument, depth=0) = parent_scope(LLVM.Function(LLVM.API.
 
 function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
     msg = Base.unsafe_string(cstr)
-    val = LLVM.Value(val)
-    if isa(val, LLVM.Instruction)
-        bt = GPUCompiler.backtrace(val)
-    else
-        bt = nothing
+    bt = nothing
+    ir = nothing
+    if val != C_NULL
+        val = LLVM.Value(val)
+        if isa(val, LLVM.Instruction)
+            bt = GPUCompiler.backtrace(val)
+        end
+        if !isa(val, LLVM.ConstantExpr)
+            # Need to convert function to string, since when the error is going to be printed
+            # the module might have been destroyed
+            ir = sprint(io->show(io, parent_scope(val)))
+        end
     end
-    if isa(val, LLVM.ConstantExpr)
-        ir = nothing
-    else
-        # Need to convert function to string, since when the error is going to be printed
-        # the module might have been destroyed
-        ir = sprint(io->show(io, parent_scope(val)))
-    end
+    
     if errtype == API.ET_NoDerivative
         throw(NoDerivativeException(msg, ir, bt))
     elseif errtype == API.ET_NoShadow
@@ -3386,6 +3387,26 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(IllegalFirstPointerException(msg, ir, bt))
     elseif errtype == API.ET_InternalError
         throw(EnzymeInternalError(msg, ir, bt))
+    elseif errtype == API.ET_TypeDepthExceeded
+        function c(io)
+            print(io, msg)
+            println(io)
+
+            if val != C_NULL
+                println(io, val)
+            end
+        
+            st = API.EnzymeTypeTreeToString(data)
+            println(io, Base.unsafe_string(st))
+            API.EnzymeStringFree(st)
+
+            if bt !== nothing
+                Base.show_backtrace(io, bt)
+            end
+        end
+        msg2 = sprint(c)
+        GPUCompiler.@safe_warn msg2
+        return
     end
     throw(AssertionError("Unknown errtype"))
 end
