@@ -10,16 +10,18 @@ steps:
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-          julia --color=yes --project=. -e '
-              import Pkg
-              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-              '
+      julia --color=yes --project=. -e '
+          import Pkg
+          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+          '
 
-          echo "+++ Run tests"
-          julia --color=yes --project=. -e '
-            import Pkg
-            Pkg.test("Enzyme")
-            '
+      echo "+++ Run tests"
+      julia --color=yes --project=. -e '
+        import Pkg
+        Pkg.test("Enzyme")
+        '
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
 steps:
   - label: "Julia v1.7"
@@ -33,16 +35,18 @@ steps:
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-          julia --color=yes --project=. -e '
-              import Pkg
-              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-              '
+      julia --color=yes --project=. -e '
+          import Pkg
+          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+          '
 
-          echo "+++ Run tests"
-          julia --color=yes --project=. -e '
-            import Pkg
-            Pkg.test("Enzyme")
-            '
+      echo "+++ Run tests"
+      julia --color=yes --project=. -e '
+        import Pkg
+        Pkg.test("Enzyme")
+        '
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
 steps:
   - label: "Julia v1"
@@ -56,13 +60,15 @@ steps:
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-          julia --color=yes --project=. -e '
-              import Pkg
-              Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-              '
+      julia --color=yes --project=. -e '
+          import Pkg
+          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+          '
 
-          echo "+++ Run tests"
-          julia --color=yes --project=. -e '
-            import Pkg
-            Pkg.test("Enzyme")
-            '
+      echo "+++ Run tests"
+      julia --color=yes --project=. -e '
+        import Pkg
+        Pkg.test("Enzyme")
+        '
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
