@@ -78,6 +78,8 @@ jobs:
         run: |
           using Pkg
           Pkg.develop(path="lib/EnzymeCore")
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
         run: |
@@ -110,6 +112,8 @@ jobs:
             Pkg.develop(path="lib/EnzymeCore")
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - run: |
           julia --project=docs -e '
             using Documenter: DocMeta, doctest

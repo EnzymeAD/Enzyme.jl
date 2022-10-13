@@ -22,6 +22,8 @@ jobs:
             Pkg.develop(path="lib/EnzymeCore")
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - run: |
           julia --project=docs -e '
             using Documenter: DocMeta, doctest
