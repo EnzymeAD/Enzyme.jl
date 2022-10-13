@@ -229,33 +229,77 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
     T_size_t = convert(LLVM.LLVMType, Int; ctx)
-    LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
+ 
+    @static if VERSION < v"1.8.0"
+        T_int8 = LLVM.Int8Type(ctx)
+        T_pint8 = LLVM.PointerType(T_int8)
+        LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
+    else
+        LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
+    end
 end
-function emit_allocobj!(B, T, size)
+function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 	ctx = context(mod)
-    func = declare_allocobj!(mod)
-	
-	T_size = parameters(eltype(llvmtype(func)))[2]
-    
+	 
 	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-
     T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
-	ty = LLVM.const_inttoptr(LLVM.ConstantInt(convert(Int, pointer_from_objref(T)); ctx), LLVM.PointerType(T_jlvalue))
-	ty = LLVM.const_addrspacecast(ty, T_prjlvalue)
 
-    pgcstack = reinsert_gcmarker!(fn, B)
-    ct = inbounds_gep!(B, bitcast!(B, pgcstack, T_ppjlvalue), [LLVM.ConstantInt(current_task_offset(); ctx)])
+ 
+    @static if VERSION < v"1.7.0"
+        T_int8 = LLVM.Int8Type(ctx)
+        T_pint8 = LLVM.PointerType(T_int8)
+        ptls = reinsert_gcmarker!(fn, B)
+        ptls = bitcast!(B, ptls, T_pint8)
+    else
+        pgcstack = reinsert_gcmarker!(fn, B)
+        ct = inbounds_gep!(B, 
+            bitcast!(B, pgcstack, T_ppjlvalue),
+            [LLVM.ConstantInt(current_task_offset(); ctx)])
+        ptls_field = inbounds_gep!(B, 
+            ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
+        ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
+    end
 
-	size = LLVM.ConstantInt(T_size, size)
-    return call!(B, func, [ct, size, ty])
+    if needs_workaround
+        T_size_t = convert(LLVM.LLVMType, Int; ctx)
+        # This doesn't allow for optimizations
+        alloc_obj = get_function!(mod, "jl_gc_alloc_typed",
+            LLVM.FunctionType(T_prjlvalue,
+                [T_pint8, T_size_t, T_prjlvalue]))
+        return call!(B, alloc_obj, [ptls, Size, tag])
+    end
+
+
+    alloc_obj = declare_allocobj!(mod)
+
+    @static if VERSION < v"1.8.0"
+        return call!(B, alloc_obj, [ptls, Size, tag])
+    else
+        return call!(B, alloc_obj, [ct, Size, tag])
+    end
 end
-function emit_allocobj!(B, T)
-    emit_allocobj!(B, T, sizeof(T))
+function emit_allocobj!(B, T::DataType)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+	ctx = context(mod)
+    
+	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    
+    # Obtain tag
+    tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(T)); ctx)  # do we need to root ETT
+    tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
+    tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
+    
+    T_size_t = convert(LLVM.LLVMType, Int; ctx)
+    Size = LLVM.ConstantInt(T_size_t, sizeof(T))
+    emit_allocobj!(B, tag, Size, #=needs_workaround=#false)
 end
 declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -3781,48 +3825,8 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         else
             needs_dynamic_size_workaround = !isa(Size, LLVM.ConstantInt) || convert(Int64, Size) != 1
         end
-
-        T_size_t = convert(LLVM.LLVMType, Int; ctx)
-        if !needs_dynamic_size_workaround
-            # TODO Call declare_allocobj/emit_allocobj
-            if VERSION < v"1.8.0"
-                alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
-                LLVM.FunctionType(T_prjlvalue, 
-                    [T_pint8, T_size_t, T_prjlvalue]))
-            else
-                alloc_obj = get_function!(mod, "julia.gc_alloc_obj",
-                    LLVM.FunctionType(T_prjlvalue, 
-                        [T_ppjlvalue, T_size_t, T_prjlvalue]))
-            end
-        else
-            # This doesn't allow for optimizations
-            alloc_obj = get_function!(mod, "jl_gc_alloc_typed",
-                LLVM.FunctionType(T_prjlvalue,
-                    [T_pint8, T_size_t, T_prjlvalue]))
-        end
-
-        if VERSION < v"1.7.0"
-            ptls = reinsert_gcmarker!(func, B)
-            ptls = bitcast!(B, ptls, T_pint8)
-        else
-            pgcstack = reinsert_gcmarker!(func, B)
-            ct = inbounds_gep!(B, 
-                bitcast!(B, pgcstack, T_ppjlvalue),
-                [LLVM.ConstantInt(current_task_offset(); ctx)])
-            ptls_field = inbounds_gep!(B, 
-                ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
-            ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
-        end
-
-        if !needs_dynamic_size_workaround
-            if VERSION < v"1.8.0"
-                obj = call!(B, alloc_obj, [ptls, Size, tag])
-            else
-                obj = call!(B, alloc_obj, [ct, Size, tag])
-            end
-        else
-            obj = call!(B, alloc_obj, [ptls, Size, tag])
-        end
+        
+        obj = emit_allocobj!(B, tag, Size, needs_dynamic_size_workaround)
         
         if ZI != C_NULL
             pc = pointercast!(B, obj, LLVM.PointerType(T_int8, Tracked ))
