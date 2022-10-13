@@ -265,6 +265,7 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
     end
 
     if needs_workaround
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
         T_size_t = convert(LLVM.LLVMType, Int; ctx)
         # This doesn't allow for optimizations
         alloc_obj = get_function!(mod, "jl_gc_alloc_typed",
