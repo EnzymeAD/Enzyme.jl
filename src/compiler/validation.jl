@@ -76,6 +76,10 @@ module FFI
             "jl_array_sizehint", "ijl_array_sizehint",
             "jl_get_keyword_sorter", "ijl_get_keyword_sorter",
             "jl_ptr_to_array",
+            "jl_box_float32", 
+            "ijl_box_float32", 
+            "jl_box_float64", 
+            "ijl_box_float64", 
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
             "memcmp"
