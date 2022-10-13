@@ -247,11 +247,10 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
 	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
 
-
+    T_int8 = LLVM.Int8Type(ctx)
+    T_pint8 = LLVM.PointerType(T_int8)
  
     @static if VERSION < v"1.7.0"
-        T_int8 = LLVM.Int8Type(ctx)
-        T_pint8 = LLVM.PointerType(T_int8)
         ptls = reinsert_gcmarker!(fn, B)
         ptls = bitcast!(B, ptls, T_pint8)
     else
@@ -261,6 +260,7 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
             [LLVM.ConstantInt(current_task_offset(); ctx)])
         ptls_field = inbounds_gep!(B, 
             ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
+        T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, bitcast!(B, ptls_field, T_ppint8))
     end
 
