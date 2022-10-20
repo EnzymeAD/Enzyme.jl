@@ -3765,14 +3765,15 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
         while length(todo) != 0
             path, ty, jlty = popfirst!(todo)
             if isa(ty, LLVM.PointerType)
-                loc = gep!(builder, nobj, path)
                 if any_jltypes(ty) 
+                    loc = gep!(builder, nobj, path)
                     fill_val = unsafe_to_pointer(nothing)
                     fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
                     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
                     fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
                     store!(builder, fill_val, loc)
                 elseif zeroAll
+                    loc = gep!(builder, nobj, path)
                     store!(builder, LLVM.null(ty), loc)
                 end
                 continue
@@ -3824,14 +3825,14 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
-    wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [llvmtype(obj), T_prjlvalue, llvmtype(Size)]))
+    wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [llvmtype(obj), T_int8, llvmtype(Size)]))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0; ctx))
     let builder = Builder(ctx)
         entry = BasicBlock(wrapper_f, "entry"; ctx)
         loop = BasicBlock(wrapper_f, "loop"; ctx)
         exit = BasicBlock(wrapper_f, "exit"; ctx)
         position!(builder, entry)
-        nobj, fval, nsize = collect(parameters(wrapper_f))
+        nobj, _, nsize = collect(parameters(wrapper_f))
         nobj = pointercast!(builder, nobj, LLVM.PointerType(LLVMType, addrspace(llvmtype(nobj))))
 
         LLVM.br!(builder, loop)
@@ -3840,7 +3841,7 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
         inc = add!(builder, idx, LLVM.ConstantInt(llvmtype(Size), 1))
         append!(LLVM.incoming(idx), [(LLVM.ConstantInt(llvmtype(Size), 0), entry), (inc, loop)])
     
-        zero_single_allocation(B, jlType, LLVMType, nobj, zeroAll, idx, ctx)
+        zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, ctx)
         
         br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, LLVM.Value(LLVM.API.LLVMBuildExactUDiv(builder, Size, AlignedSize, ""))), exit, loop)
         position!(builder, exit)
@@ -3849,7 +3850,7 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
 
         dispose(builder)
     end
-    return call!(B, wrapper_f, [obj,  fill_val, Size]).ref
+    return call!(B, wrapper_f, [obj, LLVM.ConstantInt(T_int8, 0), Size]).ref
 end
 
 function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
