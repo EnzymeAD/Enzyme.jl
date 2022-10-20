@@ -418,6 +418,10 @@ function EnzymeSetCustomDeallocator(handler)
     ptr = cglobal((:CustomDeallocator, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
+function EnzymeSetCustomZero(handler)
+    ptr = cglobal((:CustomZero, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
 
 function EnzymeHasCustomAllocatorSupport()
     try
