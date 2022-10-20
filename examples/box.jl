@@ -188,7 +188,7 @@ end
 
 # ## Define forward functions
 
-# Finally, we create two functions, bthe first of which computes and stores all the 
+# Finally, we create two functions, the first of which computes and stores all the 
 # states of the system, and the second which has been written specifically to be 
 # passed to Enzyme. 
 
@@ -339,14 +339,14 @@ autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([T
 # \frac{\partial J}{\partial \mathbf{x}(0)}
 # ```
 #
-# where `x(t)`` is the state of the model at time t. If we think about `x(t_f)`` as solely depending on the 
+# where ``x(t)`` is the state of the model at time t. If we think about ``x(t_f)`` as solely depending on the 
 # initial condition, then this derivative is really 
 #
 # ```math
 # \frac{\partial J}{\partial \mathbf{x}(0)} = \frac{\partial}{\partial \mathbf{x}(0)} \left( (1,0,0,0,0,0)^T \cdot L(\ldots(L(\mathbf{x}(0)))) \right) 
 # ```
 #
-# with L(x(t)) = x(t + dt), i.e. one forward step. One could expand this derivative with the chain rule (and it would be very complicated), but really this 
+# with ``L(x(t)) = x(t + dt)``, i.e. one forward step. One could expand this derivative with the chain rule (and it would be very complicated), but really this 
 # is where Enzyme comes in. Each run of autodiff on our forward function is one piece of this big chain rule done for us! We also note that the chain rule
 # goes from the outside in, so we start with the derivative of the forward function at the final state, and work backwards until the initial state.
 # To get Enzyme to do this, we complete the following steps:
