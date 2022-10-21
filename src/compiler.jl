@@ -613,7 +613,7 @@ end
     res = forward(args...)
 
     internal_tape = res[1]
-    
+
     if length(res) == 1
         resT = Nothing
         shadow_return = nothing
@@ -925,6 +925,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     else
         llvmf = nested_codegen!(mod, func, Tuple{Any, AnyArray(length(ops)), Ptr{Any}, Ptr{UInt8}, Any, Val{Int64(width)}, Val{ReturnType}})
     end
+    permit_inlining!(llvmf)
 
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -2062,6 +2063,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     fun = nested_codegen!(mod, runtime_newtask_fwd, Tuple{Any, Any, Any, Int, Val{width}})
+    permit_inlining!(fun)
 
     B = LLVM.Builder(B)
     
@@ -2105,6 +2107,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     GPUCompiler.@safe_warn "active variables passed by value to jl_new_task are not yet supported"
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     fun = nested_codegen!(mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int, Val{width}})
+    permit_inlining!(fun)
 
     B = LLVM.Builder(B)
     sret = allocate_sret!(gutils, 2, ctx)
@@ -3670,7 +3673,7 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         vals = LLVM.Value[p]
         todo = LLVM.Value[v]
         while length(todo) != 0
-            cur = pop!(todo)
+            cur = popfirst!(todo)
             ty = llvmtype(cur)
             if isa(ty, LLVM.PointerType)
                 if any_jltypes(ty)
@@ -3736,6 +3739,120 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
+end
+
+function zero_allocation(B, LLVMType, obj, isTape::UInt8)
+    B = LLVM.Builder(B)
+    LLVMType = LLVM.LLVMType(LLVMType)
+    obj = LLVM.Value(obj)
+    jlType = tape_type(LLVMType)
+    zeroAll = isTape == 0
+    func = LLVM.parent(position(B))
+    mod = LLVM.parent(func)
+    ctx = context(mod)
+    T_int64 = LLVM.Int8Type(ctx)
+    zero_single_allocation(B, jlType, LLVMType, obj, zeroAll, LLVM.ConstantInt(T_int64, 0), ctx)
+    return nothing
+end
+
+function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, ctx)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+
+        todo = Tuple{Vector{LLVM.Value},LLVM.LLVMType,DataType}[(LLVM.Value[idx], LLVMType, jlType)]
+
+        while length(todo) != 0
+            path, ty, jlty = popfirst!(todo)
+            if isa(ty, LLVM.PointerType)
+                if any_jltypes(ty) 
+                    loc = gep!(builder, nobj, path)
+                    fill_val = unsafe_to_pointer(nothing)
+                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(llvmtype(loc))))
+                    store!(builder, fill_val, loc)
+                elseif zeroAll
+                    loc = gep!(builder, nobj, path)
+                    store!(builder, LLVM.null(ty), loc)
+                end
+                continue
+            end
+            if isa(ty, LLVM.FloatingPointType) || isa(ty, LLVM.IntegerType)
+                if zeroAll
+                    loc = gep!(builder, nobj, path)
+                    store!(builder, LLVM.null(ty), loc)
+                end
+                continue
+            end
+            if isa(ty, LLVM.ArrayType) || isa(ty, LLVM.VectorType)
+                for i=1:length(ty)
+                    npath = copy(path)
+                    push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
+                    push!(todo, (npath, eltype(ty), eltype(jlty)))
+                end
+                continue
+            end
+            if isa(ty, LLVM.StructType)
+                i = 1
+                for ii in 1:fieldcount(jlty)
+                    jlet = fieldtype(jlty, ii)
+                    if GPUCompiler.isghosttype(jlet) || Core.Compiler.isconstType(jlet)
+                        continue
+                    end
+                    t = LLVM.elements(ty)[i]
+                    npath = copy(path)
+                    push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
+                    push!(todo, (npath, t, jlet))
+                    i+=1
+                end
+                @assert i == Int(length(LLVM.elements(ty)))+1
+                continue
+            end
+        end
+    return nothing
+
+end
+
+
+function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Size, zeroAll::Bool)::LLVM.API.LLVMValueRef
+    func = LLVM.parent(position(B))
+    mod = LLVM.parent(func)
+    ctx = context(mod)
+    T_int8 = LLVM.Int8Type(ctx)
+        
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+
+    wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [llvmtype(obj), T_int8, llvmtype(Size)]))
+    push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0; ctx))
+    linkage!(wrapper_f, LLVM.API.LLVMInternalLinkage)
+    let builder = Builder(ctx)
+        entry = BasicBlock(wrapper_f, "entry"; ctx)
+        loop = BasicBlock(wrapper_f, "loop"; ctx)
+        exit = BasicBlock(wrapper_f, "exit"; ctx)
+        position!(builder, entry)
+        nobj, _, nsize = collect(parameters(wrapper_f))
+        nobj = pointercast!(builder, nobj, LLVM.PointerType(LLVMType, addrspace(llvmtype(nobj))))
+
+        LLVM.br!(builder, loop)
+        position!(builder, loop)
+        idx = LLVM.phi!(builder, llvmtype(Size))
+        inc = add!(builder, idx, LLVM.ConstantInt(llvmtype(Size), 1))
+        append!(LLVM.incoming(idx), [(LLVM.ConstantInt(llvmtype(Size), 0), entry), (inc, loop)])
+    
+        zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, ctx)
+        
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, LLVM.Value(LLVM.API.LLVMBuildExactUDiv(builder, nsize, AlignedSize, ""))), exit, loop)
+        position!(builder, exit)
+        
+        ret!(builder)
+
+        dispose(builder)
+    end
+    return call!(B, wrapper_f, [obj, LLVM.ConstantInt(T_int8, 0), Size]).ref
 end
 
 function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
@@ -3830,11 +3947,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         obj = emit_allocobj!(B, tag, Size, needs_dynamic_size_workaround)
         
         if ZI != C_NULL
-            pc = pointercast!(B, obj, LLVM.PointerType(T_int8, Tracked ))
-            API.SetForMemSet!(pc)
-            unsafe_store!(ZI, LLVM.memset!(B, pc,  LLVM.ConstantInt(T_int8, 0),
-                                                  Size, 
-                                                 #=align=#0 ).ref)
+            unsafe_store!(ZI, zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, #=ZeroAll=#false))
         end
         AS = Tracked
     else
@@ -3920,6 +4033,10 @@ function __init__()
         API.EnzymeSetPostCacheStore(@cfunction(
              julia_post_cache_store, Ptr{LLVM.API.LLVMValueRef},
             (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, Ptr{UInt64})))
+        
+        API.EnzymeSetCustomZero(@cfunction(
+            zero_allocation, Cvoid,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, UInt8)))
     end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
@@ -5102,7 +5219,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             count = 0
             todo = Tuple{Vector{LLVM.Value},LLVM.LLVMType}[([LLVM.ConstantInt(LLVM.IntType(64; ctx), 0)], jltype)]
             while length(todo) != 0
-                path, ty = pop!(todo)
+                path, ty = popfirst!(todo)
                 if isa(ty, LLVM.PointerType)
                     loc = gep!(builder, rootRet, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), count)])
                     count+=1
@@ -5863,7 +5980,7 @@ end
                 push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
                 push!(toremove, name(f))
             end
-        end 
+        end
         ModulePassManager() do pm
             always_inliner!(pm)
             run!(pm, mod)
