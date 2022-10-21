@@ -3827,6 +3827,7 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
 
     wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [llvmtype(obj), T_int8, llvmtype(Size)]))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0; ctx))
+    linkage!(wrapper_f, LLVM.API.LLVMInternalLinkage)
     let builder = Builder(ctx)
         entry = BasicBlock(wrapper_f, "entry"; ctx)
         loop = BasicBlock(wrapper_f, "loop"; ctx)
@@ -3843,7 +3844,7 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
     
         zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, ctx)
         
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, LLVM.Value(LLVM.API.LLVMBuildExactUDiv(builder, Size, AlignedSize, ""))), exit, loop)
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, LLVM.Value(LLVM.API.LLVMBuildExactUDiv(builder, nsize, AlignedSize, ""))), exit, loop)
         position!(builder, exit)
         
         ret!(builder)
@@ -5978,7 +5979,7 @@ end
                 push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
                 push!(toremove, name(f))
             end
-        end 
+        end
         ModulePassManager() do pm
             always_inliner!(pm)
             run!(pm, mod)
