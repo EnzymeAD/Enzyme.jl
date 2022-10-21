@@ -3771,7 +3771,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
                     fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
                     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
                     fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
-                    loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(eltype(loc))))
+                    loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(llvmtype(loc))))
                     store!(builder, fill_val, loc)
                 elseif zeroAll
                     loc = gep!(builder, nobj, path)
