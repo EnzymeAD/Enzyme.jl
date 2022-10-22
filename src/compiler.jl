@@ -3741,6 +3741,36 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
+function fixup_return(B, retval)
+    B = LLVM.Builder(B)
+    
+    func = LLVM.parent(position(B))
+    mod = LLVM.parent(func)
+    ctx = context(mod)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    
+    retval = LLVM.Value(retval)
+    ty = llvmtype(retval)
+    # Special case the union return { {} addr(10)*, i8 }
+    #   which can be [ null, 1 ], to not have null in the ptr
+    #   field, but nothing
+    if isa(ty, LLVM.StructType)
+        elems = LLVM.elements(ty)
+        if length(elems) == 2 && elems[1] == T_prjlvalue
+            fill_val = unsafe_to_pointer(nothing)
+            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            prev = extract_value!(B, retval, 0)
+            eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
+            retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
+        end
+    end
+    return retval.ref
+end
+
 function zero_allocation(B, LLVMType, obj, isTape::UInt8)
     B = LLVM.Builder(B)
     LLVMType = LLVM.LLVMType(LLVMType)
@@ -4037,6 +4067,9 @@ function __init__()
         API.EnzymeSetCustomZero(@cfunction(
             zero_allocation, Cvoid,
             (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, UInt8)))
+        API.EnzymeSetFixupReturn(@cfunction(
+            fixup_return, LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
     end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
@@ -4975,7 +5008,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
-        @assert allocatedinline(actualRetType)
+        if !allocatedinline(actualRetType)
+            @safe_show actualRetType, rettype
+            @assert allocatedinline(actualRetType)
+        end
         push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, actualRetType; ctx))))
     end
 
