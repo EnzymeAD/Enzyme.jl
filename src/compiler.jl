@@ -3765,7 +3765,7 @@ function fixup_return(B, retval)
             fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
-            retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), prev)
+            retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
         end
     end
     return retval.ref
