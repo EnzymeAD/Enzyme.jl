@@ -423,6 +423,27 @@ end
     @test res[1].y == nothing
 end
 
+@testset "Null init union" begin
+    @noinline function unionret(itr, cond)
+        if cond
+            return Base._InitialValue()
+        else
+            return itr[1]
+        end
+    end
+
+    function fwdunion(data::Vector{Float64})::Real
+        unionret(data, false)
+    end
+
+    data = ones(Float64, 500)
+    ddata = zeros(Float64, 500)
+
+    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Active, Tuple{Enzyme.Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+    dup = Enzyme.Duplicated(data, ddata)
+    res = forward(dup)[1]
+end
+
 # dot product (https://github.com/EnzymeAD/Enzyme.jl/issues/495)
 @testset "Dot product" for T in (Float32, Float64)
     xx = rand(T, 10)
