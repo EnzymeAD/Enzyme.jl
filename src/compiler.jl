@@ -700,6 +700,7 @@ function runtime_generic_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UIn
 end
 
 @inline function common_interface_rev(args, shadow_ptr, tape::Any, width::Val{Width}) where Width
+    
     actives = []
     for (i, p) in enumerate(args)
         if typeof(p) <: Active
@@ -769,6 +770,7 @@ function runtime_invoke_fwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt
     args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
     
     fn = arg_ptr[1]
+    dfn = shadow_ptr[1]
 
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
@@ -789,8 +791,8 @@ function runtime_invoke_fwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt
 
     tt′ = Tuple{map(Core.Typeof, args)...}
 
-    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                        #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
+                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
     
@@ -812,6 +814,7 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{U
     args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
 
     fn = arg_ptr[1]
+    dfn = shadow_ptr[1]
     
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
@@ -822,7 +825,7 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{U
     annotation = guess_activity(rt)
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
