@@ -275,6 +275,32 @@ end
     @test 2.0 * 7.0 + 3.0 * 5.0 ≈ first(Enzyme.autodiff(Forward, Duplicated(f, df), Duplicated(5.0, 7.0)))
 end
 
+@testset "Union return" begin
+    @noinline function fwdunion(itr, cond)
+        if cond
+            return Base._InitialValue()
+        else
+            return itr[1]
+        end
+    end
+
+    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+    d = Duplicated(Float64[2.0], Float64[0.0])
+    r = forward(d, Const(false))
+    @test r[2] ≈ 2.0 
+    @test r[3] ≈ 0.0 
+    
+    r = forward(d, Const(true))
+    @test r[2] == Base._InitialValue()
+    @test r[3] == Base._InitialValue()
+    
+    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(false))
+    r = forward(d, Const(false))
+    @test r[2] ≈ 0.0 
+    r = forward(d, Const(true))
+    @test r[2] == Base._InitialValue()
+end
+
 @testset "Callable ABI" begin
     function method(f, x)
         return f(x)
