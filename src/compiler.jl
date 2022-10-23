@@ -733,7 +733,8 @@ end
                 d[w]
             end
             a = unsafe_load(shadow_ptr, (i-1)*Width+w)
-            if a isa Base.RefValue
+            if a === nothing
+            elseif a isa Base.RefValue
                 @assert eltype(a) == typeof(dd)
                 a[] += dd
             else
@@ -955,6 +956,14 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
             push!(vals, LLVM.ConstantInt(Csize_t(0); ctx))
         end
     else
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+        fill_val = unsafe_to_pointer(nothing)
+        fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+        fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+        fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+
         for (i, op) in enumerate(ops)
             idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
             val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
@@ -977,9 +986,8 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
                 end
             end
 
-            for w in 1:width
-                
-                ev = LLVM.null(llvmtype(op))
+            for w in 1:width 
+                ev = fill_val
                 if inverted !== nothing
                     if width == 1
                         ev = inverted
@@ -1060,10 +1068,6 @@ function allocate_sret!(B::LLVM.Builder, N, ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     al = LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
-    for i in 1:N
-        LLVM.store!(B, LLVM.null(T_prjlvalue),
-                    LLVM.inbounds_gep!(B, al, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]))
-    end
     return al
 end
 

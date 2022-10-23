@@ -442,6 +442,26 @@ end
     forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Active, Tuple{Enzyme.Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
     dup = Enzyme.Duplicated(data, ddata)
     res = forward(dup)[1]
+
+    function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
+        sum(
+            sum(
+                weight 
+                for (weight, mean) in zip(weights, weights)
+            ) 
+            for x in data
+        )
+    end
+
+    data = ones(Float64, 500)
+     
+    weights = [0.2, 0.8]
+    dweights = [0.0, 0.0]
+
+    Enzyme.autodiff(Enzyme.Reverse, mixture_loglikelihood, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    # TODO fix correctness, but its regardless better than a segfault
+    # @test dweights[1] ≈ 500.
+    # @test dweights[2] ≈ 500.
 end
 
 # dot product (https://github.com/EnzymeAD/Enzyme.jl/issues/495)
