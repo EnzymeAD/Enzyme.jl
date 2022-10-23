@@ -1850,7 +1850,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
     
             jctx = ctx
@@ -1872,7 +1872,7 @@ end
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -3786,7 +3786,7 @@ function zero_allocation(B, LLVMType, obj, isTape::UInt8)
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
     ctx = context(mod)
-    T_int64 = LLVM.Int8Type(ctx)
+    T_int64 = LLVM.Int64Type(ctx)
     zero_single_allocation(B, jlType, LLVMType, obj, zeroAll, LLVM.ConstantInt(T_int64, 0), ctx)
     return nothing
 end
@@ -4300,6 +4300,8 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     modifiedBetween::Bool
     # Whether to also return the primal
     returnPrimal::Bool
+    # Whether to (in aug fwd) += by one
+    shadowInit::Bool
 end
 
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
@@ -4690,6 +4692,7 @@ end
 
 function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules)
     rt  = job.params.rt
+    shadow_init = job.params.shadowInit
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
     F   = adjoint.f
@@ -4898,7 +4901,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         end
 
         if wrap
-          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed)
+          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed, shadow_init)
         end
 
         # TODOs:
@@ -4911,7 +4914,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width, #=returnPrimal=#false)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width, #=returnPrimal=#false, shadow_init)
         end
     elseif mode == API.DEM_ReverseModeCombined
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType)) 
@@ -4923,7 +4926,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure, width, returnUsed)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure, width, returnUsed, shadow_init)
         end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType)) 
@@ -4935,7 +4938,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
             uncacheable_args))
         augmented_primalf = nothing
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed)
+          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed, shadow_init)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -4945,7 +4948,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     return adjointf, augmented_primalf, TapeType
 end
 
-function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure, width, returnPrimal)
+function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure, width, returnPrimal, shadow_init)
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -4968,6 +4971,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                               # + If the adjoint this will be all Active variables (includes all of T_EnzymeSRet)
                               # + If the forward, this will be ?return, ?shadowReturn, ?tape
 
+    pactualRetType = actualRetType
     sret_union = is_sret_union(actualRetType)
     if sret_union
         actualRetType = Any
@@ -5128,9 +5132,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     FT = LLVM.FunctionType(T_ret, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
     sfn = LLVM.get_subprogram(enzymefn)
-    if sfn !== nothing
-        LLVM.set_subprogram!(llvm_f, sfn)
-    end
+    # if sfn !== nothing
+    #     LLVM.set_subprogram!(llvm_f, sfn)
+    # end
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -5222,6 +5226,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
 
         val = call!(builder, enzymefn, realparms)
+        if LLVM.get_subprogram(enzymefn) !== nothing
+            metadata(val)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(enzymefn) )
+        end
 
         if Mode == API.DEM_ReverseModePrimal
             returnNum = 0
@@ -5235,6 +5242,26 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     ptr = pointercast!(builder, ptr, LLVM.PointerType(llvmtype(eval)))
                     si = store!(builder, eval, ptr)
                     returnNum+=1
+
+                    if i == 3 && shadow_init
+                        shadows = LLVM.Value[]
+                        if width == 1
+                            push!(shadows, eval)
+                        else
+                            for i in 1:width
+                                push!(shadows, extract_value!(builder, eval, i-1))
+                            end
+                        end
+                        #cf = add_one_in_place_gen(eltype(rettype))
+                        #cf = inttoptr!(builder, cf, LLVM.PointerType(LLVM.FunctionType(T_void, [convert(LLVMType, eltype(rettype); ctx)])))
+                       
+                        cf = nested_codegen!(mod, add_one_in_place, Tuple{Any})
+                        push!(function_attributes(cf), EnumAttribute("alwaysinline", 0; ctx))
+                        permit_inlining!(cf)
+                        for shadowv in shadows
+                            c = call!(builder, cf, [shadowv])
+                        end
+                    end
                 end
             end
         elseif Mode == API.DEM_ForwardMode
@@ -6231,6 +6258,20 @@ function jl_set_typeof(v::Ptr{Cvoid}, T)
     return nothing
 end
 
+function add_one_in_place(x) 
+    ty = typeof(x)
+    # ptr = Base.pointer_from_objref(x)
+    ptr = unsafe_to_pointer(x)
+    if ty <: Base.RefValue || ty == Base.RefValue{Float64}
+        x[] += one(eltype(ty))
+    elseif true
+        res = x+one(ty)
+        @assert typeof(res) == ty
+        unsafe_store!(reinterpret(Ptr{ty}, ptr), res)
+    end
+    return nothing
+end
+
 @generated function enzyme_call(::Val{RawCall}, fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
         rt::Type{RT}, f::F, df::DF, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, F, T, RT, DF, TapeType, N, CC, width, returnPrimal}
 
@@ -6356,7 +6397,7 @@ end
     
     jlRT = eltype(rettype)
     if typeof(jlRT) == UnionAll
-      # Future improvement, add tye assertion on load
+      # Future improvement, add type assertion on load
       jlRT = DataType
     end
 
@@ -6441,6 +6482,7 @@ end
     #     T_ret = T_prjlvalue
     # end
     llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
+    push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0; ctx))
 
 	mod = LLVM.parent(llvm_f)
     i64 = LLVM.IntType(64; ctx)
@@ -6605,11 +6647,11 @@ const cache_lock = ReentrantLock()
 end
 
 
-@generated function genthunk(::Type{F}, f::Fn, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}) where {F, Fn, DF, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal}
+@generated function genthunk(::Type{F}, f::Fn, df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}, ::Val{ShadowInit}) where {F, Fn, DF, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal, ShadowInit}
     primal, adjoint = fspec(F, TT)
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
     job    = Compiler.CompilerJob(target, primal, params)
     
     sig = Tuple{F, map(eltype, TT.parameters)...}
@@ -6679,24 +6721,24 @@ end
     end
 end
 
-@inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal}
+@inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
     primal, adjoint = fspec(Core.Typeof(f), TT)
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
     
-    genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal))
+    genthunk(Core.Typeof(f), f, df, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal), Val(ShadowInit))
 end
 
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function gendeferred_codegen(::Type{F}, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
     primal, adjoint = fspec(F, tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal)
+    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
     job    = CompilerJob(target, primal, params)
     
     addr = get_trampoline(job)
