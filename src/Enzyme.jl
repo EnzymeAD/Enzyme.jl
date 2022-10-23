@@ -25,11 +25,22 @@ import LLVM
 include("api.jl")
 
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
+    if T isa Union
+        if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
+            if Mode == API.DEM_ForwardMode
+                return DuplicatedNoNeed{T}
+            else
+                return Duplicated{T}
+            end
+        end
+    end
     return Const{T}
 end
+
 @inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
     return Const{Union{}}
 end
+
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
