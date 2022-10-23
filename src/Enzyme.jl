@@ -25,11 +25,22 @@ import LLVM
 include("api.jl")
 
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
+    if T isa Union
+        if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
+            if Mode == API.DEM_ForwardMode
+                return DuplicatedNoNeed{T}
+            else
+                return Duplicated{T}
+            end
+        end
+    end
     return Const{T}
 end
+
 @inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
     return Const{Union{}}
 end
+
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
@@ -53,6 +64,13 @@ end
     end
 end
 
+@inline function guess_activity(::Type{Real}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{Any}
+    else
+        return Duplicated{Any}
+    end
+end
 @inline function guess_activity(::Type{Any}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{Any}
@@ -181,16 +199,10 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
-        if !allocatedinline(rt)
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false))
+        if !allocatedinline(rt) || rt isa Union
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false), #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(true))
             res = forward(args′...)
-            @assert length(res) == 2
             tape = res[1]
-            if res[2] isa Base.RefValue
-                res[2][] += one(eltype(typeof(res[2])))
-            else
-                res[2] += one(eltype(typeof(res[2])))
-            end
             return adjoint(args′..., tape)
         end
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed

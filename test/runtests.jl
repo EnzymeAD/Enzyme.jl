@@ -442,6 +442,55 @@ end
     forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Active, Tuple{Enzyme.Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
     dup = Enzyme.Duplicated(data, ddata)
     res = forward(dup)[1]
+
+	function firstimpl(itr)
+		v = firstfold(itr)
+		@assert !(v isa Base._InitialValue)
+		return v
+	end
+
+	function firstfold(itr)
+		op, itr = Base._xfadjoint(Base.BottomRF(Base.add_sum), Base.Generator(Base.identity, itr))
+		y = iterate(itr)
+		init = Base._InitialValue()
+		y === nothing && return init
+		v = op(init, y[1])
+		return v
+	end
+
+	function smallrf(weights::Vector{Float64}, data::Vector{Float64})::Float64
+		itr1 = (weight for (weight, mean) in zip(weights, weights))
+
+		itr2 = (firstimpl(itr1) for x in data)
+
+		firstimpl(itr2)
+	end
+
+	data = ones(Float64, 1)
+	 
+	weights = [0.2]
+	dweights = [0.0]
+	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    @test dweights[1] ≈ 1.
+
+    function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
+        sum(
+            sum(
+                weight 
+                for (weight, mean) in zip(weights, weights)
+            ) 
+            for x in data
+        )
+    end
+
+    data = ones(Float64, 20)
+     
+    weights = [0.2, 0.8]
+    dweights = [0.0, 0.0]
+
+    Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    @test dweights[1] ≈ 20.
+    @test dweights[2] ≈ 20.
 end
 
 # dot product (https://github.com/EnzymeAD/Enzyme.jl/issues/495)
@@ -1321,7 +1370,7 @@ end
 
     out = Ref(0.0)
     dout = Ref(1.0)
-    @test 1.0 ≈ Enzyme.autodiff(unionret, Active(2.0), Duplicated(out, dout), true)[1]
+    @test 2.0 ≈ Enzyme.autodiff(unionret, Active, Active(2.0), Duplicated(out, dout), true)[1]
 end
 
 @testset "Array push" begin
