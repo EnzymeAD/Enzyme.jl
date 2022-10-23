@@ -897,7 +897,7 @@ function runtime_apply_latest_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{Acti
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_apply_latest_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+function runtime_apply_latest_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
     args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
     return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
