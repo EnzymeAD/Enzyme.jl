@@ -4707,6 +4707,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
     args_known_values = API.IntList[]
 
     ctx = LLVM.context(mod)
+
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         typeTree = typetree(F, ctx, dl)
         push!(args_typeInfo, typeTree)
@@ -4967,6 +4968,11 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                               # + If the adjoint this will be all Active variables (includes all of T_EnzymeSRet)
                               # + If the forward, this will be ?return, ?shadowReturn, ?tape
 
+    sret_union = is_sret_union(actualRetType)
+    if sret_union
+        actualRetType = Any
+    end
+
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         isboxed = GPUCompiler.deserves_argbox(F)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
@@ -5014,6 +5020,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
+        @assert !sret_union
         if !allocatedinline(actualRetType)
             @safe_show actualRetType, rettype
             @assert allocatedinline(actualRetType)
@@ -5477,6 +5484,21 @@ function is_sret(jlrettype, ctx)
     end
     return false
 end
+function is_sret_union(jlrettype)
+    if jlrettype === Union{}
+        # jlrettype == (jl_value_t*)jl_bottom_type
+        return false
+    elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
+        # jl_is_structtype(jlrettype) && jl_is_datatype_singleton((jl_datatype_t*)jlrettype)
+        return false
+    elseif jlrettype isa Union # jl_is_uniontype(jlrettype)
+        if union_alloca_type(jlrettype) > 0
+            # sret, also a regular return here
+            return true
+        end
+    end
+    return false
+end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
@@ -5488,14 +5510,21 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     sret = is_sret(actualRetType, ctx)
+    sret_union = is_sret_union(actualRetType)
     
     returnRoots = false
     if sret
-        RT = eltype(llvmtype(first(parameters(entry_f))))
-    	returnRoots = deserves_rooting(RT)
-		if returnRoots
-			GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
-		end
+        if sret_union
+            T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+            RT = T_prjlvalue
+        else
+            RT = eltype(llvmtype(first(parameters(entry_f))))
+            returnRoots = deserves_rooting(RT)
+            if returnRoots
+                GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
+            end
+        end
     end
 
 	args = classify_arguments(functy, entry_ft, sret, returnRoots)
@@ -5504,10 +5533,12 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
     
     @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end]) 
+
     
 	# if returnRoots
 	# 	push!(wrapper_types, llvmtype(parameters(entry_f)[1+sret]))
 	# end
+    #
     for (parm, arg) in zip(collect(parameters(entry_f))[1+sret+returnRoots:end], args)
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
@@ -5537,6 +5568,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             if !isa(ci, LLVM.CallInst) || called_value(ci) != entry_f
                 continue
             end
+            @assert !sret_union
             ops = collect(operands(ci))[1:end-1]
             position!(builder, ci)
             nops = LLVM.Value[]
@@ -5619,14 +5651,56 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     
         LLVM.API.LLVMSetInstructionCallConv(res, LLVM.callconv(entry_f))
 
-        if sret
+        # Box union return, from https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L3138
+        if sret_union
+            def = BasicBlock(wrapper_f, "defaultBB"; ctx)
+            scase = extract_value!(builder, res, 1)
+            sw = switch!(builder, scase, def)
+            counter = 1
+            T_int8 = LLVM.Int8Type(ctx)
+            T_int64 = LLVM.Int64Type(ctx)
+            T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+            T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+            function inner(jlrettype)
+                BB = BasicBlock(wrapper_f, "box_union"; ctx)
+                position!(builder, BB)
+                
+                if GPUCompiler.isghosttype(jlrettype) || Core.Compiler.isconstType(jlrettype)
+                    fill_val = unsafe_to_pointer(jlrettype.instance)
+                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    ret!(builder, fill_val)
+                else
+                    obj = emit_allocobj!(builder, jlrettype)
+                    llty = convert(LLVMType, jlrettype; ctx)
+                    ld = load!(builder, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(llvmtype(sretPtr)))))
+                    store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(llvmtype(obj)))))
+                    # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(llvmtype(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
+
+                    ret!(builder, obj)
+                end
+
+                LLVM.API.LLVMAddCase(sw, LLVM.ConstantInt(llvmtype(scase), counter), BB)
+                counter+=1
+                return
+            end
+            for_each_uniontype_small(inner, actualRetType)
+
+            position!(builder, def)
+            fill_val = unsafe_to_pointer(nothing)
+            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            ret!(builder, fill_val)
+        elseif sret 
             ret!(builder, load!(builder, sretPtr))
         elseif LLVM.return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
         else
             ret!(builder, res)
         end
-
         dispose(builder)
     end
 
@@ -6279,15 +6353,25 @@ end
             error("calling convention should be annotated, got $T")
         end
     end
+    
+    jlRT = eltype(rettype)
+    if typeof(jlRT) == UnionAll
+      # Future improvement, add tye assertion on load
+      jlRT = DataType
+    end
+
+    if is_sret_union(jlRT)
+        jlRT = Any
+    end
 
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
         # TODO handle batch width
-        @assert allocatedinline(eltype(rettype))
+        @assert allocatedinline(jlRT)
         if width == 1
-            push!(types, eltype(rettype))
+            push!(types, jlRT)
         else
-            push!(types, NTuple{width, eltype(rettype)})
+            push!(types, NTuple{width, jlRT})
         end
         push!(ccexprs, argexprs[i])
         i+=1
@@ -6308,11 +6392,6 @@ end
         push!(sret_types, TapeType)
     end
 
-    jlRT = eltype(rettype)
-    if typeof(jlRT) == UnionAll
-      # Future improvement, add tye assertion on load
-      jlRT = DataType
-    end
     if returnPrimal
         push!(sret_types, jlRT)
     end
