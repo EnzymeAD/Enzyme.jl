@@ -554,17 +554,16 @@ struct Tape{T}
     resT::DataType
 end
 
-@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::NamedTuple{A,B}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width,A,B}
+@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {ActivityTup,width,A,B}
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, length(arg_ptr))
     args = Any[]
     
     for i in start:length(arg_ptr)
         p = arg_ptr[i]
         T = Core.Typeof(p)
-        if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 push!(args, Active(p))
             else
@@ -581,17 +580,16 @@ end
     end
     return args
 end
-@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, activity_ptr::Ptr{UInt8}, ::Val{width}) where {width}
+@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {ActivityTup,width}
     # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
     #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
     #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    __activity = Base.unsafe_wrap(Array, activity_ptr, length(arg_ptr))
     args = Any[]
     
     for i in start:length(arg_ptr)
         p = arg_ptr[i]
         T = Core.Typeof(p)
-        if __activity[i] != 0 && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 push!(args, Active(p))
             else
@@ -664,8 +662,10 @@ end
     end
 end
 
-function runtime_generic_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_generic_fwd(arg_ptr, shadow_ptr, activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    fn = arg_ptr[1]
+    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -699,12 +699,12 @@ function runtime_generic_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UIn
     end
 end
 
-@inline function common_interface_rev(args, shadow_ptr, tape::Any, width::Val{Width}) where Width
+@inline function common_interface_rev(start, args, shadow_ptr, tape::Any, width::Val{Width}) where Width
     
     actives = []
     for (i, p) in enumerate(args)
         if typeof(p) <: Active
-            push!(actives, i)
+            push!(actives, i+start-1)
         end
     end
 
@@ -747,8 +747,10 @@ end
     return nothing
 end
 
-function runtime_generic_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_generic_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    fn = arg_ptr[1]
+    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -756,22 +758,23 @@ function runtime_generic_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{
     annotation = guess_activity(rt)
     
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_generic_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(args, shadow_ptr, tape, width)
+function runtime_generic_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
 
-function runtime_invoke_fwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_invoke_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
     
-    fn = arg_ptr[1]
-    dfn = shadow_ptr[1]
+    fn = arg_ptr[2]
+    dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
 
+    mi = arg_ptr[1]
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
     @assert F == typeof(fn)
@@ -810,12 +813,13 @@ function runtime_invoke_fwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt
     end
 end
 
-function runtime_invoke_augfwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_invoke_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
 
-    fn = arg_ptr[1]
-    dfn = shadow_ptr[1]
+    fn = arg_ptr[2]
+    dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
     
+    mi = arg_ptr[1]
     # TODO actually use the mi rather than fn
     @assert in(mi.def, methods(fn))
 
@@ -830,13 +834,15 @@ function runtime_invoke_augfwd(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{U
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_invoke_rev(mi::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(args, shadow_ptr, tape, width)
+function runtime_invoke_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(#=start=#3, args, shadow_ptr, tape, width)
 end
 
-function runtime_apply_latest_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_apply_latest_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    fn = arg_ptr[1]
+    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
+    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -851,8 +857,8 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Pt
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                        #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
+                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
 
@@ -870,8 +876,10 @@ function runtime_apply_latest_fwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Pt
     end
 end
 
-function runtime_apply_latest_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_apply_latest_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    fn = arg_ptr[1]
+    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -883,15 +891,15 @@ function runtime_apply_latest_augfwd(fn::Any, arg_ptr, shadow_ptr, activity_ptr:
     end
 
     tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_apply_latest_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Ptr{UInt8}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#1, arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(args, shadow_ptr, tape, width)
+function runtime_apply_latest_rev(fn::Any, arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
@@ -922,15 +930,8 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    ops = collect(operands(orig))[(start+1):end-1]
+    ops = collect(operands(orig))[start:end-1]
     
-    if tape === nothing
-        llvmf = nested_codegen!(mod, func, Tuple{Any, AnyArray(length(ops)), AnyArray(Int64(width)*length(ops)), Ptr{UInt8}, Val{Int64(width)}, Val{ReturnType}})
-    else
-        llvmf = nested_codegen!(mod, func, Tuple{Any, AnyArray(length(ops)), Ptr{Any}, Ptr{UInt8}, Any, Val{Int64(width)}, Val{ReturnType}})
-    end
-    permit_inlining!(llvmf)
-
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
@@ -944,79 +945,77 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     # TODO: Optimization by emitting liverange
     primal = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
     shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num*width))
-    activity = LLVM.alloca!(EB, LLVM.ArrayType(T_int8, num))
-
-    jl_fn = API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start])
-    if lookup
-        jl_fn = API.EnzymeGradientUtilsLookup(gutils, jl_fn, B)
-    end
+    ActivityList = Bool[]
 
     to_preserve = LLVM.Value[]
 
-    if length(ops) == 0
-        vals = LLVM.Value[LLVM.Value(jl_fn), activity]
-        if tape !== nothing
-            push!(vals, LLVM.ConstantInt(Csize_t(0); ctx))
-        end
-    else
-        T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-        fill_val = unsafe_to_pointer(nothing)
-        fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-        fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-        fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
-
-        for (i, op) in enumerate(ops)
-            idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
-            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-            if lookup
-                val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
-            end
-    
-            LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
-
-            active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
-            activeC = LLVM.ConstantInt(T_int8, active)
-            LLVM.store!(B, activeC, LLVM.inbounds_gep!(B, activity, idx))
-
-            inverted = nothing
-
-            if active
-                inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
-                if lookup
-                    inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
-                end
-            end
-
-            for w in 1:width 
-                ev = fill_val
-                if inverted !== nothing
-                    if width == 1
-                        ev = inverted
-                    else
-                        ev = extract_value!(B, inverted, w-1)
-                    end
-                    if tape !== nothing
-                        push!(to_preserve, ev)
-                    end
-                end
-
-                idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
-                LLVM.store!(B, ev,
-                            LLVM.inbounds_gep!(B, shadow, idx))
-            end
-        end
-
-        primal = addrspacecast!(B, primal, LLVM.PointerType(eltype(llvmtype(primal)), 11))
-        if tape === nothing
-            shadow = addrspacecast!(B, shadow, LLVM.PointerType(eltype(llvmtype(shadow)), 11))
-        else
-            # TODO ROOT
-        end
+    @assert length(ops) != 0
         
-        vals = LLVM.Value[LLVM.Value(jl_fn), primal, shadow, activity]
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    fill_val = unsafe_to_pointer(nothing)
+    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+
+    for (i, op) in enumerate(ops)
+        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+        if lookup
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+
+        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
+
+        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
+        push!(ActivityList, active)
+
+        inverted = nothing
+
+        if active
+            inverted = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+            if lookup
+                inverted = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, inverted, B))
+            end
+        end
+
+        for w in 1:width 
+            ev = fill_val
+            if inverted !== nothing
+                if width == 1
+                    ev = inverted
+                else
+                    ev = extract_value!(B, inverted, w-1)
+                end
+                if tape !== nothing
+                    push!(to_preserve, ev)
+                end
+            end
+
+            idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
+            LLVM.store!(B, ev,
+                        LLVM.inbounds_gep!(B, shadow, idx))
+        end
     end
+
+    primal = addrspacecast!(B, primal, LLVM.PointerType(eltype(llvmtype(primal)), 11))
+    if tape === nothing
+        shadow = addrspacecast!(B, shadow, LLVM.PointerType(eltype(llvmtype(shadow)), 11))
+    else
+        # TODO ROOT
+    end
+    
+    Activity = Val{(ActivityList...,)}
+    if tape === nothing
+        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), AnyArray(Int64(width)*length(ops)), Activity, Val{Int64(width)}, Val{ReturnType}})
+    else
+        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), Ptr{Any}, Activity, Any, Val{Int64(width)}, Val{ReturnType}})
+    end
+    
+    permit_inlining!(llvmf)
+    
+    vals = LLVM.Value[primal, shadow]
 
     if tape !== nothing
         push!(vals, LLVM.Value(tape))
