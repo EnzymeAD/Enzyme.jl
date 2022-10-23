@@ -4,9 +4,7 @@ authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu
 version = "0.10.12"
 
 [deps]
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
-ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
@@ -16,12 +14,10 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-TopOptGridap = "69521377-0896-4821-8208-eb7f4c7a9421"
-Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [compat]
-CEnum = "0.4"
 EnzymeCore = "0.1"
+CEnum = "0.4"
 Enzyme_jll = "0.0.43"
 GPUCompiler = "0.16.2"
 LLVM = "4.14"
