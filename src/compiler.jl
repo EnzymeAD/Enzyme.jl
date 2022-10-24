@@ -5159,7 +5159,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         if ZI != C_NULL
             unsafe_store!(ZI, zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, #=ZeroAll=#false))
         else
-            zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, #=ZeroAll=#false)
+            @assert convert(Int64, Count) == 1
+            nobj = pointercast!(B, obj, LLVM.PointerType(LLVMType, addrspace(llvmtype(obj))))
+            zero_single_allocation(B, TT, LLVMType, nobj, #=zeroAll=#false, LLVM.ConstantInt(T_int64, 0), ctx)
         end
         AS = Tracked
     else

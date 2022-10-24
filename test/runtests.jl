@@ -1207,6 +1207,30 @@ end
     @test 1.0 ≈ autodiff(Forward, f, Duplicated(0.1, 1.0))[1]
 end
 
+@testset "Advanced GC" begin
+    u = Float64[1.0, 2.0]
+    x = @inbounds @view u[1:2]
+
+    du = Float64[0.0, 0.0]
+    dx = @inbounds @view du[1:2]
+
+    function foo(x)
+        return Base.unaliascopy(x)
+    end
+
+    # TODO this needs to be signfiicantly perf engineered
+    # there are a _lot_ of unnecessary caches for returnRoots, etc
+    forward, pullback = Enzyme.Compiler.thunk(foo, nothing, Duplicated, Tuple{Duplicated{typeof(x)}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
+
+    res = forward(Duplicated(x, dx))
+    @show res
+    res[3][1] = 50.0
+    res[3][2] = 70.0
+    pullback(Duplicated(x, dx), res[1])
+    @test u ≈ [1.0, 2.0]
+    @test du ≈ [50.0, 70.0]
+end
+
 @testset "Array Copy" begin
 	F = [2.0, 3.0]
 
