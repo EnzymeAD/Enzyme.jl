@@ -15,7 +15,7 @@ using Test
     R = Float64[0., 0.]
     dR = Float64[2., 3.]
 
-    @test 5.0 ≈ Enzyme.autodiff(Reverse, tasktest, Duplicated(R, dR), Active(2.0))[1]
+    @test 5.0 ≈ Enzyme.autodiff(Reverse, tasktest, Duplicated(R, dR), Active(2.0))[1][2]
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
     
@@ -30,7 +30,7 @@ using Test
         nothing
     end
     # The empty return previously resulted in an illegal instruction error
-    @test 0.0 ≈ Enzyme.autodiff(Reverse, tasktest2, Duplicated(R, dR), Active(2.0))[1]
+    @test 0.0 ≈ Enzyme.autodiff(Reverse, tasktest2, Duplicated(R, dR), Active(2.0))[1][2]
     @test () === Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
 
@@ -108,6 +108,6 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1]
+    @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1][2]
     @test 1.0 ≈ autodiff(Forward, thr_inactive, false, Duplicated(2.14, 1.0))[1]
 end

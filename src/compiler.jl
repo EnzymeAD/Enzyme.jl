@@ -578,12 +578,13 @@ end
     return false
 end
 
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs...) where {forwardMode,start, ActivityTup,width}
+@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{Any,N}) where {forwardMode,start, ActivityTup,width,N}
     ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
         p = allargs[(i-1)*(width+1) + 1]
-        T = Core.Typeof(p)
+        T = typeof(p)
+        # T = Core.Typeof(p)
         if ActivityTup[i] && !isghostty(T)
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 return Active(p)
@@ -601,58 +602,13 @@ end
     end
 end
 
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start, ActivityTup,width,A,B}
-    ntuple(Val(length(ActivityTup)-start+1)) do idx
-        Base.@_inline_meta
-        i = start + idx - 1
-        p = arg_ptr[i]
-        T = Core.Typeof(p)
-        if ActivityTup[i] && !isghostty(T)
-            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                return Active(p)
-            else
-                if width == 1
-                    s = shadow_ptr[(i-1)*width + 1]
-                    return Duplicated(p, s)
-                else
-                    return BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], Val(width)))
-                end
-            end
-        else
-            return Const(p)
-        end
-    end
-end
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start,ActivityTup,width}
-    ntuple(Val(length(ActivityTup)-start+1)) do idx
-        Base.@_inline_meta
-        i = start + idx - 1
-        p = arg_ptr[i]
-        T = Core.Typeof(p)
-        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
-            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                return Active(p)
-            else
-                if width == 1
-                    s = unsafe_load(shadow_ptr, (i-1)*width + 1)
-                    return Duplicated(p, s)
-                else
-                    return BatchDuplicated(p, ntuple(w->unsafe_load(shadow_ptr, (i-1)*width+w), Val(width)))
-                end
-            end
-        else
-            return Const(p)
-        end
-    end
-end
-
 struct Tape{AdjointTy,TapeTy,ShadowTy,ResT}
     thunk::AdjointTy
     internal_tape::TapeTy
     shadow_return::ShadowTy
 end
 
-@inline function common_interface_augfwd(annotation, forward::ForwardTy, adjoint::AdjointTy, args, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,AdjointTy,Width,ReturnType} 
+@inline function common_interface_augfwd(annotation, forward::ForwardTy, adjoint::AdjointTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,AdjointTy,ArgsTy,Width,ReturnType} 
     res = forward(args...)
 
     internal_tape = res[1]
@@ -707,11 +663,11 @@ end
     end
 end
 
-function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    fn = allargs[1]
-    dfn = ActivityTup[1] ? allargs[2] : nothing
+function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
     
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, allargs...)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -745,9 +701,7 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     end
 end
 
-@inline function common_interface_rev(activity::Val{ActivityTup}, startV::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs...) where {ActivityTup,start,Width}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), startV, activity, width, allargs...)
-
+@inline function common_interface_rev(args::ArgsTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {start, Width,N,ArgsTy}
     if tape.shadow_return !== nothing
         if Width == 1
             val = tape.shadow_return[]
@@ -788,10 +742,10 @@ end
     return nothing
 end
 
-function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    fn = allargs[1]
-    dfn = ActivityTup[1] ? allargs[2] : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, allargs...)
+function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType, N, F, DF}
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -804,21 +758,21 @@ function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, R
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, allargs...) where {ActivityTup,Width,TapeType}
-    return common_interface_rev(activity_ptr, #=start=#Val(2), shadow_ptr, tape, width, allargs...)
+function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
+    return common_interface_rev(args, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 
-function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(3), activity_ptr, width, allargs...)
+function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, MI, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
     
-    fn = allargs[(2-1)*(width+1)+1]
-    dfn = ActivityTup[2] ? allargs[(2-1)*(width+1)+1+1] : nothing
+    fn = f
+    dfn = ActivityTup[2] ? df : nothing
 
-    mi = allargs[1]
     specTypes = mi.specTypes.parameters
-    F = specTypes[1]
-    @assert F == typeof(fn)
+    FT = specTypes[1]
+    @assert FT == F
     @assert in(mi.def, methods(fn))
     
     tt = Tuple{specTypes[2:end]...}
@@ -854,16 +808,15 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
     end
 end
 
-function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), activity, width, allargs...)
+function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, MI, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
-    fn = allargs[(2-1)*(Width+1)+1]
-    dfn = ActivityTup[2] ? allargs[(2-1)*(Width+1)+1+1] : nothing
+    fn = f
+    dfn = ActivityTup[2] ? df : nothing
 
-    mi = allargs[1]
     specTypes = mi.specTypes.parameters
-    F = specTypes[1]
-    @assert F == typeof(fn)
+    FT = specTypes[1]
+    @assert FT == F
     @assert in(mi.def, methods(fn))
     
     tt = Tuple{specTypes[2:end]...}
@@ -877,15 +830,16 @@ function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, allargs...) where {ActivityTup,Width,TapeType}
-    return common_interface_rev(activity_ptr, #=start=#Val(3), shadow_ptr, tape, width, allargs...)
+function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, MI, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
+    return common_interface_rev(args, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
-function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, allargs...)
+function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
-    fn = allargs[1]
-    dfn = ActivityTup[1] ? allargs[2] : nothing
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -919,11 +873,11 @@ function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width},
     end
 end
 
-function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, allargs...)
+function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
-    fn = allargs[1]
-    dfn = ActivityTup[1] ? allargs[2] : nothing
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -941,8 +895,9 @@ function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Widt
     return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
 end
 
-function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, allargs...) where {ActivityTup,Width,TapeType}
-    return common_interface_rev(activity_ptr, #=start=#Val(2), shadow_ptr, tape, width, allargs...)
+function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
+    return common_interface_rev(args, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
@@ -979,11 +934,11 @@ function unsafe_to_llvm(val, ctx)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing)
+function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    ops = collect(operands(orig))[start:end-1]
+    ops = collect(operands(orig))[start+firstconst:end-1]
     
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -1010,8 +965,15 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
         shadow = bitcast!(B, shadow_ptr, LLVM.PointerType(convert(LLVMType, NT; ctx), addrspace(llvmtype(shadow_ptr))))
     end
 
+    if firstconst
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start]))
+        if lookup
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+        push!(vals, val)
+    end
+
     for (i, op) in enumerate(ops)
-        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if lookup
             val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
