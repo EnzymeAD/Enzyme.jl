@@ -2,7 +2,7 @@ module EnzymeCore
 
 using Adapt
 
-export Forward, Reverse, ReverseWithPrimal
+export Forward, Reverse, ReverseWithPrimal, ReverseSplit, ReverseSplitWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 
 function batch_size end
@@ -109,14 +109,18 @@ Abstract type for what differentiation mode will be used.
 abstract type Mode end
 
 """
-    struct Reverse <: Mode
+    struct Reverse{Split, ReturnPrimal} <: Mode
 
-Reverse mode differentiation
+Reverse mode differentiation.
+- `Split=false`: Enzyme will use a combined primal-reverse mode.
+- `Split=true`: Enzyme will run the augmented-forward function and return the tape + reverse thunk.
+- `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
 """
-struct ReverseMode{ReturnPrimal} <: Mode
-end
-const Reverse = ReverseMode{false}()
-const ReverseWithPrimal = ReverseMode{true}()
+struct ReverseMode{ReturnPrimal, Split} <: Mode end
+const Reverse = ReverseMode{false, false}()
+const ReverseWithPrimal = ReverseMode{true, false}()
+const ReverseSplit = ReverseMode{false, true}()
+const ReverseSplitWithPrimal = ReverseMode{true, true}()
 
 """
     struct Forward <: Mode

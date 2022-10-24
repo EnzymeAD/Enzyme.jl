@@ -21,11 +21,14 @@ export EnzymeRules
 # Independent code, must be loaded before "compiler.jl"
 include("pmap.jl")
 
-guess_activity(::Type{T}, ::ReverseMode) where T = guess_activity(T)
-guess_activity(::Type{T}, ::ForwardMode) where T = guess_activity(T, API.DEM_ForwardMode)
-
 import LLVM
 include("api.jl")
+
+convert(::Type{API.CDerivativeMode}, ::ReverseMode{false}) = API.DEM_ReverseModeCombined
+convert(::Type{API.CDerivativeMode}, ::ReverseMode{true}) = API.DEM_ReverseModeGradient
+convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
+
+guess_activity(::Type{T}, mode::Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
     if T isa Union
@@ -40,18 +43,18 @@ include("api.jl")
     return Const{T}
 end
 
-@inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+@inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode)
     return Const{Union{}}
 end
 
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractFloat}
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
     else
         return Active{T}
     end
 end
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:Complex{<:AbstractFloat}}
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Complex{<:AbstractFloat}}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
     else
@@ -59,7 +62,7 @@ end
     end
 end
 
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T<:AbstractArray}
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
     else
@@ -67,14 +70,14 @@ end
     end
 end
 
-@inline function guess_activity(::Type{Real}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+@inline function guess_activity(::Type{Real}, Mode::API.CDerivativeMode)
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{Any}
     else
         return Duplicated{Any}
     end
 end
-@inline function guess_activity(::Type{Any}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined)
+@inline function guess_activity(::Type{Any}, Mode::API.CDerivativeMode)
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{Any}
     else
