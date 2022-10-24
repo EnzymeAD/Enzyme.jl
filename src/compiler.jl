@@ -325,6 +325,16 @@ declare_writebarrier!(mod) = get_function!(mod, "julia.write_barrier") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(LLVM.VoidType(ctx), [T_prjlvalue]; vararg=true)
 end
+declare_apply_generic!(mod) = get_function!(mod, "ijl_apply_generic") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type(ctx)])
+end
+declare_juliacall!(mod) = get_function!(mod, "julia.call") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
+end
 function emit_writebarrier!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -559,13 +569,50 @@ struct Tape{T}
     resT::DataType
 end
 
+# From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
+@inline function isghostty(ty) 
+    if ty === Union{}
+        return true
+    end
+    if Base.isconcretetype(ty) && !ismutabletype(ty)
+        if sizeof(ty) == 0
+            return true
+        end
+        # TODO consider struct_to_llvm ?
+    end
+    return false
+end
+
+@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs...) where {forwardMode,start, ActivityTup,width}
+    ntuple(Val(length(ActivityTup)-start+1)) do idx
+        Base.@_inline_meta
+        i = start + idx - 1
+        p = allargs[(i-1)*(width+1) + 1]
+        T = Core.Typeof(p)
+        if ActivityTup[i] && !isghostty(T)
+            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+                return Active(p)
+            else
+                if width == 1
+                    s = allargs[(i-1)*(width+1) + 1+1]
+                    return Duplicated(p, s)
+                else
+                    return BatchDuplicated(p, ntuple(w->allargs[(i-1)*(width+1)+w+1], Val(width)))
+                end
+            end
+        else
+            return Const(p)
+        end
+    end
+end
+
 @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start, ActivityTup,width,A,B}
     ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
         p = arg_ptr[i]
         T = Core.Typeof(p)
-        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
+        if ActivityTup[i] && !isghostty(T)
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 return Active(p)
             else
@@ -659,11 +706,11 @@ end
     end
 end
 
-function runtime_generic_fwd(arg_ptr, shadow_ptr, activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
+function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
+    fn = allargs[1]
+    dfn = ActivityTup[1] ? allargs[2] : nothing
     
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, allargs...)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -764,13 +811,14 @@ function runtime_generic_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}
     return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
 
-function runtime_invoke_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
-    
-    fn = arg_ptr[2]
-    dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
 
-    mi = arg_ptr[1]
+function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(3), activity_ptr, width, allargs...)
+    
+    fn = allargs[(2-1)*(width+1)+1]
+    dfn = ActivityTup[2] ? allargs[(2-1)*(width+1)+1+1] : nothing
+
+    mi = allargs[1]
     specTypes = mi.specTypes.parameters
     F = specTypes[1]
     @assert F == typeof(fn)
@@ -835,10 +883,9 @@ function runtime_invoke_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup},
     return common_interface_rev(#=start=#3, args, shadow_ptr, tape, width)
 end
 
-function runtime_apply_latest_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
+function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
+    fn = allargs[1]
+    dfn = ActivityTup[1] ? shadow_ptr[2] : nothing
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -922,6 +969,16 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     return
 end
 
+function unsafe_to_llvm(val, ctx)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    fill_val = unsafe_to_pointer(val)
+    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+end
+
 function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -930,7 +987,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
 
     num = convert(UInt32, length(ops))
@@ -938,31 +995,26 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     EB = LLVM.Builder(ctx)
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    # TODO: Optimization by emitting liverange
-    primal = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
-    shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num*width))
     ActivityList = Bool[]
 
     to_preserve = LLVM.Value[]
 
     @assert length(ops) != 0
-        
+    fill_val = unsafe_to_llvm(nothing, ctx)
+
+    vals = LLVM.Value[]
+    
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-    fill_val = unsafe_to_pointer(nothing)
-    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
-
+    
     for (i, op) in enumerate(ops)
         idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if lookup
             val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
         end
-
-        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
+        
+        push!(vals, val)
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
         push!(ActivityList, active)
@@ -989,75 +1041,34 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
                 end
             end
 
-            idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
-            LLVM.store!(B, ev,
-                        LLVM.inbounds_gep!(B, shadow, idx))
+            push!(vals, ev)
         end
     end
-
-    primal = addrspacecast!(B, primal, LLVM.PointerType(eltype(llvmtype(primal)), 11))
-    if tape === nothing
-        shadow = addrspacecast!(B, shadow, LLVM.PointerType(eltype(llvmtype(shadow)), 11))
-    else
-        # TODO ROOT
+    
+    for vt in ( Val(ReturnType),   Val(Int64(width)), Val((ActivityList...,)) )
+        pushfirst!(vals, unsafe_to_llvm(vt, ctx))
     end
-    
-    Activity = Val{(ActivityList...,)}
-    if tape === nothing
-        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), AnyArray(Int64(width)*length(ops)), Activity, Val{Int64(width)}, Val{ReturnType}})
-    else
-        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), Ptr{Any}, Activity, Any, Val{Int64(width)}, Val{ReturnType}})
-    end
-    
-    permit_inlining!(llvmf)
-    
-    vals = LLVM.Value[primal, shadow]
+    pushfirst!(vals, unsafe_to_llvm(func, ctx))
 
     if tape !== nothing
         push!(vals, LLVM.Value(tape))
     end
 
-    if sret !== nothing && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        pushfirst!(vals, sret)
+    inv = declare_apply_generic!(mod)
+    @static if VERSION < v"1.9-"
+        inv = LLVM.pointercast!(B, inv, LLVM.PointerType(LLVM.FunctionType(T_prjlvalue, LLVM.LLVMType[]; vararg=true)))
+    else
+        pushfirst!(vals, inv)
+        inv = declare_juliacall!(mod)
     end
 
-    params = parameters(eltype(LLVM.llvmtype(llvmf)))
-    for (i, val) in enumerate(vals)
-        sourceT = LLVM.llvmtype(val)
-        targetT = params[i]
-        if sourceT !== targetT
-            vals[i] = if sourceT isa LLVM.PointerType && targetT isa LLVM.IntegerType
-                LLVM.ptrtoint!(B, val, targetT)
-            elseif sourceT isa LLVM.IntegerType && targetT isa LLVM.PointerType
-                LLVM.inttoptr!(B, val, targetT)
-            else
-                LLVM.bitcast!(B, val, targetT)
-            end
-        end
-    end
-
-    if length(to_preserve) != 0
-        token = emit_gc_preserve_begin(B, to_preserve)
-    end
-
-    cal = LLVM.call!(B, llvmf, vals)
-    if sret !== nothing
-        attr = if LLVM.version().major >= 12
-            TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
-        else
-            EnumAttribute("sret"; ctx)
-        end
-        LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
-    end
+    cal = LLVM.call!(B, inv, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-    
-    if length(to_preserve) != 0
-        emit_gc_preserve_end(B, token)
-    end
-    
-    if sret !== nothing && !any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        emit_error(B, orig, "Illegal generic_setup")
-    end
+    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+    LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+
+    llty = convert(LLVMType, ReturnType; ctx)
+    cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Tracked))
 
     return cal
 end
@@ -1088,9 +1099,7 @@ function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
     
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
-        sret = allocate_sret!(gutils, 1+width, ctx)
-
-        generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
 
         if shadowR != C_NULL
             if width == 1
@@ -1134,9 +1143,7 @@ function common_generic_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 2+width, ctx)
-        generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
-
+        sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false)
         if shadowR != C_NULL
             if width == 1
                 gep = LLVM.inbounds_gep!(B, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
@@ -1212,8 +1219,7 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = allocate_sret!(gutils, 1+width, ctx)
-    generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
+    sret = generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
@@ -1249,8 +1255,7 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = allocate_sret!(gutils, 2+width, ctx)
-    generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
+    sret = generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
@@ -1537,8 +1542,7 @@ function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 1+width, ctx)
-        generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sert = generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
         
         if shadowR != C_NULL
             if width == 1
@@ -1577,8 +1581,7 @@ function common_invoke_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.A
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 2+width, ctx)
-        generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false)
         
         if shadowR != C_NULL
             if width == 1
