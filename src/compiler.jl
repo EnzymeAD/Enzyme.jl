@@ -556,39 +556,33 @@ struct Tape{T}
     resT::DataType
 end
 
-@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {ActivityTup,width,A,B}
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    args = Any[]
-    
-    for i in start:length(arg_ptr)
+@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start, ActivityTup,width,A,B}
+    ntuple(Val(length(arg_ptr)-start+1)) do idx
+        Base.@_inline_meta
+        i = start + idx - 1
         p = arg_ptr[i]
         T = Core.Typeof(p)
         if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                push!(args, Active(p))
+                return Active(p)
             else
                 if width == 1
                     s = shadow_ptr[(i-1)*width + 1]
-                    push!(args, Duplicated(p, s))
+                    return Duplicated(p, s)
                 else
-                    push!(args, BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], width)))
+                    return BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], Val(width)))
                 end
             end
         else
-            push!(args, Const(p))
+            return Const(p)
         end
     end
     return args
 end
-@inline function wrap_annotated_args(forwardMode, start, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {ActivityTup,width}
-    # Note: We shall not unsafe_wrap any of the Ptr{Any}, since these are stack allocations
-    #       As an example, if the Array created by unsafe_wrap get's moved to the remset it
-    #       will constitute a leak of the stack allocation, and GC will find delicous garbage.
-    args = Any[]
-    
-    for i in start:length(arg_ptr)
+@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start,ActivityTup,width}
+    ntuple(Val(length(arg_ptr)-start+1)) do idx
+        Base.@_inline_meta
+        i = start + idx - 1
         p = arg_ptr[i]
         T = Core.Typeof(p)
         if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
@@ -599,7 +593,7 @@ end
                     s = unsafe_load(shadow_ptr, (i-1)*width + 1)
                     push!(args, Duplicated(p, s))
                 else
-                    push!(args, BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], width)))
+                    push!(args, BatchDuplicated(p, ntuple(w->unsafe_load(shadow_ptr, (i-1)*width+w), Val(width))))
                 end
             end
         else
@@ -668,7 +662,7 @@ function runtime_generic_fwd(arg_ptr, shadow_ptr, activity::Val{ActivityTup}, wi
     fn = arg_ptr[1]
     dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
     
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -753,7 +747,7 @@ end
 function runtime_generic_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
     fn = arg_ptr[1]
     dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
 
     # TODO: Annotation of return value
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
@@ -767,12 +761,12 @@ function runtime_generic_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityT
 end
 
 function runtime_generic_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
     return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
 
 function runtime_invoke_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
     
     fn = arg_ptr[2]
     dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
@@ -817,7 +811,7 @@ function runtime_invoke_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup},
 end
 
 function runtime_invoke_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
 
     fn = arg_ptr[2]
     dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
@@ -838,14 +832,14 @@ function runtime_invoke_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTu
 end
 
 function runtime_invoke_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#3, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
     return common_interface_rev(#=start=#3, args, shadow_ptr, tape, width)
 end
 
 function runtime_apply_latest_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
     fn = arg_ptr[1]
     dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#true, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -882,7 +876,7 @@ end
 function runtime_apply_latest_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
     fn = arg_ptr[1]
     dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
 
     tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
@@ -901,7 +895,7 @@ function runtime_apply_latest_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{Acti
 end
 
 function runtime_apply_latest_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#false, #=start=#2, arg_ptr, shadow_ptr, activity_ptr, width)
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
     return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
 end
 
