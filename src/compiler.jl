@@ -334,6 +334,11 @@ declare_juliacall!(mod) = get_function!(mod, "julia.call") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
 end
+declare_jl_!(mod) = get_function!(mod, "jl_") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
+end
 function emit_writebarrier!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -852,8 +857,8 @@ end
 function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, allargs...) where {ActivityTup,Width,ReturnType}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), activity, width, allargs...)
     
-    fn = allargs[(2-1)*(width+1)+1]
-    dfn = ActivityTup[2] ? allargs[(2-1)*(width+1)+1+1] : nothing
+    fn = allargs[(2-1)*(Width+1)+1]
+    dfn = ActivityTup[2] ? allargs[(2-1)*(Width+1)+1+1] : nothing
 
     mi = allargs[1]
     specTypes = mi.specTypes.parameters
@@ -1058,7 +1063,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
     pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
     pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
-    
+   
     pushfirst!(vals, unsafe_to_llvm(func, ctx))
 
     if tape !== nothing
@@ -1075,8 +1080,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     cal = LLVM.call!(B, inv, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-    conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-    LLVM.API.LLVMSetInstructionCallConv(cal, conv)
+    @static if VERSION < v"1.9-"
+        LLVM.API.LLVMSetInstructionCallConv(cal, 37)
+    end
 
     if tape === nothing
         llty = convert(LLVMType, ReturnType; ctx)
@@ -3614,6 +3620,7 @@ any_jltypes(::LLVM.VoidType) = false
 @inline any_jltypes(::Type{Nothing}) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
 @inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{Complex{T}}) where T = any_jltypes(T)
 @inline any_jltypes(::Type{NTuple{Size, T}}) where {Size, T} = any_jltypes(T)
 @inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
 @inline any_jltypes(::Type{Any}) = true
@@ -5078,7 +5085,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     if is_adjoint
         NT = Tuple{ActiveRetTypes...}
-        if any(any_jltypes(b) for b in ActiveRetTypes)
+        if any(any_jltypes(convert(LLVM.LLVMType, b; ctx, allow_boxed=true)) for b in ActiveRetTypes)
             NT = AnonymousStruct(NT)
         end
         push!(sret_types, NT)
@@ -6503,9 +6510,12 @@ end
         end
         i+=1
     end
+	
+    ctx = LLVM.Context()
+    
     if is_adjoint
         NT = Tuple{ActiveRetTypes...}
-        if any(any_jltypes(b) for b in ActiveRetTypes)
+        if any(any_jltypes(convert(LLVM.LLVMType, b; ctx, allow_boxed=true)) for b in ActiveRetTypes)
             NT = AnonymousStruct(NT)
         end
         push!(sret_types, NT)
@@ -6530,7 +6540,6 @@ end
     end
 
 	# calls fptr
-	ctx = LLVM.Context()
     llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
     llsret_types = LLVMType[]
     if !isempty(sret_types)
