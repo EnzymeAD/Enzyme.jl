@@ -556,7 +556,7 @@ end
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
-    @test (√3, nothing) ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))
+    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))[1]
     @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), 3))
 end
 
