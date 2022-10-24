@@ -557,7 +557,7 @@ struct Tape{T}
 end
 
 @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start, ActivityTup,width,A,B}
-    ntuple(Val(length(arg_ptr)-start+1)) do idx
+    ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
         p = arg_ptr[i]
@@ -577,30 +577,28 @@ end
             return Const(p)
         end
     end
-    return args
 end
 @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start,ActivityTup,width}
-    ntuple(Val(length(arg_ptr)-start+1)) do idx
+    ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
         p = arg_ptr[i]
         T = Core.Typeof(p)
         if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                push!(args, Active(p))
+                return Active(p)
             else
                 if width == 1
                     s = unsafe_load(shadow_ptr, (i-1)*width + 1)
-                    push!(args, Duplicated(p, s))
+                    return Duplicated(p, s)
                 else
-                    push!(args, BatchDuplicated(p, ntuple(w->unsafe_load(shadow_ptr, (i-1)*width+w), Val(width))))
+                    return BatchDuplicated(p, ntuple(w->unsafe_load(shadow_ptr, (i-1)*width+w), Val(width)))
                 end
             end
         else
-            push!(args, Const(p))
+            return Const(p)
         end
     end
-    return args
 end
 
 @inline function common_interface_augfwd(annotation, forward, adjoint, args, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType} 
