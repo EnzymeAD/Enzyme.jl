@@ -694,7 +694,7 @@ function runtime_generic_fwd(arg_ptr, shadow_ptr, activity::Val{ActivityTup}, wi
     end
 end
 
-@inline function common_interface_rev(start, args, shadow_ptr, tape::Any, width::Val{Width}) where Width
+@inline function common_interface_rev(start, args, shadow_ptr, tape, width::Val{Width}) where Width
     
     actives = []
     for (i, p) in enumerate(args)
@@ -711,12 +711,10 @@ end
         else
             val = ntuple(i->tape.shadow_return[i][], width)
         end
-        push!(args, val)
+        args = (args..., val)
     end
 
-    push!(args, tape.internal_tape)
-
-    tup = tape.thunk(args...)
+    tup = tape.thunk(args..., tape.internal_tape)
     
     for (d, i) in zip(tup, actives)
         # While `RefValue{T}` and boxed T for immutable are bitwise compatible
