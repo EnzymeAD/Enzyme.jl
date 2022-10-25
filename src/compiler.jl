@@ -808,6 +808,39 @@ end
     return false
 end
 
+@inline wrap_annotated_args_r(::Val{forwardMode}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode, ActivityTup,width}= ()
+@inline function wrap_annotated_args_r(::Val{forwardMode}, ::Val{ActivityTup}, ::Val{width}, p::T, allargs::Vararg{Any,N}) where {forwardMode,ActivityTup,width,N, T}
+    out = if !ActivityTup[1] || isghostty(T)
+        Const(p)
+    elseif !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+        Active(p)
+    elseif width == 1
+        Duplicated(p, allargs[1])
+    else
+        BatchDuplicated(p, ntuple(Val(width)) do i
+          Base.@_inline_meta
+          allargs[i] 
+        end)
+    end
+    rest = ntuple(Val(N-width)) do i
+        Base.@_inline_meta
+        allargs[i+width]
+    end
+    (out, wrap_annotated_args_r(Val(forwardMode), Val(Base.tail(ActivityTup)), Val(width), rest...)...)
+end
+
+# @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{Any,N}) where {forwardMode,start, ActivityTup,width,N}
+#     NAct = Val(ntuple(Val(length(ActivityTup)-start+1)) do i
+#         Base.@_inline_meta
+#         ActivityTup[i+start-1]
+#     end)
+#     rest = ntuple(Val(N-(1+width)*(start-1))) do i
+#         Base.@_inline_meta
+#         allargs[i+(1+width)*(start-1)]
+#     end
+#     wrap_annotated_args_r(Val(forwardMode), NAct, Val(width), rest...)
+# end
+
 @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{Any,N}) where {forwardMode,start, ActivityTup,width,N}
     ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
@@ -931,6 +964,81 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     end
 end
 
+# This attempt is not type stable, using recusive variant below:
+# @inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
+#     if tape.shadow_return !== nothing
+#         if Width == 1
+#             val = tape.shadow_return[]
+#         else
+#             val = ntuple(i->tape.shadow_return[i][], width)
+#         end
+#         args = (args..., val)
+#     end
+# 
+#     tup = adjoint(args..., tape.internal_tape)[1]
+# 
+#     ntuple(numArgs) do i
+#         Base.@_inline_meta
+#         d = tup[i]
+#         if d isa Nothing
+#             return nothing
+#         end
+#         i += start - 1
+#         # While `RefValue{T}` and boxed T for immutable are bitwise compatible
+#         # they are not idempotent on the Julia level. We could "force" `a` to be
+#         # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+#         ntuple(width) do w
+#             Base.@_inline_meta
+#             dd = if Width == 1
+#                 d
+#             else
+#                 d[w]
+#             end
+#             a = allargs[(i-1)*(Width+1)+w+1]
+#             if a === nothing
+#             elseif a isa Base.RefValue
+#                 # @assert eltype(a) == typeof(dd)
+#                 a[] += dd
+#             else
+#                 ref = shadow_ptr[(i-1)*Width+w]
+#                 ref = reinterpret(Ptr{typeof(a)}, ref)
+#                 unsafe_store!(ref, dd+a)
+#             end
+#         end
+#         return nothing
+#     end
+#     return nothing
+# end
+
+@inline zipAdd(::Val{Width}, ::Tuple{}, ::Tuple{}, ::Tuple{}) where Width = nothing
+@inline function zipAdd(::Val{Width}, revout::T, prev::R, shadow::S) where {Width, T,R,S}
+    if typeof(revout[1]) !== Nothing
+        d = revout[1]
+        prevs = prev[1]
+        shadows = shadow[1]
+        ntuple(Val(Width)) do w
+                Base.@_inline_meta
+                dd = if Width == 1
+                    d
+                else
+                    d[w]
+                end
+                a = prevs[w]
+                if a === nothing
+                elseif a isa Base.RefValue
+                    # @assert eltype(a) == typeof(dd)
+                    a[] += dd
+                else
+                    ref = shadows[w]
+                    ref = reinterpret(Ptr{typeof(a)}, ref)
+                    unsafe_store!(ref, dd+a)
+                end
+        end
+    end
+    zipAdd(Val(Width), Base.tail(revout), Base.tail(prev), Base.tail(shadow))
+    return
+end
+
 @inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
     if tape.shadow_return !== nothing
         if Width == 1
@@ -941,37 +1049,25 @@ end
         args = (args..., val)
     end
 
-    tup = adjoint(args..., tape.internal_tape)
-
-    ntuple(numArgs) do i
+    tup = adjoint(args..., tape.internal_tape)[1]
+    
+    prevTyped = ntuple(numArgs) do i
         Base.@_inline_meta
-        d = tup[1][i]
-        if d isa Nothing
-            return nothing
+        ntuple(width) do w
+            Base.@_inline_meta
+            allargs[(i-1+start-1)*(Width+1)+w+1]
         end
-        i += start - 1
-        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-        # they are not idempotent on the Julia level. We could "force" `a` to be
-        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
-        for w in 1:Width
-            dd = if Width == 1
-                d
-            else
-                d[w]
-            end
-            a = allargs[(i-1)*(Width+1)+w+1]
-            if a === nothing
-            elseif a isa Base.RefValue
-                # @assert eltype(a) == typeof(dd)
-                a[] += dd
-            else
-                ref = shadow_ptr[(i-1)*Width+w]
-                ref = reinterpret(Ptr{typeof(a)}, ref)
-                unsafe_store!(ref, dd+a)
-            end
-        end
-        return nothing
     end
+
+    shadows = ntuple(numArgs) do i
+        Base.@_inline_meta
+        ntuple(width) do w
+            Base.@_inline_meta
+            shadow_ptr[(i-1+start-1)*(Width)+w]
+        end
+    end
+
+    zipAdd(Val(Width), tup, prevTyped, shadows) 
     return nothing
 end
 
@@ -982,11 +1078,11 @@ function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, R
     dfn = ActivityTup[1] ? df : nothing
 
     # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt = Tuple{(eltype(typeof(x)) for x in args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     
-    tt′ = Tuple{map(typeof, args)...}
+    tt′ = Tuple{(typeof(a) for a in args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_augfwd(annotation, forward, args, width, RT)
@@ -1310,10 +1406,6 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
     pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
     pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
-    
-    if tape !== nothing
-        push!(vals, LLVM.Value(tape))
-    end
     
     mi = emit_methodinstance!(B, func, vals)
    
