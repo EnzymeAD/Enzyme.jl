@@ -175,7 +175,7 @@ f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
 
 # output
 
-(3.966106403010388, 54450.0)
+(3.966106403010388, nothing, nothing, 54450.0)
 ```
 
 here, `autodiff` returns a tuple
