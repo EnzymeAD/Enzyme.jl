@@ -2313,7 +2313,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         if API.runtimeActivity()
             prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
             shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), shadowres, prev)
-            API.moveBefore(prev, shadowres, C_NULL)
+            API.moveBefore(prev, shadowres, B)
         end
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig))))
@@ -2324,7 +2324,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
                 prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
                 callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), callv, prev)
                 if idx == 1
-                    API.moveBefore(prev, callv, C_NULL)
+                    API.moveBefore(prev, callv, B)
                 end
             end
             shadowres = insert_value!(B, shadowres, callv, idx-1)
