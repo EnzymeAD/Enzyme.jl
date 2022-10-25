@@ -775,7 +775,9 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
     @assert FT == F
     @assert in(mi.def, methods(fn))
     
-    tt = Tuple{specTypes[2:end]...}
+    # TODO: Use spectypes
+    # tt = Tuple{specTypes[2:end]...}
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -819,11 +821,12 @@ function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT
     @assert FT == F
     @assert in(mi.def, methods(fn))
     
-    tt = Tuple{specTypes[2:end]...}
+    # TODO: Use spectypes
+    # tt = Tuple{specTypes[2:end]...}
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     
     annotation = guess_activity(rt)
-
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
