@@ -928,7 +928,7 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     end
 end
 
-@inline function common_interface_rev(args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {start, Width,N,ArgsTy, AdjointTy}
+@inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
     if tape.shadow_return !== nothing
         if Width == 1
             val = tape.shadow_return[]
@@ -940,9 +940,11 @@ end
 
     tup = adjoint(args..., tape.internal_tape)
 
-    for (i, d) in enumerate(tup[1])
+    ntuple(numArgs) do i
+        Base.@_inline_meta
+        d = tup[1][i]
         if d isa Nothing
-            continue
+            return nothing
         end
         i += start - 1
         # While `RefValue{T}` and boxed T for immutable are bitwise compatible
@@ -957,7 +959,7 @@ end
             a = allargs[(i-1)*(Width+1)+w+1]
             if a === nothing
             elseif a isa Base.RefValue
-                @assert eltype(a) == typeof(dd)
+                # @assert eltype(a) == typeof(dd)
                 a[] += dd
             else
                 ref = shadow_ptr[(i-1)*Width+w]
@@ -965,6 +967,7 @@ end
                 unsafe_store!(ref, dd+a)
             end
         end
+        return nothing
     end
     return nothing
 end
@@ -1001,7 +1004,7 @@ function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, 
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
-    return common_interface_rev(args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 
@@ -1094,7 +1097,7 @@ function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, t
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_rev(args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
@@ -1176,7 +1179,7 @@ function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Wid
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     #
-    return common_interface_rev(args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
