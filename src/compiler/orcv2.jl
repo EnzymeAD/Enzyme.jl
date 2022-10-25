@@ -137,28 +137,40 @@ function get_trampoline(job)
     # We could also use one dylib per job
     jd = JITDylib(lljit)
 
-    entry_sym = String(gensym(:entry))
-    target_sym = String(gensym(:target))
+    adjoint_sym = String(gensym(:adjoint))
+    _adjoint_sym = String(gensym(:adjoint))
+
+    primal_sym = String(gensym(:adjoint))
+    _primal_sym = String(gensym(:adjoint))
+
     flags = LLVM.API.LLVMJITSymbolFlags(
                 LLVM.API.LLVMJITSymbolGenericFlagsCallable |
                 LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
-    entry = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, entry_sym),
-                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
-                    mangle(lljit, target_sym), flags))
 
-    mu = LLVM.reexports(lctm, ism, jd, Ref(entry))
+    adjoint = LLVM.API.LLVMOrcCSymbolAliasMapPair(
+                mangle(lljit, adjoint_sym),
+                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
+                    mangle(lljit, _adjoint_sym), flags))
+    primal = LLVM.API.LLVMOrcCSymbolAliasMapPair(
+                mangle(lljit, primal_sym),
+                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
+                    mangle(lljit, _primal_sym), flags))
+
+    mu = LLVM.reexports(lctm, ism, jd, [adjoint, primal])
     LLVM.define(jd, mu)
 
     # 2. Lookup address of entry symbol
-    addr = LLVM.lookup(lljit, entry_sym)
+    adjoint_addr = LLVM.lookup(lljit, adjoint)
+    primal_addr = LLVM.lookup(lljit, primal)
 
     # 3. add MU that will call back into the compiler
-    sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, target_sym), flags)
+    adjoint_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _adjoint_sym), flags)
+    primal_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _primal_sym), flags)
 
     function materialize(mr)
         mod, adjoint_name, primal_name = Compiler._thunk(job)
         adjointf = functions(mod)[adjoint_name]
+        primalf = functions(mod)[primal_name]
 
         # Rename adjointf to match target_sym
         # Really we should do:
@@ -166,7 +178,8 @@ function get_trampoline(job)
         # 1. Make the runtime decision about what symbol should implement "foo". Let's call this "foo.rt.impl".
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
-        LLVM.name!(adjointf, target_sym)
+        LLVM.name!(adjointf, adjoint_sym)
+        LLVM.name!(primalf, primal_sym)
         tsm = move_to_threadsafe(mod)
 
         il = LLVM.IRTransformLayer(lljit)
@@ -178,9 +191,9 @@ function get_trampoline(job)
     function discard(jd, sym)
     end
 
-    mu = LLVM.CustomMaterializationUnit(entry_sym, Ref(sym), materialize, discard)
+    mu = LLVM.CustomMaterializationUnit(entry_sym, [adjoint_sym, primal_sym], materialize, discard)
     LLVM.define(jd, mu)
-    return addr
+    return adjoint_addr, primal_addr
 end
 
 function add!(mod)
