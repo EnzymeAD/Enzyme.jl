@@ -543,17 +543,24 @@ function emit_methodinstance!(B, func, args)::LLVM.Value
 
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    @static if VERSION < v"1.8.0-"
+    worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds", 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, sizeT, psizeT, psizeT]))
+    else
     worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds", 
         LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]))
-
+    end
     EB = LLVM.Builder(ctx)
     position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
     minworld = alloca!(EB, sizeT)
     maxworld = alloca!(EB, sizeT)
     store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
     store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
+    @static if VERSION < v"1.8.0-"
+    methodmatch = call!(B, worlds, LLVM.Value[tag, LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    else
     methodmatch = call!(B, worlds, LLVM.Value[tag, unsafe_to_llvm(nothing, ctx), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
-    
+    end
     methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, 2), Tracked))
     gep = LLVM.inbounds_gep!(B, methodmatch, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
     sv = LLVM.load!(B, gep)
