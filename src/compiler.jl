@@ -4212,10 +4212,7 @@ function fixup_return(B, retval)
     if isa(ty, LLVM.StructType)
         elems = LLVM.elements(ty)
         if length(elems) == 2 && elems[1] == T_prjlvalue
-            fill_val = unsafe_to_pointer(nothing)
-            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            fill_val = unsafe_to_llvm(nothing, ctx)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
             retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
@@ -4250,10 +4247,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
             if isa(ty, LLVM.PointerType)
                 if any_jltypes(ty) 
                     loc = gep!(builder, nobj, path)
-                    fill_val = unsafe_to_pointer(nothing)
-                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    fill_val = unsafe_to_llvm(nothing, ctx)
                     loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(llvmtype(loc))))
                     store!(builder, fill_val, loc)
                 elseif zeroAll
@@ -4374,10 +4368,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             end
 
             # Obtain tag
-            tag = unsafe_to_llvm(ETT)
+            tag = unsafe_to_llvm(ETT, ctx)
         else
             boxed_count = emit_box_int64!(B, Count)
-            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(TT)))
+            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(TT, ctx)))
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -6168,10 +6162,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 position!(builder, BB)
                 
                 if GPUCompiler.isghosttype(jlrettype) || Core.Compiler.isconstType(jlrettype)
-                    fill_val = unsafe_to_pointer(jlrettype.instance)
-                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    fill_val = unsafe_to_llvm(jlrettype.instance, ctx)
                     ret!(builder, fill_val)
                 else
                     obj = emit_allocobj!(builder, jlrettype)
@@ -6190,10 +6181,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             for_each_uniontype_small(inner, actualRetType)
 
             position!(builder, def)
-            fill_val = unsafe_to_pointer(nothing)
-            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            fill_val = unsafe_to_llvm(nothing, ctx)
             ret!(builder, fill_val)
         elseif sret 
             ret!(builder, load!(builder, sretPtr))
