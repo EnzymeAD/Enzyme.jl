@@ -990,7 +990,7 @@ end
 		end
 	end
 
-    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][1]
+    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][2]
 	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
 	
 	function tobedifferentiated2(cond, a)::Float64
@@ -1001,7 +1001,7 @@ end
 		end
 	end
 
-    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1][1]
+    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1][2]
 	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, true, Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)

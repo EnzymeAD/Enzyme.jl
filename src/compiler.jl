@@ -324,10 +324,18 @@ declare_writebarrier!(mod) = get_function!(mod, "julia.write_barrier") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(LLVM.VoidType(ctx), [T_prjlvalue]; vararg=true)
 end
+@static if VERSION < v"1.8.0"
+declare_apply_generic!(mod) = get_function!(mod, "jl_apply_generic") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type(ctx)])
+end
+else
 declare_apply_generic!(mod) = get_function!(mod, "ijl_apply_generic") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type(ctx)])
+end
 end
 declare_juliacall!(mod) = get_function!(mod, "julia.call") do ctx
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
