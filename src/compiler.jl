@@ -343,11 +343,214 @@ declare_juliacall!(mod) = get_function!(mod, "julia.call") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
 end
-declare_jl_!(mod) = get_function!(mod, "jl_") do ctx
+
+function emit_jl!(B, val)::LLVM.Value 
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
-    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
+    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
+    fn = get_function!(mod, "jl_", FT)
+    call!(B, fn, [val])
 end
+
+function emit_box_int64!(B, val)::LLVM.Value  
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_int64 = LLVM.Int64Type(ctx)
+
+    @static if VERSION < v"1.8-"
+        box_int64 = get_function!(mod, "jl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+    else
+        box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+    end
+    call!(B, box_int64, [val])
+end
+
+function emit_invoke!(B, args)::LLVM.Value     
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+
+    # {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32, {} addrspace(10)*)* @ijl_invoke
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32, T_prjlvalue]) 
+    @static if VERSION < v"1.8-"
+        inv = get_function!(mod, "jl_invoke", gen_FT)
+    else
+        inv = get_function!(mod, "ijl_invoke", gen_FT)
+    end
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        inv = bitcast!(B, inv, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        res = call!(B, inv, args)
+        LLVM.callconv!(res, 38)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call2",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        res = call!(B, julia_call, [inv, args...])
+    end
+    return res
+end
+
+function emit_svec!(B, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    fn = get_function!(mod, "jl_svec") do ctx
+        sz = convert(LLVMType, Csize_t; ctx)
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+        LLVM.FunctionType(T_prjlvalue, [sz]; vararg=true)
+    end
+    sz = convert(LLVMType, Csize_t; ctx)
+    call!(B, fn, [LLVM.ConstantInt(sz, length(args)), args...])
+end
+
+
+function emit_apply_type!(B, Ty, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    legal = true
+    found = []
+    for arg in args
+        if !isa(arg, ConstantExpr)
+            legal = false
+            break
+        end
+
+        ce = arg
+        while isa(ce, ConstantExpr)
+            ce = operands(ce)[1]
+        end
+        if !isa(ce, LLVM.ConstantInt)
+            legal = false
+            break
+        end
+        ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+        typ = Base.unsafe_pointer_to_objref(ptr)
+        push!(found, typ, ctx)
+    end
+
+    if legal
+        return unsafe_to_llvm(Ty{found...}, ctx)
+    end
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+    
+    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+    f_apply_type = get_function!(mod, "jl_f_apply_type", generic_FT)
+    Ty = unsafe_to_llvm(Ty, ctx)
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), Ty, args...])
+        LLVM.callconv!(tag, 37)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
+    end
+    return tag
+end
+
+function emit_jltypeof!(B, arg)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    if isa(arg, ConstantExpr)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            ce = operands(ce)[1]
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            return unsafe_to_llvm(Core.Typeof(typ), ctx)
+        end
+    end
+
+    fn = get_function!(mod, "jl_typeof") do ctx
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
+    end
+    call!(B, fn, [arg])
+end
+
+function emit_methodinstance!(B, func, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    world = enzyme_extract_world(fn)
+
+    sizeT = convert(LLVMType, Csize_t; ctx)
+    psizeT = LLVM.PointerType(sizeT)
+
+    primalvaltys = LLVM.Value[unsafe_to_llvm(Core.Typeof(func), ctx)]
+   
+    meth = only(methods(func))
+    tag = emit_apply_type!(B, Tuple, primalvaltys)
+
+    meth = unsafe_to_llvm(meth, ctx)
+
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds", 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]))
+
+    EB = LLVM.Builder(ctx)
+    position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
+    minworld = alloca!(EB, sizeT)
+    maxworld = alloca!(EB, sizeT)
+    store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
+    store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
+    methodmatch = call!(B, worlds, LLVM.Value[tag, unsafe_to_llvm(nothing, ctx), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    
+    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, 2), Tracked))
+    gep = LLVM.inbounds_gep!(B, methodmatch, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+    sv = LLVM.load!(B, gep)
+    
+    fn = get_function!(mod, "jl_specializations_get_linfo",
+                       LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue]))
+
+    mi = call!(B, fn, [meth, tag, sv])
+
+    return mi
+end
+
 function emit_writebarrier!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -675,6 +878,7 @@ end
 end
 
 function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+
     fn = f
     dfn = ActivityTup[1] ? df : nothing
     
@@ -850,6 +1054,8 @@ function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, t
 end
 
 function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    @ccall jl_(activity::Any)::Any
+    @ccall jl_(ActivityTup::Any)::Any
     args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
     
     fn = f
@@ -1030,7 +1236,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
             end
         end
     end
-   
+
     if tape !== nothing
         pushfirst!(vals, shadow_ptr)
         pushfirst!(vals, LLVM.Value(tape))
@@ -1039,26 +1245,20 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
     pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
     pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
-   
-    pushfirst!(vals, unsafe_to_llvm(func, ctx))
-
+    
     if tape !== nothing
         push!(vals, LLVM.Value(tape))
     end
+    
+    mi = emit_methodinstance!(B, func, vals)
+   
+    pushfirst!(vals, unsafe_to_llvm(func, ctx))
+    
+    pushfirst!(vals, mi)
 
-    inv = declare_apply_generic!(mod)
-    @static if VERSION < v"1.9-"
-        inv = LLVM.pointercast!(B, inv, LLVM.PointerType(LLVM.FunctionType(T_prjlvalue, LLVM.LLVMType[]; vararg=true)))
-    else
-        pushfirst!(vals, inv)
-        inv = declare_juliacall!(mod)
-    end
+    cal = emit_invoke!(B, vals)
 
-    cal = LLVM.call!(B, inv, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-    @static if VERSION < v"1.9-"
-        LLVM.API.LLVMSetInstructionCallConv(cal, 37)
-    end
 
     if tape === nothing
         llty = convert(LLVMType, ReturnType; ctx)
@@ -3990,13 +4190,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
     T_int8 = LLVM.Int8Type(ctx)
 
     if any_jltypes(LLVMType) || IsDefault != 0
-        T_int32 = LLVM.Int32Type(ctx)
         T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-        T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-        T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
         T_pint8 = LLVM.PointerType(T_int8)
         T_ppint8 = LLVM.PointerType(T_pint8)
 
@@ -4021,45 +4217,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             end
 
             # Obtain tag
-            tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
-            tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
-            tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
+            tag = unsafe_to_llvm(ETT)
         else
-            # TODO: Version switch to get jl_box_int64 and not call37...
-        @static if VERSION < v"1.8-"
-            box_int64 = get_function!(mod, "jl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
-        else
-            box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
-        end
-            boxed_count = call!(B, box_int64, [Count])
-
-            generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
-            f_apply_type = get_function!(mod, "jl_f_apply_type", generic_FT)
-
-
-            ptr = unsafe_to_pointer(NTuple)
-
-            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, ptr); ctx)
-            EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
-            EnzymeTapeT = LLVM.const_addrspacecast(EnzymeTapeT, T_prjlvalue)
-
-            TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx)
-            TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue_UT)
-            TapeT = LLVM.const_addrspacecast(TapeT, T_prjlvalue)
-
-            if VERSION < v"1.9.0-"
-                FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue])
-                f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
-                # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-                tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
-                LLVM.callconv!(tag, 37)
-            else
-                # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-                julia_call = get_function!(mod, "julia.call",
-                    LLVM.FunctionType(T_prjlvalue, 
-                                      [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
-                tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
-            end
+            boxed_count = emit_box_int64!(B, Count)
+            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(TT)))
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -4714,7 +4875,18 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme_custom_extract_mi(orig)
+function enzyme_extract_world(fn::LLVM.Function)
+    for fattr in collect(function_attributes(fn))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_world"
+                return parse(Int, LLVM.value(fattr))
+            end
+        end
+    end
+    GPUCompiler.@safe_error "Enzyme: Could not find world", fn
+end
+
+function enzyme_custom_extract_mi(orig::LLVM.Instruction)
     mi = nothing
     job = nothing
     for fattr in collect(function_attributes(LLVM.called_value(orig)))
@@ -6254,6 +6426,9 @@ end
             push!(attributes, StringAttribute("enzymejl_mi", string(convert(Int, pointer_from_objref(mi))); ctx))
             push!(attributes, StringAttribute("enzymejl_job", string(convert(Int, pointer_from_objref(jobref))); ctx))
             push!(jlrules, fname)
+        end
+        for f in functions(mod)
+            push!(function_attributes(f), StringAttribute("enzymejl_world", string(job.source.world); ctx))
         end
 
         GC.@preserve job jobref begin
