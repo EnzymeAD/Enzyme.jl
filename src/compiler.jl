@@ -520,10 +520,26 @@ function emit_methodinstance!(B, func, args)::LLVM.Value
     psizeT = LLVM.PointerType(sizeT)
 
     primalvaltys = LLVM.Value[unsafe_to_llvm(Core.Typeof(func), ctx)]
+    for a in args
+        push!(primalvaltys, emit_jltypeof!(B, a))
+    end
    
     meth = only(methods(func))
     tag = emit_apply_type!(B, Tuple, primalvaltys)
 
+#    TT = meth.sig
+#    while TT isa UnionAll
+#        TT = TT.body
+#    end
+#    parms = TT.parameters
+#    
+#    tosv = primalvaltys
+#    if length(parms) > 0 && typeof(parms[end]) == Core.TypeofVararg
+#        tosv = LLVM.Value[tosv[1:length(parms)-1]..., emit_apply_type!(B, Tuple, tosv[length(parms):end])]
+#    end
+#    sv = emit_svec!(B, tosv[2:end])
+#
+    
     meth = unsafe_to_llvm(meth, ctx)
 
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -816,13 +832,12 @@ end
     end
 end
 
-struct Tape{AdjointTy,TapeTy,ShadowTy,ResT}
-    thunk::AdjointTy
+struct Tape{TapeTy,ShadowTy,ResT}
     internal_tape::TapeTy
     shadow_return::ShadowTy
 end
 
-@inline function common_interface_augfwd(annotation, forward::ForwardTy, adjoint::AdjointTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,AdjointTy,ArgsTy,Width,ReturnType} 
+@inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
     res = forward(args...)
 
     internal_tape = res[1]
@@ -830,7 +845,7 @@ end
     if length(res) == 1
         resT = Nothing
         shadow_return = nothing
-        tape = Tape{AdjointTy, typeof(internal_tape), typeof(shadow_return), resT}(adjoint, internal_tape, shadow_return)
+        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
         if Width == 1
             return ReturnType((nothing, nothing, tape))
         else
@@ -840,7 +855,7 @@ end
     if annotation <: Const
         let origRet = res[2], resT = typeof(origRet)
             shadow_return = nothing
-            tape = Tape{AdjointTy, typeof(internal_tape), typeof(shadow_return), resT}(adjoint, internal_tape, shadow_return)
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             if Width == 1
                 return ReturnType((origRet, origRet, tape))
             else
@@ -855,7 +870,7 @@ end
             else
                 shadow_return = ntuple(i->Ref(zero(resT)), width)
             end
-            tape = Tape{AdjointTy, typeof(internal_tape), typeof(shadow_return), resT}(adjoint, internal_tape, shadow_return)
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             if Width == 1
                 return ReturnType((origRet, shadow_return, tape))
             else
@@ -885,7 +900,7 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
 
     # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -897,7 +912,7 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
         end
     end
 
-    tt′ = Tuple{map(Core.Typeof, args)...}
+    tt′ = Tuple{map(typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
@@ -916,7 +931,7 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     end
 end
 
-@inline function common_interface_rev(args::ArgsTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {start, Width,N,ArgsTy}
+@inline function common_interface_rev(args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {start, Width,N,ArgsTy, AdjointTy}
     if tape.shadow_return !== nothing
         if Width == 1
             val = tape.shadow_return[]
@@ -926,7 +941,7 @@ end
         args = (args..., val)
     end
 
-    tup = tape.thunk(args..., tape.internal_tape)
+    tup = adjoint(args..., tape.internal_tape)
 
     for (i, d) in enumerate(tup[1])
         if d isa Nothing
@@ -958,24 +973,38 @@ end
 end
 
 function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType, N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
+    
     fn = f
     dfn = ActivityTup[1] ? df : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
 
     # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     
-    tt′ = Tuple{map(Core.Typeof, args)...}
+    tt′ = Tuple{map(typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
+    return common_interface_augfwd(annotation, forward, args, width, RT)
 end
 
 function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    return common_interface_rev(args, Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    # TODO: Annotation of return value
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
+    
+    tt′ = Tuple{map(typeof, args)...}
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+
+    return common_interface_rev(args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 
@@ -992,7 +1021,7 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
     
     # TODO: Use spectypes
     # tt = Tuple{specTypes[2:end]...}
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -1004,7 +1033,7 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
         end
     end
 
-    tt′ = Tuple{map(Core.Typeof, args)...}
+    tt′ = Tuple{map(typeof, args)...}
 
     forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
                     #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
@@ -1038,30 +1067,46 @@ function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT
     
     # TODO: Use spectypes
     # tt = Tuple{specTypes[2:end]...}
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     
     annotation = guess_activity(rt)
     tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
+    return common_interface_augfwd(annotation, forward, args, width, RT)
 end
 
 function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, MI, F, DF}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    return common_interface_rev(args, Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    specTypes = mi.specTypes.parameters
+    FT = specTypes[1]
+    @assert FT == F
+    @assert in(mi.def, methods(fn))
+    
+    # TODO: Use spectypes
+    # tt = Tuple{specTypes[2:end]...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    
+    annotation = guess_activity(rt)
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+    return common_interface_rev(args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-    @ccall jl_(activity::Any)::Any
-    @ccall jl_(ActivityTup::Any)::Any
     args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
     
     fn = f
     dfn = ActivityTup[1] ? df : nothing
 
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -1073,7 +1118,7 @@ function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width},
         end
     end
 
-    tt′ = Tuple{map(Core.Typeof, args)...}
+    tt′ = Tuple{map(typeof, args)...}
     forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
                     #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
@@ -1099,7 +1144,7 @@ function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Widt
     fn = f
     dfn = ActivityTup[1] ? df : nothing
 
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     if Width != 1
@@ -1108,16 +1153,33 @@ function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Widt
         end
     end
 
-    tt′ = Tuple{map(Core.Typeof, args)...}
+    tt′ = Tuple{map(typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
+    return common_interface_augfwd(annotation, forward, args, width, RT)
 end
 
 function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    return common_interface_rev(args, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
+
+    tt′ = Tuple{map(typeof, args)...}
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+    #
+    return common_interface_rev(args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
