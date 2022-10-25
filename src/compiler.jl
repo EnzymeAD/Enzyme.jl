@@ -373,6 +373,40 @@ function emit_box_int64!(B, val)::LLVM.Value
     call!(B, box_int64, [val])
 end
 
+function emit_apply_generic!(B, args)::LLVM.Value     
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32]) 
+    @static if VERSION < v"1.8-"
+        inv = get_function!(mod, "jl_apply_generic", gen_FT)
+    else
+        inv = get_function!(mod, "ijl_apply_generic", gen_FT)
+    end
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        inv = bitcast!(B, inv, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        res = call!(B, inv, args)
+        LLVM.callconv!(res, 37)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        res = call!(B, julia_call, [inv, args...])
+    end
+    return res
+end
+
 function emit_invoke!(B, args)::LLVM.Value     
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -561,10 +595,13 @@ function emit_methodinstance!(B, func, args)::LLVM.Value
     else
     methodmatch = call!(B, worlds, LLVM.Value[tag, unsafe_to_llvm(nothing, ctx), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
     end
-    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, 2), Tracked))
-    gep = LLVM.inbounds_gep!(B, methodmatch, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)])
+    emit_jl!(B, methodmatch)
+    emit_jl!(B, emit_jltypeof!(B, methodmatch))
+    offset = 1
+    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, offset+1), Tracked))
+    gep = LLVM.inbounds_gep!(B, methodmatch, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(offset; ctx)])
     sv = LLVM.load!(B, gep)
-    
+   
     fn = get_function!(mod, "jl_specializations_get_linfo",
                        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue]))
 
@@ -850,8 +887,11 @@ end
         Base.@_inline_meta
         i = start + idx - 1
         p = allargs[(i-1)*(width+1) + 1]
+    @static if VERSION < v"1.7.0-"
+        T = Core.Typeof(p)
+    else
         T = typeof(p)
-        # T = Core.Typeof(p)
+    end
         if ActivityTup[i] && !isghostty(T)
             if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
                 return Active(p)
@@ -937,7 +977,13 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
     args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
 
     # TODO: Annotation of return value
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -949,7 +995,6 @@ function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Va
         end
     end
 
-    tt′ = Tuple{map(typeof, args)...}
     forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
     res = forward(args...)
@@ -1082,11 +1127,16 @@ function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, R
     dfn = ActivityTup[1] ? df : nothing
 
     # TODO: Annotation of return value
-    tt = Tuple{(eltype(typeof(x)) for x in args)...}
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     
-    tt′ = Tuple{(typeof(a) for a in args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_augfwd(annotation, forward, args, width, RT)
@@ -1099,11 +1149,16 @@ function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, 
     dfn = ActivityTup[1] ? df : nothing
 
     # TODO: Annotation of return value
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     
-    tt′ = Tuple{map(typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
@@ -1123,8 +1178,14 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
     @assert in(mi.def, methods(fn))
     
     # TODO: Use spectypes
-    # tt = Tuple{specTypes[2:end]...}
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
+    tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -1135,8 +1196,6 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
             annotation = BatchDuplicated{rt, Width}
         end
     end
-
-    tt′ = Tuple{map(typeof, args)...}
 
     forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
                     #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
@@ -1170,11 +1229,16 @@ function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT
     
     # TODO: Use spectypes
     # tt = Tuple{specTypes[2:end]...}
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     
     annotation = guess_activity(rt)
-    tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_augfwd(annotation, forward, args, width, RT)
@@ -1193,11 +1257,16 @@ function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, t
     
     # TODO: Use spectypes
     # tt = Tuple{specTypes[2:end]...}
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     
     annotation = guess_activity(rt)
-    tt′ = Tuple{map(Core.Typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
@@ -1209,7 +1278,13 @@ function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width},
     fn = f
     dfn = ActivityTup[1] ? df : nothing
 
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt, API.DEM_ForwardMode)
     if annotation <: DuplicatedNoNeed
@@ -1221,7 +1296,6 @@ function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width},
         end
     end
 
-    tt′ = Tuple{map(typeof, args)...}
     forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
                     #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
 
@@ -1247,7 +1321,13 @@ function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Widt
     fn = f
     dfn = ActivityTup[1] ? df : nothing
 
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     if Width != 1
@@ -1256,7 +1336,6 @@ function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Widt
         end
     end
 
-    tt′ = Tuple{map(typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
 
@@ -1269,7 +1348,13 @@ function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Wid
     fn = f
     dfn = ActivityTup[1] ? df : nothing
 
+    @static if VERSION < v"1.7.0-"
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    else
     tt = Tuple{map(x->eltype(typeof(x)), args)...}
+    tt′ = Tuple{map(typeof, args)...}
+    end
     rt = Core.Compiler.return_type(fn, tt)
     annotation = guess_activity(rt)
     if Width != 1
@@ -1278,7 +1363,6 @@ function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Wid
         end
     end
 
-    tt′ = Tuple{map(typeof, args)...}
     forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
     #
@@ -1411,13 +1495,23 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
     pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
     
+    @static if VERSION < v"1.7.0-"
+    else
     mi = emit_methodinstance!(B, func, vals)
-   
+    end
+
     pushfirst!(vals, unsafe_to_llvm(func, ctx))
     
+    @static if VERSION < v"1.7.0-"
+    else
     pushfirst!(vals, mi)
+    end
 
+    @static if VERSION < v"1.7.0-"
+    cal = emit_apply_generic!(B, vals)
+    else
     cal = emit_invoke!(B, vals)
+    end
 
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
 
