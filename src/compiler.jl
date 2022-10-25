@@ -768,7 +768,7 @@ function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, :
     args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
     
     fn = f
-    dfn = ActivityTup[2] ? df : nothing
+    dfn = ActivityTup[1] ? df : nothing
 
     specTypes = mi.specTypes.parameters
     FT = specTypes[1]
@@ -812,7 +812,7 @@ function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
     fn = f
-    dfn = ActivityTup[2] ? df : nothing
+    dfn = ActivityTup[1] ? df : nothing
 
     specTypes = mi.specTypes.parameters
     FT = specTypes[1]
