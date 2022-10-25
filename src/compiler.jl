@@ -1526,7 +1526,7 @@ function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sert = generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
+        sert = generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; firstconst=true)
         
         if shadowR != C_NULL
             if width == 1
@@ -1565,7 +1565,7 @@ function common_invoke_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.A
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false)
+        sret = generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; firstconst=true)
         
         if shadowR != C_NULL
             if width == 1
@@ -1603,7 +1603,7 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
 
-        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape)
+        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape, firstconst=true)
     end
 
     return nothing
