@@ -1394,7 +1394,7 @@ end
         push!(a, 1.0)
         return x
     end
-    y, = Enzyme.autodiff(double_push,Active(1.0))
+    y, = Enzyme.autodiff(double_push,Active(1.0))[1]
     @test y == 1.0
     
     function aloss(a, arr)
@@ -1412,7 +1412,7 @@ end
         Active,
         Active(1.0),
         Duplicated(arr, darr)
-    )[1]
+       )[1][1]
     @test y == 1.0
 end
 
@@ -1470,11 +1470,11 @@ end
     end
 
     bres = Enzyme.autodiff(Reverse, batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))[1]
-    @test length(bres) == 1
-    @test length(bres[1]) == 3
-    @test bres[1][1] ≈  1.0
-    @test bres[1][2] ≈  4.0
-    @test bres[1][3] ≈ 12.0
+    @test length(bres) == 2
+    @test length(bres[2]) == 3
+    @test bres[2][1] ≈  1.0
+    @test bres[2][2] ≈  4.0
+    @test bres[2][3] ≈ 12.0
 end
 
 @testset "Jacobian" begin
