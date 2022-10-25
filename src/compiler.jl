@@ -839,7 +839,7 @@ function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, t
 end
 
 function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
     
     fn = f
     dfn = ActivityTup[1] ? df : nothing
