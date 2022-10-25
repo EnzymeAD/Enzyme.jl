@@ -917,7 +917,7 @@ end
     origRet = res[2]
     resT = typeof(origRet)
     shadow_return = nothing
-    tape = Tape{AdjointTy, typeof(internal_tape), typeof(shadow_return), resT}(adjoint, internal_tape, shadow_return)
+    tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
     if Width == 1
         return ReturnType((origRet, res[3], tape))
     else
