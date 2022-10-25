@@ -1020,7 +1020,7 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][1]
+    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][2]
     @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
     
     @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
