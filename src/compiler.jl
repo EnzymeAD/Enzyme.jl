@@ -885,7 +885,7 @@ end
 #     wrap_annotated_args_r(Val(forwardMode), NAct, Val(width), rest...)
 # end
 
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{Any,N}) where {forwardMode,start, ActivityTup,width,N}
+Base.@constprop :aggressive @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{<:Any,N}) where {forwardMode,start, ActivityTup,width,N}
     ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
@@ -917,7 +917,7 @@ struct Tape{TapeTy,ShadowTy,ResT}
     shadow_return::ShadowTy
 end
 
-@inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
+Base.@constprop :aggressive @inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
     res = forward(args...)
 
     internal_tape = res[1]
@@ -1123,7 +1123,7 @@ end
     return nothing
 end
 
-function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType, N, F, DF}
+Base.@constprop :aggressive function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{<:Any,N}) where {ActivityTup,Width,ReturnType, N, F, DF}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
     fn = f
