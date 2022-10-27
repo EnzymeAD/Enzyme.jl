@@ -664,8 +664,21 @@ grad = jacobian(Forward, f, [2.0, 3.0])
  0.0  1.0
 ```
 """
-@inline function jacobian(::ForwardMode, f::F, x::X, args...; kwargs...) where {F, X}
-    cols = gradient(Forward, f, x, args...; kwargs...)
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    tmp = ntuple(length(shadow)) do i
+        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+    end
+    cols = tupleconcat(tmp...)
+    reduce(hcat, cols)
+end
+
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+    cols = ntuple(length(shadow)) do i
+        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+    end
     reduce(hcat, cols)
 end
 
