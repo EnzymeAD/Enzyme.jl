@@ -319,9 +319,16 @@ f(x) = x*x
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    RT = if A <: Duplicated && width != 0
+        BatchDuplicated{eltype(A), width}
+    elseif A <: DuplicatedNoNeed && width != 0
+        BatchDuplicatedNoNeed{eltype(A), width}
+    else
+        A
+    end
+
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
@@ -340,7 +347,14 @@ end
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    RT = if A <: Duplicated && width != 0
+        BatchDuplicated{eltype(A), width}
+    elseif A <: DuplicatedNoNeed && width != 0
+        BatchDuplicatedNoNeed{eltype(A), width}
+    else
+        A
+    end
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
 

@@ -1729,6 +1729,18 @@ end
     @test fres ≈ [1.0, 1.0, 1.0]    
 end
 
+@testset "Uncached batch sizes" begin
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))
+    for (i, v) in enumerate(res)
+        @test v ≈ i
+    end
+    @assert length(res) == 10
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{40,Float64}((Float64(i) for i in 1:40))))
+    for (i, v) in enumerate(res)
+        @test v ≈ i
+    end
+    @assert length(res) == 40
+end
 @testset "Large dynamic tape" begin
 	
 	function ldynloss(X, Y, ps, bs)

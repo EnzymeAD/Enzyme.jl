@@ -1077,12 +1077,108 @@ end
     return nothing
 end
 
+function runtime_generic_fwd_fallback(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt, API.DEM_ForwardMode)
+    if annotation <: DuplicatedNoNeed
+        annotation = Duplicated{rt}
+    end
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
+
+    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
+                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+
+    res = forward(args...)
+
+    if length(res) == 0
+        return ReturnType(ntuple(i->nothing, Val(Width+1)))
+    end
+    if annotation <: Const
+        return ReturnType(ntuple(i->res[1], Val(Width+1)))
+    end
+
+    if Width == 1
+       return ReturnType((res[1], res[2]))
+    else
+        return ReturnType((res[1], res[2]...))
+    end
+end
+
+function runtime_generic_augfwd_fallback(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
+
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+
+    return common_interface_augfwd(annotation, forward, args, width, RT)
+end
+
+function runtime_generic_rev_fallback(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
+    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
+    
+    fn = f
+    dfn = ActivityTup[1] ? df : nothing
+
+    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
+    tt′ = Tuple{map(Core.Typeof, args)...}
+    rt = Core.Compiler.return_type(fn, tt)
+    annotation = guess_activity(rt)
+    if Width != 1
+        if annotation <: Duplicated
+            annotation = BatchDuplicated{rt, Width}
+        end
+    end
+
+    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+    #
+    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
+end
+
+const MaxArgCache::Int64 = 30
+const MaxWidthCache::Int64 = 10
+
 @inline function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64)
     primargs = Symbol[]
     shadowargs = Union{Symbol,Expr}[]
     primtypes = Symbol[]
     allargs = Expr[]
     typeargs = Symbol[]
+    dfns = Symbol[:df]
+    if Width != 1
+        for w in 2:Width
+            shad = Symbol("df_"*string(w))
+            t = Symbol("DF_"*"_"*string(w))
+            e = :($shad::$t)
+            push!(allargs, e)
+            push!(typeargs, t)
+            push!(dfns, shad)
+        end
+    end
     for i in 1:N
         prim = Symbol("primal_"*string(i))
         t = Symbol("PT_"*string(i))
@@ -1126,9 +1222,12 @@ end
 end
 
 const FwdCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_fwd(N::Int64,Width::Int64)
+function runtime_generic_fwd(N::Int64,Width::Int64)::Function
     if haskey(FwdCache, (N,Width))
         return FwdCache[(N,Width)]
+    end
+    if N > MaxArgCache || Width > MaxWidthCache
+        return runtime_generic_fwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
     funcname = Symbol("inner_runtime_generic_fwd_"*string(N)*"_"*string(Width))
@@ -1151,7 +1250,7 @@ function runtime_generic_fwd(N::Int64,Width::Int64)
             end
             if $Width != 1
                 if annotation <: Duplicated
-                    annotation = BatchDuplicated{rt, Width}
+                    annotation = BatchDuplicated{rt, $Width}
                 end
             end
 
@@ -1180,9 +1279,12 @@ function runtime_generic_fwd(N::Int64,Width::Int64)
 end
 
 const AugCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_augfwd(N::Int64,Width::Int64)
+function runtime_generic_augfwd(N::Int64,Width::Int64)::Function
     if haskey(AugCache, (N,Width))
         return AugCache[(N,Width)]
+    end
+    if N > MaxArgCache || Width > MaxWidthCache
+        return runtime_generic_augfwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
     funcname = Symbol("inner_runtime_generic_augfwd_"*string(N)*"_"*string(Width))
@@ -1212,9 +1314,12 @@ function runtime_generic_augfwd(N::Int64,Width::Int64)
     return fn
 end
 const RevCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_rev(N::Int64,Width::Int64)
+function runtime_generic_rev(N::Int64,Width::Int64)::Function
     if haskey(RevCache, (N,Width))
         return RevCache[(N,Width)]
+    end
+    if N > MaxArgCache || Width > MaxWidthCache
+        return runtime_generic_augfwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
     outs = []
@@ -1284,239 +1389,12 @@ function runtime_generic_rev(N::Int64,Width::Int64)
     return fn
 end
 # Hack around cannot eval in generated
-for N in 0:30
-    for Width in 1:10
+for N in 0:MaxArgCache
+    for Width in 1:MaxWidthCache
         runtime_generic_fwd(N, Width)
         runtime_generic_augfwd(N, Width)
         runtime_generic_rev(N, Width)
     end
-end
-
-function runtime_generic_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-   
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    # TODO: Annotation of return value
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-    
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-
-    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
-end
-
-
-function runtime_invoke_fwd(activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, MI, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    specTypes = mi.specTypes.parameters
-    FT = specTypes[1]
-    @assert FT == F
-    @assert in(mi.def, methods(fn))
-    
-    # TODO: Use spectypes
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-    
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
-end
-
-function runtime_invoke_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, MI, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    specTypes = mi.specTypes.parameters
-    FT = specTypes[1]
-    @assert FT == F
-    @assert in(mi.def, methods(fn))
-    
-    # TODO: Use spectypes
-    # tt = Tuple{specTypes[2:end]...}
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    
-    annotation = guess_activity(rt)
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_augfwd(annotation, forward, args, width, RT)
-end
-
-function runtime_invoke_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, mi::MI, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, MI, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    specTypes = mi.specTypes.parameters
-    FT = specTypes[1]
-    @assert FT == F
-    @assert in(mi.def, methods(fn))
-    
-    # TODO: Use spectypes
-    # tt = Tuple{specTypes[2:end]...}
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    
-    annotation = guess_activity(rt)
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, Val(2), shadow_ptr, tape, width, f, df, allargs...)
-end
-
-function runtime_apply_latest_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
-end
-
-function runtime_apply_latest_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-
-    return common_interface_augfwd(annotation, forward, args, width, RT)
-end
-
-function runtime_apply_latest_rev(activity_ptr::Val{ActivityTup}, width::Val{Width}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,TapeType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity_ptr, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    #
-    return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
