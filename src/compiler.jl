@@ -1124,7 +1124,30 @@ end
 end
 
 Base.@constprop :aggressive function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{<:Any,N}) where {ActivityTup,Width,ReturnType, N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
+    args = ntuple(Val(length(ActivityTup)-1)) do idx
+        Base.@_inline_meta
+        i = idx + 1
+        p = allargs[(i-1)*(Width+1) + 1 - 2]
+    @static if VERSION < v"1.7.0-"
+        T = Core.Typeof(p)
+    else
+        T = typeof(p)
+    end
+        if ActivityTup[i] && !isghostty(T)
+            if !false && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
+                return Active(p)
+            else
+                if width == 1
+                    s = allargs[(i-1)*(Width+1) + 1+1 - 2]
+                    return Duplicated(p, s)
+                else
+                    return BatchDuplicated(p, ntuple(w->allargs[(i-1)*(Width+1)+w+1 - 2], Val(Width)))
+                end
+            end
+        else
+            return Const(p)
+        end
+    end
     
     fn = f
     dfn = ActivityTup[1] ? df : nothing
