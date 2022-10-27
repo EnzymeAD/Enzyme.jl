@@ -678,6 +678,15 @@ grad = jacobian(Forward, f, [2.0, 3.0])
  0.0  1.0
 ```
 """
+@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
+    cols = if length(x) == 0
+        return ()
+    else
+        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+    end
+    reduce(hcat, cols)
+end
+
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))

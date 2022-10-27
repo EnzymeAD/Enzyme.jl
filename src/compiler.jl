@@ -1350,7 +1350,7 @@ function runtime_generic_rev(N::Int64,Width::Int64)::Function
         for w in 1:Width
             push!(shadowret, :(tape.shadow_return[$w][]))
         end
-        shadowret = :($(shadowret...,))
+        shadowret = :(($(shadowret...),))
     end
     funcname = Symbol("inner_runtime_generic_rev_"*string(N)*"_"*string(Width))
     toe = quote
@@ -2101,7 +2101,8 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
 
-        generic_setup(orig, runtime_generic_rev(length(collect(operands(orig)))-offset-2, Int64(width)), Nothing, gutils, #=start=#offset+1, ctx, B, false; tape)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        generic_setup(orig, runtime_generic_rev(length(collect(operands(orig)))-offset-2, Int64(width)), Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
     end
 
     return nothing
