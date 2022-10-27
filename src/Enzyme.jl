@@ -626,7 +626,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -636,7 +636,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::ForwardMode, f, x, ::Val{1}; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
     ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
@@ -664,8 +664,8 @@ grad = jacobian(Forward, f, [2.0, 3.0])
  0.0  1.0
 ```
 """
-@inline function jacobian(::ForwardMode, args...; kwargs...)
-    cols = gradient(Forward, args...; kwargs...)
+@inline function jacobian(::ForwardMode, f::F, x::X, args...; kwargs...) where {F, X}
+    cols = gradient(Forward, f, x, args...; kwargs...)
     reduce(hcat, cols)
 end
 
@@ -690,7 +690,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
  0.0  1.0
 ```
 """
-@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -731,7 +731,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
-@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val}
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
