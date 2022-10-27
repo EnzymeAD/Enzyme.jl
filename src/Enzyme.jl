@@ -320,9 +320,9 @@ f(x) = x*x
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    RT = if A <: Duplicated && width != 0
+    RT = if A <: Duplicated && width != 1
         BatchDuplicated{eltype(A), width}
-    elseif A <: DuplicatedNoNeed && width != 0
+    elseif A <: DuplicatedNoNeed && width != 1
         BatchDuplicatedNoNeed{eltype(A), width}
     else
         A
@@ -347,9 +347,9 @@ end
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    RT = if A <: Duplicated && width != 0
+    RT = if A <: Duplicated && width != 1
         BatchDuplicated{eltype(A), width}
-    elseif A <: DuplicatedNoNeed && width != 0
+    elseif A <: DuplicatedNoNeed && width != 1
         BatchDuplicatedNoNeed{eltype(A), width}
     else
         A

@@ -1335,7 +1335,7 @@ function runtime_generic_rev(N::Int64,Width::Int64)::Function
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
                 else
-                  ref = shadow_ptr[$((i-1)*(Width+1)+w+1)]
+                  ref = shadow_ptr[$(i*(Width)+w)]
                   ref = reinterpret(Ptr{typeof($shad)}, ref)
                   unsafe_store!(ref, $shad+$expr)
                 end
