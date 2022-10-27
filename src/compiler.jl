@@ -637,9 +637,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     b = LLVM.Builder(B)
 
     vals = LLVM.Value[]
-    valTys = API.CValueType[]
     for i = 1:numArgs
-        push!(valTys, API.VT_Primal)
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
     end
 
