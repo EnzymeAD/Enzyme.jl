@@ -972,50 +972,6 @@ Base.@constprop :aggressive @inline function common_interface_augfwd(annotation,
     end
 end
 
-function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-    
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
-
-    # TODO: Annotation of return value
-    @static if VERSION < v"1.7.0-"
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    else
-    tt = Tuple{map(x->eltype(typeof(x)), args)...}
-    tt′ = Tuple{map(typeof, args)...}
-    end
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
-end
-
 # This attempt is not type stable, using recusive variant below:
 # @inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
 #     if tape.shadow_return !== nothing
@@ -1123,8 +1079,7 @@ end
     return nothing
 end
 
-@inline function setup_macro_wraps(forawrdMode::Bool, N::Int64, Width::Int64)
-    forwardMode = false
+@inline function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64)
     primargs = Symbol[]
     shadowargs = Union{Symbol,Expr}[]
     primtypes = Symbol[]
@@ -1170,6 +1125,60 @@ end
         push!(wrapped, expr)
     end
     return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
+end
+
+const FwdCache = Dict{Tuple{Int64,Int64},Function}()
+function runtime_generic_fwd(N::Int64,Width::Int64)
+    if haskey(FwdCache, (N,Width))
+        return FwdCache[(N,Width)]
+    end
+    primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
+    funcname = Symbol("inner_runtime_generic_fwd_"*string(N)*"_"*string(Width))
+    efn = quote
+        Base.@constprop :aggressive function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
+            args = ($(wrapped...),)
+
+            fn = f
+            dfn = ActivityTup[1] ? df : nothing
+
+            # TODO: Annotation of return value
+            # tt0 = Tuple{$(primtypes...)}
+            tt = Tuple{map(x->eltype(typeof(x)), args)...}
+            tt′ = Tuple{map(typeof, args)...}
+            rt = Core.Compiler.return_type(fn, tt)
+            annotation = guess_activity(rt, API.DEM_ForwardMode)
+            
+            if annotation <: DuplicatedNoNeed
+                annotation = Duplicated{rt}
+            end
+            if $Width != 1
+                if annotation <: Duplicated
+                    annotation = BatchDuplicated{rt, Width}
+                end
+            end
+
+            forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+
+            res = forward(args...)
+
+            if length(res) == 0
+                return ReturnType(ntuple(i->nothing, Val($Width+1)))
+            end
+            if annotation <: Const
+                return ReturnType(ntuple(i->res[1], Val($Width+1)))
+            end
+
+            if $Width == 1
+               return ReturnType((res[1], res[2]))
+            else
+                return ReturnType((res[1], res[2]...))
+            end
+        end
+    end
+    fn = eval(efn)
+    FwdCache[(N,Width)] = fn
+    return fn
+
 end
 
 const AugCache = Dict{Tuple{Int64,Int64},Function}()
@@ -1279,6 +1288,7 @@ end
 # Hack around cannot eval in generated
 for N in 0:30
     for Width in 1:10
+        runtime_generic_fwd(N, Width)
         runtime_generic_augfwd(N, Width)
         runtime_generic_rev(N, Width)
     end
@@ -1691,7 +1701,7 @@ function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
     
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
-        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
+        sret = generic_setup(orig, runtime_generic_fwd(length(collect(operands(orig)))-offset-1, Int64(width)), AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
 
         if shadowR != C_NULL
             if width == 1
@@ -1813,7 +1823,7 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
+    sret = generic_setup(orig, runtime_generic_fwd(length(collect(operands(orig)))-offset-2, Int64(width)), AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
