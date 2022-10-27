@@ -885,7 +885,7 @@ end
 #     wrap_annotated_args_r(Val(forwardMode), NAct, Val(width), rest...)
 # end
 
-Base.@constprop :aggressive @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{<:Any,N}) where {forwardMode,start, ActivityTup,width,N}
+@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{<:Any,N}) where {forwardMode,start, ActivityTup,width,N}
     ntuple(Val(length(ActivityTup)-start+1)) do idx
         Base.@_inline_meta
         i = start + idx - 1
@@ -917,7 +917,7 @@ struct Tape{TapeTy,ShadowTy,ResT}
     shadow_return::ShadowTy
 end
 
-Base.@constprop :aggressive @inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
+@inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
     res = forward(args...)
 
     internal_tape = res[1]
@@ -1135,7 +1135,7 @@ function runtime_generic_fwd(N::Int64,Width::Int64)
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
     funcname = Symbol("inner_runtime_generic_fwd_"*string(N)*"_"*string(Width))
     efn = quote
-        Base.@constprop :aggressive function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
+        function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
             args = ($(wrapped...),)
 
             fn = f
@@ -1189,7 +1189,7 @@ function runtime_generic_augfwd(N::Int64,Width::Int64)
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
     funcname = Symbol("inner_runtime_generic_augfwd_"*string(N)*"_"*string(Width))
     fn = eval(quote
-        Base.@constprop :aggressive function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
+        function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
             args = ($(wrapped...),)
 
             fn = f
@@ -1228,7 +1228,7 @@ function runtime_generic_rev(N::Int64,Width::Int64)
                 :(tup[$i][$w])
             end
             shad = Symbol("shadow_"*string(i)*"_"*string(w))
-            push!(outs, :(if $shad === nothing
+            push!(outs, :(if $expr === nothing
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
                 else
@@ -1251,7 +1251,7 @@ function runtime_generic_rev(N::Int64,Width::Int64)
     end
     funcname = Symbol("inner_runtime_generic_rev_"*string(N)*"_"*string(Width))
     toe = quote
-        Base.@constprop :aggressive function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, tape::TapeType, shadow_ptr, f::F, df::DF,$(allargs...)) where {ActivityTup,TapeType, F, DF, $(typeargs...)}
+        function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, tape::TapeType, shadow_ptr, f::F, df::DF,$(allargs...)) where {ActivityTup,TapeType, F, DF, $(typeargs...)}
             args = ($(wrapped...),)
 
             fn = f
