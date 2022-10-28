@@ -1730,6 +1730,7 @@ end
 end
 
 @testset "Uncached batch sizes" begin
+    genericsin(x) = Base.invokelatest(sin, x)
     res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))
     for (i, v) in enumerate(res)
         @test v ≈ i
