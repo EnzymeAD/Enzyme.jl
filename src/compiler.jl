@@ -1159,9 +1159,6 @@ function runtime_generic_rev_fallback(activity_ptr::Val{ActivityTup}, width::Val
     return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
-const MaxArgCache::Int64 = 30
-const MaxWidthCache::Int64 = 10
-
 @inline function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64)
     primargs = Symbol[]
     shadowargs = Union{Symbol,Expr}[]
@@ -1222,11 +1219,11 @@ const MaxWidthCache::Int64 = 10
 end
 
 const FwdCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_fwd(N::Int64,Width::Int64)::Function
+function runtime_generic_fwd(N::Int64,Width::Int64,create::Bool=false)::Function
     if haskey(FwdCache, (N,Width))
         return FwdCache[(N,Width)]
     end
-    if N > MaxArgCache || Width > MaxWidthCache
+    if !create
         return runtime_generic_fwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
@@ -1279,11 +1276,11 @@ function runtime_generic_fwd(N::Int64,Width::Int64)::Function
 end
 
 const AugCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_augfwd(N::Int64,Width::Int64)::Function
+function runtime_generic_augfwd(N::Int64,Width::Int64,create::Bool=false)::Function
     if haskey(AugCache, (N,Width))
         return AugCache[(N,Width)]
     end
-    if N > MaxArgCache || Width > MaxWidthCache
+    if !create
         return runtime_generic_augfwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
@@ -1314,11 +1311,11 @@ function runtime_generic_augfwd(N::Int64,Width::Int64)::Function
     return fn
 end
 const RevCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_rev(N::Int64,Width::Int64)::Function
+function runtime_generic_rev(N::Int64,Width::Int64,create::Bool=false)::Function
     if haskey(RevCache, (N,Width))
         return RevCache[(N,Width)]
     end
-    if N > MaxArgCache || Width > MaxWidthCache
+    if !create
         return runtime_generic_augfwd_fallback
     end
     primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
@@ -1389,11 +1386,11 @@ function runtime_generic_rev(N::Int64,Width::Int64)::Function
     return fn
 end
 # Hack around cannot eval in generated
-for N in 0:MaxArgCache
-    for Width in 1:MaxWidthCache
-        runtime_generic_fwd(N, Width)
-        runtime_generic_augfwd(N, Width)
-        runtime_generic_rev(N, Width)
+for N in 0:30
+    for Width in 1:10
+        runtime_generic_fwd(N, Width, true)
+        runtime_generic_augfwd(N, Width, true)
+        runtime_generic_rev(N, Width, true)
     end
 end
 
