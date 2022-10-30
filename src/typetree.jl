@@ -98,6 +98,10 @@ function typetree(::Type{Core.SimpleVector}, ctx, dl, seen=nothing)
     return tt
 end
 
+function typetree(::Type{Union{}}, ctx, dl, seen=nothing)
+    return TypeTree()
+end
+
 function typetree(::Type{<:AbstractString}, ctx, dl, seen=nothing)
     return TypeTree()
 end
