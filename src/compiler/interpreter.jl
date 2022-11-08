@@ -88,6 +88,11 @@ function is_primitive_func(@nospecialize(TT))
     if in(ft, PrimitiveFuncs)
        return true
     end
+    if ft === typeof(Base.rem2pi)
+        if TT <: Tuple{ft, Float32, <:Any} || TT <: Tuple{ft, Float64, <:Any} || TT <: Tuple{ft, Float16, <:Any}
+            return true
+        end
+    end
     if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
        ft === typeof(Base.sinc) ||
        ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) ||

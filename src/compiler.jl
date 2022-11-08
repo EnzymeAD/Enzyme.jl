@@ -29,6 +29,7 @@ unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)),
 # Julia function to LLVM stem and arity
 const known_ops = Dict(
     Base.cbrt => (:cbrt, 1),
+    Base.rem2pi => (:jl_rem2pi, 2),
     Base.sqrt => (:sqrt, 1),
     Base.sin => (:sin, 1),
     Base.sinc => (:sincn, 1),
@@ -6044,6 +6045,7 @@ end
            elseif sparam_vals[2] != T
               continue
            end
+        elseif name == :jl_rem2pi
         else
            all(==(T), sparam_vals) || continue
         end
@@ -6060,7 +6062,7 @@ end
         handleCustom(name, [EnumAttribute("readnone", 0; ctx),
                     StringAttribute("enzyme_shouldrecompute"; ctx)])
     end
-    
+   
     @assert actualRetType !== nothing
 
     if must_wrap
