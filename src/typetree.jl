@@ -3,6 +3,7 @@
 # - recursive types
 
 import LLVM: refcheck
+import GPUCompiler
 LLVM.@checked struct TypeTree
     ref::API.CTypeTreeRef
 end
@@ -74,7 +75,7 @@ function typetree(::Type{Float64}, ctx, dl, seen=nothing)
 end
 
 function typetree(::Type{T}, ctx, dl, seen=nothing) where T<:AbstractFloat
-    @warn "Unknown floating point type" T
+    GPUCompiler.@safe_warn "Unknown floating point type" T
     return TypeTree()
 end
 
@@ -149,7 +150,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     end
 
     if seen !== nothing && T ∈ seen
-        @warn "Recursive type" T
+        GPUCompiler.@safe_warn "Recursive type" T
         return TypeTree()
     end
     if seen === nothing
@@ -162,7 +163,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     try
         fieldcount(T)
     catch
-        @warn "Type does not have a definite number of fields" T
+        GPUCompiler.@safe_warn "Type does not have a definite number of fields" T
         return TypeTree()
     end
 
