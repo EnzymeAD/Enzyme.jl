@@ -2639,16 +2639,22 @@ function boxfloat_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
         if width == 1
             ipc = bitcast!(B, ip, LLVM.PointerType(flt, addrspace(llvmtype(orig))))
             ld = load!(B, ipc)
-            API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], ld, B, flt)
+            store!(B, ConstantFP(flt, 0.0), ipc)
+            if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+                API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], ld, B, flt)
+            end
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
             for idx in 1:width
                 ipc = extract_value!(B, ip, idx-1)
                 ipc = bitcast!(B, ipc, LLVM.PointerType(flt, addrspace(llvmtype(orig))))
                 ld = load!(B, ipc)
+                store!(B, ConstantFP(flt, 0.0), ipc)
                 shadowres = insert_value!(B, shadowres, ld, idx-1)
             end
-            API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], shadowret, B, flt)
+            if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+                API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], shadowret, B, flt)
+            end
         end
     end
     return nothing
