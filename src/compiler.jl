@@ -2634,7 +2634,7 @@ function boxfloat_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
         B = LLVM.Builder(B)
-        ip = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B))
+        ip = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, orig, B), B))
         flt = llvmtype(origops[1])
         if width == 1
             ipc = bitcast!(B, ip, LLVM.PointerType(flt, addrspace(llvmtype(orig))))
