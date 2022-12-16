@@ -4597,6 +4597,28 @@ function ptr_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTre
 end
 
 function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    inst = LLVM.Instruction(val)
+    ce = operands(inst)[1]
+    while isa(ce, ConstantExpr)
+        ce = operands(ce)[1]
+    end
+    if isa(ce, ConstantInt)
+        if (direction & API.DOWN) != 0
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            ctx = LLVM.context(LLVM.Value(val))
+            dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+            typ2 = Core.Typeof(typ)
+            rest = typetree(typ2, ctx, dl)
+            if GPUCompiler.deserves_retbox(typ2)
+                merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                only!(rest, -1)
+            end
+            API.EnzymeMergeTypeTree(ret, rest)
+        end
+        return UInt8(false)
+    end
+
     if (direction & API.UP) != 0
         API.EnzymeMergeTypeTree(unsafe_load(args), ret)
     end
