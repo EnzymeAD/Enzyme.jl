@@ -2758,11 +2758,14 @@ end
 
 function apply_iterate_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0  
+        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+        if shadowR != C_NULL && normal !== nothing
+            unsafe_store!(shadowR, normal.ref)
+        end
     end
 
     return nothing
@@ -2770,7 +2773,9 @@ end
 
 function apply_iterate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0  
+        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
+    end
     return nothing
 end
 
