@@ -760,6 +760,40 @@ end
     #          Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
 end
 
+@testset "No speculation" begin
+	mutable struct SpecFoo
+
+		iters::Int64
+		a::Float64
+		b::Vector{Float64}
+
+	end
+
+	function f(Foo)
+		for i = 1:Foo.iters
+
+			c = -1.0
+
+			if Foo.a < 0.0
+				X = (-Foo.a)^0.25
+				c = 2*log(X)
+			end
+
+			# set b equal to desired result
+			Foo.b[1] = 1.0 / c
+
+			return nothing
+		end
+	end
+
+	foo  = SpecFoo(1, 1.0, zeros(Float64, 1))
+	dfoo = SpecFoo(0, 0.0, zeros(Float64, 1))
+
+	# should not throw a domain error, which
+	# will occur if the pow is mistakenly speculated
+	Enzyme.autodiff(f, Duplicated(foo, dfoo))
+end
+
 genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
 function genlatestsinx(xp)
     x = @inbounds xp[1]
