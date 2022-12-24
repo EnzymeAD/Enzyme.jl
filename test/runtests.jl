@@ -826,6 +826,16 @@ end
     Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx))
     @test 0 ≈ x[1]
     @test -0.4161468365471424 ≈ dx[1]
+
+	function inactive_gen(x)
+		n = 1
+		for k in 1:2
+			y = falses(n)        
+		end
+		return x
+	end
+	@test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1]
+	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
 end
 
 @testset "invoke" begin
