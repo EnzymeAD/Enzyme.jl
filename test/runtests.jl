@@ -146,6 +146,7 @@ end
     test_scalar(Base.exp10, 1.0)
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
+    test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == (0.5,)
