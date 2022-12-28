@@ -1711,8 +1711,8 @@ end
     #  - GPU support
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
 
-    target = GPUCompiler.NativeCompilerTarget()
-    params = Compiler.PrimalCompilerParams()
+    target = DefaultCompilerTarget()
+    params = PrimalCompilerParams()
     job    = CompilerJob(target, funcspec, params)
 
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, validate=false, ctx)
@@ -4411,6 +4411,8 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
 end
 
+DefaultCompilerTarget(;kwargs...) = GPUCompiler.NativeCompilerTarget(;jlruntime=true, kwargs...)
+
 ## job
 
 # TODO: We shouldn't blanket opt-out
@@ -5920,8 +5922,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     returnPrimal = params.returnPrimal
 
     if parent_job === nothing
-        primal_target = GPUCompiler.NativeCompilerTarget()
-        primal_params = Compiler.PrimalCompilerParams()
+        primal_target = DefaultCompilerTarget()
+        primal_params = PrimalCompilerParams()
         primal_job    = CompilerJob(primal_target, primal, primal_params)
     else
         primal_job = similar(parent_job, job.source)
