@@ -6238,7 +6238,7 @@ end
             push!(jlrules, fname)
         end
 
-        GC.@preserve jobref begin
+        GC.@preserve job jobref begin
             adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules)
         end
         toremove = []
