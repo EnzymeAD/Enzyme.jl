@@ -637,8 +637,10 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     b = LLVM.Builder(B)
 
     vals = LLVM.Value[]
+    valTys = API.CValueType[]
     for i = 1:numArgs
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
+        push!(valTys, API.VT_Primal)
     end
 
     anti = LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.Value(LLVM.API.LLVMGetCalledValue(OrigCI)), vals, length(vals), OrigCI, valTys, length(valTys), b, #=lookup=#false ))
