@@ -1161,6 +1161,65 @@ function runtime_generic_rev_fallback(activity_ptr::Val{ActivityTup}, width::Val
     return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
+@inline function setup_macro_wraps2(forwardMode::Bool, N::Int64, Width::Int64, allargs::Vector{Expr})
+    primargs = Expr[]
+    shadowargs = Expr[]
+    primtypes = Expr[]
+    idx = 1
+    typeargs = Expr[]
+    dfns = Union{Expr,Symbol}[:df]
+    if Width != 1
+        for w in 2:Width
+            shad = allargs[idx]
+            idx+=1
+            t = :(typeof($shad))
+            e = :($shad::$t)
+            push!(typeargs, t)
+            push!(dfns, shad)
+        end
+    end
+    while idx <= length(allargs)
+        prim = allargs[idx]
+        idx+=1
+        t = :(typeof($prim))
+        e = :($prim::$t)
+        push!(primargs, prim)
+        push!(typeargs, t)
+        push!(primtypes, t)
+        shadows = Expr[]
+        for w in 1:Width
+            shad = allargs[idx]
+            idx+=1
+            t = :(typeof($shad))
+            e = :($shad::$t)
+            push!(typeargs, t)
+            push!(shadows, shad)
+        end
+        if Width == 1
+            push!(shadowargs, shadows[1])
+        else
+            push!(shadowargs, :(($(shadows...),)))
+        end
+    end
+    wrapped = Expr[]
+    for i in 1:length(primargs)
+        expr = :(
+                if ActivityTup[$i+1] && !isghostty($(primtypes[i]))
+                if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
+                    Active($(primargs[i]))
+                 else
+                     $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
+                 end
+             else
+                 Const($(primargs[i]))
+             end
+
+            )
+        push!(wrapped, expr)
+    end
+    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
+end
+
 @inline function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64)
     primargs = Symbol[]
     shadowargs = Union{Symbol,Expr}[]
@@ -1220,8 +1279,58 @@ end
     return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
 end
 
+@inline eltypeof(x) = eltype(typeof(x))
+
+@generated function inner_runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup,Width, ReturnType, F, DF}
+
+    _, _, primtypes, _, _, wrapped = setup_macro_wraps2(true, length(allargs), Width, [:(allargs[$i]) for i in 1:length(allargs)])
+  
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(res[1]), Val(Width+1))
+    return quote
+        args = ($(wrapped...),)
+
+        fn = f
+        dfn = ActivityTup[1] ? df : nothing
+
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt = Tuple{map(eltypeof, args)...}
+        tt′ = Tuple{map(typeof, args)...}
+        rt = Core.Compiler.return_type(fn, tt)
+        annotation = guess_activity(rt, API.DEM_ForwardMode)
+        
+        if annotation <: DuplicatedNoNeed
+            annotation = Duplicated{rt}
+        end
+        if $Width != 1
+            if annotation <: Duplicated
+                annotation = BatchDuplicated{rt, $Width}
+            end
+        end
+
+        forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+
+        res = forward(args...)
+
+        if length(res) == 0
+            return ReturnType($nnothing)
+        end
+        if annotation <: Const
+            return ReturnType(($(nres...),))
+        end
+
+        if $Width == 1
+           return ReturnType((res[1], res[2]))
+        else
+            return ReturnType((res[1], res[2]...))
+        end
+    end
+end
+
 const FwdCache = Dict{Tuple{Int64,Int64},Function}()
 function runtime_generic_fwd(N::Int64,Width::Int64,create::Bool=false)::Function
+    return inner_runtime_generic_fwd
     if haskey(FwdCache, (N,Width))
         return FwdCache[(N,Width)]
     end
