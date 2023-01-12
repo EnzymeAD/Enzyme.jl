@@ -1079,44 +1079,6 @@ end
     return nothing
 end
 
-function runtime_generic_fwd_fallback(activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), activity, width, f, df, allargs...)
-    
-    fn = f
-    dfn = ActivityTup[1] ? df : nothing
-
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
-end
-
 function runtime_generic_augfwd_fallback(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs::Vararg{Any,N}) where {ActivityTup,Width,ReturnType,N, F, DF}
     args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), activity, width, f, df, allargs...)
     
@@ -1161,97 +1123,50 @@ function runtime_generic_rev_fallback(activity_ptr::Val{ActivityTup}, width::Val
     return common_interface_rev(Val(length(ActivityTup)-1), args, adjoint, #=start=#Val(2), shadow_ptr, tape, width, f, df, allargs...)
 end
 
-@inline function setup_macro_wraps2(forwardMode::Bool, N::Int64, Width::Int64, allargs::Vector{Expr})
-    primargs = Expr[]
-    shadowargs = Expr[]
-    primtypes = Expr[]
-    idx = 1
-    typeargs = Expr[]
-    dfns = Union{Expr,Symbol}[:df]
-    if Width != 1
-        for w in 2:Width
-            shad = allargs[idx]
-            idx+=1
-            t = :(typeof($shad))
-            e = :($shad::$t)
-            push!(typeargs, t)
-            push!(dfns, shad)
-        end
-    end
-    while idx <= length(allargs)
-        prim = allargs[idx]
-        idx+=1
-        t = :(typeof($prim))
-        e = :($prim::$t)
-        push!(primargs, prim)
-        push!(typeargs, t)
-        push!(primtypes, t)
-        shadows = Expr[]
-        for w in 1:Width
-            shad = allargs[idx]
-            idx+=1
-            t = :(typeof($shad))
-            e = :($shad::$t)
-            push!(typeargs, t)
-            push!(shadows, shad)
-        end
-        if Width == 1
-            push!(shadowargs, shadows[1])
-        else
-            push!(shadowargs, :(($(shadows...),)))
-        end
-    end
-    wrapped = Expr[]
-    for i in 1:length(primargs)
-        expr = :(
-                if ActivityTup[$i+1] && !isghostty($(primtypes[i]))
-                if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
-                    Active($(primargs[i]))
-                 else
-                     $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
-                 end
-             else
-                 Const($(primargs[i]))
-             end
-
-            )
-        push!(wrapped, expr)
-    end
-    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
-end
-
-@inline function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64)
-    primargs = Symbol[]
+function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothing)
+    primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
     primtypes = Symbol[]
     allargs = Expr[]
     typeargs = Symbol[]
-    dfns = Symbol[:df]
-    if Width != 1
-        for w in 2:Width
-            shad = Symbol("df_"*string(w))
-            t = Symbol("DF_"*"_"*string(w))
+    dfns = Union{Symbol,Expr}[:df]
+    base_idx = 1
+    for w in 2:Width
+        if base === nothing
+            shad = Symbol("df_$w")
+            t = Symbol("DF__$w*")
             e = :($shad::$t)
             push!(allargs, e)
             push!(typeargs, t)
-            push!(dfns, shad)
+        else
+            shad = :($base[$base_idx]) 
+            base_idx += 1
         end
+        push!(dfns, shad)
     end
     for i in 1:N
-        prim = Symbol("primal_"*string(i))
-        t = Symbol("PT_"*string(i))
-        e = :($prim::$t)
-        push!(allargs, e)
+        if base === nothing
+            prim = Symbol("primal_$i")
+            t = Symbol("PT_$i")
+            e = :($prim::$t)
+            push!(allargs, e)
+            push!(typeargs, t)
+        else
+            prim = :($base[$base_idx]) 
+            t = :(typeof($prim))
+            base_idx += 1
+        end
         push!(primargs, prim)
-        push!(typeargs, t)
         push!(primtypes, t)
         shadows = Symbol[]
         for w in 1:Width
-            shad = Symbol("shadow_"*string(i)*"_"*string(w))
-            t = Symbol("ST_"*string(i)*"_"*string(w))
-            e = :($shad::$t)
-            push!(allargs, e)
-            push!(typeargs, t)
+            if base === nothing
+                shad = Symbol("shadow_$(i)_$w")
+                t = Symbol("ST_$(i)_$w")
+                e = :($shad::$t)
+                push!(allargs, e)
+                push!(typeargs, t)
+            end
             push!(shadows, shad)
         end
         if Width == 1
@@ -1281,13 +1196,11 @@ end
 
 @inline eltypeof(x) = eltype(typeof(x))
 
-@generated function inner_runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup,Width, ReturnType, F, DF}
-
-    _, _, primtypes, _, _, wrapped = setup_macro_wraps2(true, length(allargs), Width, [:(allargs[$i]) for i in 1:length(allargs)])
-  
+function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(res[1]), Val(Width+1))
     return quote
+        @inline
         args = ($(wrapped...),)
 
         fn = f
@@ -1321,69 +1234,32 @@ end
         end
 
         if $Width == 1
-           return ReturnType((res[1], res[2]))
+            return ReturnType((res[1], res[2]))
         else
             return ReturnType((res[1], res[2]...))
         end
     end
 end
 
-const FwdCache = Dict{Tuple{Int64,Int64},Function}()
-function runtime_generic_fwd(N::Int64,Width::Int64,create::Bool=false)::Function
-    return inner_runtime_generic_fwd
-    if haskey(FwdCache, (N,Width))
-        return FwdCache[(N,Width)]
-    end
-    if !create
-        return runtime_generic_fwd_fallback
-    end
-    primargs, shadowargs, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
-    funcname = Symbol("inner_runtime_generic_fwd_"*string(N)*"_"*string(Width))
-    efn = quote
-        function $funcname(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF,$(allargs...)) where {ActivityTup,ReturnType, F, DF, $(typeargs...)}
-            args = ($(wrapped...),)
+function func_runtime_generic_fwd(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
+    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
-            fn = f
-            dfn = ActivityTup[1] ? df : nothing
-
-            # TODO: Annotation of return value
-            # tt0 = Tuple{$(primtypes...)}
-            tt = Tuple{map(x->eltype(typeof(x)), args)...}
-            tt′ = Tuple{map(typeof, args)...}
-            rt = Core.Compiler.return_type(fn, tt)
-            annotation = guess_activity(rt, API.DEM_ForwardMode)
-            
-            if annotation <: DuplicatedNoNeed
-                annotation = Duplicated{rt}
-            end
-            if $Width != 1
-                if annotation <: Duplicated
-                    annotation = BatchDuplicated{rt, $Width}
-                end
-            end
-
-            forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-            res = forward(args...)
-
-            if length(res) == 0
-                return ReturnType(ntuple(i->nothing, Val($Width+1)))
-            end
-            if annotation <: Const
-                return ReturnType(ntuple(i->res[1], Val($Width+1)))
-            end
-
-            if $Width == 1
-               return ReturnType((res[1], res[2]))
-            else
-                return ReturnType((res[1], res[2]...))
-            end
+    quote 
+        function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where   {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+            $body
         end
     end
-    fn = eval(efn)
-    FwdCache[(N,Width)] = fn
-    return fn
+end
 
+@generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+    _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
+    return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+end
+
+# Create specializations
+for (N, Width) in Iterators.product(0:30, 1:10)
+    eval(func_runtime_generic_fwd(N, Width))
 end
 
 const AugCache = Dict{Tuple{Int64,Int64},Function}()
@@ -1499,7 +1375,6 @@ end
 # Hack around cannot eval in generated
 for N in 0:30
     for Width in 1:10
-        runtime_generic_fwd(N, Width, true)
         runtime_generic_augfwd(N, Width, true)
         runtime_generic_rev(N, Width, true)
     end
@@ -1685,7 +1560,7 @@ function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
     
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
-        sret = generic_setup(orig, runtime_generic_fwd(length(collect(operands(orig)))-offset-1, Int64(width)), AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
+        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
 
         if shadowR != C_NULL
             if width == 1
@@ -1807,7 +1682,7 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = generic_setup(orig, runtime_generic_fwd(length(collect(operands(orig)))-offset-2, Int64(width)), AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
+    sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
@@ -2132,7 +2007,7 @@ function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = generic_setup(orig, runtime_generic_fwd(length(collect(operands(orig)))-offset-2, Int64(width)), AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
+        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         
         if shadowR != C_NULL
             if width == 1
