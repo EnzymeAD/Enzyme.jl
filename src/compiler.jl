@@ -852,231 +852,9 @@ end
     return false
 end
 
-@inline wrap_annotated_args_r(::Val{forwardMode}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode, ActivityTup,width}= ()
-@inline function wrap_annotated_args_r(::Val{forwardMode}, ::Val{ActivityTup}, ::Val{width}, p::T, allargs::Vararg{Any,N}) where {forwardMode,ActivityTup,width,N, T}
-    out = if !ActivityTup[1] || isghostty(T)
-        Const(p)
-    elseif !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-        Active(p)
-    elseif width == 1
-        Duplicated(p, allargs[1])
-    else
-        BatchDuplicated(p, ntuple(Val(width)) do i
-          Base.@_inline_meta
-          allargs[i] 
-        end)
-    end
-    rest = ntuple(Val(N-width)) do i
-        Base.@_inline_meta
-        allargs[i+width]
-    end
-    (out, wrap_annotated_args_r(Val(forwardMode), Val(Base.tail(ActivityTup)), Val(width), rest...)...)
-end
-
-# @inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{Any,N}) where {forwardMode,start, ActivityTup,width,N}
-#     NAct = Val(ntuple(Val(length(ActivityTup)-start+1)) do i
-#         Base.@_inline_meta
-#         ActivityTup[i+start-1]
-#     end)
-#     rest = ntuple(Val(N-(1+width)*(start-1))) do i
-#         Base.@_inline_meta
-#         allargs[i+(1+width)*(start-1)]
-#     end
-#     wrap_annotated_args_r(Val(forwardMode), NAct, Val(width), rest...)
-# end
-
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, ::Val{ActivityTup}, ::Val{width}, allargs::Vararg{<:Any,N}) where {forwardMode,start, ActivityTup,width,N}
-    ntuple(Val(length(ActivityTup)-start+1)) do idx
-        Base.@_inline_meta
-        i = start + idx - 1
-        p = allargs[(i-1)*(width+1) + 1]
-    @static if VERSION < v"1.7.0-"
-        T = Core.Typeof(p)
-    else
-        T = typeof(p)
-    end
-        if ActivityTup[i] && !isghostty(T)
-            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                return Active(p)
-            else
-                if width == 1
-                    s = allargs[(i-1)*(width+1) + 1+1]
-                    return Duplicated(p, s)
-                else
-                    return BatchDuplicated(p, ntuple(w->allargs[(i-1)*(width+1)+w+1], Val(width)))
-                end
-            end
-        else
-            return Const(p)
-        end
-    end
-end
-
 struct Tape{TapeTy,ShadowTy,ResT}
     internal_tape::TapeTy
     shadow_return::ShadowTy
-end
-
-@inline function common_interface_augfwd(annotation, forward::ForwardTy, args::ArgsTy, width::Val{Width}, RT::Val{ReturnType}) where {ForwardTy,ArgsTy,Width,ReturnType} 
-    res = forward(args...)
-
-    internal_tape = res[1]
-
-    if length(res) == 1
-        resT = Nothing
-        shadow_return = nothing
-        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-        if Width == 1
-            return ReturnType((nothing, nothing, tape))
-        else
-            return ReturnType((nothing, ntuple(i->nothing, width)..., tape))
-        end
-    end
-    if annotation <: Const
-        let origRet = res[2], resT = typeof(origRet)
-            shadow_return = nothing
-            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            if Width == 1
-                return ReturnType((origRet, origRet, tape))
-            else
-                return ReturnType((origRet, ntuple(i->origRet, width)..., tape))
-            end
-        end
-    end
-    if annotation <: Active
-        let origRet = res[2], resT = typeof(origRet)
-            if Width == 1
-                shadow_return = Ref(zero(resT))
-            else
-                shadow_return = ntuple(i->Ref(zero(resT)), width)
-            end
-            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            if Width == 1
-                return ReturnType((origRet, shadow_return, tape))
-            else
-                return ReturnType((origRet, shadow_return..., tape))
-            end
-        end
-    end
-    
-    @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
-    
-    origRet = res[2]
-    resT = typeof(origRet)
-    shadow_return = nothing
-    tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-    if Width == 1
-        return ReturnType((origRet, res[3], tape))
-    else
-        return ReturnType((origRet, ntuple(i->res[3], width)..., tape))
-    end
-end
-
-# This attempt is not type stable, using recusive variant below:
-# @inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
-#     if tape.shadow_return !== nothing
-#         if Width == 1
-#             val = tape.shadow_return[]
-#         else
-#             val = ntuple(i->tape.shadow_return[i][], width)
-#         end
-#         args = (args..., val)
-#     end
-# 
-#     tup = adjoint(args..., tape.internal_tape)[1]
-# 
-#     ntuple(numArgs) do i
-#         Base.@_inline_meta
-#         d = tup[i]
-#         if d isa Nothing
-#             return nothing
-#         end
-#         i += start - 1
-#         # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-#         # they are not idempotent on the Julia level. We could "force" `a` to be
-#         # a boxed T, but would lose the mutable memory semantics that Enzyme requires
-#         ntuple(width) do w
-#             Base.@_inline_meta
-#             dd = if Width == 1
-#                 d
-#             else
-#                 d[w]
-#             end
-#             a = allargs[(i-1)*(Width+1)+w+1]
-#             if a === nothing
-#             elseif a isa Base.RefValue
-#                 # @assert eltype(a) == typeof(dd)
-#                 a[] += dd
-#             else
-#                 ref = shadow_ptr[(i-1)*Width+w]
-#                 ref = reinterpret(Ptr{typeof(a)}, ref)
-#                 unsafe_store!(ref, dd+a)
-#             end
-#         end
-#         return nothing
-#     end
-#     return nothing
-# end
-
-@inline zipAdd(::Val{Width}, ::Tuple{}, ::Tuple{}, ::Tuple{}) where Width = nothing
-@inline function zipAdd(::Val{Width}, revout::T, prev::R, shadow::S) where {Width, T,R,S}
-    if typeof(revout[1]) !== Nothing
-        d = revout[1]
-        prevs = prev[1]
-        shadows = shadow[1]
-        ntuple(Val(Width)) do w
-                Base.@_inline_meta
-                dd = if Width == 1
-                    d
-                else
-                    d[w]
-                end
-                a = prevs[w]
-                if a === nothing
-                elseif a isa Base.RefValue
-                    # @assert eltype(a) == typeof(dd)
-                    a[] += dd
-                else
-                    ref = shadows[w]
-                    ref = reinterpret(Ptr{typeof(a)}, ref)
-                    unsafe_store!(ref, dd+a)
-                end
-        end
-    end
-    zipAdd(Val(Width), Base.tail(revout), Base.tail(prev), Base.tail(shadow))
-    return
-end
-
-@inline function common_interface_rev(numArgs::Val{NA}, args::ArgsTy, adjoint::AdjointTy, ::Val{start}, shadow_ptr, tape, width::Val{Width}, allargs::Vararg{Any,N}) where {NA, start, Width,N,ArgsTy, AdjointTy}
-    if tape.shadow_return !== nothing
-        if Width == 1
-            val = tape.shadow_return[]
-        else
-            val = ntuple(i->tape.shadow_return[i][], width)
-        end
-        args = (args..., val)
-    end
-
-    tup = adjoint(args..., tape.internal_tape)[1]
-    
-    prevTyped = ntuple(numArgs) do i
-        Base.@_inline_meta
-        ntuple(width) do w
-            Base.@_inline_meta
-            allargs[(i-1+start-1)*(Width+1)+w+1]
-        end
-    end
-
-    shadows = ntuple(numArgs) do i
-        Base.@_inline_meta
-        ntuple(width) do w
-            Base.@_inline_meta
-            shadow_ptr[(i-1+start-1)*(Width)+w]
-        end
-    end
-
-    zipAdd(Val(Width), tup, prevTyped, shadows) 
-    return nothing
 end
 
 function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothing)
@@ -1241,13 +1019,13 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             resT = Nothing
             shadow_return = nothing
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            return ReturnType($nnothing..., tape)
+            return ReturnType(($nnothing..., tape))
         end
         if annotation <: Const
             let origRet = res[2], resT = typeof(origRet)
                 shadow_return = nothing
                 tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-                return ReturnType($nres..., tape)
+                return ReturnType(($(nres...), tape))
             end
         end
         if annotation <: Active
@@ -1255,7 +1033,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
                 if $Width == 1
                     shadow_return = Ref(zero(resT))
                 else
-                    shadow_return = $nzeros
+                    shadow_return = ($(nzeros...),)
                 end
                 tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
                 if $Width == 1
@@ -1275,7 +1053,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         if $Width == 1
             return ReturnType((origRet, res[3], tape))
         else
-            return ReturnType((origRet, $nres3..., tape))
+            return ReturnType((origRet, $(nres3...), tape))
         end
     end
 end
