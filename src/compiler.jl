@@ -1213,7 +1213,11 @@ end
 end
 
 function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
-    quote
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(origRet), Val(Width+1))
+    nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
+    nres3 = ntuple(i->:(res[3]), Val(Width))
+    return quote
         args = ($(wrapped...),)
 
         fn = f
@@ -1225,16 +1229,60 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         tt′ = Tuple{map(typeof, args)...}
         rt = Core.Compiler.return_type(fn, tt)
         annotation = guess_activity(rt)
-        
+
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                      #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-        return common_interface_augfwd(annotation, forward, args, width, RT)
+        
+        res = forward(args...)
+
+        internal_tape = res[1]
+
+        if length(res) == 1
+            resT = Nothing
+            shadow_return = nothing
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType($nnothing..., tape)
+        end
+        if annotation <: Const
+            let origRet = res[2], resT = typeof(origRet)
+                shadow_return = nothing
+                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+                return ReturnType($nres..., tape)
+            end
+        end
+        if annotation <: Active
+            let origRet = res[2], resT = typeof(origRet)
+                if $Width == 1
+                    shadow_return = Ref(zero(resT))
+                else
+                    shadow_return = $nzeros
+                end
+                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+                if $Width == 1
+                    return ReturnType((origRet, shadow_return, tape))
+                else
+                    return ReturnType((origRet, shadow_return..., tape))
+                end
+            end
+        end
+        
+        @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
+        
+        origRet = res[2]
+        resT = typeof(origRet)
+        shadow_return = nothing
+        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+        if $Width == 1
+            return ReturnType((origRet, res[3], tape))
+        else
+            return ReturnType((origRet, $nres3..., tape))
+        end
     end
 end
 
 function func_runtime_generic_augfwd(N, Width)
     _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote 
         function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
@@ -1309,7 +1357,7 @@ end
 
 function func_runtime_generic_rev(N, Width)
     _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
 
     quote 
         function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, TapeType, F, DF, $(typeargs...)}
