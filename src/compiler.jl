@@ -5387,6 +5387,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                         permit_inlining!(cf)
                         for shadowv in shadows
                             c = call!(builder, cf, [shadowv])
+                            if LLVM.get_subprogram(enzymefn) !== nothing
+                                metadata(c)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(enzymefn) )
+                            end
                         end
                     end
                 end
