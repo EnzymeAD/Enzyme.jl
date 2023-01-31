@@ -20,7 +20,7 @@ using Enzyme_jll
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x, = autodiff(Reverse, f, Active, Active(x))
+    ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
     if typeof(x) <: Complex
     else
       @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
@@ -58,14 +58,14 @@ f0(x) = 1.0 + x
     @test_broken thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
 
-    @test thunk_a(Active(2.0), 1.0) == (1.0,)
-    @test thunk_a(Active(2.0), 2.0) == (2.0,)
-    @test thunk_b(Const(2.0)) === ()
+    @test thunk_a(Active(2.0), 1.0) == ((1.0,),)
+    @test thunk_a(Active(2.0), 2.0) == ((2.0,),)
+    @test thunk_b(Const(2.0)) === ((nothing,),)
 
     forward, pullback = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1))
 
     @test forward(Active(2.0)) == (nothing,)
-    @test pullback(Active(2.0), 1.0, nothing) == (1.0,)
+    @test pullback(Active(2.0), 1.0, nothing) == ((1.0,),)
     
     function mul2(x)
         x[1] * x[2]
@@ -116,14 +116,14 @@ end
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
-    @test autodiff(Reverse, f1, Active, Active(1.0))[1] ≈ 1.0
+    @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0
     @test autodiff(Forward, f1, DuplicatedNoNeed, Duplicated(1.0, 1.0))[1] ≈ 1.0
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
-    @test autodiff(Reverse, f2, Active, Active(1.0))[1] ≈ 2.0
+    @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
-    @test autodiff(Reverse, tanh, Active, Active(1.0))[1] ≈ 0.41997434161402606939
+    @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
-    @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1] ≈ Float32(0.41997434161402606939)
+    @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
@@ -134,8 +134,10 @@ end
     test_scalar(Base.acos, 0.9)
 
     test_scalar(Base.atan, 0.9)
-    @test autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[1] ≈ ForwardDiff.derivative(x->Base.atan(x, 3.4), 0.9)
-    @test autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[2] ≈ ForwardDiff.derivative(x->Base.atan(0.9, x), 3.4)
+
+    res = autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[1]
+    @test res[1] ≈ ForwardDiff.derivative(x->Base.atan(x, 3.4), 0.9)
+    @test res[2] ≈ ForwardDiff.derivative(x->Base.atan(0.9, x), 3.4)
 
     test_scalar(cbrt, 1.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
@@ -151,7 +153,7 @@ end
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
 
-    @test autodiff(Reverse, (x)->log(x), Active(2.0)) == (0.5,)
+    @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
 end
 
 @testset "Simple Exception" begin
@@ -177,9 +179,9 @@ end
 
 @testset "Simple tests" begin
     g(x) = real((x + im)*(1 - im*x))
-    @test first(autodiff(Reverse, g, Active, Active(2.0))) ≈ 2.0
+    @test first(autodiff(Reverse, g, Active, Active(2.0))[1]) ≈ 2.0
     @test first(autodiff(Forward, g, Duplicated(2.0, 1.0))) ≈ 2.0
-    @test first(autodiff(Reverse, g, Active, Active(3.0))) ≈ 2.0
+    @test first(autodiff(Reverse, g, Active, Active(3.0))[1]) ≈ 2.0
     @test first(autodiff(Forward, g, Duplicated(3.0, 1.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
@@ -197,7 +199,7 @@ function euroad(f::T) where T
     return g
 end
 
-euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))
+euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
 
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
 @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
@@ -251,8 +253,8 @@ end
 
     f_dict(params, x) = params[:var] * x
 
-    @test autodiff(Reverse, f_dict, Const(params), Active(5.0)) == (10.0,)
-    @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == (10.0,)
+    @test autodiff(Reverse, f_dict, Const(params), Active(5.0)) == ((nothing, 10.0,),)
+    @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0,),)
     @test dparams[:var] == 5.0
 
     
@@ -305,7 +307,7 @@ end
 @testset "Struct return" begin
     x = [2.0]
     dx = [0.0]
-    @test Enzyme.autodiff(invsin, Active, Duplicated(x, dx)) == ()
+    @test Enzyme.autodiff(invsin, Active, Duplicated(x, dx)) == ((nothing,),)
     @test dx[1] == -0.4161468365471424
 end
 
@@ -349,7 +351,7 @@ end
         out = y ⊻ xptr;
         return reinterpret(Float64, out)
     end
-    @test autodiff(Reverse, fneg, Active, Active(2.0))[1] ≈ -1.0
+    @test autodiff(Reverse, fneg, Active, Active(2.0))[1][1] ≈ -1.0
     @test autodiff(Forward, fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
@@ -357,7 +359,7 @@ end
         out = y | xptr;
         return reinterpret(Float64, out)
     end
-    @test autodiff(Reverse, expor, Active, Active(0.42))[1] ≈ 4.0
+    @test autodiff(Reverse, expor, Active, Active(0.42))[1][1] ≈ 4.0
     @test autodiff(Forward, expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
@@ -369,7 +371,7 @@ end
         end
         return mean(a)
     end
-    @test autodiff(Reverse, gc_alloc, Active, Active(5.0))[1] ≈ 10
+    @test autodiff(Reverse, gc_alloc, Active, Active(5.0))[1][1] ≈ 10
     @test autodiff(Forward, gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
 
     A = Float64[2.0, 3.0]
@@ -386,7 +388,7 @@ end
         return mean(a)
     end
     
-    @test Enzyme.autodiff(Reverse, gc_copy, Active, Active(5.0))[1] ≈ 10
+    @test Enzyme.autodiff(Reverse, gc_copy, Active, Active(5.0))[1][1] ≈ 10
     @test Enzyme.autodiff(Forward, gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
@@ -422,9 +424,9 @@ end
     end
 
     test_f(f::Foo2) = f.x^2
-    res = autodiff(test_f, Active(Foo2(3.0, :two)))
-    @test res[1].x ≈ 6.0
-    @test res[1].y == nothing
+    res = autodiff(test_f, Active(Foo2(3.0, :two)))[1][1]
+    @test res.x ≈ 6.0
+    @test res.y == nothing
 end
 
 @testset "Null init union" begin
@@ -520,14 +522,14 @@ end
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    @test fd ≈ first(autodiff(Reverse, sin, Active, Active(x)))
+    @test fd ≈ first(autodiff(Reverse, sin, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, sin, Duplicated(x, 1.0)))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
-    @test fd ≈ first(autodiff(Reverse, asin, Active, Active(x)))
+    @test fd ≈ first(autodiff(Reverse, asin, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, asin, Duplicated(x, 1.0)))
     test_scalar(asin, x)
 
@@ -542,19 +544,19 @@ end
     fd = central_fdm(5, 1)(foo, x)
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
-    @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))
+    @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1.0)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
-    @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))
+    @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     # They do matter for duplicated, which can't be auto promoted
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
-    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))
+    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))[1]
     @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), 3))
 end
 
@@ -571,7 +573,7 @@ end
         x = ccall(:jl_box_float64, Any, (Float64,), x)
         (sin(x)::Float64 + x)::Float64
     end
-    @test 0.5838531634528576 ≈ Enzyme.autodiff(Reverse, boxfloat, Active, Active(2.0))[1]
+    @test 0.5838531634528576 ≈ Enzyme.autodiff(Reverse, boxfloat, Active, Active(2.0))[1][1]
     @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, DuplicatedNoNeed, Duplicated(2.0, 1.0))[1]
     res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 2.0)))[1]
     @test 0.5838531634528576 ≈ res[1]
@@ -634,7 +636,7 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
-    @test 1.0 ≈ Enzyme.autodiff(dxdt_pred, Active(1.0))[1]
+    @test 1.0 ≈ Enzyme.autodiff(dxdt_pred, Active(1.0))[1][1]
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
@@ -712,7 +714,7 @@ end
         x*x
     end
 
-    @test 4.6 ≈ first(autodiff(Reverse, printsq, Active, Active(2.3)))
+    @test 4.6 ≈ first(autodiff(Reverse, printsq, Active, Active(2.3)))[1]
     @test 4.6 ≈ first(autodiff(Forward, printsq, Duplicated(2.3, 1.0)))
 
     function tostring(x)
@@ -720,7 +722,7 @@ end
         x*x
     end
 
-    @test 4.6 ≈ first(autodiff(Reverse, tostring, Active, Active(2.3)))
+    @test 4.6 ≈ first(autodiff(Reverse, tostring, Active, Active(2.3)))[1]
     @test 4.6 ≈ first(autodiff(Forward, tostring, Duplicated(2.3, 1.0)))
 end
 
@@ -815,7 +817,7 @@ function invsin(xp)
 end
 
 @testset "generic" begin
-    @test -0.4161468365471424 ≈ Enzyme.autodiff(Reverse, genlatestsin, Active, Active(2.0))[1]
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(Reverse, genlatestsin, Active, Active(2.0))[1][1]
     @test -0.4161468365471424 ≈ Enzyme.autodiff(Forward, genlatestsin, Duplicated(2.0, 1.0))[1]
 
     x = [2.0]
@@ -837,7 +839,7 @@ end
 		end
 		return x
 	end
-	@test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1]
+    @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1][1]
 	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
 end
 
@@ -911,9 +913,9 @@ end
     dout = Ref(1.0)
     dout2 = Ref(10.0)
 
-    res = Enzyme.autodiff(Reverse, revfoo, BatchDuplicated(out, (dout, dout2)), Active(2.0))
-    @test 4.0 ≈ res[1][1]
-    @test 40.0 ≈ res[1][2]
+    res = Enzyme.autodiff(Reverse, revfoo, BatchDuplicated(out, (dout, dout2)), Active(2.0))[1][2]
+    @test 4.0 ≈ res[1]
+    @test 40.0 ≈ res[2]
     @test 0.0 ≈ dout[]
     @test 0.0 ≈ dout2[]
 
@@ -928,9 +930,9 @@ end
         out[] = Base.invokelatest(rev_lq, x)::Float64
         nothing
     end
-    res = Enzyme.autodiff(Reverse, revfoo2, BatchDuplicated(out, (dout, dout2)), Active(2.0))
-    @test 4.0 ≈ res[1][1]
-    @test 40.0 ≈ res[1][2]
+    res = Enzyme.autodiff(Reverse, revfoo2, BatchDuplicated(out, (dout, dout2)), Active(2.0))[1][2]
+    @test 4.0 ≈ res[1]
+    @test 40.0 ≈ res[2]
     @test 0.0 ≈ dout[]
     @test 0.0 ≈ dout2[]
 
@@ -941,7 +943,7 @@ end
     dyn_f(::Val{D}) where D = prod(D)
     dyn_mwe(x, t) = x / dyn_f(Val(t))
 
-    @test 0.5 ≈ Enzyme.autodiff(dyn_mwe, Active, Active(1.0), Const((1, 2)))[1]
+    @test 0.5 ≈ Enzyme.autodiff(dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
 end
 
 @testset "broadcast" begin
@@ -1018,7 +1020,7 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1]
+    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][2]
     @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
     
     @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
@@ -1036,7 +1038,7 @@ end
 		end
 	end
 
-	@test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1]
+    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][2]
 	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
 	
 	function tobedifferentiated2(cond, a)::Float64
@@ -1047,7 +1049,7 @@ end
 		end
 	end
 
-	@test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1]
+    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1][2]
 	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, true, Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)
@@ -1170,7 +1172,7 @@ end
     function f(x::Float64)
         @inbounds return bmat(x)[1]
     end
-    @test 1.0 ≈ autodiff(Reverse, f, Active(0.1))[1]
+    @test 1.0 ≈ autodiff(Reverse, f, Active(0.1))[1][1]
     @test 1.0 ≈ autodiff(Forward, f, Duplicated(0.1, 1.0))[1]
 end
 
@@ -1194,7 +1196,7 @@ end
 
 @testset "No inference" begin
     c = 5.0
-    @test 5.0 ≈ autodiff(Reverse, (A,)->c * A, Active, Active(2.0))[1]
+    @test 5.0 ≈ autodiff(Reverse, (A,)->c * A, Active, Active(2.0))[1][1]
     @test 5.0 ≈ autodiff(Forward, (A,)->c * A, Duplicated(2.0, 1.0))[1]
 end
 
@@ -1251,7 +1253,7 @@ end
         k1 = @inbounds func_scalar(G[1])
         return k1
     end
-    @test Enzyme.autodiff(Reverse, timsteploop_scalar, Active(2.0))[1] ≈ 1.0
+    @test Enzyme.autodiff(Reverse, timsteploop_scalar, Active(2.0))[1][1] ≈ 1.0
     @test Enzyme.autodiff(Forward, timsteploop_scalar, Duplicated(2.0, 1.0))[1] ≈ 1.0
 
     @noinline function func(X)
@@ -1262,7 +1264,7 @@ end
         k1 = func(G)
         return k1
     end
-    @test Enzyme.autodiff(Reverse, timsteploop, Active(2.0))[1] ≈ 1.0
+    @test Enzyme.autodiff(Reverse, timsteploop, Active(2.0))[1][1] ≈ 1.0
     @test Enzyme.autodiff(Forward, timsteploop, Duplicated(2.0, 1.0))[1] ≈ 1.0
 end
 
@@ -1418,7 +1420,7 @@ end
 
     out = Ref(0.0)
     dout = Ref(1.0)
-    @test 2.0 ≈ Enzyme.autodiff(unionret, Active, Active(2.0), Duplicated(out, dout), true)[1]
+    @test 2.0 ≈ Enzyme.autodiff(unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
 end
 
 @testset "Array push" begin
@@ -1430,7 +1432,7 @@ end
 
     x  = [2.3]
     dx = [0.0]
-    @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))
+    @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))[2]
     @test x ≈ [2.3, 2.0]
     @test dx ≈ [1.0]
 
@@ -1440,7 +1442,7 @@ end
         push!(a, 1.0)
         return x
     end
-    y, = Enzyme.autodiff(double_push,Active(1.0))
+    y, = Enzyme.autodiff(double_push,Active(1.0))[1]
     @test y == 1.0
     
     function aloss(a, arr)
@@ -1458,7 +1460,7 @@ end
         Active,
         Active(1.0),
         Duplicated(arr, darr)
-    )[1]
+       )[1][1]
     @test y == 1.0
 end
 
@@ -1515,12 +1517,12 @@ end
         nothing
     end
 
-    bres = Enzyme.autodiff(Reverse, batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))
-    @test length(bres) == 1
-    @test length(bres[1]) == 3
-    @test bres[1][1] ≈  1.0
-    @test bres[1][2] ≈  4.0
-    @test bres[1][3] ≈ 12.0
+    bres = Enzyme.autodiff(Reverse, batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))[1]
+    @test length(bres) == 2
+    @test length(bres[2]) == 3
+    @test bres[2][1] ≈  1.0
+    @test bres[2][2] ≈  4.0
+    @test bres[2][3] ≈ 12.0
 end
 
 @testset "Jacobian" begin
@@ -1651,12 +1653,6 @@ DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
     doctest(Enzyme; manual = false)
 end
 
-
-using CUDA
-if CUDA.functional() && VERSION >= v"1.7.0"
-    include("cuda.jl")
-end
-
 using Random
 
 @testset "Random" begin
@@ -1715,7 +1711,7 @@ end
       res
     end
 
-    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))
+    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))[1]
     
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
@@ -1727,6 +1723,19 @@ end
     @test fres ≈ [1.0, 1.0, 1.0]    
 end
 
+@testset "Uncached batch sizes" begin
+    genericsin(x) = Base.invokelatest(sin, x)
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))[1]
+    for (i, v) in enumerate(res)
+        @test v ≈ i * -0.4161468365471424
+    end
+    @assert length(res) == 10
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{40,Float64}((Float64(i) for i in 1:40))))[1]
+    for (i, v) in enumerate(res)
+        @test v ≈ i * -0.4161468365471424
+    end
+    @assert length(res) == 40
+end
 @testset "Large dynamic tape" begin
 	
 	function ldynloss(X, Y, ps, bs)
@@ -1750,4 +1759,10 @@ end
 		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
 	end
 
+end
+
+# Always run last since otherwise on 1.6 device functions cause breakage.
+using CUDA
+if CUDA.functional() && VERSION >= v"1.7.0"
+    include("cuda.jl")
 end

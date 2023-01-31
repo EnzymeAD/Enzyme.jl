@@ -325,6 +325,292 @@ declare_writebarrier!(mod) = get_function!(mod, "julia.write_barrier") do ctx
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
     LLVM.FunctionType(LLVM.VoidType(ctx), [T_prjlvalue]; vararg=true)
 end
+@static if VERSION < v"1.8.0"
+declare_apply_generic!(mod) = get_function!(mod, "jl_apply_generic") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type(ctx)])
+end
+else
+declare_apply_generic!(mod) = get_function!(mod, "ijl_apply_generic") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type(ctx)])
+end
+end
+declare_juliacall!(mod) = get_function!(mod, "julia.call") do ctx
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
+end
+
+function emit_jl!(B, val)::LLVM.Value 
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
+    fn = get_function!(mod, "jl_", FT)
+    call!(B, fn, [val])
+end
+
+function emit_box_int64!(B, val)::LLVM.Value  
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_int64 = LLVM.Int64Type(ctx)
+
+    @static if VERSION < v"1.8-"
+        box_int64 = get_function!(mod, "jl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+    else
+        box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
+    end
+    call!(B, box_int64, [val])
+end
+
+function emit_apply_generic!(B, args)::LLVM.Value     
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32]) 
+    @static if VERSION < v"1.8-"
+        inv = get_function!(mod, "jl_apply_generic", gen_FT)
+    else
+        inv = get_function!(mod, "ijl_apply_generic", gen_FT)
+    end
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        inv = bitcast!(B, inv, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        res = call!(B, inv, args)
+        LLVM.callconv!(res, 37)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        res = call!(B, julia_call, [inv, args...])
+    end
+    return res
+end
+
+function emit_invoke!(B, args)::LLVM.Value     
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+
+    # {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32, {} addrspace(10)*)* @ijl_invoke
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32, T_prjlvalue]) 
+    @static if VERSION < v"1.8-"
+        inv = get_function!(mod, "jl_invoke", gen_FT)
+    else
+        inv = get_function!(mod, "ijl_invoke", gen_FT)
+    end
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        inv = bitcast!(B, inv, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        res = call!(B, inv, args)
+        LLVM.callconv!(res, 38)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call2",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        res = call!(B, julia_call, [inv, args...])
+    end
+    return res
+end
+
+function emit_svec!(B, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    
+    fn = get_function!(mod, "jl_svec") do ctx
+        sz = convert(LLVMType, Csize_t; ctx)
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+        LLVM.FunctionType(T_prjlvalue, [sz]; vararg=true)
+    end
+    sz = convert(LLVMType, Csize_t; ctx)
+    call!(B, fn, [LLVM.ConstantInt(sz, length(args)), args...])
+end
+
+
+function emit_apply_type!(B, Ty, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    legal = true
+    found = []
+    for arg in args
+        if !isa(arg, ConstantExpr)
+            legal = false
+            break
+        end
+
+        ce = arg
+        while isa(ce, ConstantExpr)
+            ce = operands(ce)[1]
+        end
+        if !isa(ce, LLVM.ConstantInt)
+            legal = false
+            break
+        end
+        ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+        typ = Base.unsafe_pointer_to_objref(ptr)
+        push!(found, typ, ctx)
+    end
+
+    if legal
+        return unsafe_to_llvm(Ty{found...}, ctx)
+    end
+    
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type(ctx)
+    
+    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+    f_apply_type = get_function!(mod, "jl_f_apply_type", generic_FT)
+    Ty = unsafe_to_llvm(Ty, ctx)
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), Ty, args...])
+        LLVM.callconv!(tag, 37)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue, 
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
+    end
+    return tag
+end
+
+function emit_jltypeof!(B, arg)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    if isa(arg, ConstantExpr)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            ce = operands(ce)[1]
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            return unsafe_to_llvm(Core.Typeof(typ), ctx)
+        end
+    end
+
+    fn = get_function!(mod, "jl_typeof") do ctx
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
+    end
+    call!(B, fn, [arg])
+end
+
+function emit_methodinstance!(B, func, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+
+    world = enzyme_extract_world(fn)
+
+    sizeT = convert(LLVMType, Csize_t; ctx)
+    psizeT = LLVM.PointerType(sizeT)
+
+    primalvaltys = LLVM.Value[unsafe_to_llvm(Core.Typeof(func), ctx)]
+    for a in args
+        push!(primalvaltys, emit_jltypeof!(B, a))
+    end
+   
+    meth = only(methods(func))
+    tag = emit_apply_type!(B, Tuple, primalvaltys)
+
+#    TT = meth.sig
+#    while TT isa UnionAll
+#        TT = TT.body
+#    end
+#    parms = TT.parameters
+#    
+#    tosv = primalvaltys
+#    if length(parms) > 0 && typeof(parms[end]) == Core.TypeofVararg
+#        tosv = LLVM.Value[tosv[1:length(parms)-1]..., emit_apply_type!(B, Tuple, tosv[length(parms):end])]
+#    end
+#    sv = emit_svec!(B, tosv[2:end])
+#
+    
+    meth = unsafe_to_llvm(meth, ctx)
+
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    @static if VERSION < v"1.8.0-"
+    worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds", 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, sizeT, psizeT, psizeT]))
+    else
+    worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds", 
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]))
+    end
+    EB = LLVM.Builder(ctx)
+    position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
+    minworld = alloca!(EB, sizeT)
+    maxworld = alloca!(EB, sizeT)
+    store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
+    store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
+    @static if VERSION < v"1.8.0-"
+    methodmatch = call!(B, worlds, LLVM.Value[tag, LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    else
+    methodmatch = call!(B, worlds, LLVM.Value[tag, unsafe_to_llvm(nothing, ctx), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    end
+    # emit_jl!(B, methodmatch)
+    # emit_jl!(B, emit_jltypeof!(B, methodmatch))
+    offset = 1
+    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(LLVM.ArrayType(T_prjlvalue, offset+1), Tracked))
+    gep = LLVM.inbounds_gep!(B, methodmatch, LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(offset; ctx)])
+    sv = LLVM.load!(B, gep)
+   
+    fn = get_function!(mod, "jl_specializations_get_linfo",
+                       LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue]))
+
+    mi = call!(B, fn, [meth, tag, sv])
+
+    return mi
+end
+
 function emit_writebarrier!(B, T)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -353,8 +639,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     vals = LLVM.Value[]
     valTys = API.CValueType[]
     for i = 1:numArgs
-        push!(valTys, API.VT_Primal)
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
+        push!(valTys, API.VT_Primal)
     end
 
     anti = LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.Value(LLVM.API.LLVMGetCalledValue(OrigCI)), vals, length(vals), OrigCI, valTys, length(valTys), b, #=lookup=#false ))
@@ -552,350 +838,329 @@ function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{
     return Return2(ftask, rtask)
 end
 
-struct Tape{T}
-    thunk::AdjointThunk
-    internal_tape::T
-    shadow_return::Any
-    resT::DataType
+# From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
+@inline function isghostty(ty) 
+    if ty === Union{}
+        return true
+    end
+    if Base.isconcretetype(ty) && !ismutabletype(ty)
+        if sizeof(ty) == 0
+            return true
+        end
+        # TODO consider struct_to_llvm ?
+    end
+    return false
 end
 
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::NamedTuple{A,B}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start, ActivityTup,width,A,B}
-    ntuple(Val(length(ActivityTup)-start+1)) do idx
-        Base.@_inline_meta
-        i = start + idx - 1
-        p = arg_ptr[i]
-        T = Core.Typeof(p)
-        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
-            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                return Active(p)
-            else
-                if width == 1
-                    s = shadow_ptr[(i-1)*width + 1]
-                    return Duplicated(p, s)
-                else
-                    return BatchDuplicated(p, ntuple(w->shadow_ptr[(i-1)*width+w], Val(width)))
-                end
-            end
-        else
-            return Const(p)
-        end
-    end
-end
-@inline function wrap_annotated_args(::Val{forwardMode}, ::Val{start}, arg_ptr, shadow_ptr::Ptr{Any}, ::Val{ActivityTup}, ::Val{width}) where {forwardMode,start,ActivityTup,width}
-    ntuple(Val(length(ActivityTup)-start+1)) do idx
-        Base.@_inline_meta
-        i = start + idx - 1
-        p = arg_ptr[i]
-        T = Core.Typeof(p)
-        if ActivityTup[i] && !(GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T))
-            if !forwardMode && (T <: AbstractFloat || T <: Complex{<:AbstractFloat})
-                return Active(p)
-            else
-                if width == 1
-                    s = unsafe_load(shadow_ptr, (i-1)*width + 1)
-                    return Duplicated(p, s)
-                else
-                    return BatchDuplicated(p, ntuple(w->unsafe_load(shadow_ptr, (i-1)*width+w), Val(width)))
-                end
-            end
-        else
-            return Const(p)
-        end
-    end
+struct Tape{TapeTy,ShadowTy,ResT}
+    internal_tape::TapeTy
+    shadow_return::ShadowTy
 end
 
-@inline function common_interface_augfwd(annotation, forward, adjoint, args, width::Val{Width}, RT::Val{ReturnType}) where {Width,ReturnType} 
-    res = forward(args...)
-
-    internal_tape = res[1]
-
-    if length(res) == 1
-        resT = Nothing
-        shadow_return = nothing
-        tape = Tape(adjoint, internal_tape, shadow_return, resT)
-        if Width == 1
-            return ReturnType((nothing, nothing, tape))
+function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothing)
+    primargs = Union{Symbol,Expr}[]
+    shadowargs = Union{Symbol,Expr}[]
+    primtypes = Union{Symbol,Expr}[]
+    allargs = Expr[]
+    typeargs = Symbol[]
+    dfns = Union{Symbol,Expr}[:df]
+    base_idx = 1
+    for w in 2:Width
+        if base === nothing
+            shad = Symbol("df_$w")
+            t = Symbol("DF__$w*")
+            e = :($shad::$t)
+            push!(allargs, e)
+            push!(typeargs, t)
         else
-            return ReturnType((nothing, ntuple(i->nothing, width)..., tape))
+            shad = :($base[$base_idx]) 
+            base_idx += 1
         end
+        push!(dfns, shad)
     end
-    if annotation <: Const
-        origRet = res[2]
-        resT = typeof(origRet)
-        shadow_return = nothing
-        tape = Tape(adjoint, internal_tape, shadow_return, resT)
-        if Width == 1
-            return ReturnType((origRet, origRet, tape))
+    for i in 1:N
+        if base === nothing
+            prim = Symbol("primal_$i")
+            t = Symbol("PT_$i")
+            e = :($prim::$t)
+            push!(allargs, e)
+            push!(typeargs, t)
         else
-            return ReturnType((origRet, ntuple(i->origRet, width)..., tape))
+            prim = :($base[$base_idx]) 
+            t = :(typeof($prim))
+            base_idx += 1
         end
-    end
-    if annotation <: Active
-        origRet = res[2]
-        resT = typeof(origRet)
-        if Width == 1
-            shadow_return = Ref(zero(resT))
-        else
-            shadow_return = ntuple(i->Ref(zero(resT)), width)
-        end
-        tape = Tape(adjoint, internal_tape, shadow_return, resT)
-        if Width == 1
-            return ReturnType((origRet, shadow_return, tape))
-        else
-            return ReturnType((origRet, shadow_return..., tape))
-        end
-    end
-    
-    @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
-    
-    origRet = res[2]
-    resT = typeof(origRet)
-    shadow_return = nothing
-    tape = Tape(adjoint, internal_tape, shadow_return, resT)
-    if Width == 1
-        return ReturnType((origRet, res[3], tape))
-    else
-        return ReturnType((origRet, ntuple(i->res[3], width)..., tape))
-    end
-end
-
-function runtime_generic_fwd(arg_ptr, shadow_ptr, activity::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity, width)
-
-    # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, #=dfn=#nothing, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
-end
-
-@inline function common_interface_rev(start, args, shadow_ptr, tape, width::Val{Width}) where Width
-    
-    actives = []
-    for (i, p) in enumerate(args)
-        if typeof(p) <: Active
-            push!(actives, i+start-1)
-        end
-    end
-
-    tape = tape::Tape
-
-    if tape.shadow_return !== nothing
-        if Width == 1
-            val = tape.shadow_return[]
-        else
-            val = ntuple(i->tape.shadow_return[i][], width)
-        end
-        args = (args..., val)
-    end
-
-    tup = tape.thunk(args..., tape.internal_tape)
-    
-    for (d, i) in zip(tup, actives)
-        # While `RefValue{T}` and boxed T for immutable are bitwise compatible
-        # they are not idempotent on the Julia level. We could "force" `a` to be
-        # a boxed T, but would lose the mutable memory semantics that Enzyme requires
+        push!(primargs, prim)
+        push!(primtypes, t)
+        shadows = Union{Symbol,Expr}[]
         for w in 1:Width
-            dd = if Width == 1
-                d
+            if base === nothing
+                shad = Symbol("shadow_$(i)_$w")
+                t = Symbol("ST_$(i)_$w")
+                e = :($shad::$t)
+                push!(allargs, e)
+                push!(typeargs, t)
             else
-                d[w]
+                shad = :($base[$base_idx]) 
+                t = :(typeof($shad))
+                base_idx += 1
             end
-            a = unsafe_load(shadow_ptr, (i-1)*Width+w)
-            if a === nothing
-            elseif a isa Base.RefValue
-                @assert eltype(a) == typeof(dd)
-                a[] += dd
+            push!(shadows, shad)
+        end
+        if Width == 1
+            push!(shadowargs, shadows[1])
+        else
+            push!(shadowargs, :(($(shadows...),)))
+        end
+    end
+    wrapped = Expr[]
+    for i in 1:N
+        expr = :(
+                if ActivityTup[$i+1] && !isghostty($(primtypes[i]))
+                if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
+                    Active($(primargs[i]))
+                 else
+                     $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
+                 end
+             else
+                 Const($(primargs[i]))
+             end
+
+            )
+        push!(wrapped, expr)
+    end
+    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
+end
+
+@inline eltypeof(x) = eltype(typeof(x))
+
+function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(res[1]), Val(Width+1))
+    return quote
+        args = ($(wrapped...),)
+
+        fn = f
+        dfn = ActivityTup[1] ? df : nothing
+
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt = Tuple{map(eltypeof, args)...}
+        tt′ = Tuple{map(typeof, args)...}
+        rt = Core.Compiler.return_type(fn, tt)
+        annotation = guess_activity(rt, API.DEM_ForwardMode)
+        
+        if annotation <: DuplicatedNoNeed
+            annotation = Duplicated{rt}
+        end
+        if $Width != 1
+            if annotation <: Duplicated
+                annotation = BatchDuplicated{rt, $Width}
+            end
+        end
+
+        forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+
+        res = forward(args...)
+
+        if length(res) == 0
+            return ReturnType($nnothing)
+        end
+        if annotation <: Const
+            return ReturnType(($(nres...),))
+        end
+
+        if $Width == 1
+            return ReturnType((res[1], res[2]))
+        else
+            return ReturnType((res[1], res[2]...))
+        end
+    end
+end
+
+function func_runtime_generic_fwd(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
+    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+
+    quote 
+        function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+    N = div(length(allargs)+2, Width)-1
+    _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
+    return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+end
+
+function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(origRet), Val(Width+1))
+    nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
+    nres3 = ntuple(i->:(res[3]), Val(Width))
+    return quote
+        args = ($(wrapped...),)
+
+        fn = f
+        dfn = ActivityTup[1] ? df : nothing
+
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt = Tuple{map(eltypeof, args)...}
+        tt′ = Tuple{map(typeof, args)...}
+        rt = Core.Compiler.return_type(fn, tt)
+        annotation = guess_activity(rt)
+
+        forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                     #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+        
+        res = forward(args...)
+
+        internal_tape = res[1]
+
+        if length(res) == 1
+            resT = Nothing
+            shadow_return = nothing
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType(($nnothing..., tape))
+        end
+        if annotation <: Const
+            let origRet = res[2], resT = typeof(origRet)
+                shadow_return = nothing
+                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+                return ReturnType(($(nres...), tape))
+            end
+        end
+        if annotation <: Active
+            let origRet = res[2], resT = typeof(origRet)
+                if $Width == 1
+                    shadow_return = Ref(zero(resT))
+                else
+                    shadow_return = ($(nzeros...),)
+                end
+                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+                if $Width == 1
+                    return ReturnType((origRet, shadow_return, tape))
+                else
+                    return ReturnType((origRet, shadow_return..., tape))
+                end
+            end
+        end
+        
+        @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
+        
+        origRet = res[2]
+        resT = typeof(origRet)
+        shadow_return = nothing
+        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+        if $Width == 1
+            return ReturnType((origRet, res[3], tape))
+        else
+            return ReturnType((origRet, $(nres3...), tape))
+        end
+    end
+end
+
+function func_runtime_generic_augfwd(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
+    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
+
+    quote 
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+    N = div(length(allargs)+2, Width)-1
+    _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
+end
+
+function body_runtime_generic_rev(N, Width, wrapped, primttypes)
+    outs = []
+    for i in 1:N
+        for w in 1:Width
+            expr = if Width == 1
+                :(tup[$i])
             else
-                ref = unsafe_load(reinterpret(Ptr{Ptr{typeof(a)}}, shadow_ptr), (i-1)*Width+w)
-                unsafe_store!(ref, dd+a)
+                :(tup[$i][$w])
             end
+            shad = Symbol("shadow_$(i)_$w")
+            out = :(if $expr === nothing
+              elseif $shad isa Base.RefValue
+                  $shad[] += $expr
+                else
+                  ref = shadow_ptr[$(i*(Width)+w)]
+                  ref = reinterpret(Ptr{typeof($shad)}, ref)
+                  unsafe_store!(ref, $shad+$expr)
+                end
+               )
+            push!(outs, out)
         end
     end
-    return nothing
-end
-
-function runtime_generic_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
-
-    # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-    
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
-end
-
-function runtime_generic_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
-end
-
-function runtime_invoke_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
-    
-    fn = arg_ptr[2]
-    dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
-
-    mi = arg_ptr[1]
-    specTypes = mi.specTypes.parameters
-    F = specTypes[1]
-    @assert F == typeof(fn)
-    @assert in(mi.def, methods(fn))
-    
-    tt = Tuple{specTypes[2:end]...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
-    end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    tt′ = Tuple{map(Core.Typeof, args)...}
-
-    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-    
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
+    shadow_ret = nothing
     if Width == 1
-       return ReturnType((res[1], res[2]))
+        shadowret = :(tape.shadow_return[])
     else
-        return ReturnType((res[1], res[2]...))
+        shadowret = []
+        for w in 1:Width
+            push!(shadowret, :(tape.shadow_return[$w][]))
+        end
+        shadowret = :(($(shadowret...),))
     end
-end
 
-function runtime_invoke_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
+    quote
+        args = ($(wrapped...),)
 
-    fn = arg_ptr[2]
-    dfn = ActivityTup[2] ? shadow_ptr[2] : nothing
+        fn = f
+        dfn = ActivityTup[1] ? df : nothing
+
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt = Tuple{map(eltypeof, args)...}
+        tt′ = Tuple{map(typeof, args)...}
+        rt = Core.Compiler.return_type(fn, tt)
+        annotation = guess_activity(rt)
+        
+        forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                    #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+        if tape.shadow_return !== nothing
+            args = (args..., $shadowret)
+        end
     
-    mi = arg_ptr[1]
-    # TODO actually use the mi rather than fn
-    @assert in(mi.def, methods(fn))
+        tup = adjoint(args..., tape.internal_tape)[1]
 
-    # TODO: Annotation of return value
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
-end
-
-function runtime_invoke_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(3), arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(#=start=#3, args, shadow_ptr, tape, width)
-end
-
-function runtime_apply_latest_fwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(true), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
-
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt, API.DEM_ForwardMode)
-    if annotation <: DuplicatedNoNeed
-        annotation = Duplicated{rt}
+        $(outs...)
+        return nothing
     end
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
+end
+
+function func_runtime_generic_rev(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
+    body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
+
+    quote 
+        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, TapeType, F, DF, $(typeargs...)}
+            $body
         end
     end
-
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width,
-                    #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
-
-    res = forward(args...)
-
-    if length(res) == 0
-        return ReturnType(ntuple(i->nothing, Val(Width+1)))
-    end
-    if annotation <: Const
-        return ReturnType(ntuple(i->res[1], Val(Width+1)))
-    end
-
-    if Width == 1
-       return ReturnType((res[1], res[2]))
-    else
-        return ReturnType((res[1], res[2]...))
-    end
 end
 
-function runtime_apply_latest_augfwd(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    fn = arg_ptr[1]
-    dfn = ActivityTup[1] ? shadow_ptr[1] : nothing
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
-
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    annotation = guess_activity(rt)
-    if Width != 1
-        if annotation <: Duplicated
-            annotation = BatchDuplicated{rt, Width}
-        end
-    end
-
-    tt′ = Tuple{map(Core.Typeof, args)...}
-    forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-
-    return common_interface_augfwd(annotation, forward, adjoint, args, width, RT)
+@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, Width, TapeType, F, DF}
+    N = div(length(allargs)+2, Width)-1
+    _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_rev(N, Width, wrapped, primtypes)
 end
 
-function runtime_apply_latest_rev(arg_ptr, shadow_ptr, activity_ptr::Val{ActivityTup}, tape::Any, width::Val{Width}, ::Val{ReturnType}) where {ActivityTup,Width,ReturnType}
-    args = wrap_annotated_args(#=forwardMode=#Val(false), #=start=#Val(2), arg_ptr, shadow_ptr, activity_ptr, width)
-    return common_interface_rev(#=start=#2, args, shadow_ptr, tape, width)
+# Create specializations
+for (N, Width) in Iterators.product(0:30, 1:10)
+    eval(func_runtime_generic_fwd(N, Width))
+    eval(func_runtime_generic_augfwd(N, Width))
+    eval(func_runtime_generic_rev(N, Width))
 end
 
 function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
@@ -922,47 +1187,62 @@ function emit_gc_preserve_end(B::LLVM.Builder, token)
     return
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing)
+function unsafe_to_llvm(val, ctx)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    fill_val = unsafe_to_pointer(val)
+    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
+    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+end
+
+function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    ops = collect(operands(orig))[start:end-1]
+    ops = collect(operands(orig))[start+firstconst:end-1]
     
     T_int8 = LLVM.Int8Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
 
     num = convert(UInt32, length(ops))
 
-    EB = LLVM.Builder(ctx)
-    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    # TODO: Optimization by emitting liverange
-    primal = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num))
-    shadow = LLVM.alloca!(EB, LLVM.ArrayType(T_prjlvalue, num*width))
     ActivityList = Bool[]
 
     to_preserve = LLVM.Value[]
 
     @assert length(ops) != 0
-        
+    fill_val = unsafe_to_llvm(nothing, ctx)
+
+    vals = LLVM.Value[]
+    
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-    fill_val = unsafe_to_pointer(nothing)
-    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+    
+    if tape !== nothing
+        NT = NTuple{length(ops)*Int64(width), Ptr{Nothing}}
+        shadow_ptr = emit_allocobj!(B, NT)
+        shadow = bitcast!(B, shadow_ptr, LLVM.PointerType(convert(LLVMType, NT; ctx), addrspace(llvmtype(shadow_ptr))))
+    end
+
+    if firstconst
+        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start]))
+        if lookup
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+        push!(vals, val)
+    end
 
     for (i, op) in enumerate(ops)
-        idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)]
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if lookup
             val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
         end
-
-        LLVM.store!(B, val, LLVM.inbounds_gep!(B, primal, idx))
+        
+        push!(vals, val)
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
         push!(ActivityList, active)
@@ -989,74 +1269,49 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
                 end
             end
 
-            idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
-            LLVM.store!(B, ev,
-                        LLVM.inbounds_gep!(B, shadow, idx))
-        end
-    end
-
-    primal = addrspacecast!(B, primal, LLVM.PointerType(eltype(llvmtype(primal)), 11))
-    if tape === nothing
-        shadow = addrspacecast!(B, shadow, LLVM.PointerType(eltype(llvmtype(shadow)), 11))
-    else
-        # TODO ROOT
-    end
-    
-    Activity = Val{(ActivityList...,)}
-    if tape === nothing
-        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), AnyArray(Int64(width)*length(ops)), Activity, Val{Int64(width)}, Val{ReturnType}})
-    else
-        llvmf = nested_codegen!(mod, func, Tuple{AnyArray(length(ops)), Ptr{Any}, Activity, Any, Val{Int64(width)}, Val{ReturnType}})
-    end
-    
-    permit_inlining!(llvmf)
-    
-    vals = LLVM.Value[primal, shadow]
-
-    if tape !== nothing
-        push!(vals, LLVM.Value(tape))
-    end
-
-    if sret !== nothing && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        pushfirst!(vals, sret)
-    end
-
-    params = parameters(eltype(LLVM.llvmtype(llvmf)))
-    for (i, val) in enumerate(vals)
-        sourceT = LLVM.llvmtype(val)
-        targetT = params[i]
-        if sourceT !== targetT
-            vals[i] = if sourceT isa LLVM.PointerType && targetT isa LLVM.IntegerType
-                LLVM.ptrtoint!(B, val, targetT)
-            elseif sourceT isa LLVM.IntegerType && targetT isa LLVM.PointerType
-                LLVM.inttoptr!(B, val, targetT)
-            else
-                LLVM.bitcast!(B, val, targetT)
+            push!(vals, ev)
+            if tape !== nothing
+                idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int64(width) + w-1; ctx)]
+                ev = addrspacecast!(B, ev, LLVM.PointerType(eltype(llvmtype(ev)), 11))
+                ev = emit_pointerfromobjref!(B, ev)
+                ev = ptrtoint!(B, ev, convert(LLVMType, Int; ctx))
+                LLVM.store!(B, ev, LLVM.inbounds_gep!(B, shadow, idx))
             end
         end
     end
 
-    if length(to_preserve) != 0
-        token = emit_gc_preserve_begin(B, to_preserve)
+    if tape !== nothing
+        pushfirst!(vals, shadow_ptr)
+        pushfirst!(vals, LLVM.Value(tape))
+    else
+        pushfirst!(vals, unsafe_to_llvm(Val(ReturnType), ctx))
+    end
+    pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
+    pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
+    
+    @static if VERSION < v"1.7.0-" || true
+    else
+    mi = emit_methodinstance!(B, func, vals)
     end
 
-    cal = LLVM.call!(B, llvmf, vals)
-    if sret !== nothing
-        attr = if LLVM.version().major >= 12
-            TypeAttribute("sret", eltype(llvmtype(sret)); ctx)
-        else
-            EnumAttribute("sret"; ctx)
-        end
-        LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
+    pushfirst!(vals, unsafe_to_llvm(func, ctx))
+    
+    @static if VERSION < v"1.7.0-" || true
+    else
+    pushfirst!(vals, mi)
     end
+
+    @static if VERSION < v"1.7.0-" || true
+    cal = emit_apply_generic!(B, vals)
+    else
+    cal = emit_invoke!(B, vals)
+    end
+
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-    
-    if length(to_preserve) != 0
-        emit_gc_preserve_end(B, token)
-    end
-    
-    if sret !== nothing && !any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        emit_error(B, orig, "Illegal generic_setup")
+
+    if tape === nothing
+        llty = convert(LLVMType, ReturnType; ctx)
+        cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Tracked))
     end
 
     return cal
@@ -1088,9 +1343,7 @@ function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
     
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
-        sret = allocate_sret!(gutils, 1+width, ctx)
-
-        generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false)
 
         if shadowR != C_NULL
             if width == 1
@@ -1134,8 +1387,7 @@ function common_generic_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 2+width, ctx)
-        generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false)
 
         if shadowR != C_NULL
             if width == 1
@@ -1185,6 +1437,7 @@ function common_generic_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
         ctx = LLVM.context(orig)
 
         @assert tape !== C_NULL
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
         generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape)
 
     end
@@ -1212,8 +1465,7 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = allocate_sret!(gutils, 1+width, ctx)
-    generic_setup(orig, runtime_apply_latest_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
+    sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
@@ -1249,8 +1501,8 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
     B = LLVM.Builder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    sret = allocate_sret!(gutils, 2+width, ctx)
-    generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false; sret)
+    # sret = generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
+    sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
     if shadowR != C_NULL
         if width == 1
@@ -1284,7 +1536,8 @@ function common_apply_latest_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
 
     B = LLVM.Builder(B)
 
-    generic_setup(orig, runtime_apply_latest_rev, Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
 
     return nothing
 end
@@ -1537,8 +1790,7 @@ function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 1+width, ctx)
-        generic_setup(orig, runtime_invoke_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         
         if shadowR != C_NULL
             if width == 1
@@ -1577,8 +1829,7 @@ function common_invoke_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.A
 
         B = LLVM.Builder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        sret = allocate_sret!(gutils, 2+width, ctx)
-        generic_setup(orig, runtime_invoke_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false; sret)
+        sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         
         if shadowR != C_NULL
             if width == 1
@@ -1616,7 +1867,8 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
 
         B = LLVM.Builder(B)
 
-        generic_setup(orig, runtime_invoke_rev, Nothing, gutils, #=start=#offset, ctx, B, true; tape)
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
     end
 
     return nothing
@@ -3660,6 +3912,7 @@ any_jltypes(::LLVM.VoidType) = false
 @inline any_jltypes(::Type{Nothing}) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
 @inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{Complex{T}}) where T = any_jltypes(T)
 @inline any_jltypes(::Type{NTuple{Size, T}}) where {Size, T} = any_jltypes(T)
 @inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
 @inline any_jltypes(::Type{Any}) = true
@@ -3856,10 +4109,7 @@ function fixup_return(B, retval)
     if isa(ty, LLVM.StructType)
         elems = LLVM.elements(ty)
         if length(elems) == 2 && elems[1] == T_prjlvalue
-            fill_val = unsafe_to_pointer(nothing)
-            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            fill_val = unsafe_to_llvm(nothing, ctx)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
             retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
@@ -3894,10 +4144,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
             if isa(ty, LLVM.PointerType)
                 if any_jltypes(ty) 
                     loc = gep!(builder, nobj, path)
-                    fill_val = unsafe_to_pointer(nothing)
-                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    fill_val = unsafe_to_llvm(nothing, ctx)
                     loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(llvmtype(loc))))
                     store!(builder, fill_val, loc)
                 elseif zeroAll
@@ -3991,13 +4238,9 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
     T_int8 = LLVM.Int8Type(ctx)
 
     if any_jltypes(LLVMType) || IsDefault != 0
-        T_int32 = LLVM.Int32Type(ctx)
         T_int64 = LLVM.Int64Type(ctx)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-        T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-        T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
         T_pint8 = LLVM.PointerType(T_int8)
         T_ppint8 = LLVM.PointerType(T_pint8)
 
@@ -4022,45 +4265,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             end
 
             # Obtain tag
-            tag = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(ETT)); ctx)  # do we need to root ETT
-            tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
-            tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
+            tag = unsafe_to_llvm(ETT, ctx)
         else
-            # TODO: Version switch to get jl_box_int64 and not call37...
-        @static if VERSION < v"1.8-"
-            box_int64 = get_function!(mod, "jl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
-        else
-            box_int64 = get_function!(mod, "ijl_box_int64", LLVM.FunctionType(T_prjlvalue, [T_int64]))
-        end
-            boxed_count = call!(B, box_int64, [Count])
-
-            generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
-            f_apply_type = get_function!(mod, "jl_f_apply_type", generic_FT)
-
-
-            ptr = unsafe_to_pointer(NTuple)
-
-            EnzymeTapeT = LLVM.ConstantInt(reinterpret(Int, ptr); ctx)
-            EnzymeTapeT = LLVM.const_inttoptr(EnzymeTapeT, T_prjlvalue_UT)
-            EnzymeTapeT = LLVM.const_addrspacecast(EnzymeTapeT, T_prjlvalue)
-
-            TapeT = LLVM.ConstantInt(reinterpret(Int, Base.pointer_from_objref(TT)); ctx)
-            TapeT = LLVM.const_inttoptr(TapeT, T_prjlvalue_UT)
-            TapeT = LLVM.const_addrspacecast(TapeT, T_prjlvalue)
-
-            if VERSION < v"1.9.0-"
-                FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue, T_prjlvalue])
-                f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
-                # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-                tag = call!(B, f_apply_type, [LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
-                LLVM.callconv!(tag, 37)
-            else
-                # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-                julia_call = get_function!(mod, "julia.call",
-                    LLVM.FunctionType(T_prjlvalue, 
-                                      [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
-                tag = call!(B, julia_call, [f_apply_type, LLVM.PointerNull(T_prjlvalue), EnzymeTapeT, boxed_count, TapeT])
-            end
+            boxed_count = emit_box_int64!(B, Count)
+            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(TT, ctx)))
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -4715,7 +4923,18 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     return UInt8(false)
 end
 
-function enzyme_custom_extract_mi(orig)
+function enzyme_extract_world(fn::LLVM.Function)
+    for fattr in collect(function_attributes(fn))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_world"
+                return parse(Int, LLVM.value(fattr))
+            end
+        end
+    end
+    GPUCompiler.@safe_error "Enzyme: Could not find world", fn
+end
+
+function enzyme_custom_extract_mi(orig::LLVM.Instruction)
     mi = nothing
     job = nothing
     for fattr in collect(function_attributes(LLVM.called_value(orig)))
@@ -5094,9 +5313,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     sret_types  = Type[]  # Julia types of all returned variables
     
-    T_JuliaSRet = LLVMType[]  # Struct return of all objects
-                              # + If the adjoint this will be all Active variables (includes all of T_EnzymeSRet)
-                              # + If the forward, this will be ?return, ?shadowReturn, ?tape
+    # Number of sret values from Enzyme calling convention
+    count_Sret = 0
 
     pactualRetType = actualRetType
     sret_union = is_sret_union(actualRetType)
@@ -5113,7 +5331,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
     end
 
-    for T in argtypes
+    ActiveRetTypes = Type[]
+    for (i, T) in enumerate(argtypes)
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
@@ -5125,28 +5344,44 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
         push!(T_wrapperargs, llvmT)
 
-        T <: Const && continue
+        if T <: Const
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
+            continue
+        end
 
         if T <: Active
             if is_adjoint
-                # Use deserves_argbox??
-                llvmT = LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, source_typ; ctx)))
-                push!(T_JuliaSRet, llvmT)
-                
+                count_Sret += 1
                 if width == 1
-                    push!(sret_types, source_typ)
+                    push!(ActiveRetTypes, source_typ)
                 else
-                    push!(sret_types, NTuple{width, source_typ})
+                    push!(ActiveRetTypes, NTuple{width, source_typ})
                 end
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
             @assert width == 1
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
         else
             error("calling convention should be annotated, got $T")
         end
+    end
+
+    if is_adjoint
+        NT = Tuple{ActiveRetTypes...}
+        if any(any_jltypes(convert(LLVM.LLVMType, b; ctx, allow_boxed=true)) for b in ActiveRetTypes)
+            NT = AnonymousStruct(NT)
+        end
+        push!(sret_types, NT)
     end
 
     # API.DFT_OUT_DIFF
@@ -5166,7 +5401,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         # tape -- todo ??? on wrap
         if existed[1] != 0
             tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-            push!(T_JuliaSRet, LLVM.LLVMType(tape))
+            count_Sret += 1
         end
         
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
@@ -5186,14 +5421,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         # primal return
         if existed[2] != 0 
             @assert returnPrimal
-            push!(T_JuliaSRet, llvmT)
+            count_Sret += 1
             push!(sret_types, actualRetType)
         else
             @assert !returnPrimal
         end
         # shadow return
         if existed[3] != 0
-            push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+            count_Sret += 1
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
                 push!(sret_types, actualRetType)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
@@ -5209,10 +5444,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             isboxed = GPUCompiler.deserves_argbox(actualRetType)
             llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
             if returnPrimal
-                push!(T_JuliaSRet, llvmT)
+                count_Sret += 1
             end
             if !(rettype <: Const)
-                push!(T_JuliaSRet, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+                count_Sret += 1
             end
         end
         if returnPrimal
@@ -5395,9 +5630,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 end
             end
         elseif Mode == API.DEM_ForwardMode
-            for returnNum in 0:(length(T_JuliaSRet)-1)
+            for returnNum in 0:(count_Sret-1)
                 eval = val
-                if length(T_JuliaSRet) > 1
+                if count_Sret > 1
                     eval = extract_value!(builder, val, returnNum)
                 end
                 ptr = gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), returnNum)])
@@ -5413,7 +5648,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                 if T <: Active
                     if !isboxed
                         eval = extract_value!(builder, val, returnNum)
-                        store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
+                        store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
                         returnNum+=1
                     end
                     activeNum+=1
@@ -5824,10 +6059,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 position!(builder, BB)
                 
                 if GPUCompiler.isghosttype(jlrettype) || Core.Compiler.isconstType(jlrettype)
-                    fill_val = unsafe_to_pointer(jlrettype.instance)
-                    fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-                    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-                    fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+                    fill_val = unsafe_to_llvm(jlrettype.instance, ctx)
                     ret!(builder, fill_val)
                 else
                     obj = emit_allocobj!(builder, jlrettype)
@@ -5846,10 +6078,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             for_each_uniontype_small(inner, actualRetType)
 
             position!(builder, def)
-            fill_val = unsafe_to_pointer(nothing)
-            fill_val = LLVM.ConstantInt(reinterpret(Int, fill_val); ctx)
-            fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-            fill_val = LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+            fill_val = unsafe_to_llvm(nothing, ctx)
             ret!(builder, fill_val)
         elseif sret 
             ret!(builder, load!(builder, sretPtr))
@@ -6240,6 +6469,9 @@ end
             push!(attributes, StringAttribute("enzymejl_job", string(convert(Int, pointer_from_objref(jobref))); ctx))
             push!(jlrules, fname)
         end
+        for f in functions(mod)
+            push!(function_attributes(f), StringAttribute("enzymejl_world", string(job.source.world); ctx))
+        end
 
         GC.@preserve job jobref begin
             adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules)
@@ -6458,6 +6690,8 @@ end
     end
 
     i = 1
+    ActiveRetTypes = Type[]
+
     for T in argtypes
         source_typ = eltype(T)
         
@@ -6465,6 +6699,9 @@ end
         i+=1
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
             continue
         end
 
@@ -6484,14 +6721,19 @@ end
 
         push!(ccexprs, argexpr)
 
-        T <: Const && continue
+        if T <: Const
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
+            continue
+        end
 
         if T <: Active
             if is_adjoint
                 if width == 1
-                    push!(sret_types, source_typ)
+                    push!(ActiveRetTypes, source_typ)
                 else
-                    push!(sret_types, NTuple{width, source_typ})
+                    push!(ActiveRetTypes, NTuple{width, source_typ})
                 end
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed
@@ -6506,6 +6748,9 @@ end
             else
                 push!(types, source_typ)
             end
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
+            end
             push!(ccexprs, argexpr)
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             if RawCall
@@ -6519,6 +6764,9 @@ end
                 push!(types, Any)
             else
                 push!(types, NTuple{width, source_typ})
+            end
+            if is_adjoint
+                push!(ActiveRetTypes, Nothing)
             end
             push!(ccexprs, argexpr)
         else
@@ -6556,6 +6804,16 @@ end
         end
         i+=1
     end
+	
+    ctx = LLVM.Context()
+    
+    if is_adjoint
+        NT = Tuple{ActiveRetTypes...}
+        if any(any_jltypes(convert(LLVM.LLVMType, b; ctx, allow_boxed=true)) for b in ActiveRetTypes)
+            NT = AnonymousStruct(NT)
+        end
+        push!(sret_types, NT)
+    end
 
     @assert i == length(argexprs)+1
             
@@ -6576,7 +6834,6 @@ end
     end
 
 	# calls fptr
-	ctx = LLVM.Context()
     llvmtys = LLVMType[convert(LLVMType, x; ctx, allow_boxed=true) for x in types]
     llsret_types = LLVMType[]
     if !isempty(sret_types)

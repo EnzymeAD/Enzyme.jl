@@ -171,11 +171,11 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
-∂f_∂a, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))
+∂f_∂a, _, _, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))[1]
 
 # output
 
-(3.966106403010388, 54450.0)
+(3.966106403010388, nothing, nothing, 54450.0)
 ```
 
 here, `autodiff` returns a tuple
@@ -319,9 +319,16 @@ f(x) = x*x
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    RT = if A <: Duplicated && width != 1
+        BatchDuplicated{eltype(A), width}
+    elseif A <: DuplicatedNoNeed && width != 1
+        BatchDuplicatedNoNeed{eltype(A), width}
+    else
+        A
+    end
+
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
@@ -340,7 +347,14 @@ end
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    RT = if A <: Duplicated && width != 1
+        BatchDuplicated{eltype(A), width}
+    elseif A <: DuplicatedNoNeed && width != 1
+        BatchDuplicatedNoNeed{eltype(A), width}
+    else
+        A
+    end
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
     thunk(args′...)
 end
 
@@ -626,7 +640,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where chunk
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -636,7 +650,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::ForwardMode, f, x, ::Val{1}; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
     ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
@@ -664,8 +678,30 @@ grad = jacobian(Forward, f, [2.0, 3.0])
  0.0  1.0
 ```
 """
-@inline function jacobian(::ForwardMode, args...; kwargs...)
-    cols = gradient(Forward, args...; kwargs...)
+@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
+    cols = if length(x) == 0
+        return ()
+    else
+        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+    end
+    reduce(hcat, cols)
+end
+
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    tmp = ntuple(length(shadow)) do i
+        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+    end
+    cols = tupleconcat(tmp...)
+    reduce(hcat, cols)
+end
+
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+    cols = ntuple(length(shadow)) do i
+        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+    end
     reduce(hcat, cols)
 end
 
@@ -690,7 +726,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
  0.0  1.0
 ```
 """
-@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{chunk}) where {chunk, n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -731,7 +767,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
-@inline function jacobian(::ReverseMode, f, x, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val}
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
