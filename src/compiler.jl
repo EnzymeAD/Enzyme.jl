@@ -5259,9 +5259,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
     FT = LLVM.FunctionType(T_ret, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
     sfn = LLVM.get_subprogram(enzymefn)
-    # if sfn !== nothing
-    #     LLVM.set_subprogram!(llvm_f, sfn)
-    # end
+    if sfn !== nothing
+        LLVM.set_subprogram!(llvm_f, sfn)
+    end
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -5387,6 +5387,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                         permit_inlining!(cf)
                         for shadowv in shadows
                             c = call!(builder, cf, [shadowv])
+                            if LLVM.get_subprogram(enzymefn) !== nothing
+                                metadata(c)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(enzymefn) )
+                            end
                         end
                     end
                 end
