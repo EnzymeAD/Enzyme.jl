@@ -1653,12 +1653,6 @@ DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
     doctest(Enzyme; manual = false)
 end
 
-
-using CUDA
-if CUDA.functional() && VERSION >= v"1.7.0"
-    include("cuda.jl")
-end
-
 using Random
 
 @testset "Random" begin
@@ -1765,4 +1759,10 @@ end
 		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
 	end
 
+end
+
+# Always run last since otherwise on 1.6 device functions cause breakage.
+using CUDA
+if CUDA.functional() && VERSION >= v"1.7.0"
+    include("cuda.jl")
 end
