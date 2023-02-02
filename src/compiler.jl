@@ -402,7 +402,7 @@ function emit_apply_generic!(B, args)::LLVM.Value
         # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
         julia_call = get_function!(mod, "julia.call",
             LLVM.FunctionType(T_prjlvalue, 
-                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+                              [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
         res = call!(B, julia_call, [inv, args...])
     end
     return res
