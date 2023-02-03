@@ -1011,7 +1011,7 @@ end
     u_v_eta = [Ref(0.0)]
     ad_struct = [Ref(1.0)]
 
-    autodiff(advance, Active, Duplicated(u_v_eta, ad_struct))
+    autodiff(advance2, Active, Duplicated(u_v_eta, ad_struct))
     @test ad_struct[1][] ≈ 2.0 
 end
 

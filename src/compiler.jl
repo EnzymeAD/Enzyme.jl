@@ -2935,6 +2935,10 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     # Zero the copy in the forward pass. 
     #   initshadow = 2.0
     #   dres = copy(initshadow) # 2.0
+    #   
+    #   This needs to be inserted
+    #   memset(dres, 0, ...)
+    #
     #   # removed return res[1]
     #   dres[1] += differeturn
     #   dmemcpy aka initshadow += dres
@@ -2945,8 +2949,8 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     
     shadowsrc = get_array_data(B, shadowsrc)
     shadowdst = get_array_data(B, shadowdst)
-    
-    if fwd && secretty != C_NULL 
+   
+    if fwd && secretty != nothing
         LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
     end
 
@@ -2958,7 +2962,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     evsrc = extract_value!(B, shadowsrc, i-1)
     evdst = extract_value!(B, shadowdst, i-1)
     
-    if fwd && secretty != C_NULL 
+    if fwd && secretty != nothing
         LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
     end
 
