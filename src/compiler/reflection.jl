@@ -11,7 +11,6 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     return Compiler.CompilerJob(target, primal, params)
 end
 
-
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  optimize::Bool=true, second_stage::Bool=true, ctx=nothing, kwargs...)
 
