@@ -1587,6 +1587,9 @@ function common_newstructv_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
         shadowsin = LLVM.Value[
                         LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, o, B)) for o in origops[offset:end-1] ]
         if width == 1
+            if offset != 1
+                pushfirst!(shadowsin, origops[1])
+            end
             shadowres = LLVM.call!(B, LLVM.called_value(orig), shadowsin)
             conv = LLVM.API.LLVMGetInstructionCallConv(orig)
             LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
@@ -1596,6 +1599,9 @@ function common_newstructv_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
                 args = LLVM.Value[
                                   extract_value!(B, s, idx-1) for s in shadowsin
                                   ]
+                if offset != 1
+                    pushfirst!(args, origops[1])
+                end
                 tmp = LLVM.call!(B, LLVM.called_value(orig), args)
                 conv = LLVM.API.LLVMGetInstructionCallConv(orig)
                 LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
