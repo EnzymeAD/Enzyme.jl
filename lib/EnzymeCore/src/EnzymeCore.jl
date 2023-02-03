@@ -2,7 +2,7 @@ module EnzymeCore
 
 using Adapt
 
-export Forward, Reverse
+export Forward, Reverse, ReverseWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 
 function batch_size end
@@ -113,9 +113,10 @@ abstract type Mode end
 
 Reverse mode differentiation
 """
-struct ReverseMode <: Mode
+struct ReverseMode{ReturnPrimal} <: Mode
 end
-const Reverse = ReverseMode()
+const Reverse = ReverseMode{false}()
+const ReverseWithPrimal = ReverseMode{true}()
 
 """
     struct Forward <: Mode

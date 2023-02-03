@@ -1,7 +1,7 @@
 module Enzyme
 
-import EnzymeCore: Forward, Reverse
-export Forward, Reverse
+import EnzymeCore: Forward, Reverse, ReverseWithPrimal
+export Forward, Reverse, ReverseWithPrimal
 
 import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
@@ -183,13 +183,25 @@ here, `autodiff` returns a tuple
 while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not returned).
 `c` will be treated as `Const(c)`.
 
+One can also request the original returned value of the computation.
+
+Example:
+
+```jldoctest
+Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
+
+# output
+
+((6.0,), 9.0)
+```
+
 !!! note
 
     Enzyme gradients with respect to integer values are zero.
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(::ReverseMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ReverseMode{ReturnPrimal}, f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -200,15 +212,15 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
         if !allocatedinline(rt) || rt isa Union
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false), #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(true))
+            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false), #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(args′...)
             tape = res[1]
-            return adjoint(args′..., tape)
+            return (res[2], adjoint(args′..., tape))
         end
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width))
+    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = eltype(Compiler.return_type(thunk))
@@ -217,14 +229,14 @@ while ``\\partial f/\\partial b`` will be *added to* `∂f_∂b` (but not return
     thunk(args′...)
 end
 
-@inline function autodiff(::ReverseMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff(::ReverseMode{ReturnPrimal}, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width))
+    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
     if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))

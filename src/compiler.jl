@@ -5554,6 +5554,11 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             @assert rettype <: Const || rettype <: Active
         end
     end
+    if Mode == API.DEM_ReverseModeCombined
+        if returnPrimal
+            push!(sret_types, actualRetType)
+        end
+    end
     if Mode == API.DEM_ForwardMode
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
         if returnUsed
@@ -5758,6 +5763,15 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         else
             activeNum = 0
             returnNum = 0
+            if Mode == API.DEM_ReverseModeCombined
+                if returnPrimal
+                    if !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
+                        eval = extract_value!(builder, val, returnNum)
+                        store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 1)]))
+                        returnNum+=1
+                    end
+                end
+            end
             for T in argtypes
                 T′ = eltype(T)
                 isboxed = GPUCompiler.deserves_argbox(T′)
