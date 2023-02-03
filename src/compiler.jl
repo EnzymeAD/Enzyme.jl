@@ -1687,7 +1687,9 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                 for a in origops[3:end-1]
                     push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
                 end
-
+                if offset != 1
+                    pushfirst!(args, first(operands(orig)))
+                end
                 shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
                 conv = LLVM.API.LLVMGetInstructionCallConv(orig)
                 LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
@@ -1700,6 +1702,9 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                                       ]
                     for a in origops[3:end-1]
                         push!(args, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, a)))
+                    end
+                    if offset != 1
+                        pushfirst!(args, first(operands(orig)))
                     end
                     tmp = LLVM.call!(B, LLVM.called_value(orig), args)
                     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
@@ -1728,9 +1733,9 @@ function common_jl_getfield_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::L
 end
 function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid 
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
         origops = collect(operands(orig))[offset:end]
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
