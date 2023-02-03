@@ -1736,6 +1736,7 @@ function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
         emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
+        return nothing
         origops = collect(operands(orig))[offset:end]
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
