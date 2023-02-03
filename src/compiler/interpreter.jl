@@ -93,7 +93,7 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
-    @static if VERSION < v"1.9-"
+    @static if VERSION >= v"1.9-"
     if ft === typeof(Base.rem)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
             return true
