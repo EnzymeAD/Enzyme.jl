@@ -215,7 +215,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false), #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(args′...)
             tape = res[1]
-            return (res[2], adjoint(args′..., tape))
+            if ReturnPrimal
+                return (adjoint(args′..., tape)[1], res[2])
+            else
+                return adjoint(args′..., tape)
+            end
         end
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))

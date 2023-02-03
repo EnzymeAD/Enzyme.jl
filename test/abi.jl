@@ -98,6 +98,24 @@ using Test
     pair = Enzyme.autodiff_deferred(mul, Active(2.0), Active(3.0))[1]
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
+    
+    pair, orig = autodiff(ReverseWithPrimal, mul, Active(2.0), Active(3.0))
+    @test pair[1] ≈ 3.0
+    @test pair[2] ≈ 2.0
+    @test orig ≈ 6.0
+
+    function inplace(x)
+        x[] *= 2
+        return Float64
+    end
+
+    res = Ref(3.0)
+    dres = Ref(1.0)
+    pair, orig = autodiff(ReverseWithPrimal, inplace, Const, Duplicated(res, dres))
+    @test pair == ()
+    @test res[] ≈ 6.0
+    @test dres[] ≈ 2.0
+    @test orig == Float64
 
     # Multi output
     # TODO broken arg convention?
