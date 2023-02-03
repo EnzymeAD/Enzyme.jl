@@ -2931,10 +2931,24 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     end
     
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+    # Zero the copy in the forward pass. 
+    #   initshadow = 2.0
+    #   dres = copy(initshadow) # 2.0
+    #   # removed return res[1]
+    #   dres[1] += differeturn
+    #   dmemcpy aka initshadow += dres
+    algn = 0
+    i8 = LLVM.IntType(8; ctx)
+
     if width == 1
     
     shadowsrc = get_array_data(B, shadowsrc)
     shadowdst = get_array_data(B, shadowdst)
+    
+    if fwd && secretty != C_NULL 
+        LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
+    end
 
     API.sub_transfer(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst, false, shadowsrc, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
     
@@ -2943,6 +2957,10 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
 
     evsrc = extract_value!(B, shadowsrc, i-1)
     evdst = extract_value!(B, shadowdst, i-1)
+    
+    if fwd && secretty != C_NULL 
+        LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
+    end
 
     shadowsrc0 = load!(B, bitcast!(B, evsrc, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(evsrc)))))
     shadowdst0 = load!(B, bitcast!(B, evdst, LLVM.PointerType(LLVM.PointerType(LLVM.IntType(8; ctx), 13), LLVM.addrspace(LLVM.llvmtype(evdst)))))
