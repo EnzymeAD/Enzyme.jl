@@ -116,6 +116,19 @@ using Test
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
     @test orig == Float64
+    
+    function inplace2(x)
+        x[] *= 2
+        return nothing
+    end
+
+    res = Ref(3.0)
+    dres = Ref(1.0)
+    pair, orig = autodiff(ReverseWithPrimal, inplace2, Const, Duplicated(res, dres))
+    @test pair == ()
+    @test res[] ≈ 6.0
+    @test dres[] ≈ 2.0
+    @test orig == nothing
 
     # Multi output
     # TODO broken arg convention?
