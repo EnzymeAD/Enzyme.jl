@@ -1645,7 +1645,7 @@ function f_tuple_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 end
 
 function f_tuple_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    common_f_tuple_augfwd(1, B, OrigCI, gutils, normalR, shadowR)
+    common_f_tuple_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
     return nothing
 end
 
