@@ -307,7 +307,7 @@ end
 @testset "Struct return" begin
     x = [2.0]
     dx = [0.0]
-    @test Enzyme.autodiff(invsin, Active, Duplicated(x, dx)) == ((nothing,),)
+    @test Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx)) == ((nothing,),)
     @test dx[1] == -0.4161468365471424
 end
 
@@ -339,7 +339,7 @@ end
     end
     inp = Float64[1.0, 2.0]
     dinp = Float64[0.0, 0.0]
-    autodiff(arsumsq, Active, Duplicated(inp, dinp))
+    autodiff(Reverse, arsumsq, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[6.0, 6.0]
 end
@@ -424,7 +424,7 @@ end
     end
 
     test_f(f::Foo2) = f.x^2
-    res = autodiff(test_f, Active(Foo2(3.0, :two)))[1][1]
+    res = autodiff(Reverse, test_f, Active(Foo2(3.0, :two)))[1][1]
     @test res.x ≈ 6.0
     @test res.y == nothing
 end
@@ -636,7 +636,7 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
-    @test 1.0 ≈ Enzyme.autodiff(dxdt_pred, Active(1.0))[1][1]
+    @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
@@ -796,7 +796,7 @@ end
 
 	# should not throw a domain error, which
 	# will occur if the pow is mistakenly speculated
-	Enzyme.autodiff(f, Duplicated(foo, dfoo))
+	Enzyme.autodiff(Reverse, f, Duplicated(foo, dfoo))
 end
 
 genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
@@ -943,7 +943,7 @@ end
     dyn_f(::Val{D}) where D = prod(D)
     dyn_mwe(x, t) = x / dyn_f(Val(t))
 
-    @test 0.5 ≈ Enzyme.autodiff(dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
+    @test 0.5 ≈ Enzyme.autodiff(Reverse, dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
 end
 
 @testset "broadcast" begin
@@ -1000,7 +1000,7 @@ end
     u_v_eta = [0.0]
     ad_struct = [1.0]
 
-    autodiff(advance, Active, Duplicated(u_v_eta, ad_struct))
+    autodiff(Reverse, advance, Active, Duplicated(u_v_eta, ad_struct))
     @test ad_struct[1] ≈ 2.0 
     
     function advance2(u_v_eta)
@@ -1011,7 +1011,7 @@ end
     u_v_eta = [Ref(0.0)]
     ad_struct = [Ref(1.0)]
 
-    autodiff(advance2, Active, Duplicated(u_v_eta, ad_struct))
+    autodiff(Reverse, advance2, Active, Duplicated(u_v_eta, ad_struct))
     @test ad_struct[1][] ≈ 2.0 
 end
 
@@ -1128,7 +1128,7 @@ end
     x = randn(10)
     dx = zero(x)
 
-    Enzyme.autodiff(gcloss, Duplicated(x, dx))
+    Enzyme.autodiff(Reverse, gcloss, Duplicated(x, dx))
 end
 
 typeunknownvec = Float64[]
@@ -1234,7 +1234,7 @@ end
 
     a = rand(5)
     da = zero(a)
-    autodiff(modf!, Duplicated(a, da))
+    autodiff(Reverse, modf!, Duplicated(a, da))
 end
 
 @testset "Type-instable capture" begin
@@ -1313,7 +1313,7 @@ end
     end
 
     GC.@preserve x y dx dy begin
-      autodiff(foo,
+      autodiff(Reverse, foo,
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)), 
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
