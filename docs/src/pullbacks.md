@@ -33,7 +33,7 @@ R = zeros(size(A,1), size(B,2))
 ∂z_∂A = zero(A)
 ∂z_∂B = zero(B)
 
-Enzyme.autodiff(mymul!, Const, Duplicated(R, ∂z_∂R), Duplicated(A, ∂z_∂A), Duplicated(B, ∂z_∂B))
+Enzyme.autodiff(Reverse, mymul!, Const, Duplicated(R, ∂z_∂R), Duplicated(A, ∂z_∂A), Duplicated(B, ∂z_∂B))
 ```
 
 Now we have:

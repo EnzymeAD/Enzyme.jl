@@ -98,7 +98,7 @@ dby = [0.0]
 
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff_deferred(f, x, y),
+    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
     Duplicated(Duplicated(x, bx), Duplicated(dx, dbx)),
     Duplicated(Duplicated(y, by), Duplicated(dy, dby)),
 )
@@ -129,7 +129,7 @@ vdby = ([0.0], [0.0]);
 # on our tuples of `Duplicated` for the tangents.
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff_deferred(f, x, y),
+    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
     BatchDuplicated(Duplicated(x, bx), Duplicated.(vdx, vdbx)),
     BatchDuplicated(Duplicated(y, by), Duplicated.(vdy, vdby)),
 );

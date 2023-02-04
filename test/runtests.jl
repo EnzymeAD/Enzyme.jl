@@ -1683,8 +1683,8 @@ using Random
 @testset "Random" begin
 	f_rand(x) = x*rand()
 	f_randn(x, N) = x*sum(randn(N))
-    autodiff(f_rand, Active, Active(1.0))
-    autodiff(f_randn, Active, Active(1.0), Const(64))
+    autodiff(Reverse, f_rand, Active, Active(1.0))
+    autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))
 end
 
 @testset "Reshape" begin
@@ -1699,7 +1699,7 @@ end
     data = Float64[1.,2.,3.,4.]
 	ddata = ones(4)
 
-	autodiff(rs, Duplicated(data, ddata))
+	autodiff(Reverse, rs, Duplicated(data, ddata))
 	@test ddata ≈ [3.0, 5.0, 2.0, 2.0]
 	
     data = Float64[1.,2.,3.,4.]
@@ -1720,7 +1720,7 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
-	Enzyme.autodiff(inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
     @test x ≈ [3.0]
     @test w ≈ [1.0]
@@ -1736,7 +1736,7 @@ end
       res
     end
 
-    dw = Enzyme.autodiff(loss, Active, Active(1.0), Const(x), Const(false))[1]
+    dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
     
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
