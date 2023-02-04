@@ -16,6 +16,7 @@ using LinearAlgebra
 import EnzymeCore: ReverseMode, ForwardMode, Annotation, Mode
 
 import EnzymeCore: EnzymeRules
+export EnzymeRules
 
 # Independent code, must be loaded before "compiler.jl"
 include("pmap.jl")

@@ -80,7 +80,15 @@ end
     @test dvec ≈ [14.0]
 end
 
-# TODO: Test error for no frule applicable despite frule on Function.
+g(x) = x ^ 2
+function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
+    return Const(g(x.val))
+end
 
+@test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
+
+h(cond, x) = cond ? g(x) : x
+@test Enzyme.autodiff(Forward, h, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
+@test_throws ErrorException Enzyme.autodiff(Forward, h, Const(true), Duplicated(1.0, 1.0))
 
 end # module ForwardRules
