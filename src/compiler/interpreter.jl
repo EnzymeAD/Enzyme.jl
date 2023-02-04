@@ -1,10 +1,12 @@
 module Interpreter
 using Random
+import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
 import ..Enzyme
+import ..EnzymeRules
 
-struct EnzymeInterpeter <: AbstractInterpreter
+struct EnzymeInterpreter <: AbstractInterpreter
     global_cache::CodeCache
     method_table::Union{Nothing,Core.MethodTable}
 
@@ -17,7 +19,9 @@ struct EnzymeInterpeter <: AbstractInterpreter
     inf_params::InferenceParams
     opt_params::OptimizationParams
 
-    function EnzymeInterpeter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt)
+    mode::API.CDerivativeMode
+
+    function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
         @assert world <= Base.get_world_counter()
 
         return new(
@@ -34,42 +38,43 @@ struct EnzymeInterpeter <: AbstractInterpreter
             InferenceParams(unoptimize_throw_blocks=false),
             VERSION >= v"1.8.0-DEV.486" ? OptimizationParams() :
                                           OptimizationParams(unoptimize_throw_blocks=false),
+            mode
         )
     end
 end
 
-Core.Compiler.InferenceParams(interp::EnzymeInterpeter) = interp.inf_params
-Core.Compiler.OptimizationParams(interp::EnzymeInterpeter) = interp.opt_params
-Core.Compiler.get_world_counter(interp::EnzymeInterpeter) = interp.world
-Core.Compiler.get_inference_cache(interp::EnzymeInterpeter) = interp.local_cache
-Core.Compiler.code_cache(interp::EnzymeInterpeter) = WorldView(interp.global_cache, interp.world)
+Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
+Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
+Core.Compiler.get_world_counter(interp::EnzymeInterpreter) = interp.world
+Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
+Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.global_cache, interp.world)
 
 # No need to do any locking since we're not putting our results into the runtime cache
-Core.Compiler.lock_mi_inference(interp::EnzymeInterpeter, mi::MethodInstance) = nothing
-Core.Compiler.unlock_mi_inference(interp::EnzymeInterpeter, mi::MethodInstance) = nothing
+Core.Compiler.lock_mi_inference(interp::EnzymeInterpreter, mi::MethodInstance) = nothing
+Core.Compiler.unlock_mi_inference(interp::EnzymeInterpreter, mi::MethodInstance) = nothing
 
-function Core.Compiler.add_remark!(interp::EnzymeInterpeter, sv::InferenceState, msg)
+function Core.Compiler.add_remark!(interp::EnzymeInterpreter, sv::InferenceState, msg)
 end
 
-Core.Compiler.may_optimize(interp::EnzymeInterpeter) = true
-Core.Compiler.may_compress(interp::EnzymeInterpeter) = true
+Core.Compiler.may_optimize(interp::EnzymeInterpreter) = true
+Core.Compiler.may_compress(interp::EnzymeInterpreter) = true
 # From @aviatesk:
 #     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
-Core.Compiler.may_discard_trees(interp::EnzymeInterpeter) = false
+Core.Compiler.may_discard_trees(interp::EnzymeInterpreter) = false
 if VERSION >= v"1.7.0-DEV.577"
-Core.Compiler.verbose_stmt_info(interp::EnzymeInterpeter) = false
+Core.Compiler.verbose_stmt_info(interp::EnzymeInterpreter) = false
 end
 
 if isdefined(Base.Experimental, Symbol("@overlay"))
-Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
+Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 else
 
 # On 1.6- CUDA.jl will poison the method table at the end of the world
 # using GPUCompiler: WorldOverlayMethodTable
-# Core.Compiler.method_table(interp::EnzymeInterpeter, sv::InferenceState) =
+# Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
 #     WorldOverlayMethodTable(interp.world)
 end
 
@@ -143,11 +148,20 @@ end
 @static if VERSION ≥ v"1.9.0-DEV.1535"
 
 import Core.Compiler: CallInfo
-function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
+function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     if is_primitive_func(mi.specTypes)
         return nothing
+    end
+    if interp.mode == API.DEM_ForwardMode
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+            return nothing
+        end
+    else
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+            return nothing
+        end
     end
 
     return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
@@ -157,11 +171,20 @@ end
 # https://github.com/JuliaLang/julia/pull/41328
 elseif isdefined(Core.Compiler, :is_stmt_inline)
 
-function Core.Compiler.inlining_policy(interp::EnzymeInterpeter,
+function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     if is_primitive_func(mi.specTypes)
         return nothing
+    end
+    if interp.mode == API.DEM_ForwardMode
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+            return nothing
+        end
+    else
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+            return nothing
+        end
     end
 
     return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
@@ -171,12 +194,26 @@ end
 elseif isdefined(Core.Compiler, :inlining_policy)
 
 import Core.Compiler: InliningTodo, InliningState
-enzyme_inlining_policy(@nospecialize(src)) = Core.Compiler.default_inlining_policy(src)
-Core.Compiler.inlining_policy(::EnzymeInterpeter) = enzyme_inlining_policy
-function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:typeof(enzyme_inlining_policy)}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
+struct EnzymeInliningPolicy
+    interp::EnzymeInterpreter
+end
+(::EnzymeInliningPolicy)(@nospecialize(src)) = Core.Compiler.default_inlining_policy(src)
+Core.Compiler.inlining_policy(interp::EnzymeInterpreter) = EnzymeInliningPolicy(interp)
+
+function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:EnzymeInliningPolicy}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
     mi = todo.mi
-    if is_primitive_func(mi.specTypes)
+    if is_primitive_func(mi.specTypes) 
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+    end
+    interp = state.policy.interp
+    if interp.mode == API.DEM_ForwardMode
+        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+            return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+        end
+    else
+        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+            return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+        end
     end
 
     return Base.@invoke Core.Compiler.resolve_todo(

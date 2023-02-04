@@ -184,7 +184,7 @@ end
 
     splat, _ = julia_activity(mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
-    entry = nested_codegen!(mod, runtime_fn, tt)
+    entry = nested_codegen!(mode, mod, runtime_fn, tt)
 
     # 5) Call the function
     B = LLVM.Builder(B)

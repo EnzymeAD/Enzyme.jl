@@ -15,6 +15,9 @@ export markType, batch_size, onehot, chunkedonehot
 using LinearAlgebra
 import EnzymeCore: ReverseMode, ForwardMode, Annotation, Mode
 
+import EnzymeCore: EnzymeRules
+export EnzymeRules
+
 # Independent code, must be loaded before "compiler.jl"
 include("pmap.jl")
 
@@ -78,7 +81,6 @@ end
         return Duplicated{Any}
     end
 end
-
 
 include("logic.jl")
 include("typeanalysis.jl")
