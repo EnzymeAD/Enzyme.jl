@@ -39,7 +39,7 @@ end
 function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
     TT = Base.unwrap_unionall(TT)
     TT = Tuple{<:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
-    isapplicable(forward, TT; world)
+    EnzymeRules.isapplicable(forward, TT; world)
 end
 
 @testset "has_frule" begin
