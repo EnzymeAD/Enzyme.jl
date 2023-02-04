@@ -5428,7 +5428,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
           adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width, #=returnPrimal=#false, shadow_init)
         end
     elseif mode == API.DEM_ReverseModeCombined
-        returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType)) 
+        returnUsed = !GPUCompiler.isghosttype(actualRetType)
         returnUsed &= returnPrimal
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
@@ -5580,9 +5580,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         end
         push!(sret_types, TapeType)
         
-        isboxed = GPUCompiler.deserves_argbox(actualRetType)
-        llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
-        
         # primal return
         if existed[2] != 0 
             @assert returnPrimal
@@ -5603,11 +5600,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             @assert rettype <: Const || rettype <: Active
         end
     end
+    if Mode == API.DEM_ReverseModeCombined
+        if returnPrimal
+            push!(sret_types, actualRetType)
+        end
+    end
     if Mode == API.DEM_ForwardMode
-        returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
+        returnUsed = !GPUCompiler.isghosttype(actualRetType)
         if returnUsed
-            isboxed = GPUCompiler.deserves_argbox(actualRetType)
-            llvmT = isboxed ? T_prjlvalue : convert(LLVMType, actualRetType; ctx)
             if returnPrimal
                 count_Sret += 1
             end
@@ -5807,6 +5807,15 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         else
             activeNum = 0
             returnNum = 0
+            if Mode == API.DEM_ReverseModeCombined
+                if returnPrimal
+                    if !GPUCompiler.isghosttype(actualRetType) 
+                        eval = extract_value!(builder, val, returnNum)
+                        store!(builder, eval, gep!(builder, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), length(elements(jltype))-1 )]))
+                        returnNum+=1
+                    end
+                end
+            end
             for T in argtypes
                 T′ = eltype(T)
                 isboxed = GPUCompiler.deserves_argbox(T′)
