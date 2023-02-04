@@ -37,6 +37,7 @@ function forward(::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
 end
 
 function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
+    TT = Base.unwrap_unionall(TT)
     TT = Tuple{<:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
     isapplicable(forward, TT; world)
 end
