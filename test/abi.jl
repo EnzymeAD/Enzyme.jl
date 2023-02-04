@@ -16,9 +16,9 @@ using Test
     
     @test () === autodiff(Forward, f, Const(nothing))
 
-    res = Enzyme.autodiff_deferred(f, Const(nothing))
+    res = autodiff_deferred(Reverse, f, Const(nothing))
     @test res === ((nothing,),)
-    @test () === Enzyme.fwddiff_deferred(f, Const(nothing))
+    @test () === autodiff_deferred(Forward, f, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(Reverse, f, Const, Const(Int))
@@ -29,24 +29,24 @@ using Test
     @test res === ((nothing,),)
     @test () === autodiff(Forward, f, Const(Int))
 
-    res = Enzyme.autodiff_deferred(f, Const(Int))
+    res = autodiff_deferred(Reverse, f, Const(Int))
     @test res === ((nothing,),)
-    @test () === Enzyme.fwddiff_deferred(f, Const(Int))
+    @test () === autodiff_deferred(Forward, f, Const(Int))
 
     # Complex numbers
-    cres,  = Enzyme.autodiff(Reverse, f, Active, Active(1.5 + 0.7im))[1]
+    cres,  = autodiff(Reverse, f, Active, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.autodiff(Forward, f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
-    @test cres ≈ 1.0 + 0.0im
-
-    cres,  = Enzyme.autodiff(Reverse, f, Active(1.5 + 0.7im))[1]
-    @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.autodiff(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres,  = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres, = Enzyme.autodiff_deferred(f, Active(1.5 + 0.7im))[1]
+    cres,  = autodiff(Reverse, f, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
-    cres,  = Enzyme.fwddiff_deferred(f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres,  = autodiff(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    @test cres ≈ 1.0 + 0.0im
+
+    cres, = autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))[1]
+    @test cres ≈ 1.0 + 0.0im
+    cres,  = autodiff_deferred(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
@@ -79,7 +79,7 @@ using Test
 
     x = [0.0]
     dx = [1.2]
-    Enzyme.autodiff_deferred(squareRetArray, Const, Duplicated(x, dx))
+    autodiff_deferred(Reverse, squareRetArray, Const, Duplicated(x, dx))
 
     dx = [1.2]
     @test () === autodiff(Forward, squareRetArray, Const, Duplicated(x, dx))
@@ -95,11 +95,16 @@ using Test
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
-    pair = Enzyme.autodiff_deferred(mul, Active(2.0), Active(3.0))[1]
+    pair = autodiff_deferred(Reverse, mul, Active(2.0), Active(3.0))[1]
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     
     pair, orig = autodiff(ReverseWithPrimal, mul, Active(2.0), Active(3.0))
+    @test pair[1] ≈ 3.0
+    @test pair[2] ≈ 2.0
+    @test orig ≈ 6.0
+    
+    pair, orig = autodiff_deferred(ReverseWithPrimal, mul, Active(2.0), Active(3.0))
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     @test orig ≈ 6.0
@@ -112,6 +117,14 @@ using Test
     res = Ref(3.0)
     dres = Ref(1.0)
     pair, orig = autodiff(ReverseWithPrimal, inplace, Const, Duplicated(res, dres))
+    @test pair == (nothing,)
+    @test res[] ≈ 6.0
+    @test dres[] ≈ 2.0
+    @test orig == Float64
+    
+    res = Ref(3.0)
+    dres = Ref(1.0)
+    pair, orig = autodiff_deferred(ReverseWithPrimal, inplace, Const, Duplicated(res, dres))
     @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
@@ -130,6 +143,14 @@ using Test
     @test dres[] ≈ 2.0
     @test orig == nothing
 
+    res = Ref(3.0)
+    dres = Ref(1.0)
+    pair, orig = autodiff_deferred(ReverseWithPrimal, inplace2, Const, Duplicated(res, dres))
+    @test pair == (nothing,)
+    @test res[] ≈ 6.0
+    @test dres[] ≈ 2.0
+    @test orig == nothing
+
     # Multi output
     # TODO broken arg convention?
     # tup(x) = (x, x*2)
@@ -139,7 +160,7 @@ using Test
     # pair = first(autodiff(Forward, tup, Duplicated(3.14, 1.0)))
     # @test pair[1] ≈ 1.0
     # @test pair[2] ≈ 2.0
-    # pair = first(Enzyme.fwddiff_deferred(tup, Duplicated(3.14, 1.0)))
+    # pair = first(autodiff_deferred(Forward, tup, Duplicated(3.14, 1.0)))
     # @test pair[1] ≈ 1.0
     # @test pair[2] ≈ 2.0
 

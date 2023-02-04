@@ -209,7 +209,7 @@ end
 @testset "Nested AD" begin
     tonest(x,y) = (x + y)^2
 
-    @test Enzyme.autodiff(Forward, (x,y) -> Enzyme.fwddiff_deferred(tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Array tests" begin
@@ -1665,7 +1665,7 @@ end
     dry = zeros(2)
 
     function foo(y, dy, x, dx)
-        Enzyme.autodiff_deferred(speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
+        autodiff_deferred(Reverse, speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
         return nothing
     end
 
