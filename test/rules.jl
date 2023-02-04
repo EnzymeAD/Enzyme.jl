@@ -40,11 +40,6 @@ end
     @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}))
     @test has_frule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
 
-    @test has_frule(f)
-    @test has_frule(f, Duplicated)
-    @test has_frule(f, DuplicatedNoNeed)
-    @test has_frule(f, BatchDuplicated)
-    @test has_frule(f, BatchDuplicatedNoNeed)
     @test has_frule(f, Duplicated, Tuple{<:Duplicated})
     @test has_frule(f, DuplicatedNoNeed, Tuple{<:Duplicated})
     @test has_frule(f, BatchDuplicated, Tuple{<:BatchDuplicated})
@@ -54,12 +49,6 @@ end
     @test !has_frule(f, DuplicatedNoNeed, Tuple{<:BatchDuplicated})
     @test !has_frule(f, BatchDuplicated, Tuple{<:Duplicated})
     @test !has_frule(f, BatchDuplicatedNoNeed, Tuple{<:Duplicated})
-
-    @test has_frule(f, Tuple{<:Duplicated})
-    @test has_frule(f, Tuple{<:BatchDuplicated})
-    @test has_frule(f, Tuple{<:Annotation})
-    @test has_frule(f, Tuple{<:Annotation{Float64}})
-    @test !has_frule(f, Tuple{<:Const})
 end
 
 @testset "autodiff(Forward, ...) custom rules" begin

@@ -55,10 +55,12 @@ function _annotate(@nospecialize(T))
     end
 end
 
-function _annotate_tt(@nospecialize(TT0))
+_annotate_partial(@nospecialize(T)) = T <: Annotation ? T : _annotate(T)
+
+function _annotate_tt(@nospecialize(TT0), annotate=_annotate)
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
-    tt = map(T->_annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
+    tt = map(T->annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
     return ft, tt
 end
 
@@ -68,35 +70,22 @@ function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     isapplicable(forward, TT; world)
 end
 
+function has_frule(@nospecialize(f), @nospecialize(RT), @nospecialize(TT::Type{<:Tuple})=Tuple{}; world=Base.get_world_counter())
+    ft, tt = _annotate_tt(Base.signature_type(f, TT), _annotate_partial)
+    TT = Tuple{<:Annotation{ft}, Type{<:RT}, tt...}
+    isapplicable(forward, TT; world)
+end
+
 function has_rrule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
     isapplicable(reverse, TT; world)
 end
 
-function has_frule(@nospecialize(f); world=Base.get_world_counter())
-    TT = Tuple{<:Annotation{Core.Typeof(f)}, Type{<:Annotation}, Vararg{<:Annotation}}
-    isapplicable(forward, TT; world)
-end
-
-# Do we need this one?
-function has_frule(@nospecialize(f), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
-    TT = Base.unwrap_unionall(TT)
-    TT = Tuple{<:Annotation{Core.Typeof(f)}, Type{<:Annotation}, TT.parameters...}
-    isapplicable(forward, TT; world)
-end
-
-# Do we need this one?
-function has_frule(@nospecialize(f), @nospecialize(RT::Type); world=Base.get_world_counter())
-    TT = Tuple{<:Annotation{Core.Typeof(f)}, Type{RT}, Vararg{<:Annotation}}
-    isapplicable(forward, TT; world)
-end
-
-# Do we need this one?
-function has_frule(@nospecialize(f), @nospecialize(RT::Type), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
-    TT = Base.unwrap_unionall(TT)
-    TT = Tuple{<:Annotation{Core.Typeof(f)}, Type{RT}, TT.parameters...}
-    isapplicable(forward, TT; world)
+function has_rrule(@nospecialize(f), @nospecialize(TT::Type{<:Tuple})=Tuple{}; world=Base.get_world_counter())
+    ft, tt = _annotate_tt(Base.signature_type(f, TT), _annotate_partial)
+    TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
+    isapplicable(reverse, TT; world)
 end
 
 # Base.hasmethod is a precise match we want the broader query.
