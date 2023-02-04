@@ -112,7 +112,7 @@ using Test
     res = Ref(3.0)
     dres = Ref(1.0)
     pair, orig = autodiff(ReverseWithPrimal, inplace, Const, Duplicated(res, dres))
-    @test pair == ()
+    @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
     @test orig == Float64
@@ -125,7 +125,7 @@ using Test
     res = Ref(3.0)
     dres = Ref(1.0)
     pair, orig = autodiff(ReverseWithPrimal, inplace2, Const, Duplicated(res, dres))
-    @test pair == ()
+    @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
     @test orig == nothing
