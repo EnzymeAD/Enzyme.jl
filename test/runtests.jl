@@ -1445,7 +1445,7 @@ end
 
     out = Ref(0.0)
     dout = Ref(1.0)
-    @test 2.0 ≈ Enzyme.autodiff(unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
+    @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
 end
 
 @testset "Array push" begin
@@ -1467,7 +1467,7 @@ end
         push!(a, 1.0)
         return x
     end
-    y, = Enzyme.autodiff(double_push,Active(1.0))[1]
+    y, = Enzyme.autodiff(Reverse, double_push,Active(1.0))[1]
     @test y == 1.0
     
     function aloss(a, arr)
