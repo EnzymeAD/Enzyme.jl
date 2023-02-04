@@ -991,6 +991,31 @@ end
     autodiff(Forward, f, Duplicated([1.0], [0.0]), Duplicated([1.0], [0.0]))
 end
 
+@testset "Copy" begin
+    function advance(u_v_eta)
+        eta = copy(u_v_eta)
+        return @inbounds eta[1] 
+    end 
+
+    u_v_eta = [0.0]
+    ad_struct = [1.0]
+
+    autodiff(advance, Active, Duplicated(u_v_eta, ad_struct))
+    @test ad_struct[1] ≈ 2.0 
+    
+    function advance2(u_v_eta)
+        eta = copy(u_v_eta)
+        return @inbounds eta[1][]
+    end 
+
+    u_v_eta = [Ref(0.0)]
+    ad_struct = [Ref(1.0)]
+
+    autodiff(advance2, Active, Duplicated(u_v_eta, ad_struct))
+    @test ad_struct[1][] ≈ 2.0 
+end
+
+
 @testset "GCPreserve2" begin
     function f!(a_out, a_in)
            a_out[1:end-1] .= a_in[2:end]
