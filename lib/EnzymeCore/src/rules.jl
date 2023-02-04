@@ -82,11 +82,11 @@ function has_rrule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     isapplicable(reverse, TT; world)
 end
 
-function has_rrule(@nospecialize(f), @nospecialize(TT::Type{<:Tuple})=Tuple{}; world=Base.get_world_counter())
-    ft, tt = _annotate_tt(Base.signature_type(f, TT), _annotate_partial)
-    TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
-    isapplicable(reverse, TT; world)
-end
+# function has_rrule(@nospecialize(f), @nospecialize(TT::Type{<:Tuple})=Tuple{}; world=Base.get_world_counter())
+#     ft, tt = _annotate_tt(Base.signature_type(f, TT), _annotate_partial)
+#     TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
+#     isapplicable(reverse, TT; world)
+# end
 
 # Base.hasmethod is a precise match we want the broader query.
 function isapplicable(@nospecialize(f), @nospecialize(TT); world=Base.get_world_counter())
