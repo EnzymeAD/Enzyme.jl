@@ -36,6 +36,11 @@ function forward(::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     return nothing
 end
 
+function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
+    TT = Tuple{<:Annotation{ft}, Type{<:RT}, TT.parameters...}
+    isapplicable(forward, TT; world)
+end
+
 @testset "has_frule" begin
     @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}))
     @test has_frule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
