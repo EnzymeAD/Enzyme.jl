@@ -374,15 +374,6 @@ end
     thunk(args′...)
 end
 
-
-# Compat
-@deprecate fwddiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} autodiff(Forward, f, A, args...)
-@deprecate fwddiff(f::F, args...) where {F} autodiff(Forward, f, args...)
-
-# Compat
-@inline autodiff(f::F, ::Type{A}, args...) where {F, A<:Annotation} = autodiff(Reverse, f, A, args...)
-@inline autodiff(f::F, args...) where {F} = autodiff(Reverse, f, args...)
-
 # F as first arg for `do` syntax
 @inline autodiff(dupf::Duplicated{F}, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, dupf, A, args...)
 @inline autodiff(f::F, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, f, A, args...)
@@ -395,7 +386,7 @@ end
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff_deferred(::ReverseMode{ReturnPrimal} f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -415,9 +406,8 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ReturnPrimal = Val(false)
     ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -431,22 +421,22 @@ end
 
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff_deferred(f::F, args...) where {F}
+@inline function autodiff_deferred(mode::ReverseMode{MT}, f::F, args...) where {F, MT}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     rt    = guess_activity(rt)
-    autodiff_deferred(f, rt, args′...) 
+    autodiff_deferred(mode, f, rt, args′...) 
 end
 
 """
-    fwddiff_deferred(f, Activity, args...)
+    autodiff_deferred(f, Activity, args...)
 
 Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function fwddiff_deferred(f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff_deferred(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -481,12 +471,12 @@ end
 
 Like [`fwddiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
-@inline function fwddiff_deferred(f::F, args...) where {F}
+@inline function autodiff_deferred(mode::ForwardMode, f::F, args...) where {F}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f, tt)
     rt    = guess_activity(rt, API.DEM_ForwardMode)
-    fwddiff_deferred(f, rt, args′...)
+    fwddiff_deferred(mode, f, rt, args′...)
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
