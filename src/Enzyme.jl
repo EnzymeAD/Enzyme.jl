@@ -30,7 +30,7 @@ convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 guess_activity(::Type{T}, mode::Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
 
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode=API.DEM_ReverseModeCombined) where {T}
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     if T isa Union
         if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
             if Mode == API.DEM_ForwardMode
