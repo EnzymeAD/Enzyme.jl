@@ -41,7 +41,7 @@ by = [1.0];
 # `Duplicated` where the first element represent the value and the second the
 # adjoint. Evaluating the reverse model using Enzyme is done via the following
 # call.
-Enzyme.autodiff(f, Duplicated(x, bx), Duplicated(y, by));
+Enzyme.autodiff(Reverse, f, Duplicated(x, bx), Duplicated(y, by));
 # This yields the gradient of `f` in `bx` at point `x = [2.0, 2.0]`. `by` is called the seed and has
 # to be set to ``1.0`` in order to compute the gradient. Let's save the gradient for later.
 g = copy(bx)
@@ -98,7 +98,7 @@ dby = [0.0]
 
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff_deferred(f, x, y),
+    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
     Duplicated(Duplicated(x, bx), Duplicated(dx, dbx)),
     Duplicated(Duplicated(y, by), Duplicated(dy, dby)),
 )
@@ -129,7 +129,7 @@ vdby = ([0.0], [0.0]);
 # on our tuples of `Duplicated` for the tangents.
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff_deferred(f, x, y),
+    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
     BatchDuplicated(Duplicated(x, bx), Duplicated.(vdx, vdbx)),
     BatchDuplicated(Duplicated(y, by), Duplicated.(vdy, vdby)),
 );

@@ -274,7 +274,7 @@ din_now = zeros(6)
 din_old = zeros(6)
 out_now = zeros(6); dout_now = ones(6)
 out_old = zeros(6); dout_old = ones(6)
-autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar; Sbar], din_old), 
+autodiff(Reverse, forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar; Sbar], din_old), 
                     Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));
 
 # In order to run Enzyme on `forward_func_4_AD`, we've needed to provide quite a few 
@@ -310,7 +310,7 @@ din_now_new = zeros(6)
 din_old_new = zeros(6)
 out_now = zeros(6); dout_now = 2*ones(6)
 out_old = zeros(6); dout_old = 2*ones(6)
-autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([Tbar; Sbar], din_old_new), 
+autodiff(Reverse, forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([Tbar; Sbar], din_old_new), 
                     Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));
 
 # Now checking din_now_new and din_old_new we see
@@ -367,7 +367,7 @@ for j = M:-1:1
     din_now = zeros(6)
     din_old = zeros(6)
 
-    autodiff(forward_func_4_AD, Duplicated(in_now[j], din_now), 
+    autodiff(Reverse, forward_func_4_AD, Duplicated(in_now[j], din_now), 
             Duplicated(in_old[j], din_old), Duplicated(zeros(6), dout_old), 
             Duplicated(zeros(6), dout_now))
     
