@@ -41,7 +41,7 @@ by = [1.0];
 # `Duplicated` where the first element represent the value and the second the
 # adjoint. Evaluating the reverse model using Enzyme is done via the following
 # call.
-Enzyme.autodiff(f, Duplicated(x, bx), Duplicated(y, by));
+Enzyme.autodiff(Reverse, f, Duplicated(x, bx), Duplicated(y, by));
 # This yields the gradient of `f` in `bx` at point `x = [2.0, 2.0]`. `by` is called the seed and has
 # to be set to ``1.0`` in order to compute the gradient. Let's save the gradient for later.
 g = copy(bx)
