@@ -89,42 +89,42 @@ end
 @testset "Registry" begin
     @test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
 
-    h(cond, x) = cond ? g(x) : x
-    @test Enzyme.autodiff(Forward, h, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
-    @test_throws ErrorException Enzyme.autodiff(Forward, h, Const(true), Duplicated(1.0, 1.0))
+    rh(cond, x) = cond ? g(x) : x
+    @test Enzyme.autodiff(Forward, rh, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
+    @test_throws ErrorException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
 end
 
 function alloc_sq(x)
-    return [x*x]
+    return Ref(x*x)
 end
 
 function h(x)
-    @inbounds alloc_sq(x)[1]
+    alloc_sq(x)[]
 end
 
 function h2(x)
-    y = @inbounds alloc_sq(x)[1]
+    y = alloc_sq(x)[]
     y * y
 end
 
 function forward(func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
-    return Duplicated([x.val*x.val], [10*2*x.val*x.dval])
+    return Duplicated(Ref(x.val*x.val), Ref(10*2*x.val*x.dval))
 end
 
 function forward(func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
-    return [1000*2*x.val*x.dval]
+    return Ref(1000*2*x.val*x.dval)
 end
 
 function alloc_sq2(x)
-    return [x*x]
+    return Ref(x*x)
 end
 
 function h3(x)
-    @inbounds alloc_sq2(x)[1]
+    alloc_sq2(x)[]
 end
 
 function forward(func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
-    return [1000*2*x.val*x.dval]
+    return Duplicated(Ref(0.0), Ref(1000*2*x.val*x.dval))
 end
 
 @testset "Shadow" begin
