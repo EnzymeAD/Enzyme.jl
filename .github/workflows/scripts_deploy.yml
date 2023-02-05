@@ -31,12 +31,3 @@ jobs:
             DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
             doctest(Enzyme)'
       - run: julia --project=docs docs/make.jl
-
-      - uses: wsmoses/action-deploy-scripts@main
-        with:
-          locker: 'enzyme-compiler'
-          remote: julia
-          privateKey: ${{ secrets.SCRIPTS_PRIVATE_KEY }}
-          rmRemote: true
-          local: docs/build
-
