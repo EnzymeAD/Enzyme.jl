@@ -1,6 +1,6 @@
 module EnzymeRules
 
-import EnzymeCore: Annotation
+import EnzymeCore: Annotation, Const, Duplicated
 export Config, ConfigWidth
 export needs_primal, needs_shadow, width, overwritten
 
