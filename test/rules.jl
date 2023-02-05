@@ -115,10 +115,23 @@ function forward(func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::D
     return [1000*2*x.val*x.dval]
 end
 
+function alloc_sq2(x)
+    return [x*x]
+end
+
+function h3(x)
+    @inbounds alloc_sq2(x)[1]
+end
+
+function forward(func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+    return [1000*2*x.val*x.dval]
+end
+
 @testset "Shadow" begin
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
     @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
+    @test_throws ErrorException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
 
 end # module ForwardRules
