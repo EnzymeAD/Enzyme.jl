@@ -1013,7 +1013,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
         rt = Core.Compiler.return_type(fn, tt)
-        annotation = guess_activity(rt)
+        annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                      #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
@@ -1126,7 +1126,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
         rt = Core.Compiler.return_type(fn, tt)
-        annotation = guess_activity(rt)
+        annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                     #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))

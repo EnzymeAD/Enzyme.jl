@@ -24,8 +24,8 @@ include("pmap.jl")
 import LLVM
 include("api.jl")
 
-convert(::Type{API.CDerivativeMode}, ::ReverseMode{false}) = API.DEM_ReverseModeCombined
-convert(::Type{API.CDerivativeMode}, ::ReverseMode{true}) = API.DEM_ReverseModeGradient
+convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, false}) = API.DEM_ReverseModeCombined
+convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, true}) = API.DEM_ReverseModeGradient
 convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 guess_activity(::Type{T}, mode::Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
