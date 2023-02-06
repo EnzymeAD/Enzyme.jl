@@ -4201,7 +4201,7 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 end
 
 function jl_array_sizehint_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    jl_array_sizehint_fwd(B, OrigCI, gutils, normalR, shadowR, tapeR)
+    jl_array_sizehint_fwd(B, OrigCI, gutils, normalR, shadowR)
      return nothing
 end
 
