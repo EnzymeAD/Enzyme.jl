@@ -86,10 +86,52 @@ function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
-@test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
+@testset "Registry" begin
+    @test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
 
-h(cond, x) = cond ? g(x) : x
-@test Enzyme.autodiff(Forward, h, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
-@test_throws ErrorException Enzyme.autodiff(Forward, h, Const(true), Duplicated(1.0, 1.0))
+    rh(cond, x) = cond ? g(x) : x
+    @test Enzyme.autodiff(Forward, rh, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
+    @test_throws ErrorException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
+end
+
+function alloc_sq(x)
+    return Ref(x*x)
+end
+
+function h(x)
+    alloc_sq(x)[]
+end
+
+function h2(x)
+    y = alloc_sq(x)[]
+    y * y
+end
+
+function forward(func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
+    return Duplicated(Ref(x.val*x.val), Ref(10*2*x.val*x.dval))
+end
+
+function forward(func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+    return Ref(1000*2*x.val*x.dval)
+end
+
+function alloc_sq2(x)
+    return Ref(x*x)
+end
+
+function h3(x)
+    alloc_sq2(x)[]
+end
+
+function forward(func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+    return Duplicated(Ref(0.0), Ref(1000*2*x.val*x.dval))
+end
+
+@testset "Shadow" begin
+    @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
+    @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
+    @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
+    @test_throws ErrorException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
+end
 
 end # module ForwardRules

@@ -3012,7 +3012,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     if !needsPrimal && activep == API.DFT_DUP_ARG
         activep = API.DFT_DUP_NONEED
     end
-    
+   
     if activep == API.DFT_CONSTANT
         RT = Const{RealRt}
     
@@ -3123,9 +3123,17 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     else
         if !needsPrimal
             shadowV = res.ref
+            if llvmtype(res) != LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
+                ST = RealRt
+                if width != 1
+                    ST = NTuple{Int64(width), ST}
+                end
+                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST))
+                return
+            end
         else
             if !isa(llvmtype(res), LLVM.StructType) && !isa(llvmtype(res), LLVM.ArrayType)
-                emit_error(B, "Enzyme: incorrect return type of forward custom rule - "*(string(RT))*" "*string(activity))
+                emit_error(B, orig, "Enzyme: incorrect return type of forward custom rule - "*(string(RT))*" "*string(activity))
                 return
             end
             normalV = extract_value!(B, res, 0).ref
