@@ -3056,6 +3056,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
+    
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = API.EnzymeGradientUtilsGetMode(gutils)
@@ -3077,6 +3078,8 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
         return nothing
     end
+    
+    fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
 
 
     sret = nothing
@@ -3118,22 +3121,36 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     if RT <: Const
         if needsPrimal
+            if RealRt != fwd_RT
+                emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
+                return
+            end
             normalV = res.ref
+        else
+            if Nothing != fwd_RT
+                emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
+                return
+            end
         end
     else
         if !needsPrimal
             shadowV = res.ref
-            if llvmtype(res) != LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(orig)))
-                ST = RealRt
-                if width != 1
-                    ST = NTuple{Int64(width), ST}
-                end
-                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST))
+            ST = RealRt
+            if width != 1
+                ST = NTuple{Int64(width), ST}
+            end
+            if ST != fwd_RT
+                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return
             end
         else
-            if !isa(llvmtype(res), LLVM.StructType) && !isa(llvmtype(res), LLVM.ArrayType)
-                emit_error(B, orig, "Enzyme: incorrect return type of forward custom rule - "*(string(RT))*" "*string(activity))
+            ST = if width == 1
+                Duplicated{RealRt}
+            else
+                BatchDuplicated{RealRt, Int64(width)}
+            end
+            if ST != fwd_RT
+                emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return
             end
             normalV = extract_value!(B, res, 0).ref
@@ -3192,18 +3209,13 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
     rev_TT = nothing
     aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+    rev_RT = nothing
 
-    if aug_RT === Union{} ||
-       aug_RT isa Union   ||
-       !(aug_RT <: Tuple) ||
-       length(aug_RT.parameters) != 2 
-
-        @safe_debug "Custom augmented_primal rule has invalid return type" TT=augprimal_TT RT=aug_RT
-        emit_error(B, orig, "Enzyme: Custom rule " * string(augprimal_TT) * " resulted in " * string(aug_RT))
-        return C_NULL
+    TapeT = Nothing
+    
+    if aug_RT <: EnzymeRules.AugmentedReturn && !(aug_RT isa Union) && !(aug_RT === Union{})
+        TapeT = EnzymeRules.tape_type(aug_RT)
     end
-
-    TapeT = aug_RT.parameters[2]
 
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -3219,7 +3231,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         end
     else
         tt = copy(activity)
-        insert!(tt, 2, RT)
+        insert!(tt, 2, RT <: Active ? RT : Type{RT})
         insert!(tt, 3, TapeT)
         pushfirst!(tt, C)
         TT = Tuple{tt...}
@@ -3233,13 +3245,14 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
             return C_NULL
         end
+        rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, TT, world)
     end
      
     needsTape = !GPUCompiler.isghosttype(TapeT) && !Core.Compiler.isconstType(TapeT)
     
     tapeV = C_NULL
     if forward && needsTape
-        tapeV = LLVM.UndefValue(convert(LLVMType, TapeT; ctx)).ref
+        tapeV = LLVM.UndefValue(convert(LLVMType, TapeT; ctx, allow_boxed=true)).ref
     end
 
     # if !forward
@@ -3320,50 +3333,53 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
 
     if forward
-        if !needsPrimal && !needsShadow && !needsTape
-        else
-            if !isa(llvmtype(res), LLVM.StructType) && !isa(llvmtype(res), LLVM.ArrayType)
-                emit_error(B, "Enzyme: incorrect return type of augmented forward custom rule - "*(string(RT))*" "*string(activity))
-                return tapeV
-            end
-            idx = 0
-            if needsPrimal
-                normalV = extract_value!(B, res, idx)
-                if llvmtype(normalV) != llvmtype(orig)
-                    GPUCompiler.@safe_error "Primal calling convention mismatch found ", normalV, " wanted ", llvmtype(orig)
-                    return tapeV
-                end
-                normalV = normalV.ref
-                idx+=1
-            end
-            if needsShadow
-                shadowV = extract_value!(B, res, idx).ref
-                if llvmtype(shadowV) != shadowType
-                    GPUCompiler.@safe_error "Shadow calling convention mismatch found ", shadowV, " wanted ",shadowType
-                    return tapeV
-                end
-                shadowV = shadowV.ref
-                idx+=1
-            end
-            if needsTape
-                tapeV = extract_value!(B, res, idx).ref
-                idx+=1
-            end
+        ShadT = RealRt
+        if width != 1
+            ShadT = NTuple{Int64(width), RealRt}
+        end
+        ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, TapeT}
+        if aug_RT != ST 
+            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, Any}
+            emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
+            return C_NULL
+        end
+
+        idx = 0
+        if needsPrimal
+            @assert !GPUCompiler.isghosttype(RealRt)
+            normalV = extract_value!(B, res, idx)
+            @assert llvmtype(normalV) == llvmtype(orig)
+            normalV = normalV.ref
+            idx+=1
+        end
+        if needsShadow
+            @assert !GPUCompiler.isghosttype(RealRt)
+            shadowV = extract_value!(B, res, idx)
+            @assert llvmtype(shadowV) == shadowType
+            shadowV = shadowV.ref
+            idx+=1
+        end
+        if needsTape
+            tapeV = extract_value!(B, res, idx).ref
+            idx+=1
         end
     else
         if length(actives) >= 1 && !isa(llvmtype(res), LLVM.StructType) && !isa(llvmtype(res), LLVM.ArrayType)
             GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
             return tapeV
         end
-        
+        Tys = Type[eltype(A) for A in activity if A <: Active]
+        ST = Tuple{Tys...}
+        if rev_RT != ST 
+            emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
+            return C_NULL
+        end
+ 
         idx = 0
         for v in actives
             ext = extract_value!(B, res, idx)
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmtype(v)))
-            if llvmtype(ext) != shadowType
-                    GPUCompiler.@safe_error "Shadow arg calling convention mismatch found ", ext, " wanted ",shadowVType
-                    return tapeV
-            end
+            @assert llvmtype(ext) == shadowVType
             Typ = C_NULL
             API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
             idx+=1
