@@ -16,7 +16,6 @@ import GPUCompiler: CompilerJob, FunctionSpec, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
-using Random
 using Printf
 
 if LLVM.has_orc_v1()
@@ -150,36 +149,6 @@ const inactivefns = Set{String}((
     "pcre2_jit_compile_8"
     # "jl_"
 ))
-
-const InactiveFunctions = Set([Base.CoreLogging.logmsg_code,
-                               Base.CoreLogging.shouldlog,
-                               Base.CoreLogging.current_logger,
-                               Base.CoreLogging.current_logger_for_env,
-                               Base.CoreLogging.handle_message,
-                               Base.to_tuple_type,
-                               Base.methods,
-                               Base.println,
-                               Base.print,
-                               Base.show,
-                               Base.flush,
-                               Base.string,
-                               Base.repr,
-                               Base.print_to_string,
-                               Base.Threads.threadid,
-                               Base.Threads.nthreads,
-                               Base.eps,
-                               Base.nextfloat,
-                               Base.prevfloat,
-                               Base.Val,
-                               Core.kwfunc,
-                               Random.rand,
-                               Random.rand!,
-                               Random.randn,
-                               Random.default_rng,
-                               Random.seed!,
-                               Base.thisind,
-                               Base.nextind
-                               ])
 
 const activefns = Set{String}((
     "jl_",
@@ -7082,7 +7051,7 @@ end
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx), EnumAttribute("readonly"; ctx)])
             continue
         end
-        if in(func, InactiveFunctions)
+        if EnzymeRules.is_inactive_from_sig(mi.specTypes; world)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
             continue
         end

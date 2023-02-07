@@ -90,6 +90,7 @@ include("typeanalysis.jl")
 include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
+include("internal_rules.jl")
 
 import .Compiler: CompilationException
 

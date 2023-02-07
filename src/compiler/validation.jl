@@ -425,7 +425,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if isa(flib, ConstantInt)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                     flib = Base.unsafe_pointer_to_objref(rep)
-                    if in(flib, InactiveFunctions)
+                    tys = [typeof(flib)]
+                    for op in collect(operands(inst))[2:end]
+                        push!(tys, Any)
+                    end
+                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                         ofn = LLVM.parent(LLVM.parent(inst))
                         mod = LLVM.parent(ofn)
                         ctx = context(mod)
@@ -483,7 +487,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, ConstantInt)
                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                 flib = Base.unsafe_pointer_to_objref(rep)
-                if in(flib, InactiveFunctions)
+                tys = [typeof(flib)]
+                for op in collect(operands(inst))[2:end]
+                    push!(tys, Any)
+                end
+                if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     ctx = context(mod)
