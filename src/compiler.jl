@@ -7052,7 +7052,7 @@ end
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world)
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx)])
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx), StringAttribute("nofree"; ctx)])
             continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task 
