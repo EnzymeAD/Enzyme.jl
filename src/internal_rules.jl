@@ -54,7 +54,7 @@ end
 function EnzymeRules.inactive(::typeof(Base.prevfloat), args...)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Base.Val), args...)
+function EnzymeRules.inactive(::Type{Base.Val}, args...)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Core.kwfunc), args...)
