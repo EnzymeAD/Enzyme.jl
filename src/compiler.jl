@@ -2873,7 +2873,7 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
-function enzyme_custom_setup_args(B, orig, gutils, mi)
+function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     ctx = LLVM.context(orig)
     ops = collect(operands(orig))
     called = ops[end]
@@ -2911,7 +2911,10 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
         op_idx+=1
         
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        
+        if reverse
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+        end
+
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, #=isforeign=#false)
        
         # TODO type analysis deduce if duplicated vs active
@@ -2923,11 +2926,13 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
             ptr = gep!(B, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            if llvmtype(val) != eltype(llvmtype(ptr))
+                val = load!(B, val)
+            end
             store!(B, val, ptr)
             
             if any_jltypes(llty)
-                vals = LLVM.Value[al0, val]
-                emit_writebarrier!(B, vals)
+                emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
             
             push!(args, al)
@@ -2942,11 +2947,13 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
             
             ptr = gep!(B, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            if llvmtype(val) != eltype(llvmtype(ptr))
+                val = load!(B, val)
+            end
             store!(B, val, ptr)
             
             if any_jltypes(llty)
-                vals = LLVM.Value[al0, val]
-                emit_writebarrier!(B, vals)
+                emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
             
             push!(args, al)
@@ -2955,6 +2962,9 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
             push!(actives, op)
         else
             ival = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
+            if reverse
+                ival = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, ival, B))
+            end
             if width == 1
                 if activep == API.DFT_DUP_ARG
                     Ty = Duplicated{arg.typ}
@@ -2977,14 +2987,17 @@ function enzyme_custom_setup_args(B, orig, gutils, mi)
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
             ptr = gep!(B, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            if llvmtype(val) != eltype(llvmtype(ptr))
+                val = load!(B, val)
+                ival = load!(B, ival)
+            end
             store!(B, val, ptr)
             
             iptr = gep!(B, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 1)])
             store!(B, ival, iptr)
 
             if any_jltypes(llty)
-                vals = LLVM.Value[al0, val, ival]
-                emit_writebarrier!(B, vals)
+                emit_writebarrier!(B, get_julia_inner_types(B, al0, val, ival))
             end
             
             push!(args, al)
@@ -3053,7 +3066,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     mi, job = enzyme_custom_extract_mi(orig)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi)
+    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     
@@ -3191,7 +3204,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     mi, job = enzyme_custom_extract_mi(orig)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi)
+    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     alloctx = LLVM.Builder(ctx)
@@ -3288,8 +3301,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             store!(B, val, ptr)
             
             if any_jltypes(llty)
-                vals = LLVM.Value[al0, val]
-                emit_writebarrier!(B, vals)
+                emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
 
             pushfirst!(args, al)
@@ -4694,6 +4706,55 @@ else
 end
 current_ptls_offset() = 14
 
+function get_julia_inner_types(B, p, startvals...; added=[])
+    ctx = LLVM.context(p)
+    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10) 
+    vals = LLVM.Value[p]
+    todo = LLVM.Value[startvals...]
+    while length(todo) != 0
+        cur = popfirst!(todo)
+        ty = llvmtype(cur)
+        if isa(ty, LLVM.PointerType)
+            if any_jltypes(ty)
+                if addrspace(ty) != 10
+                    cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
+                    push!(added, cur.ref)
+                end
+                if llvmtype(cur) != T_prjlvalue
+                    cur = bitcast!(B, cur, T_prjlvalue)
+                    push!(added, cur.ref)
+                end
+                push!(vals, cur)
+            end
+            continue
+        end
+        if isa(ty, LLVM.ArrayType)
+            if any_jltypes(ty)
+                for i=1:length(ty)
+                    ev = extract_value!(B, cur, i-1)
+                    push!(added, ev.ref)
+                    push!(todo, ev)
+                end
+            end
+            continue
+        end
+        if isa(ty, LLVM.StructType)
+            for (i, t) in enumerate(LLVM.elements(ty))
+                if any_jltypes(t)
+                    ev = extract_value!(B, cur, i-1)
+                    push!(added, ev.ref)
+                    push!(todo, ev)
+                end
+            end
+            continue
+        end
+        GPUCompiler.@safe_warn "Enzyme illegal subtype", ty, cur, SI, p, v
+        @assert false
+    end
+    return vals
+end
+
 function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::Ptr{LLVM.API.LLVMValueRef}
     B = LLVM.Builder(B)
     SI = LLVM.Instruction(SI)
@@ -4714,48 +4775,7 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         p = bitcast!(B, p, T_prjlvalue)
         push!(added, p.ref)
         
-        vals = LLVM.Value[p]
-        todo = LLVM.Value[v]
-        while length(todo) != 0
-            cur = popfirst!(todo)
-            ty = llvmtype(cur)
-            if isa(ty, LLVM.PointerType)
-                if any_jltypes(ty)
-                    if addrspace(ty) != 10
-                        cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
-                        push!(added, cur.ref)
-                    end
-                    if llvmtype(cur) != T_prjlvalue
-                        cur = bitcast!(B, cur, T_prjlvalue)
-                        push!(added, cur.ref)
-                    end
-                    push!(vals, cur)
-                end
-                continue
-            end
-            if isa(ty, LLVM.ArrayType)
-                if any_jltypes(ty)
-                    for i=1:length(ty)
-                        ev = extract_value!(B, cur, i-1)
-                        push!(added, ev.ref)
-                        push!(todo, ev)
-                    end
-                end
-                continue
-            end
-            if isa(ty, LLVM.StructType)
-                for (i, t) in enumerate(LLVM.elements(ty))
-                    if any_jltypes(t)
-                        ev = extract_value!(B, cur, i-1)
-                        push!(added, ev.ref)
-                        push!(todo, ev)
-                    end
-                end
-                continue
-            end
-            GPUCompiler.@safe_warn "Enzyme illegal subtype", ty, cur, SI, p, v
-            @assert false
-        end
+        vals = get_julia_inner_types(B, p, v, added=added)
         r = emit_writebarrier!(B, vals)
         push!(added, r.ref)
     end
@@ -6886,6 +6906,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     modifiedBetween = params.modifiedBetween
     returnPrimal = params.returnPrimal
 
+    if !(params.rt <: Const)
+        @assert !GPUCompiler.isghosttype(eltype(params.rt))
+    end
     if parent_job === nothing
         primal_target = DefaultCompilerTarget()
         primal_params = PrimalCompilerParams(mode)
