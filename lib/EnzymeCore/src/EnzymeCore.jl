@@ -131,6 +131,9 @@ struct ForwardMode <: Mode
 end
 const Forward = ForwardMode()
 
+function autodiff end
+function autodiff_deferred end
+
 include("rules.jl")
 
 end # module EnzymeCore
