@@ -1793,6 +1793,20 @@ end
 end
 
 @testset "Runtime activity" begin
+    
+    Enzyme.API.runtimeActivity!(true)
+    #GC.enable(false)
+    
+    struct ParametersA
+        a::Vector{Float64}
+        b::Vector{Float64}
+    end
+    
+    struct ParametersB
+        a::Vector{Float64}
+        b::Vector{Float64}
+        c::Vector{Float64}
+    end
 
     function f(x, y)
         x.a[1] * y[1] + x.b[1] * y[1]*y[1] + x.a[1]
