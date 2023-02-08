@@ -1792,6 +1792,39 @@ end
 
 end
 
+@testset "Runtime activity" begin
+
+    function f(x, y)
+        x.a[1] * y[1] + x.b[1] * y[1]*y[1] + x.a[1]
+    end
+    
+    function g(x, y)
+        x.a[1] * x.b[1] * y[1] + y[1] * x.c[1] * x.c[1] + x.c[1]
+    end
+    
+    function h(x, z, y)
+        f(x,y) + g(z, y)
+    end
+    
+    a = ParametersA([1.0], [2.0])
+    ∂a = ParametersA([0.0], [0.0])
+    
+    b = ParametersB([0.5], [1.0], [3.0])
+    ∂b = ParametersB([0.0], [0.0], [0.0])
+    
+    Y = Float64[1.0]
+    ∂Y = Float64[0.0]
+    
+    autodiff(Reverse, h, Active, Duplicated(a, ∂a), Duplicated(b, ∂b), Duplicated(Y, ∂Y))
+
+    Enzyme.API.runtimeActivity!(false)
+    
+    @test ∂a = ParametersA([2.0], [1.0])
+    @test ∂b = ParametersB([1.0], [0.5], [7.0])
+    @test ∂Y = Float64[14.5]
+    
+end
+
 # Always run last since otherwise on 1.6 device functions cause breakage.
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
