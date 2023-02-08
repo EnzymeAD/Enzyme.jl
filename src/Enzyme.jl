@@ -9,7 +9,10 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-export autodiff, autodiff_deferred, jacobian, gradient, gradient!
+import EnzymeCore: autodiff, autodiff_deferred
+export autodiff, autodiff_deferred
+
+export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
