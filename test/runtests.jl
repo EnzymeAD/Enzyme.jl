@@ -1793,15 +1793,15 @@ end
 end
 
 @testset "Runtime activity" begin
-    
+
     Enzyme.API.runtimeActivity!(true)
     #GC.enable(false)
-    
+
     struct ParametersA
         a::Vector{Float64}
         b::Vector{Float64}
     end
-    
+
     struct ParametersB
         a::Vector{Float64}
         b::Vector{Float64}
