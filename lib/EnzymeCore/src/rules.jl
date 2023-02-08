@@ -101,4 +101,16 @@ function issupported()
     end
 end
 
+"""
+    inactive(func::typeof(f), args::...)
+
+Mark a particular function as always being inactive in both its return result and the function call itself.
+"""
+function inactive end
+
+# Base.hasmethod is a precise match we want the broader query.
+function is_inactive_from_sig(@nospecialize(TT); world=Base.get_world_counter())
+    return isapplicable(inactive, TT; world)
+end
+
 end # EnzymeRules
