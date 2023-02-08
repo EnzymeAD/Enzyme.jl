@@ -5517,10 +5517,10 @@ end
 
 function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
     orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
         return 1
     end
-    origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
 
@@ -5531,7 +5531,7 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                           shadowin
                           LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                           ]
-        LLVM.call!(B, LLVM.function_type(orig), LLVM.called_value(orig), args)
+        LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx in 1:width
@@ -5539,7 +5539,7 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                               extract_value!(B, shadowin, idx-1)
                               LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                               ]
-            LLVM.call!(B, LLVM.function_type(orig), LLVM.called_value(orig), args)
+            LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
         end
     end
     return 0

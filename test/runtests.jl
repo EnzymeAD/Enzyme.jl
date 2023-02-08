@@ -1309,6 +1309,13 @@ end
 	@test dF ≈ [3.0, 2.0]
 
     @test 31.0 ≈ autodiff(Forward, copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
+
+    function sh(x)
+        Base.sizehint!(x, length(x))
+        nothing
+    end
+
+    autodiff(Reverse, sh, Duplicated([1.0], [0.0]))
 end
 
 @testset "No inference" begin
