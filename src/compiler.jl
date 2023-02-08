@@ -185,6 +185,75 @@ const activefns = Set{String}((
     "jl_",
 ))
 
+
+Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
+    if T isa Union
+        if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
+            if Mode == API.DEM_ForwardMode
+                return DuplicatedNoNeed{T}
+            else
+                return Duplicated{T}
+            end
+        end
+    end
+    if isghostty(T) || Core.Compiler.isconstType(T) || T === DataType
+        return Const{T}
+    end
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Duplicated{T}
+    end
+end
+
+@inline function Enzyme.guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode)
+    return Const{Union{}}
+end
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Integer}
+    return Const{T}
+end
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Active{T}
+    end
+end
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Complex{<:AbstractFloat}}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Active{T}
+    end
+end
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Duplicated{T}
+    end
+end
+
+@inline function Enzyme.guess_activity(::Type{Real}, Mode::API.CDerivativeMode)
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{Any}
+    else
+        return Duplicated{Any}
+    end
+end
+@inline function Enzyme.guess_activity(::Type{Any}, Mode::API.CDerivativeMode)
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{Any}
+    else
+        return Duplicated{Any}
+    end
+end
+
 # User facing interface
 abstract type AbstractThunk{F, RT, TT, Width, DF} end
 
