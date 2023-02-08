@@ -3264,7 +3264,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
     TapeT = Nothing
     
-    if aug_RT <: EnzymeRules.AugmentedReturn && !(aug_RT isa Union) && !(aug_RT === Union{})
+    if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa Union) && !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
     end
 
@@ -3388,6 +3388,16 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             ShadT = NTuple{Int64(width), RealRt}
         end
         ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, TapeT}
+        if aug_RT != ST
+            if aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
+                if convert(LLVMType, EnzymeRules.shadow_type(aug_RT); ctx, allow_boxed=true) != 
+                   convert(LLVMType, EnzymeRules.shadow_type(ST)    ; ctx, allow_boxed=true) 
+                    emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " flex shadow ABI return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
+            return C_NULL
+                end
+                ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadow ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
+            end
+        end
         if aug_RT != ST 
             ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, Any}
             emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
