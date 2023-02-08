@@ -426,7 +426,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                     flib = Base.unsafe_pointer_to_objref(rep)
                     tys = [typeof(flib)]
-                    for op in collect(operands(inst))[2:end]
+                    for op in collect(operands(inst))[4:end]
                         push!(tys, Any)
                     end
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
