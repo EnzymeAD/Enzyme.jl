@@ -40,11 +40,22 @@ guess_activity(::Type{T}, mode::Mode) where T = guess_activity(T, convert(API.CD
             end
         end
     end
-    return Const{T}
+    if GPUCompiler.isghosttype(T) || Core.Compiler.isconstType(T)
+        return Const{T}
+    end
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        return Duplicated{T}
+    end
 end
 
 @inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode)
     return Const{Union{}}
+end
+
+@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Integer}
+    return Const{T}
 end
 
 @inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
