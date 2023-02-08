@@ -1833,9 +1833,9 @@ end
 
     Enzyme.API.runtimeActivity!(false)
     
-    @test ∂a = ParametersA([2.0], [1.0])
-    @test ∂b = ParametersB([1.0], [0.5], [7.0])
-    @test ∂Y = Float64[14.5]
+    @test ∂a == ParametersA([2.0], [1.0])
+    @test ∂b == ParametersB([1.0], [0.5], [7.0])
+    @test ∂Y == Float64[14.5]
     
 end
 
