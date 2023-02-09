@@ -1,5 +1,4 @@
 module Interpreter
-using Random
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
 using GPUCompiler: CodeCache, WorldView
@@ -78,20 +77,11 @@ else
 #     WorldOverlayMethodTable(interp.world)
 end
 
-const PrimitiveFuncs = Set([typeof(Base.string), typeof(Base.eps), typeof(Base.nextfloat), typeof(Base.prevfloat), typeof(Enzyme.pmap),
-                            typeof(Base.to_tuple_type), typeof(Base.repr),
-                            typeof(Random.rand), typeof(Random.rand!), typeof(Random.randn), typeof(Random.default_rng), typeof(Random.seed!),
-                            typeof(Base.thisind), typeof(Base.nextind),
-                            typeof(Base.CoreLogging.logmsg_code),
-                            typeof(Base.CoreLogging.shouldlog),
-                            typeof(Base.CoreLogging.handle_message),
-                           ])
-
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
-    if in(ft, PrimitiveFuncs)
-       return true
+    if ft == typeof(Enzyme.pmap)
+        return true
     end
     if ft === typeof(Base.rem2pi)
         if TT <: Tuple{ft, Float32, <:Any} || TT <: Tuple{ft, Float64, <:Any} || TT <: Tuple{ft, Float16, <:Any}
@@ -154,6 +144,9 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     if is_primitive_func(mi.specTypes)
         return nothing
     end
+    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+        return nothing
+    end
     if interp.mode == API.DEM_ForwardMode
         if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
             return nothing
@@ -175,6 +168,9 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     if is_primitive_func(mi.specTypes)
+        return nothing
+    end
+    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
         return nothing
     end
     if interp.mode == API.DEM_ForwardMode
@@ -206,6 +202,9 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     interp = state.policy.interp
+    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+        return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
+    end
     if interp.mode == API.DEM_ForwardMode
         if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)

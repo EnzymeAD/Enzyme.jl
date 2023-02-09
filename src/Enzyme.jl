@@ -9,7 +9,10 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-export autodiff, autodiff_deferred, jacobian, gradient, gradient!
+import EnzymeCore: autodiff, autodiff_deferred
+export autodiff, autodiff_deferred
+
+export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -24,72 +27,18 @@ include("pmap.jl")
 import LLVM
 include("api.jl")
 
-convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, false}) = API.DEM_ReverseModeCombined
-convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, true}) = API.DEM_ReverseModeGradient
-convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, false}) = API.DEM_ReverseModeCombined
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, true}) = API.DEM_ReverseModeGradient
+Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
-guess_activity(::Type{T}, mode::Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
-
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
-    if T isa Union
-        if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
-            if Mode == API.DEM_ForwardMode
-                return DuplicatedNoNeed{T}
-            else
-                return Duplicated{T}
-            end
-        end
-    end
-    return Const{T}
-end
-
-@inline function guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode)
-    return Const{Union{}}
-end
-
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Active{T}
-    end
-end
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Complex{<:AbstractFloat}}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Active{T}
-    end
-end
-
-@inline function guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Duplicated{T}
-    end
-end
-
-@inline function guess_activity(::Type{Real}, Mode::API.CDerivativeMode)
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{Any}
-    else
-        return Duplicated{Any}
-    end
-end
-@inline function guess_activity(::Type{Any}, Mode::API.CDerivativeMode)
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{Any}
-    else
-        return Duplicated{Any}
-    end
-end
+function guess_activity end
 
 include("logic.jl")
 include("typeanalysis.jl")
 include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
+include("internal_rules.jl")
 
 import .Compiler: CompilationException
 

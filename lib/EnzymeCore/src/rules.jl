@@ -1,8 +1,9 @@
 module EnzymeRules
 
 import EnzymeCore: Annotation, Const, Duplicated
-export Config, ConfigWidth
+export Config, ConfigWidth, AugmentedReturn
 export needs_primal, needs_shadow, width, overwritten
+export primal_type, shadow_type, tape_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
@@ -20,24 +21,44 @@ function forward end
 struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
 const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 
-needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-width(::Config{<:Any, <:Any, Width}) where Width = Width
-overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline width(::Config{<:Any, <:Any, Width}) where Width = Width
+@inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 
+struct AugmentedReturn{PrimalType,ShadowType,TapeType}
+    primal::PrimalType
+    shadow::ShadowType
+    tape::TapeType
+end
+@inline primal_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = PrimalType
+@inline shadow_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
+@inline tape_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
+struct AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}
+    primal::PrimalType
+    shadow::ShadowType
+    tape::TapeType
+end
+@inline primal_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = PrimalType
+@inline shadow_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
+@inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
 """
     augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Must return a tuple of length 2.
-The first-value is primal value and the second is the tape. If no tape is
-required return `(val, nothing)`.
+Must return an AugmentedReturn type.
+* The primal must be the same type of the original return if needs_primal(config), otherwise nothing.
+* The shadow must be nothing if needs_shadow(config) is false. If width is 1, the shadow should be the same
+  type of the original return. If the width is greater than 1, the shadow should be NTuple{original return, width}.
+* The tape can be any type (including Nothing) and is preserved for the reverse call.
 """
 function augmented_primal end
 
 """
-    reverse(::Config, func::Annotation{typeof(f)}, dret::Annotation, tape, args::Annotation...)
+    reverse(::Config, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
+    reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
-Takes gradient of derivative, activity annotation, and tape
+Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
+as Active{T} with the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
 """
 function reverse end
 
@@ -69,8 +90,8 @@ end
 
 function has_rrule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Config, <:Annotation{ft}, <:Annotation, <:Any, tt...}
-    isapplicable(reverse, TT; world)
+    TT = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    isapplicable(augmented_primal, TT; world)
 end
 
 # Base.hasmethod is a precise match we want the broader query.
@@ -86,6 +107,18 @@ function issupported()
     else
         return true
     end
+end
+
+"""
+    inactive(func::typeof(f), args::...)
+
+Mark a particular function as always being inactive in both its return result and the function call itself.
+"""
+function inactive end
+
+# Base.hasmethod is a precise match we want the broader query.
+function is_inactive_from_sig(@nospecialize(TT); world=Base.get_world_counter())
+    return isapplicable(inactive, TT; world)
 end
 
 end # EnzymeRules
