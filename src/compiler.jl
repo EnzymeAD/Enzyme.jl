@@ -828,11 +828,7 @@ function permit_inlining!(f::LLVM.Function)
 end
 
 function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
-    tt′ = Tuple{}
-    args = ()
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    forward = thunk(fn, dfn, Const, tt′, Val(API.DEM_ForwardMode), width)
+    forward = thunk(fn, dfn, Const, Tuple{}, Val(API.DEM_ForwardMode), width, Val((false,)))
 
     function fclosure()
         res = forward()
@@ -846,13 +842,9 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}) where width
-
-    tt′ = Tuple{}
-    args = ()
-    tt = Tuple{map(x->eltype(Core.Typeof(x)), args)...}
-    rt = Core.Compiler.return_type(fn, tt)
-    forward, adjoint = thunk(fn, dfn, Const, tt′, Val(API.DEM_ReverseModePrimal), Val(width))
+function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ModifiedBetween::Val{MB}) where {width, MB}
+    # TODO make this AD subcall type stable
+    forward, adjoint = thunk(fn, dfn, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween)
 
     taperef = Ref{Any}()
 
@@ -977,6 +969,7 @@ end
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(res[1]), Val(Width+1))
+    ModifiedBetween = ntuple(i->false, Val(N))
     return quote
         args = ($(wrapped...),)
 
@@ -999,7 +992,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             end
         end
 
-        forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(false), #=returnPrimal=#Val(true))
+        forward = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
         res = forward(args...)
 
@@ -1040,6 +1033,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
     nres = ntuple(i->:(origRet), Val(Width+1))
     nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
     nres3 = ntuple(i->:(res[3]), Val(Width))
+    
     return quote
         args = ($(wrapped...),)
 
@@ -1054,7 +1048,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                     #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+                                 ModifiedBetween, #=returnPrimal=#Val(true))
         
         res = forward(args...)
 
@@ -1108,13 +1102,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote 
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetwen::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -1152,7 +1146,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         end
         shadowret = :(($(shadowret...),))
     end
-
+    
     quote
         args = ($(wrapped...),)
 
@@ -1167,7 +1161,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                    #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+                                 ModifiedBetween, #=returnPrimal=#Val(true))
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
         end
@@ -1184,13 +1178,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
 
     quote 
-        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, TapeType, F, DF, $(typeargs...)}
+        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
@@ -1239,6 +1233,7 @@ end
 
 function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     ops = collect(operands(orig))[start+firstconst:end-1]
@@ -1326,6 +1321,22 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     else
         pushfirst!(vals, unsafe_to_llvm(Val(ReturnType), ctx))
     end
+    
+    if mode != API.DEM_ForwardMode
+        uncacheable = Vector{UInt8}(undef, length(collect(operands(orig))))
+        API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+
+        sret = false
+        returnRoots = false
+
+        ModifiedBetween = Bool[]
+
+        for idx in 1:(length(ops)+firstconst)
+            push!(overwritten, uncacheable[(start-1)+idx] != 0)
+        end
+        pushfirst!(vals, unsafe_to_llvm(Val((ModifiedBetween...,)), ctx))
+    end 
+
     pushfirst!(vals, unsafe_to_llvm(Val(Int64(width)), ctx))
     pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,)), ctx))
     
@@ -2629,7 +2640,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#false, #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#(false for _ in mi.specTypes.parameters), #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
     
             jctx = ctx
@@ -2651,7 +2662,8 @@ end
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false, #=shadowInit=#false)
+            # TODO modifiedBetween
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#(true for _ in mi.specTypes.parameters), #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -2896,7 +2908,14 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     GPUCompiler.@safe_warn "active variables passed by value to jl_new_task are not yet supported"
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mode = API.EnzymeGradientUtilsGetMode(gutils)
-    fun = nested_codegen!(mode, mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int, Val{width}})
+
+
+    uncacheable = Vector{UInt8}(undef, 4)
+    API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+    
+    ModifiedBetween = (uncacheable[1] != 0,) 
+    
+    fun = nested_codegen!(mode, mod, runtime_newtask_augfwd, Tuple{Any, Any, Any, Int, Val{width}, Val{ModifiedBetween}})
     permit_inlining!(fun)
 
     B = LLVM.Builder(B)
@@ -5500,7 +5519,7 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     abiwrap::Bool
     # Whether, in split mode, acessible primal argument data is modified
     # between the call and the split
-    modifiedBetween::Bool
+    modifiedBetween::NTuple{N, Bool} where N
     # Whether to also return the primal
     returnPrimal::Bool
     # Whether to (in aug fwd) += by one
@@ -5966,6 +5985,8 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
 
     ctx = LLVM.context(mod)
 
+    @assert length(modifiedBetween) == length(tt) + 1
+
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         typeTree = typetree(F, ctx, dl)
         push!(args_typeInfo, typeTree)
@@ -5974,15 +5995,11 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         else
             push!(args_activity, API.DFT_CONSTANT)
         end
-        if !modifiedBetween
-            push!(uncacheable_args, false)
-        else
-            push!(uncacheable_args, true)
-        end
+        push!(uncacheable_args, modifiedBetween[1])
         push!(args_known_values, API.IntList())
     end
 
-    for T in tt
+    for (i, T) in enumerate(tt)
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             if !(T <: Const)
@@ -6014,11 +6031,7 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         end
         typeTree = typetree(T, ctx, dl)
         push!(args_typeInfo, typeTree)
-        if !modifiedBetween
-            push!(uncacheable_args, false)
-        else
-            push!(uncacheable_args, true)
-        end
+        push!(uncacheable_args, modifiedBetween[1+i])
         push!(args_known_values, API.IntList())
     end
 
@@ -8035,7 +8048,7 @@ end
     # invalidations of the primal, which is managed by GPUCompiler.
 
 
-    thunk = cached_compilation(job, hash(hash(hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)), UInt64(ModifiedBetween)), UInt64(ReturnPrimal)), specid)::Thunk
+    thunk = cached_compilation(job, hash(hash(hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)), hash(ModifiedBetween)), UInt64(ReturnPrimal)), specid)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType
         AugT = AugmentedForwardThunk{F, rt, adjoint.tt, Val{width} , DF, Val(ReturnPrimal), TapeType}
@@ -8060,7 +8073,7 @@ end
     end
 end
 
-@inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
+@inline function thunk(f::F,df::DF, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {F, DF, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
     primal, adjoint = fspec(Core.Typeof(f), TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, DF != Nothing, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
@@ -8091,7 +8104,7 @@ import GPUCompiler: deferred_codegen_jobs
 end
 
 @inline function deferred_codegen(f::F, ::Val{tt}, ::Val{rt}, ::Val{DupClosure},::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}=Val(Mode != API.DEM_ReverseModeCombined), ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
+                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false)) where {F,tt, rt, DupClosure, Mode, width, ModifiedBetween, ReturnPrimal}
     gendeferred_codegen(Core.Typeof(f), Val(tt), Val(rt), Val(DupClosure), Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal))
 end
 

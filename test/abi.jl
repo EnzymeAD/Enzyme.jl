@@ -336,7 +336,7 @@ end
         end
     end
 
-    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
+    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val((true, true, false)), #=returnPrimal=#Val(true))
     d = Duplicated(Float64[2.0], Float64[0.0])
     r = forward(d, Const(false))
     @test r[2] ≈ 2.0 
@@ -346,7 +346,7 @@ end
     @test r[2] == Base._InitialValue()
     @test r[3] == Base._InitialValue()
     
-    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val((true, true, false)), #=returnPrimal=#Val(false))
     r = forward(d, Const(false))
     @test r[2] ≈ 0.0 
     r = forward(d, Const(true))
