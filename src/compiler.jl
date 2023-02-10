@@ -4752,8 +4752,11 @@ if VERSION >= v"1.9.0-"
 else
   current_task_offset() = -12
 end
-current_ptls_offset() = 14
-
+if VERSION >= v"1.9.0-"
+  current_ptls_offset() = 15
+else
+  current_ptls_offset() = 14
+end
 function get_julia_inner_types(B, p, startvals...; added=[])
     ctx = LLVM.context(p)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
