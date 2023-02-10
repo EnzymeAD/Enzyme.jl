@@ -1215,7 +1215,7 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     return token
 end
 
-function emit_gc_preserve_end(B::LLVM.Builder, token)
+function emit_gc_preserve_end(B::LLVM.Builder, token::LLVM.Value)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1341,10 +1341,18 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     pushfirst!(vals, mi)
     end
 
+    if length(to_preserve) != 0
+        token = emit_gc_preserve_begin(B, to_preserve)
+    end
+    
     @static if VERSION < v"1.7.0-" || true
     cal = emit_apply_generic!(B, vals)
     else
     cal = emit_invoke!(B, vals)
+    end
+    
+    if length(to_preserve) != 0
+        emit_gc_preserve_end(B, token)
     end
 
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
