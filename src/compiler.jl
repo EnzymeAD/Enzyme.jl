@@ -5035,7 +5035,8 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
-        @static if VERSION >= v"1.9.0-DEV.1571"
+        # and also https://github.com/JuliaLang/julia/pull/48620
+        @static if VERSION >= v"1.11.0-DEV.1571"
             needs_dynamic_size_workaround = false
         else
             needs_dynamic_size_workaround = !isa(Size, LLVM.ConstantInt) || convert(Int64, Size) != 1
