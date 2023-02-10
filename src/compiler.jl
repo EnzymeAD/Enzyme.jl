@@ -4593,7 +4593,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         if isa(val, LLVM.Instruction)
             bt = GPUCompiler.backtrace(val)
         end
-        if !isa(val, LLVM.ConstantExpr)
+        if isa(val, LLVM.ConstantExpr)
+            for u in LLVM.uses(val)
+                u = LLVM.user(u)
+                if isa(u, LLVM.Instruction)
+                    bt = GPUCompiler.backtrace(val)
+                end
+            end
+        else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
             ir = sprint(io->show(io, parent_scope(val)))

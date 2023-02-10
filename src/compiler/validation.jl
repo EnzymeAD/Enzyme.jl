@@ -82,7 +82,7 @@ module FFI
             "ijl_box_float64", 
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
-            "memcmp"
+            "memcmp","memchr"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -254,7 +254,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
 
             if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
-                push!(errors, ("jl_load_and_lookup", bt, nothing))
                 return
             end
             # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
@@ -292,7 +291,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
 
             if !isa(fname, String) || !isa(flib, String)
-                push!(errors, ("jl_lazy_load_and_lookup", bt, nothing))
                 return
             end
 
