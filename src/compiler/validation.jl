@@ -263,19 +263,20 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             mod = LLVM.parent(ofn)
             ctx = context(mod)
 
-            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            ops = collect(operands(inst))[1:end-1]
+            @assert length(ops) == 2
+            flib = ops[1]
+            fname = ops[2]
+
             if isa(flib, LLVM.LoadInst)
                 op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
-                if isa(op, LLVM.ConstantExpr)
-                    op1 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
-                    if isa(op1, LLVM.ConstantExpr)
-                        op2 = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op1, 0))
-                        if isa(op2, ConstantInt)
-                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
-                            ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
-                            flib = Base.unsafe_pointer_to_objref(ld)
-                        end
-                    end
+                while isa(op, LLVM.ConstantExpr)
+                    op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
+                end
+                if isa(op2, ConstantInt)
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
+                    ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
+                    flib = Base.unsafe_pointer_to_objref(ld)
                 end
             end
 
