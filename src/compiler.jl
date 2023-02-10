@@ -3263,8 +3263,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     rev_RT = nothing
 
     TapeT = Nothing
-    
-    if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa Union) && !(aug_RT === Union{})
+
+    if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa UnionAll) && !(aug_RT isa Union) && !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
     end
 
@@ -3277,7 +3277,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT)
         else
             @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-            emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(augprimal_TT))
+            emit_error(B, orig, "Enzyme: No augmented custom rule was appliable for " * string(augprimal_TT))
             return C_NULL
         end
     else
@@ -3293,7 +3293,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, TT)
         else
             @safe_debug "No custom reverse rule is applicable for" TT
-            emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
+            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(TT))
             return C_NULL
         end
         rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, TT, world)
