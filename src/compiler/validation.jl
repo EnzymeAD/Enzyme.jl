@@ -273,8 +273,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 while isa(op, LLVM.ConstantExpr)
                     op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
                 end
-                if isa(op2, ConstantInt)
-                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op2)+8)
+                if isa(op, ConstantInt)
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op)+8)
                     ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
                     flib = Base.unsafe_pointer_to_objref(ld)
                 end
