@@ -1102,7 +1102,7 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote 
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetwen::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
@@ -1323,7 +1323,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     end
     
     if mode != API.DEM_ForwardMode
-        uncacheable = Vector{UInt8}(undef, length(collect(operands(orig))))
+        uncacheable = Vector{UInt8}(undef, length(collect(operands(orig)))-1)
         API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
 
         sret = false
@@ -1332,7 +1332,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
         ModifiedBetween = Bool[]
 
         for idx in 1:(length(ops)+firstconst)
-            push!(overwritten, uncacheable[(start-1)+idx] != 0)
+            push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
         end
         pushfirst!(vals, unsafe_to_llvm(Val((ModifiedBetween...,)), ctx))
     end 
