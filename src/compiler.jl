@@ -3025,6 +3025,10 @@ function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     waitfn = find_match(mod, "jl_wait")
+    if waitfn === nothing
+        emit_error(LLVM.Builder(B), orig, "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work")
+        return nothing
+    end
     @assert waitfn !== nothing
     shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
     cal = LLVM.call!(LLVM.Builder(B), waitfn, [shadowtask])
@@ -3056,6 +3060,10 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     enq_work_fn = find_match(mod, "jl_enq_work")
+    if enq_work_fn === nothing
+        emit_error(LLVM.Builder(B), orig, "Enzyme: could not find jl_enq_work fn to create shadow of wait")
+        return nothing
+    end
     @assert enq_work_fn !== nothing
     shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
     cal = LLVM.call!(LLVM.Builder(B), enq_work_fn, [shadowtask])
