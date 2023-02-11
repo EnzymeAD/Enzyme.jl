@@ -2640,7 +2640,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple(false for _ in mi.specTypes.parameters), #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple((false for _ in mi.specTypes.parameters)...), #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
     
             jctx = ctx
@@ -2663,7 +2663,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple(true for _ in mi.specTypes.parameters), #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple((true for _ in mi.specTypes.parameters)...), #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             jctx = ctx
 @static if VERSION < v"1.9-"
