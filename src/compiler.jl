@@ -7344,6 +7344,14 @@ end
 
             res = call!(builder, llvmfn, collect(parameters(wrapper_f)))
 
+            if !isempty(parameters(llvmfn)) 
+                for attr in collect(parameter_attributes(llvmfn, 1))
+                    if kind(attr) == kind(EnumAttribute("sret"; ctx))
+                        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
+                    end
+                end
+            end
+
             if LLVM.return_type(FT) == LLVM.VoidType(ctx)
                 ret!(builder)
             else
