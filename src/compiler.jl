@@ -1828,6 +1828,88 @@ function jl_getfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
     common_jl_getfield_rev(1, B, OrigCI, gutils, tape)
 end
 
+
+function common_setfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    
+    orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))[offset:end]
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[4]) == 0
+        width = API.EnzymeGradientUtilsGetWidth(gutils)
+
+        B = LLVM.Builder(B)
+        shadowin = if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
+            LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
+        else
+            LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
+        end
+
+        shadowout = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[4], B))
+        if width == 1
+            args = LLVM.Value[
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                              shadowin
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                              shadowout
+                              ]
+            if offset != 1
+                pushfirst!(args, first(operands(orig)))
+            end
+            shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
+            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
+        else
+            for idx in 1:width
+                args = LLVM.Value[
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
+                                  extract_value!(B, shadowin, idx-1)
+                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
+                                  extract_value!(B, shadowout, idx-1)
+                                  ]
+                if offset != 1
+                    pushfirst!(args, first(operands(orig)))
+                end
+                tmp = LLVM.call!(B, setF, args)
+                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
+                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
+            end
+        end
+    end
+    return nothing
+end
+
+function common_setfield_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    orig = LLVM.Instruction(OrigCI)
+    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return nothing
+end
+
+function common_setfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+  orig = LLVM.Instruction(OrigCI)
+  emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
+  return nothing
+end
+
+
+function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    common_setfield_fwd(1, B, OrigCI, gutils, normalR, shadowR)
+end
+
+function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+    common_setfield_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+end
+
+function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+    common_setfield_rev(1, B, OrigCI, gutils, tape)
+end
+
 function common_apply_iterate_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
@@ -1903,6 +1985,10 @@ function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
             common_jl_getfield_fwd(2, B, OrigCI, gutils, normalR, shadowR)
             return nothing
         end
+        if in(name, ("ijl_f_setfield", "jl_f_setfield"))
+            common_setfield_fwd(2, B, OrigCI, gutils, normalR, shadowR)
+            return nothing
+        end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))
             common_apply_iterate_fwd(2, B, OrigCI, gutils, normalR, shadowR)
             return nothing
@@ -1944,6 +2030,10 @@ function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             common_jl_getfield_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
             return nothing
         end
+        if in(name, ("ijl_s_getfield", "jl_s_getfield"))
+            common_setfield_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
+            return nothing
+        end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))
             common_apply_iterate_augfwd(2, B, OrigCI, gutils, normalR, shadowR, tapeR)
             return nothing
@@ -1983,6 +2073,10 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         end
         if in(name, ("ijl_f_getfield", "jl_f_getfield"))
             common_jl_getfield_rev(2, B, OrigCI, gutils, tape)
+            return nothing
+        end
+        if in(name, ("ijl_f_setfield", "jl_f_setfield"))
+            common_setfield_rev(2, B, OrigCI, gutils, tape)
             return nothing
         end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))
@@ -4285,68 +4379,6 @@ function jl_array_sizehint_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     return nothing
 end
 
-function setfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
-    end
-    
-    orig = LLVM.Instruction(OrigCI)
-    origops = collect(operands(orig))
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[4]) == 0
-        width = API.EnzymeGradientUtilsGetWidth(gutils)
-
-        B = LLVM.Builder(B)
-        shadowin = if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
-            LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
-        else
-            LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
-        end
-
-        shadowout = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[4], B))
-        if width == 1
-            args = LLVM.Value[
-                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
-                              shadowin
-                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
-                              shadowout
-                              ]
-            shadowres = LLVM.call!(B, LLVM.called_value(orig), args)
-            conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-            LLVM.API.LLVMSetInstructionCallConv(shadowres, conv)
-        else
-            for idx in 1:width
-                args = LLVM.Value[
-                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))
-                                  extract_value!(B, shadowin, idx-1)
-                                  LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
-                                  extract_value!(B, shadowout, idx-1)
-                                  ]
-                tmp = LLVM.call!(B, setF, args)
-                conv = LLVM.API.LLVMGetInstructionCallConv(orig)
-                LLVM.API.LLVMSetInstructionCallConv(tmp, conv)
-            end
-        end
-    end
-    return nothing
-end
-
-function setfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
-    end
-    return nothing
-end
-
-function setfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-  orig = LLVM.Instruction(OrigCI)
-  emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
-  return nothing
-end
-
 function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     orig = LLVM.Instruction(OrigCI)
@@ -4593,7 +4625,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         if isa(val, LLVM.Instruction)
             bt = GPUCompiler.backtrace(val)
         end
-        if !isa(val, LLVM.ConstantExpr)
+        if isa(val, LLVM.ConstantExpr)
+            for u in LLVM.uses(val)
+                u = LLVM.user(u)
+                if isa(u, LLVM.Instruction)
+                    bt = GPUCompiler.backtrace(val)
+                end
+            end
+        else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
             ir = sprint(io->show(io, parent_scope(val)))
@@ -4752,8 +4791,11 @@ if VERSION >= v"1.9.0-"
 else
   current_task_offset() = -12
 end
-current_ptls_offset() = 14
-
+if VERSION >= v"1.9.0-"
+  current_ptls_offset() = 15
+else
+  current_ptls_offset() = 14
+end
 function get_julia_inner_types(B, p, startvals...; added=[])
     ctx = LLVM.context(p)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -5035,7 +5077,8 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
-        @static if VERSION >= v"1.9.0-DEV.1571"
+        # and also https://github.com/JuliaLang/julia/pull/48620
+        @static if VERSION >= v"1.10.0-DEV.569"
             needs_dynamic_size_workaround = false
         else
             needs_dynamic_size_workaround = !isa(Size, LLVM.ConstantInt) || convert(Int64, Size) != 1
