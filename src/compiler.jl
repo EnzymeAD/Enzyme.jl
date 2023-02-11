@@ -969,7 +969,7 @@ end
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(res[1]), Val(Width+1))
-    ModifiedBetween = ntuple(i->false, Val(N))
+    ModifiedBetween = ntuple(i->false, Val(N+1))
     return quote
         args = ($(wrapped...),)
 
@@ -2910,7 +2910,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     mode = API.EnzymeGradientUtilsGetMode(gutils)
 
 
-    uncacheable = Vector{UInt8}(undef, 4)
+    uncacheable = Vector{UInt8}(undef, 3)
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
     
     ModifiedBetween = (uncacheable[1] != 0,) 
