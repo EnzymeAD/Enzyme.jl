@@ -2623,11 +2623,16 @@ end
 
     funcT = mi.specTypes.parameters[2]
 
+    # TODO actually do modifiedBetween
 @static if VERSION < v"1.8-"
     e_tt = Tuple{}
+    modifiedBetween = (mode != API.DEM_ForwardMode, )
 else
     e_tt = Tuple{Const{Int}}
+    modifiedBetween = (mode != API.DEM_ForwardMode, false)
 end
+
+
     eprimal, eadjoint = fspec(funcT, e_tt)
 
     # TODO: Clean this up and add to `nested_codegen!` asa feature
@@ -2640,7 +2645,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple((false for _ in mi.specTypes.parameters)...), #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
     
             jctx = ctx
@@ -2663,7 +2668,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, #=modifiedBetween=#tuple((true for _ in mi.specTypes.parameters)...), #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             jctx = ctx
 @static if VERSION < v"1.9-"
