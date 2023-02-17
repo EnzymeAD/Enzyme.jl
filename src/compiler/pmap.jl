@@ -44,7 +44,7 @@ function runtime_pmap_rev(count, ::Type{ThunkTy}, ::Val{AnyJL}, adjoint, tapes, 
     return nothing
 end
 
-function julia_activity(source_types, FTs, ops, gutils)
+function julia_activity(orig, source_types, FTs, ops, gutils)
     source_types = source_types[2:end]
     # count, funcT, funcT
     args = Type[source_types[1]]
@@ -55,10 +55,16 @@ function julia_activity(source_types, FTs, ops, gutils)
     end
     codegen_i = 2
     
+    overwritten = Bool[]
+    uncacheable = Vector{UInt8}(undef, length(ops))
+    API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+    
     for source_typ in source_types[3:end]
         if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            push!(overwritten, false)
             continue
         end
+        push!(overwritten, uncacheable[codegen_i])
 
         codegen_typ = llvmtype(ops[codegen_i])
         if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
@@ -95,7 +101,7 @@ function julia_activity(source_types, FTs, ops, gutils)
         end
         codegen_i += 1
     end
-    return args, dup_args
+    return args, dup_args, overwritten
 end
 
 function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
@@ -133,7 +139,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     
     @assert GPUCompiler.isghosttype(funcT) || Core.Compiler.isconstType(funcT) 
 
-    _, dup = julia_activity(mi.specTypes.parameters, [], ops, gutils)
+    _, dup, overwritten = julia_activity(orig, mi.specTypes.parameters, [], ops, gutils)
         e_tt = Tuple{dup...}
         @static if VERSION >= v"1.8" 
           RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...})
@@ -146,8 +152,10 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     if augfwdnm === nothing
         # TODO: Clean this up and add to `nested_codegen!` asa feature
         etarget = Compiler.EnzymeTarget()
+        funcOverwritten = true
+        indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                        #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#true, #=returnPrimal=#false, #=shadowprimalInit=#false)
+                                                #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             
         jctx = ctx
@@ -182,7 +190,7 @@ end
         Vector{TapeType}
     end
 
-    splat, _ = julia_activity(mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
+    splat, _, _ = julia_activity(orig, mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
     entry = nested_codegen!(mode, mod, runtime_fn, tt)
 
