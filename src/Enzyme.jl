@@ -360,8 +360,9 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, ptr, #=df=#nothing)
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
+    @assert primal_ptr === nothing
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, adjoint_ptr, #=df=#nothing)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -401,8 +402,9 @@ code, as well as high-order differentiation.
     end
 
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    ptr   = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, ptr, #=df=#nothing)
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    @assert primal_ptr === nothing
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, adjoint_ptr, #=df=#nothing)
     thunk(args′...)
 end
 
