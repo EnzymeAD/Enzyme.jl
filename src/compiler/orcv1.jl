@@ -5,6 +5,7 @@ import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob
 import ..Compiler
+import ..Compiler: API
 
 export get_trampoline
 
@@ -47,7 +48,7 @@ mutable struct CallbackContext
 end
 
 const l_outstanding = Base.ReentrantLock()
-const outstanding = Dict{Symbol, Tuple{CallbackContext, CallbackContext}}()
+const outstanding = Dict{Symbol, Tuple{CallbackContext, Union{Nothing, CallbackContext}}}()
 
 # Setup the lazy callback for creating a module
 function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
@@ -79,11 +80,15 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
     try
         thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))::Compiler.Thunk
         cc_adjoint.addr = thunk.adjoint
-        cc_primal.addr  = thunk.primal
+        if cc_primal !== nothing
+            cc_primal.addr  = thunk.primal
+        end
 
         # 4. Update the stub pointer to point to the recently compiled module
         set_stub!(orc, string(cc_adjoint.stub), thunk.adjoint)
-        set_stub!(orc, string(cc_primal.stub),  thunk.primal)
+        if cc_primal !== nothing
+            set_stub!(orc, string(cc_primal.stub),  thunk.primal)
+        end
     finally
         unlock(cc.l_job)
     end
@@ -96,8 +101,16 @@ end
 function get_trampoline(job)
     tag = gensym(:tag)
     l_job = Base.ReentrantLock()
+
+    mode = job.params.mode
+    needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+
     cc_adjoint = CallbackContext(tag, job, gensym(:adjoint), l_job)
-    cc_primal = CallbackContext(tag, job, gensym(:primal), l_job)
+    if needs_augmented_primal
+        cc_primal = CallbackContext(tag, job, gensym(:primal), l_job)
+    else
+        cc_primal = nothing
+    end
     lock(l_outstanding) do
         outstanding[tag] = (cc_adjoint, cc_primal)
     end
@@ -108,10 +121,15 @@ function get_trampoline(job)
     addr_adjoint = callback!(orc, c_callback, pointer_from_objref(cc_adjoint))
     create_stub!(orc, string(cc_adjoint.stub), addr_adjoint)
 
-    addr_primal = callback!(orc, c_callback, pointer_from_objref(cc_primal))
-    create_stub!(orc, string(cc_primal.stub), addr_primal)
+    if needs_augmented_primal
+        addr_primal = callback!(orc, c_callback, pointer_from_objref(cc_primal))
+        create_stub!(orc, string(cc_primal.stub), addr_primal)
+        addr_primal_stub = address(orc, string(cc_primal.stub))
+    else
+        addr_primal_stub = nothing
+    end
 
-    return address(orc, string(cc_adjoint.stub))#, address(orc, string(cc_primal.stub))
+    return address(orc, string(cc_adjoint.stub)), nothing
 end
 
 
