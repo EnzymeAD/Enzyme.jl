@@ -5,6 +5,7 @@ import LLVM:TargetMachine
 
 import GPUCompiler
 import ..Compiler
+import ..Compiler: API
 
 export get_trampoline
 
@@ -124,20 +125,20 @@ function move_to_threadsafe(ir)
     end
 end
 
-function add_trampoline!(jd, (lljit, lctm, ism), name, target)
+function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     flags = LLVM.API.LLVMJITSymbolFlags(
                 LLVM.API.LLVMJITSymbolGenericFlagsCallable |
                 LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
 
     alias = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, name),
+                mangle(lljit, entry),
                 LLVM.API.LLVMOrcCSymbolAliasMapEntry(
                     mangle(lljit, target), flags))
 
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
     
-    LLVM.lookup(lljit, alias)
+    LLVM.lookup(lljit, entry)
 end
 
 function get_trampoline(job)
@@ -152,7 +153,6 @@ function get_trampoline(job)
 
     mode = job.params.mode
     needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
-    @show mode
 
     # We could also use one dylib per job
     jd = JITDylib(lljit)
@@ -160,20 +160,19 @@ function get_trampoline(job)
     adjoint_sym = String(gensym(:adjoint))
     _adjoint_sym = String(gensym(:adjoint))
     adjoint_addr = add_trampoline!(jd, (lljit, lctm, ism),
-                                   _adjoint_sym, target)
+                                   _adjoint_sym, adjoint_sym)
 
     if needs_augmented_primal
         primal_sym = String(gensym(:augmented_primal))
         _primal_sym = String(gensym(:augmented_primal))
         primal_addr = add_trampoline!(jd, (lljit, lctm, ism),
-                                    _primal_sym, primal_sym)
+                                      _primal_sym, primal_sym)
     else
         primal_sym = nothing
         primal_addr = nothing
     end
 
     # 3. add MU that will call back into the compiler
-    # primal_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _primal_sym), flags)
     function materialize(mr)
         # Rename adjointf to match target_sym
         # Really we should do:
@@ -201,11 +200,20 @@ function get_trampoline(job)
 
     function discard(jd, sym) end
 
-    symbols = [adjoint_sym]
+    flags = LLVM.API.LLVMJITSymbolFlags(
+                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
+                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+
+    symbols = [
+        LLVM.API.LLVMOrcCSymbolFlagsMapPair(
+            mangle(lljit, adjoint_sym), flags),
+    ]
     if needs_augmented_primal
-        push!(symbols, primal_sym)
+        push!(symbols, LLVM.API.LLVMOrcCSymbolFlagsMapPair(
+            mangle(lljit, primal_sym), flags),)
     end
-    mu = LLVM.CustomMaterializationUnit(entry_sym, symbols,
+
+    mu = LLVM.CustomMaterializationUnit(adjoint_sym, symbols,
                                         materialize, discard)
     LLVM.define(jd, mu)
     return adjoint_addr, primal_addr

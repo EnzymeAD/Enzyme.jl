@@ -7955,8 +7955,11 @@ import GPUCompiler: deferred_codegen_jobs
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
     job    = CompilerJob(target, primal, params)
     
-    addr = get_trampoline(job)
-    id = Base.reinterpret(Int, pointer(addr))
+    adjoint_addr, primal_addr = get_trampoline(job)
+    id = Base.reinterpret(Int, pointer(adjoint_addr))
+    if primal_addr !== nothing
+        error("Not implmented")
+    end
 
     deferred_codegen_jobs[id] = job
     trampoline = reinterpret(Ptr{Cvoid}, id)
