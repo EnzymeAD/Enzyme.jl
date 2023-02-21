@@ -124,6 +124,22 @@ function move_to_threadsafe(ir)
     end
 end
 
+function add_trampoline!(jd, (lljit, lctm, ism), name, target)
+    flags = LLVM.API.LLVMJITSymbolFlags(
+                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
+                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+
+    alias = LLVM.API.LLVMOrcCSymbolAliasMapPair(
+                mangle(lljit, name),
+                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
+                    mangle(lljit, target), flags))
+
+    mu = LLVM.reexports(lctm, ism, jd, [alias])
+    LLVM.define(jd, mu)
+    
+    LLVM.lookup(lljit, alias)
+end
+
 function get_trampoline(job)
     compiler = jit[]
     lljit = compiler.jit
@@ -134,64 +150,63 @@ function get_trampoline(job)
         error("Delayed compilation not available.")
     end
 
+    mode = job.params.mode
+    needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+    @show mode
+
     # We could also use one dylib per job
     jd = JITDylib(lljit)
 
     adjoint_sym = String(gensym(:adjoint))
     _adjoint_sym = String(gensym(:adjoint))
+    adjoint_addr = add_trampoline!(jd, (lljit, lctm, ism),
+                                   _adjoint_sym, target)
 
-    primal_sym = String(gensym(:adjoint))
-    _primal_sym = String(gensym(:adjoint))
-
-    flags = LLVM.API.LLVMJITSymbolFlags(
-                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
-
-    adjoint = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, adjoint_sym),
-                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
-                    mangle(lljit, _adjoint_sym), flags))
-    primal = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, primal_sym),
-                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
-                    mangle(lljit, _primal_sym), flags))
-
-    mu = LLVM.reexports(lctm, ism, jd, [adjoint, primal])
-    LLVM.define(jd, mu)
-
-    # 2. Lookup address of entry symbol
-    adjoint_addr = LLVM.lookup(lljit, adjoint)
-    primal_addr = LLVM.lookup(lljit, primal)
+    if needs_augmented_primal
+        primal_sym = String(gensym(:augmented_primal))
+        _primal_sym = String(gensym(:augmented_primal))
+        primal_addr = add_trampoline!(jd, (lljit, lctm, ism),
+                                    _primal_sym, primal_sym)
+    else
+        primal_sym = nothing
+        primal_addr = nothing
+    end
 
     # 3. add MU that will call back into the compiler
-    adjoint_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _adjoint_sym), flags)
-    primal_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _primal_sym), flags)
-
+    # primal_sym = LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, _primal_sym), flags)
     function materialize(mr)
-        mod, adjoint_name, primal_name = Compiler._thunk(job)
-        adjointf = functions(mod)[adjoint_name]
-        primalf = functions(mod)[primal_name]
-
         # Rename adjointf to match target_sym
         # Really we should do:
         # Create a re-export for a unique name, and a custom materialization unit that makes the deferred decision. E.g. add "foo" -> "my_deferred_decision_sym.1". Then define a CustomMU whose materialization method looks like:
         # 1. Make the runtime decision about what symbol should implement "foo". Let's call this "foo.rt.impl".
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
+        mod, adjoint_name, primal_name = Compiler._thunk(job)
+        adjointf = functions(mod)[adjoint_name]
         LLVM.name!(adjointf, adjoint_sym)
-        LLVM.name!(primalf, primal_sym)
-        tsm = move_to_threadsafe(mod)
+        if needs_augmented_primal
+            primalf = functions(mod)[primal_name]
+            LLVM.name!(primalf, primal_sym)
+        else
+            @assert primal_name === nothing
+            primalf = nothing
+        end
 
+        tsm = move_to_threadsafe(mod)
         il = LLVM.IRTransformLayer(lljit)
         LLVM.emit(il, mr, tsm)
 
         return nothing
     end
 
-    function discard(jd, sym)
-    end
+    function discard(jd, sym) end
 
-    mu = LLVM.CustomMaterializationUnit(entry_sym, [adjoint_sym, primal_sym], materialize, discard)
+    symbols = [adjoint_sym]
+    if needs_augmented_primal
+        push!(symbols, primal_sym)
+    end
+    mu = LLVM.CustomMaterializationUnit(entry_sym, symbols,
+                                        materialize, discard)
     LLVM.define(jd, mu)
     return adjoint_addr, primal_addr
 end
