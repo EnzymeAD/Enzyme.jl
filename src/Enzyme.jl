@@ -347,8 +347,9 @@ code, as well as high-order differentiation.
         (f, nothing)
     end
     
-    ptr   = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, ptr, dfn)
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    @assert primal_ptr === nothing
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, adjoint_ptr, dfn)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -388,7 +389,6 @@ code, as well as high-order differentiation.
     end
 
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     fn, dfn = if F <: Duplicated
@@ -397,8 +397,9 @@ code, as well as high-order differentiation.
         (f, nothing)
     end
 
-    ptr   = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, ptr, dfn)
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
+    @assert primal_ptr === nothing
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, adjoint_ptr, dfn)
     thunk(args′...)
 end
 

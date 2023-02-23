@@ -8098,13 +8098,25 @@ import GPUCompiler: deferred_codegen_jobs
     params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, DupClosure, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
     job    = CompilerJob(target, primal, params)
     
-    addr = get_trampoline(job)
-    id = Base.reinterpret(Int, pointer(addr))
+    adjoint_addr, primal_addr = get_trampoline(job)
+    adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))
+    deferred_codegen_jobs[adjoint_id] = job
 
-    deferred_codegen_jobs[id] = job
-    trampoline = reinterpret(Ptr{Cvoid}, id)
+    if primal_addr !== nothing
+        primal_id = Base.reinterpret(Int, pointer(primal_addr))
+        deferred_codegen_jobs[primal_id] = job
+    else
+        primal_id = 0
+    end
+
     quote
-        ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $trampoline)
+        adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
+        primal = if $(primal_addr !== nothing)
+            ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
+        else
+            nothing
+        end
+        adjoint, primal
     end
 end
 
