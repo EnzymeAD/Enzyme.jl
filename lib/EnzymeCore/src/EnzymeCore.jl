@@ -61,6 +61,10 @@ accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
+    function Duplicated(val::T, dval::T) where T
+        check_congruence(val, dval)
+        new{T}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -102,6 +106,31 @@ batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
+"""
+    congruent(a::T, b::T)::T
+
+Defines values to be congruent, e.g. structurally equivalent.
+"""
+function congruent end
+
+congruent(a::T, b::T) where T<:Number = true
+congruent(a::T, b::T) where T<:AbstractArray = length(a) == length(b)
+
+function check_congruence(a::T, b::T) where T
+    # TODO: Use once hasmethod is static
+    # if !hasmethod(congruent, Tuple{T, T})
+    #     error("""
+    #     Implement EnzymeCore.congruent(a, b) for your type $T
+    #     """)
+    # end
+    if !congruent(a, b)
+        error("""
+        Your values are not congruent, structural equivalence is
+        requirement for the correctness of the adjoint pass.
+        """)
+    end
+end
+ 
 """
     abstract type Mode
 
