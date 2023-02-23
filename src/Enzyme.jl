@@ -46,6 +46,13 @@ import .Compiler: CompilationException
 # @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
 # @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
 
+@inline function falses_from_args(::Val{add}, args::Vararg{Any, N}) where {add,N}
+    ntuple(Val(add+N)) do i
+        Base.@_inline_meta
+        false
+    end
+end
+
 @inline function annotate(args::Vararg{Any, N}) where N
     ntuple(Val(N)) do i
         Base.@_inline_meta
@@ -162,11 +169,20 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
+
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(fn, tt)
         if !allocatedinline(rt) || rt isa Union
-            forward, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), #=ModifiedBetween=#Val(false), #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
+            forward, adjoint = Enzyme.Compiler.thunk(fn, dfn, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(args′...)
             tape = res[1]
             if ReturnPrimal
@@ -178,24 +194,9 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
+    thunk = Enzyme.Compiler.thunk(fn, dfn, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = eltype(Compiler.return_type(thunk))
-        args′ = (args′..., one(rt))
-    end
-    thunk(args′...)
-end
-
-@inline function autodiff(::ReverseMode{ReturnPrimal}, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args...)
-    if width == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
-    if A <: Active
         rt = eltype(Compiler.return_type(thunk))
         args′ = (args′..., one(rt))
     end
@@ -205,26 +206,21 @@ end
 
 """
     autodiff(mode::Mode, f, args...)
-    autodiff(f, mode::Mode, args...)
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff(mode::Mode, f::F, args...) where {F}
+@inline function autodiff(mode::CMode, f::F, args...) where {F, CMode<:Mode}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
+    fn = if F <: Duplicated
+        f.val
+    else
+        f
+    end
+    rt    = Core.Compiler.return_type(fn, tt)
     A     = guess_activity(rt, mode)
     autodiff(mode, f, A, args′...)
-end
-
-@inline function autodiff(mode::Mode, dupf::Duplicated{F}, args...) where {F}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt, mode)
-    autodiff(mode, dupf, A, args′...)
 end
 
 """
@@ -297,34 +293,17 @@ f(x) = x*x
     else
         A
     end
+    
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
-    thunk = Enzyme.Compiler.thunk(f, #=df=#nothing, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     #=ModifiedBetween=#Val(false), ReturnPrimal)
-    thunk(args′...)
-end
-
-@inline function autodiff(::ForwardMode, dupf::Duplicated{F}, ::Type{A}, args...) where {F, A<:Annotation}
-    args′  = annotate(args...)
-    if any_active(args′...)
-        throw(ErrorException("Active arguments not allowed in forward mode"))
-    end
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args′...)
-    if width == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-    if A <: Active
-        throw(ErrorException("Active Returns not allowed in forward mode"))
-    end
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    RT = if A <: Duplicated && width != 1
-        BatchDuplicated{eltype(A), width}
-    elseif A <: DuplicatedNoNeed && width != 1
-        BatchDuplicatedNoNeed{eltype(A), width}
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
     else
-        A
+        (f, nothing)
     end
-    thunk = Enzyme.Compiler.thunk(#=f=#dupf.val, #=df=#dupf.dval, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+
+    thunk = Enzyme.Compiler.thunk(fn, dfn, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+                                     ModifiedBetween, ReturnPrimal)
     thunk(args′...)
 end
 
@@ -360,9 +339,17 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ReverseModeCombined), Val(width), #=ModifiedBetween=#Val(false), Val(ReturnPrimal))
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+    
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     @assert primal_ptr === nothing
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, adjoint_ptr, #=df=#nothing)
+    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, adjoint_ptr, dfn)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -402,9 +389,17 @@ code, as well as high-order differentiation.
     end
 
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(f, Val(tt′), Val(rt), #=dupClosure=#Val(false), Val(API.DEM_ForwardMode), Val(width), #=ModifiedBetween=#Val(false), ReturnPrimal)
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(fn, Val(tt′), Val(rt), #=dupClosure=#Val(dfn !== nothing), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, adjoint_ptr, #=df=#nothing)
+    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, adjoint_ptr, dfn)
     thunk(args′...)
 end
 
@@ -419,6 +414,15 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     rt    = Core.Compiler.return_type(f, tt)
     rt    = guess_activity(rt, mode)
     autodiff_deferred(mode, f, rt, args′...)
+end
+
+@inline function autodiff_deferred(mode::SMode, dupf::Duplicated{F}, args...) where {F, SMode<:Mode}
+    args′ = annotate(args...)
+    tt′   = Tuple{map(Core.Typeof, args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    rt    = Core.Compiler.return_type(dupf.val, tt)
+    A     = guess_activity(rt, mode)
+    autodiff_deferred(mode, dupf, A, args′...)
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
@@ -684,7 +688,8 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
-    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), #=ModifiedBetween=#Val(false))
+    ModifiedBetween = Val((false, false))
+    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -692,7 +697,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), #=ModifiedBetween=#Val(false))
+        primal2, adjoint2 = Enzyme.Compiler.thunk(f, #=df=#nothing, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
     end
 
     tmp = ntuple(num) do i
@@ -719,7 +724,8 @@ end
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
     rt = Core.Compiler.return_type(f, tt)
-    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), #=ModifiedBetween=#Val(false))
+    ModifiedBetween = Val((false, false))
+    primal, adjoint = Enzyme.Compiler.thunk(f, #=df=#nothing, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
