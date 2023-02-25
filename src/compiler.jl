@@ -7225,13 +7225,20 @@ end
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
         has_custom_rule = false
+
+        # TODO: Julia 1.6-1.8
+        specTypes = mi.specTypes
+        if mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+            specTypes = Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+        end
+
         if mode == API.DEM_ForwardMode
-            has_custom_rule = EnzymeRules.has_frule_from_sig(mi.specTypes; world)
+            has_custom_rule = EnzymeRules.has_frule_from_sig(specTypes; world)
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
         else
-            has_custom_rule = EnzymeRules.has_rrule_from_sig(mi.specTypes; world)
+            has_custom_rule = EnzymeRules.has_rrule_from_sig(specTypes; world)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
             end

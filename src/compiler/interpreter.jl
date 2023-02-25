@@ -1,7 +1,7 @@
 module Interpreter
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
-using GPUCompiler: CodeCache, WorldView
+using GPUCompiler: CodeCache, WorldView, @safe_debug
 import ..Enzyme
 import ..EnzymeRules
 
@@ -141,18 +141,29 @@ import Core.Compiler: CallInfo
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    if is_primitive_func(mi.specTypes)
+    specTypes = mi.specTypes
+    if mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+        specTypes = Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+    end
+
+    if is_primitive_func(specTypes)
+        @safe_debug "Blocking inlining for primitive func" mi.specTypes
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
+        @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
         return nothing
     end
+
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
+            @safe_debug "Blocking inlining due to frule" mi.specTypes
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
+            @safe_debug "Blocking inling due to rrule" mi.specTypes
             return nothing
         end
     end
