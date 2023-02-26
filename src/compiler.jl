@@ -3288,6 +3288,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
+    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
@@ -3300,25 +3301,42 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     tt = copy(activity)
-    insert!(tt, 2, Type{RT})
+    if isKWCall
+        popfirst!(tt)
+        kwargs = tt[1]
+        @assert kwargs <: Const 
+        tt[1] = kwargs.parameters[1]
+        insert!(tt, 2, Core.typeof(EnzymeRules.forward))
+        insert!(tt, 4, Type{RT})
+    else
+        insert!(tt, 2, Type{RT})
+    end
     TT = Tuple{tt...}
 
     # TODO get world
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
-    if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
+    @safe_debug "Trying to apply custom forward rule" TT isKWCall
+    llvmf = nothing
+    if !isKWCall && EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
         @safe_debug "Applying custom forward rule" TT
         llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT)
-    else
+        fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+    end
+
+    if isKWCall && EnzymeRules.isapplicable(Core.kwcall, TT; world)
+        @safe_debug "Applying custom forward rule (kwcall)" TT
+        llvmf = nested_codegen!(mode, mod, Core.kwcall, TT)
+        fwd_RT = Core.Compiler.return_type(Core.kwcall, TT, world)
+    end
+
+    if llvmf === nothing
         @safe_debug "No custom forward rule is applicable for" TT
         emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
         return nothing
     end
     
-    fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
-
-
     sret = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
         sret = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[1])))
