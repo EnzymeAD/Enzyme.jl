@@ -3104,6 +3104,8 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     ops = ops[1:end-1]
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
+    kwtup = nothing
+
     args = LLVM.Value[]
     activity = Type[]
     overwritten = Bool[]
@@ -3122,8 +3124,14 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-   
+  
+    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    
+    true_idx = 0
+    
     for arg in jlargs
+        true_idx += 1
+
         if arg.cc == GPUCompiler.GHOST
             push!(activity, Const{arg.typ})
             push!(overwritten, false)
@@ -3133,14 +3141,24 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
         op = ops[op_idx]
         push!(overwritten, uncacheable[op_idx] != 0)
         op_idx+=1
-        
+ 
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if reverse
             val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
         end
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, #=isforeign=#false)
-       
+        
+        if isKWCall && true_idx == 2
+            # Only constant kw arg tuple's are currently supported
+            @assert activep == API.DFT_CONSTANT
+            Ty = arg.typ
+
+            push!(args, val)
+            kwtup = Ty
+            continue
+        end
+
         # TODO type analysis deduce if duplicated vs active
         if activep == API.DFT_CONSTANT
             Ty = Const{arg.typ}
@@ -3232,7 +3250,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     
     @assert op_idx-1 == length(ops)
 
-    return args, activity, (overwritten...,), actives
+    return args, activity, (overwritten...,), actives, kwtup
 end
 
 function enzyme_custom_setup_ret(gutils, orig, mi, job)
@@ -3291,7 +3309,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     
@@ -3303,12 +3321,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     tt = copy(activity)
     if isKWCall
         popfirst!(tt)
-        kwargs = tt[1]
-        @assert kwargs <: Const 
-        tt[1] = kwargs.parameters[1]
+        @assert kwtup !== nothing
+        insert!(tt, 1, kwtup)
         insert!(tt, 2, Core.typeof(EnzymeRules.forward))
         insert!(tt, 4, Type{RT})
     else
+        @assert kwtup === nothing
         insert!(tt, 2, Type{RT})
     end
     TT = Tuple{tt...}
@@ -3446,7 +3464,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     mi, job = enzyme_custom_extract_mi(orig)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     alloctx = LLVM.Builder(ctx)
