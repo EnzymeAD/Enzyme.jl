@@ -18,6 +18,81 @@ The Enzyme binary dependencies will be installed automatically via Julia's binar
 
 The Enzyme.jl API revolves around the function [`autodiff`](@ref), see it's documentation for details and a usage example. Also see [Implementing pullbacks](@ref) on how to use Enzyme.jl to implement back-propagation for functions with non-scalar results.
 
+## Getting started
+
+```julia
+rosenbrook(x, y) = (1.0 - x)^2 + 100.0 * (y - x^2)^2
+rosenbrook_inp(x) = 1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
+```
+
+### Reverse mode
+
+```julia-repl
+julia> autodiff(Reverse, rosenbrook, Active, Active(1.0), Active(2.0))
+(-400.0, 200.0)
+```
+
+```julia-repl
+julia> x = [1.0, 2.0]
+2-element Vector{Float64}:
+ 1.0
+ 2.0
+
+julia> dx = [0.0, 0.0]
+2-element Vector{Float64}:
+ 0.0
+ 0.0
+
+julia> autodiff(Reverse, rosenbrook_inp, Active, Duplicated(x, dx))
+()
+
+julia> dx
+2-element Vector{Float64}:
+ -400.0
+  200.0
+```
+
+Both the inplace and "normal" variant return the gradient. The difference is that with
+[`Active`](@ref) the gradient is returned and with [`Duplicated`](@ref) the gradient is returned in the shadow-heap.
+
+### Forward mode
+With forward mode we can seed the arguments. In forward mode `Duplicated(x, 0.0)` is equivalent to `Const(x)`,
+except that we can perform more optimizations for `Const`. We obtain as a result the primal return of `rosenbrook`
+and the tangent return.
+
+```julia-repl
+julia> autodiff(Forward, rosenbrook, Duplicated, Const(1.0), Duplicated(3.0, 1.0))
+(400.0, 400.0)
+
+julia> autodiff(Forward, rosenbrook, Duplicated, Duplicated(1.0, 1.0), Const(3.0))
+(400.0, -800.0)
+```
+
+Of note, when we seed both arguments at once the tangent return is the sum of both.
+
+```julia-repl
+julia> autodiff(Forward, rosenbrook, Duplicated, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
+(400.0, -400.0)
+```
+
+We can also use forward mode with our inplace methods.
+
+```julia-repl
+julia> x = [1.0, 3.0]
+2-element Vector{Float64}:
+ 1.0
+ 3.0
+
+julia> dx=[1.0, 1.0]
+2-element Vector{Float64}:
+ 1.0
+ 1.0
+
+julia> autodiff(Forward, rosenbrook_inp, Duplicated, Duplicated(x, dx))
+(400.0, -400.0)
+```
+
+Note the seeding through `dx`.
 
 ## Caveats / Known-issues
 
