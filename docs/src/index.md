@@ -29,7 +29,10 @@ rosenbrook_inp(x) = 1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
 
 ```julia-repl
 julia> autodiff(Reverse, rosenbrook, Active, Active(1.0), Active(2.0))
-(-400.0, 200.0)
+((-400.0, 200.0),)
+
+julia> autodiff(ReverseWithPrimal, rosenbrook, Active, Active(1.0), Active(2.0))
+((-400.0, 200.0), 100.0)
 ```
 
 ```julia-repl
@@ -44,7 +47,7 @@ julia> dx = [0.0, 0.0]
  0.0
 
 julia> autodiff(Reverse, rosenbrook_inp, Active, Duplicated(x, dx))
-()
+((nothing,),)
 
 julia> dx
 2-element Vector{Float64}:
