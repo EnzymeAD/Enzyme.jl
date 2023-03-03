@@ -11,7 +11,7 @@ function f_ip(x)
    return nothing
 end
 
-import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule, has_rrule_from_sig
+import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
