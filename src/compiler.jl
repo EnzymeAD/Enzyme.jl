@@ -3462,6 +3462,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
+    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
@@ -3475,13 +3476,28 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     world = enzyme_extract_world(fn)
 
     C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    
     augprimal_tt = copy(activity)
-    insert!(augprimal_tt, 2, Type{RT})
-    pushfirst!(augprimal_tt, C)
-    augprimal_TT = Tuple{augprimal_tt...}
+    if isKWCall
+        popfirst!(augprimal_tt)
+        @assert kwtup !== nothing
+        insert!(augprimal_tt, 1, kwtup)
+        insert!(augprimal_tt, 2, Core.typeof(EnzymeRules.augmented_primal))
+        insert!(augprimal_tt, 3, C)
+        insert!(augprimal_tt, 5, Type{RT})
+
+        augprimal_TT = Tuple{augprimal_tt...} 
+        aug_RT = Core.Compiler.return_type(Core.kwcall, augprimal_TT, world)
+    else
+        @assert kwtup === nothing
+        insert!(augprimal_tt, 1, C)
+        insert!(augprimal_tt, 3, Type{RT})
+        
+        augprimal_TT = Tuple{augprimal_tt...}
+        aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+    end
 
     rev_TT = nothing
-    aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
     rev_RT = nothing
 
     TapeT = Nothing
@@ -3493,32 +3509,57 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
+    llvmf = nothing
+    
     if forward
-        if EnzymeRules.isapplicable(EnzymeRules.augmented_primal, augprimal_TT; world)
+        if !isKWCall && EnzymeRules.isapplicable(EnzymeRules.augmented_primal, augprimal_TT; world)
             @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT)
-        else
+        end
+        if isKWCall && EnzymeRules.isapplicable(Core.kwcall, augprimal_TT; world)
+            @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
+            llvmf = nested_codegen!(mode, mod, Core.kwcall, augprimal_TT)
+        end
+
+        if llvmf == nothing
             @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-            emit_error(B, orig, "Enzyme: No augmented custom rule was appliable for " * string(augprimal_TT))
+            emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
             return C_NULL
         end
     else
         tt = copy(activity)
-        insert!(tt, 2, RT <: Active ? RT : Type{RT})
-        insert!(tt, 3, TapeT)
-        pushfirst!(tt, C)
-        TT = Tuple{tt...}
-        rev_TT = TT
-
-        if EnzymeRules.isapplicable(EnzymeRules.reverse, TT; world)
-            @safe_debug "Applying custom reverse rule" TT
-            llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, TT)
+        if isKWCall
+            popfirst!(tt)
+            @assert kwtup !== nothing
+            insert!(tt, 1, kwtup)
+            insert!(tt, 2, Core.typeof(EnzymeRules.reverse))
+            insert!(tt, 3, C)
+            insert!(tt, 5, RT <: Active ? RT : Type{RT})
+            insert!(tt, 6, TapeT)
         else
-            @safe_debug "No custom reverse rule is applicable for" TT
-            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(TT))
+            @assert kwtup === nothing
+            insert!(tt, 1, C)
+            insert!(tt, 3, RT <: Active ? RT : Type{RT})
+            insert!(tt, 4, TapeT)
+        end
+        rev_TT = Tuple{tt...}
+
+        if !isKWCall && EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
+            @safe_debug "Applying custom reverse rule" TT=rev_TT
+            llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT)
+            rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+        end
+        if isKWCall && EnzymeRules.isapplicable(Core.kwcall, rev_TT; world)
+            @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
+            llvmf = nested_codegen!(mode, mod, Core.kwcall, rev_TT)
+            rev_RT = Core.Compiler.return_type(Core.kwcall, rev_TT, world)
+        end
+
+        if llvmf == nothing
+            @safe_debug "No custom reverse rule is applicable for" augprimal_TT
+            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(augprimal_TT))
             return C_NULL
         end
-        rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, TT, world)
     end
      
     needsTape = !GPUCompiler.isghosttype(TapeT) && !Core.Compiler.isconstType(TapeT)
@@ -3564,11 +3605,11 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
 
-            pushfirst!(args, al)
+            insert!(args, 1+(kwtup!==nothing), al)
         end
         if needsTape
             @assert tape != C_NULL
-            pushfirst!(args, LLVM.Value(tape))
+            insert!(args, 1+(kwtup!==nothing), LLVM.Value(tape))
         end
     end
 
