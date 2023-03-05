@@ -1678,6 +1678,22 @@ end
     autodiff(Forward, foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
+@testset "Deferred helper" begin
+    fncs = [x -> x[1]^2 + x[2]^2, x -> x[2] * sin(x[1]) - x[1]]
+    cons_h = function (res, θ)
+        for i in 1:2
+            res[i] .= Enzyme.jacobian(Forward, (x) -> Enzyme.gradient_deferred(Reverse, fncs[i], x), θ)
+        end
+    end
+    x0 = zeros(2)
+    H3 = [Array{Float64}(undef, 2, 2), Array{Float64}(undef, 2, 2)]
+    cons_h(H3, x0)
+    @test H3[1] ≈ [ 2.0   0.0;
+                    0.0   2.0]
+    @test H3[2] ≈ [ 0.0   1.0;
+                    1.0   0.0]
+end
+
 using  Documenter
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 @testset "DocTests" begin

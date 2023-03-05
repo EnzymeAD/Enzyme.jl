@@ -13,6 +13,7 @@ import EnzymeCore: autodiff, autodiff_deferred
 export autodiff, autodiff_deferred
 
 export jacobian, gradient, gradient!
+export jacobian_deferred, gradient_deferred, gradient_deferred!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -503,6 +504,11 @@ grad = gradient(Reverse, f, [2.0, 3.0])
     autodiff(Reverse, f, Duplicated(x, dx))
     dx
 end
+@inline function gradient_deferred(::ReverseMode, f, x)
+    dx = zero(x)
+    autodiff_deferred(Reverse, f, Duplicated(x, dx))
+    dx
+end
 
 
 """
@@ -529,6 +535,11 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 @inline function gradient!(::ReverseMode, dx, f, x)
     dx .= 0
     autodiff(Reverse, f, Duplicated(x, dx))
+    dx
+end
+@inline function gradient_deferred!(::ReverseMode, dx, f, x)
+    dx .= 0
+    autodiff_deferred(Reverse, f, Duplicated(x, dx))
     dx
 end
 
@@ -558,6 +569,12 @@ grad = gradient(Forward, f, [2.0, 3.0])
         return ()
     end
     values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+end
+@inline function gradient_deferred(::ForwardMode, f, x; shadow=onehot(x))
+    if length(x) == 0
+        return ()
+    end
+    values(only(autodiff_deferred(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -608,6 +625,22 @@ end
     end
 end
 
+@inline function gradient_deferred(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    tmp = ntuple(length(shadow)) do i
+        values(autodiff_deferred(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+    end
+    tupleconcat(tmp...)
+end
+
+@inline function gradient_deferred(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+    ntuple(length(shadow)) do i
+        autodiff_deferred(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+    end
+end
+
 """
     jacobian(::ForwardMode, f, x; shadow=onehot(x))
     jacobian(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
@@ -653,6 +686,33 @@ end
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
     cols = ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+    end
+    reduce(hcat, cols)
+end
+
+@inline function jacobian_deferred(::ForwardMode, f, x; shadow=onehot(x))
+    cols = if length(x) == 0
+        return ()
+    else
+        values(only(autodiff_deferred(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+    end
+    reduce(hcat, cols)
+end
+
+@inline function jacobian_deferred(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+    if chunk == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    tmp = ntuple(length(shadow)) do i
+        values(autodiff_deferred(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+    end
+    cols = tupleconcat(tmp...)
+    reduce(hcat, cols)
+end
+
+@inline function jacobian_deferred(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+    cols = ntuple(length(shadow)) do i
+        autodiff_deferred(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
     reduce(hcat, cols)
 end
