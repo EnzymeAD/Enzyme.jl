@@ -287,9 +287,17 @@ f(x) = x*x
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
     RT = if A <: Duplicated && width != 1
-        BatchDuplicated{eltype(A), width}
+        if A isa UnionAll
+            BatchDuplicated{T, width} where T
+        else
+            BatchDuplicated{eltype(A), width}
+        end
     elseif A <: DuplicatedNoNeed && width != 1
-        BatchDuplicatedNoNeed{eltype(A), width}
+        if A isa UnionAll
+            BatchDuplicatedNoNeed{T, width} where T
+        else
+            BatchDuplicatedNoNeed{eltype(A), width}
+        end
     else
         A
     end
