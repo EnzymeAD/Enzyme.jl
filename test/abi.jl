@@ -385,3 +385,16 @@ end
     @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 end
+
+@testset "Promotion" begin
+    x = [1.0, 2.0]; dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
+    rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
+    r = autodiff(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[1] ≈ 100.0
+    @test r[2][1] ≈ -400.0
+    @test r[2][2] ≈ 200.0
+    r = autodiff_deferred(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[1] ≈ 100.0
+    @test r[2][1] ≈ -400.0
+    @test r[2][2] ≈ 200.0
+end
