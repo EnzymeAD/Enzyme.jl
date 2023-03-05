@@ -23,7 +23,7 @@ The Enzyme.jl API revolves around the function [`autodiff`](@ref), see it's docu
 
 ## Getting started
 
-```jldoctest rosenbrock ; output = false 
+```jldoctest rosenbrock
 julia> rosenbrock(x, y) = (1.0 - x)^2 + 100.0 * (y - x^2)^2
 rosenbrock (generic function with 1 method)
 
