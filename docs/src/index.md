@@ -1,5 +1,8 @@
 ```@meta
 CurrentModule = Enzyme
+DocTestSetup = quote
+    using Enzyme
+end
 ```
 
 # Enzyme
