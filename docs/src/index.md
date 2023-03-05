@@ -20,14 +20,17 @@ The Enzyme.jl API revolves around the function [`autodiff`](@ref), see it's docu
 
 ## Getting started
 
-```julia
+```jldoctest rosenbrock ; output = false 
 rosenbrock(x, y) = (1.0 - x)^2 + 100.0 * (y - x^2)^2
-rosenbrock_inp(x) = 1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
+rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
 ```
 
 ### Reverse mode
 
-```julia-repl
+The return value of reverse mode is a tuple that contains as a first value
+the derivative value of the active inputs and optionally the primal return value.
+
+```jldoctest rosenbrock
 julia> autodiff(Reverse, rosenbrock, Active, Active(1.0), Active(2.0))
 ((-400.0, 200.0),)
 
@@ -35,7 +38,7 @@ julia> autodiff(ReverseWithPrimal, rosenbrock, Active, Active(1.0), Active(2.0))
 ((-400.0, 200.0), 100.0)
 ```
 
-```julia-repl
+```jldoctest rosenbrock
 julia> x = [1.0, 2.0]
 2-element Vector{Float64}:
  1.0
@@ -56,14 +59,16 @@ julia> dx
 ```
 
 Both the inplace and "normal" variant return the gradient. The difference is that with
-[`Active`](@ref) the gradient is returned and with [`Duplicated`](@ref) the gradient is returned in the shadow-heap.
+[`Active`](@ref) the gradient is returned and with [`Duplicated`](@ref) the gradient is accumulated in place.
 
 ### Forward mode
-With forward mode we can seed the arguments. In forward mode `Duplicated(x, 0.0)` is equivalent to `Const(x)`,
-except that we can perform more optimizations for `Const`. We obtain as a result the primal return of `rosenbrock`
-and the tangent return.
+The return value of forward mode with a `Duplicated` return is a tuple containing as the first value
+the primal return value and as the second value the derivative.
 
-```julia-repl
+In forward mode `Duplicated(x, 0.0)` is equivalent to `Const(x)`,
+except that we can perform more optimizations for `Const`.
+
+```jldoctest rosenbrock
 julia> autodiff(Forward, rosenbrock, Duplicated, Const(1.0), Duplicated(3.0, 1.0))
 (400.0, 400.0)
 
@@ -73,14 +78,14 @@ julia> autodiff(Forward, rosenbrock, Duplicated, Duplicated(1.0, 1.0), Const(3.0
 
 Of note, when we seed both arguments at once the tangent return is the sum of both.
 
-```julia-repl
+```jldoctest rosenbrock
 julia> autodiff(Forward, rosenbrock, Duplicated, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
 (400.0, -400.0)
 ```
 
-We can also use forward mode with our inplace methods.
+We can also use forward mode with our inplace method.
 
-```julia-repl
+```jldoctest rosenbrock
 julia> x = [1.0, 3.0]
 2-element Vector{Float64}:
  1.0
@@ -96,6 +101,25 @@ julia> autodiff(Forward, rosenbrock_inp, Duplicated, Duplicated(x, dx))
 ```
 
 Note the seeding through `dx`.
+
+#### Vector forward mode
+
+We can also use vector mode to calculate both derivatives at once.
+
+```jldoctest rosenbrock
+julia> autodiff(Forward, rosenbrock, BatchDuplicated, BatchDuplicated(1.0, (1.0, 0.0)), BatchDuplicated(3.0, (0.0, 1.0)))
+(400.0, (var"1" = -800.0, var"2" = 400.0))
+
+julia> x = [1.0, 3.0]
+2-element Vector{Float64}:
+ 1.0
+ 3.0
+
+julia> dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
+
+julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx_1, dx_2)))
+(400.0, (var"1" = -800.0, var"2" = 400.0))
+```
 
 ## Caveats / Known-issues
 
