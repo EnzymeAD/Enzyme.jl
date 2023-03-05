@@ -374,29 +374,47 @@ code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
     args′ = annotate(args...)
+    if any_active(args′...)
+        throw(ErrorException("Active arguments not allowed in forward mode"))
+    end
     tt′   = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    if A isa UnionAll
+    RT = if A <: Duplicated && width != 1
+        if A isa UnionAll
+            BatchDuplicated{T, width} where T
+        else
+            BatchDuplicated{eltype(A), width}
+        end
+    elseif A <: DuplicatedNoNeed && width != 1
+        if A isa UnionAll
+            BatchDuplicatedNoNeed{T, width} where T
+        else
+            BatchDuplicatedNoNeed{eltype(A), width}
+        end
+    else
+        A
+    end
+    if RT isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f, tt)
-        rt = A{rt}
+        rt = RT{rt}
     else
-        @assert A isa DataType
-        rt = A
+        @assert RT isa DataType
+        rt = RT
     end
 
     if eltype(rt) == Union{}
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    if A <: Active
+    if RT <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     fn, dfn = if F <: Duplicated
