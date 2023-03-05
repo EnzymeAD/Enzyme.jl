@@ -3556,8 +3556,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         end
 
         if llvmf == nothing
-            @safe_debug "No custom reverse rule is applicable for" augprimal_TT
-            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(augprimal_TT))
+            @safe_debug "No custom reverse rule is applicable for" rev_TT
+            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(rev_TT))
             return C_NULL
         end
     end
@@ -3694,7 +3694,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         Tys = Type[eltype(A) for A in activity if A <: Active]
         ST = Tuple{Tys...}
         if rev_RT != ST 
-            emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
+            emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
             return C_NULL
         end
  
