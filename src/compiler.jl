@@ -3124,8 +3124,12 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-  
-    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+ 
+    if VERSION >= v"1.9.0-DEV.1598"
+        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    else
+        isKWCall = false
+    end
     
     true_idx = 0
     
@@ -3306,7 +3310,11 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
-    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    if VERSION >= v"1.9.0-DEV.1598"
+        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    else
+        isKWCall = false
+    end
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
@@ -3462,7 +3470,11 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
-    isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    if VERSION >= v"1.9.0-DEV.1598"
+        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    else
+        isKWCall = false
+    end
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
@@ -7305,7 +7317,7 @@ end
 
         # TODO: Julia 1.6-1.8
         specTypes = mi.specTypes
-        if mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+        if VERSION >= v"1.9.0-DEV.1598" && mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
             specTypes = Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
         end
 

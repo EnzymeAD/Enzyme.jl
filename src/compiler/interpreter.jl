@@ -142,7 +142,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
     specTypes = mi.specTypes
-    if mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    if VERSION >= v"1.9.0-DEV.1598" && mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
         specTypes = Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
     end
 
