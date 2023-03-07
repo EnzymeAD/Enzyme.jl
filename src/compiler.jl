@@ -3154,12 +3154,17 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, #=isforeign=#false)
         
         if isKWCall && true_idx == 2
-            # Only constant kw arg tuple's are currently supported
-            @assert activep == API.DFT_CONSTANT
             Ty = arg.typ
 
             push!(args, val)
-            kwtup = Ty
+            
+            # Only constant kw arg tuple's are currently supported
+            if activep == API.DFT_CONSTANT
+                kwtup = Ty
+            else
+                @assert activep == API.DFT_DUP_ARG
+                kwtup = Duplicated{Ty}
+            end
             continue
         end
 
@@ -3320,7 +3325,6 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
-    
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = API.EnzymeGradientUtilsGetMode(gutils)
@@ -3338,6 +3342,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         insert!(tt, 2, Type{RT})
     end
     TT = Tuple{tt...}
+    
+    if kwtup !== nothing && kwtup <: Duplicated
+        @safe_debug "Non-constant keyword argument found for " TT
+        emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(TT))
+        return nothing
+    end
 
     # TODO get world
     curent_bb = position(B)
@@ -3507,6 +3517,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         
         augprimal_TT = Tuple{augprimal_tt...}
         aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+    end
+    
+    if kwtup !== nothing && kwtup <: Duplicated
+        @safe_debug "Non-constant keyword argument found for " augprimal_TT
+        emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(augprimal_TT))
+        return C_NULL
     end
 
     rev_TT = nothing

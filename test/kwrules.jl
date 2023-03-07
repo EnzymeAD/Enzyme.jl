@@ -45,5 +45,18 @@ end
 g3(x, y) = f_kw3(x; val=y)
 @test_throws MethodError autodiff(Forward, g3, Duplicated(2.0, 1.0), Const(42.0))[1] ≈ 14.0
 
+function f_kw4(x; y=2.0)
+    x*y
+end
+
+function forward(::Const{typeof(f_kw4)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; y)
+    return 1000*y+2*x.val*x.dval
+end
+
+# Test that this errors due to missing kwargs in rule definition
+g4(x, y) = f_kw4(x; y)
+@test autodiff(Forward, g4, Duplicated(2.0, 1.0), Const(42.0))[1] ≈ 42004.0 
+@test_throws ErrorException autodiff(Forward, g4, Duplicated(2.0, 1.0), Duplicated(42.0, 1.0))[1]
+
 end # KWForwardRules
 
