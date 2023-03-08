@@ -3316,10 +3316,17 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
         kwfunc = Core.kwfunc
     else
-        #if ...
-        #    kwfunc = Core.kwftype(mi.specTypes[...])
-        #end
         isKWCall = false
+        if length(mi.specTypes.types) >= 3
+            ft = mi.specTypes.types[3]
+            inner = Interpreter.get_inner_kw_fn(ft)
+            if inner !== nothing
+                if mi.specTypes.types[1] == inner
+                    kwfunc = Core.kwfunc(EnzymeRules.forward)
+                    isKWCall = true
+                end
+            end
+        end
     end
 
     # 2) Create activity, and annotate function spec
@@ -3481,13 +3488,19 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
-    kwfunc = nothing
     if VERSION >= v"1.9.0-DEV.1598"
         isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-        kwfunc = Core.kwcall
     else
-        #kwfunc = ...
         isKWCall = false
+        if length(mi.specTypes.types) >= 3
+            ft = mi.specTypes.types[3]
+            inner = Interpreter.get_inner_kw_fn(ft)
+            if inner !== nothing
+                if mi.specTypes.types[1] == inner
+                    isKWCall = true
+                end
+            end
+        end
     end
 
     # 2) Create activity, and annotate function spec
@@ -3513,6 +3526,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         insert!(augprimal_tt, 5, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...} 
+        kwfunc = nothing
+        if VERSION >= v"1.9.0-DEV.1598"
+            kwfunc = Core.kwcall
+        else
+            kwfunc = Core.kwfunc(EnzmeRules.augmented_primal)
+        end
         aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
     else
         @assert kwtup === nothing
@@ -3581,10 +3600,16 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT)
             rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
         end
-        if isKWCall && EnzymeRules.isapplicable(kwfunc, rev_TT; world)
+        if isKWCall && EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
+            rkwfunc = nothing
+            if VERSION >= v"1.9.0-DEV.1598"
+                rkwfunc = Core.kwcall
+            else
+                rkwfunc = Core.kwfunc(EnzmeRules.reverse)
+            end
             @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
-            llvmf = nested_codegen!(mode, mod, kwfunc, rev_TT)
-            rev_RT = Core.Compiler.return_type(kwfunc, rev_TT, world)
+            llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT)
+            rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
         end
 
         if llvmf == nothing

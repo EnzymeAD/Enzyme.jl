@@ -134,6 +134,16 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
+function get_inner_kw_fn(ft)
+        if isdefined(ft, :name) && isdefined(ft.name, :module) && isdefined(ft.name, :name)
+            mod = getfield(ft.name, :module)
+            st = Symbol("#"*String(ft.name.name)*"#1")
+            if isdefined(mod, st)
+                return getfield(mod, st)
+            end
+        end
+        return nothing
+end
 function simplify_kw(specTypes)
     if VERSION >= v"1.9.0-DEV.1598" 
         if specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
@@ -142,30 +152,13 @@ function simplify_kw(specTypes)
     else
         if length(specTypes.types) >= 3
             ft = specTypes.types[3]
-            @show ft, Core.kwftype(ft), specTypes.types[1], specTypes.types[1] == Core.kwftype(ft)
-            if specTypes.types[1] == Core.kwftype(ft)
-                return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+            inner = get_inner_kw_fn(ft)
+            if inner !== nothing
+                if specTypes.types[1] == inner
+                    return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+                end
             end
-            names(T) = [fieldname(T, i) for i in 1:fieldcount(T)]
-            s = specTypes.types[1]
-            @show s
-        flush(stdout)
-            @show names(s)
-        flush(stdout)
-            @show typeof(s) 
-        flush(stdout)
-            @show names(typeof(s))
-        flush(stdout)
-            @show Core.Typeof(s)
-        flush(stdout)
-        @show s.instance
-        flush(stdout)
-        #    @show names(Core.Typeof(s))
-        #flush(stdout)
         end
-        # Tuple{Main.KWForwardRules.var"##f_kw#1", Base.Pairs{Symbol, Union{}, Tuple{}, NamedTuple{(), Tuple{}}}, typeof(Main.KWForwardRules.f_kw), Float64}
-        @show specTypes
-        flush(stdout)
     end
     return specTypes
     
