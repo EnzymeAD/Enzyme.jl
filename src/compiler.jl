@@ -3097,7 +3097,7 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
-function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
+function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     ctx = LLVM.context(orig)
     ops = collect(operands(orig))
     called = ops[end]
@@ -3124,13 +3124,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse)
     
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
- 
-    if VERSION >= v"1.9.0-DEV.1598"
-        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-    else
-        isKWCall = false
-    end
-    
+  
     true_idx = 0
     
     for arg in jlargs
@@ -3315,14 +3309,21 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
+
+    kwfunc = nothing
+
     if VERSION >= v"1.9.0-DEV.1598"
         isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+        kwfunc = Core.kwfunc
     else
+        #if ...
+        #    kwfunc = Core.kwftype(mi.specTypes[...])
+        #end
         isKWCall = false
     end
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false, isKWCall)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     alloctx = LLVM.Builder(ctx)
@@ -3361,10 +3362,10 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
     end
 
-    if isKWCall && EnzymeRules.isapplicable(Core.kwcall, TT; world)
+    if isKWCall && EnzymeRules.isapplicable(kwfunc, TT; world)
         @safe_debug "Applying custom forward rule (kwcall)" TT
-        llvmf = nested_codegen!(mode, mod, Core.kwcall, TT)
-        fwd_RT = Core.Compiler.return_type(Core.kwcall, TT, world)
+        llvmf = nested_codegen!(mode, mod, kwfunc, TT)
+        fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
     end
 
     if llvmf === nothing
@@ -3480,14 +3481,17 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
+    kwfunc = nothing
     if VERSION >= v"1.9.0-DEV.1598"
         isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+        kwfunc = Core.kwcall
     else
+        #kwfunc = ...
         isKWCall = false
     end
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
     
     alloctx = LLVM.Builder(ctx)
@@ -3509,7 +3513,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         insert!(augprimal_tt, 5, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...} 
-        aug_RT = Core.Compiler.return_type(Core.kwcall, augprimal_TT, world)
+        aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
@@ -3544,9 +3548,9 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT)
         end
-        if isKWCall && EnzymeRules.isapplicable(Core.kwcall, augprimal_TT; world)
+        if isKWCall && EnzymeRules.isapplicable(kwfunc, augprimal_TT; world)
             @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
-            llvmf = nested_codegen!(mode, mod, Core.kwcall, augprimal_TT)
+            llvmf = nested_codegen!(mode, mod, kwfunc, augprimal_TT)
         end
 
         if llvmf == nothing
@@ -3577,10 +3581,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT)
             rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
         end
-        if isKWCall && EnzymeRules.isapplicable(Core.kwcall, rev_TT; world)
+        if isKWCall && EnzymeRules.isapplicable(kwfunc, rev_TT; world)
             @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
-            llvmf = nested_codegen!(mode, mod, Core.kwcall, rev_TT)
-            rev_RT = Core.Compiler.return_type(Core.kwcall, rev_TT, world)
+            llvmf = nested_codegen!(mode, mod, kwfunc, rev_TT)
+            rev_RT = Core.Compiler.return_type(kwfunc, rev_TT, world)
         end
 
         if llvmf == nothing
@@ -7331,11 +7335,7 @@ end
         k_name = GPUCompiler.safe_name(k.specfunc)
         has_custom_rule = false
 
-        # TODO: Julia 1.6-1.8
-        specTypes = mi.specTypes
-        if VERSION >= v"1.9.0-DEV.1598" && mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-            specTypes = Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
-        end
+        specTypes = Interpreter.simplify_kw(mi.specTypes)
 
         if mode == API.DEM_ForwardMode
             has_custom_rule = EnzymeRules.has_frule_from_sig(specTypes; world)
