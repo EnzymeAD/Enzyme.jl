@@ -1615,13 +1615,13 @@ end
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
     u = Vector{Float64}(undef, 5)
 
-    # @test J_r_1(A, x) == [
-    #     1.0  1.0  0.0  0.0  0.0  0.0;
-    #     1.0  0.0  1.0  0.0  0.0  0.0;
-    #     1.0  0.0  0.0  1.0  0.0  0.0;
-    #     1.0  0.0  0.0  0.0  1.0  0.0;
-    #     1.0  0.0  0.0  0.0  0.0  1.0;
-    # ]
+    @test J_r_1(A, x) == [
+        1.0  1.0  0.0  0.0  0.0  0.0;
+        1.0  0.0  1.0  0.0  0.0  0.0;
+        1.0  0.0  0.0  1.0  0.0  0.0;
+        1.0  0.0  0.0  0.0  1.0  0.0;
+        1.0  0.0  0.0  0.0  0.0  1.0;
+    ]
 
     @test_broken J_r_2(A, x) == [
         1.0  1.0  0.0  0.0  0.0  0.0;
@@ -1631,7 +1631,6 @@ end
         1.0  0.0  0.0  0.0  0.0  1.0;
     ]
    
-    # Function fails verification in test/CI
     # @test J_f_1(A, x) == [
     #     1.0  1.0  0.0  0.0  0.0  0.0;
     #     1.0  0.0  1.0  0.0  0.0  0.0;
@@ -1647,8 +1646,6 @@ end
     #     1.0  0.0  0.0  0.0  0.0  1.0;
     # ]
 
-    # Bug on (augmented) forward pass deducing if
-	# shadow value is used
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
@@ -1789,6 +1786,33 @@ end
 		fill!(grads, 0)
 		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
 	end
+
+end
+
+@testset "Static activity" begin
+
+    struct Test2{T}
+        obs::T
+    end
+
+    function test(t, x)
+        o = t.obs
+        y = (x .- o)
+        yv = @inbounds y[1]
+        return yv*yv
+    end
+
+    obs = [1.0]
+    t = Test2(obs)
+
+    x0 = [0.0]
+    dx0 = [0.0]
+
+    autodiff(Reverse, test, Const(t), Duplicated(x0, dx0))
+        
+    @test obs[1] ≈ 1.0
+    @test x0[1] ≈ 0.0
+    @test dx0[1] ≈ -2.0
 
 end
 
