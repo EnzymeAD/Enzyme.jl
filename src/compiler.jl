@@ -3530,7 +3530,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if VERSION >= v"1.9.0-DEV.1598"
             kwfunc = Core.kwcall
         else
-            kwfunc = Core.kwfunc(EnzmeRules.augmented_primal)
+            kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
         end
         aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
     else
@@ -3600,16 +3600,18 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT)
             rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
         end
-        if isKWCall && EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
+        if isKWCall
             rkwfunc = nothing
             if VERSION >= v"1.9.0-DEV.1598"
                 rkwfunc = Core.kwcall
             else
                 rkwfunc = Core.kwfunc(EnzmeRules.reverse)
             end
-            @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
-            llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT)
-            rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+            if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
+                @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
+                llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT)
+                rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+            end
         end
 
         if llvmf == nothing
