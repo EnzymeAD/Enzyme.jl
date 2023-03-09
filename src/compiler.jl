@@ -3584,7 +3584,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             if VERSION >= v"1.9.0-DEV.1598"
                 rkwfunc = Core.kwcall
             else
-                rkwfunc = Core.kwfunc(EnzmeRules.reverse)
+                rkwfunc = Core.kwfunc(EnzymeRules.reverse)
             end
             if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
