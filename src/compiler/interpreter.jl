@@ -201,7 +201,6 @@ elseif isdefined(Core.Compiler, :is_stmt_inline)
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    @safe_debug "Inspecting... " mi.specTypes
     specTypes = simplify_kw(mi.specTypes)
 
     if is_primitive_func(specTypes)

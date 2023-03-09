@@ -3839,9 +3839,6 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 
         unsafe_store!(shadowR, shadowres.ref)
     end
-
-    unsafe_store!(shadowR, shadowres.ref)
-
 	return nothing
 end
 
@@ -4000,7 +3997,7 @@ function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
 
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0 && API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
       arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
     end
 
