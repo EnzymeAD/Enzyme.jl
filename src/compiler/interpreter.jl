@@ -134,34 +134,22 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
-function get_inner_kw_fn(ft)
-        if isdefined(ft, :name) && isdefined(ft.name, :module) && isdefined(ft.name, :name)
-            mod = getfield(ft.name, :module)
-            st = Symbol("#"*String(ft.name.name)*"#1")
-            if isdefined(mod, st)
-                return getfield(mod, st)
-            end
-        end
-        return nothing
-end
 function simplify_kw(specTypes)
-    if VERSION >= v"1.9.0-DEV.1598" 
+    if VERSION >= v"1.9.0-DEV.1598"
         if specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
             return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
         end
     else
         if length(specTypes.types) >= 3
+            kwftype = specTypes.types[1]
             ft = specTypes.types[3]
-            inner = get_inner_kw_fn(ft)
-            if inner !== nothing
-                if specTypes.types[1] == inner
-                    return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
-                end
+            if Core.kwftype(ft) == kwftype
+                return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
             end
         end
     end
     return specTypes
-    
+
 end
 
 # https://github.com/JuliaLang/julia/pull/46965
@@ -205,6 +193,7 @@ elseif isdefined(Core.Compiler, :is_stmt_inline)
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
+    @safe_debug "Inspecting... " mi.specTypes
     specTypes = simplify_kw(mi.specTypes)
 
     if is_primitive_func(specTypes)
@@ -238,10 +227,9 @@ Core.Compiler.inlining_policy(interp::EnzymeInterpreter) = EnzymeInliningPolicy(
 
 function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:EnzymeInliningPolicy}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
     mi = todo.mi
-    
     specTypes = simplify_kw(mi.specTypes)
 
-    if is_primitive_func(specTypes) 
+    if is_primitive_func(specTypes)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     interp = state.policy.interp
