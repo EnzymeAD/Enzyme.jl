@@ -3312,18 +3312,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     kwfunc = nothing
 
-    if VERSION >= v"1.9.0-DEV.1598"
-        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-        kwfunc = Core.kwfunc
-    else
-        isKWCall = false
-        if length(mi.specTypes.types) >= 3
-            kwftype = mi.specTypes.types[1]
-            ft = mi.specTypes.types[3]
-            if Core.kwftype(ft) == kwftype
-                kwfunc = Core.kwfunc(EnzymeRules.forward)
-                isKWCall = true
-            end
+    isKWCall = isKWCallSignature(mi.specTypes)
+    if isKWCall
+        if VERSION >= v"1.9.0-DEV.1598"
+            kwfunc = Core.kwfunc
+        else
+            kwfunc = Core.kwfunc(EnzymeRules.forward)
         end
     end
 
@@ -3486,18 +3480,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
     # 1) extract out the MI from attributes
     mi, job = enzyme_custom_extract_mi(orig)
-    if VERSION >= v"1.9.0-DEV.1598"
-        isKWCall = mi.specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-    else
-        isKWCall = false
-        if length(mi.specTypes.types) >= 3
-            kwftype = mi.specTypes.types[1]
-            ft = mi.specTypes.types[3]
-            if Core.kwftype(ft) == kwftype
-                isKWCall = true
-            end
-        end
-    end
+    isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall)
@@ -5721,6 +5704,8 @@ include("compiler/passes.jl")
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/validation.jl")
+
+import .Interpreter: isKWCallSignature
 
 """
 Create the `FunctionSpec` pair, and lookup the primal return type.

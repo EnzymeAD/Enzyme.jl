@@ -134,22 +134,30 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
-function simplify_kw(specTypes)
+function isKWCallSignature(@nospecialize(TT))
     if VERSION >= v"1.9.0-DEV.1598"
-        if specTypes <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
-            return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
-        end
+        return TT <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
     else
         if length(specTypes.types) >= 3
             kwftype = specTypes.types[1]
             ft = specTypes.types[3]
+            if isabstracttype(ft)
+                return false
+            end
             if Core.kwftype(ft) == kwftype
-                return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+                return true
             end
         end
+        return false
     end
-    return specTypes
+end
 
+function simplify_kw(specTypes)
+    if isKWCallSignature(specTypes)
+        return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+    else
+        return specTypes
+    end
 end
 
 # https://github.com/JuliaLang/julia/pull/46965
