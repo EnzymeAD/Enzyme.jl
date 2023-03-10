@@ -141,7 +141,7 @@ function isKWCallSignature(@nospecialize(TT))
         if length(TT.parameters) >= 3
             kwftype = TT.parameters[1]
             ft = TT.parameters[3]
-            if isabstracttype(ft)
+            if ccall(:jl_argument_method_table, Any, (Any,), ft) === nothing
                 return false
             end
             if Core.kwftype(ft) == kwftype
