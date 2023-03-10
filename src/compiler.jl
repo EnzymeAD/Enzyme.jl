@@ -3314,11 +3314,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     isKWCall = isKWCallSignature(mi.specTypes)
     if isKWCall
-        if VERSION >= v"1.9.0-DEV.1598"
-            kwfunc = Core.kwfunc
-        else
-            kwfunc = Core.kwfunc(EnzymeRules.forward)
-        end
+        kwfunc = Core.kwfunc(EnzymeRules.forward)
     end
 
     # 2) Create activity, and annotate function spec
@@ -3505,12 +3501,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         insert!(augprimal_tt, 5, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        kwfunc = nothing
-        if VERSION >= v"1.9.0-DEV.1598"
-            kwfunc = Core.kwcall
-        else
-            kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        end
+        kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
         aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
     else
         @assert kwtup === nothing
@@ -3580,12 +3571,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
         end
         if isKWCall
-            rkwfunc = nothing
-            if VERSION >= v"1.9.0-DEV.1598"
-                rkwfunc = Core.kwcall
-            else
-                rkwfunc = Core.kwfunc(EnzymeRules.reverse)
-            end
+            rkwfunc = Core.kwfunc(EnzymeRules.reverse)
             if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT)
