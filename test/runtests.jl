@@ -1019,6 +1019,28 @@ end
 
     autodiff(Reverse, advance2, Active, Duplicated(u_v_eta, ad_struct))
     @test ad_struct[1][] ≈ 2.0 
+    
+
+    function incopy(u_v_eta, val, i)
+        eta = copy(u_v_eta)
+        eta[1] = val
+        return @inbounds eta[i]
+    end 
+
+    u_v_eta = [0.0]
+
+    v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), 1)[1][2]
+    @test v ≈ 1.0 
+    @test u_v_eta[1] ≈ 0.0 
+    
+    function incopy2(val, i)
+        eta = Float64[2.3]
+        eta[1] = val
+        return @inbounds eta[i]
+    end 
+
+    v = autodiff(Reverse, incopy2, Active, Active(3.14), 1)[1][1]
+    @test v ≈ 1.0 
 end
 
 

@@ -3666,19 +3666,32 @@ end
 function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
         origops = LLVM.operands(orig)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
-        @assert API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
 
         B = LLVM.Builder(B)
+        i8 = LLVM.IntType(8; ctx)
+        algn = 0
 
         if width == 1
             shadowres = LLVM.call!(B, LLVM.called_value(orig), [shadowin])
+
+            # TODO zero based off runtime types, rather than presume floatlike?
+            if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
+                elSize = get_array_elsz(B, shadowin)
+                elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
+                len = get_array_len(B, shadowin)
+                length = LLVM.mul!(B, len, elSize)
+                isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
+                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
+                LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
+            end
             if API.runtimeActivity()
                 prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
                 shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), shadowres, prev)
@@ -3689,6 +3702,15 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             for idx in 1:width
                 ev = extract_value!(B, shadowin, idx-1)
                 callv = LLVM.call!(B, LLVM.called_value(orig), [ev])
+                if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
+                    elSize = get_array_elsz(B, shadowin)
+                    elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
+                    len = get_array_len(B, shadowin)
+                    length = LLVM.mul!(B, len, elSize)
+                    isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
+                    GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
+                    LLVM.memset!(B, get_array_data(callv), LLVM.ConstantInt(i8, 0, false), length, algn)
+                end
                 if API.runtimeActivity()
                     prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
                     callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[1]))), callv, prev)
