@@ -232,13 +232,17 @@ end
         return Active{T}
     end
 end
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Complex{<:AbstractFloat}}
+@inline function Enzyme.guess_activity(::Type{Complex{T}}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
+        return DuplicatedNoNeed{Complex{T}}
     else
-        return Active{T}
+        return Active{Complex{T}}
     end
 end
+
+@inline active_reg(::Type{Complex{T}}) where {T<:AbstractFloat} = true
+@inline active_reg(::Type{T}) where {T<:AbstractFloat} = true
+@inline active_reg(::Type{T}) where {T} = false
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
@@ -976,12 +980,16 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
             push!(shadowargs, :(($(shadows...),)))
         end
     end
+    @assert length(primargs) == N
+    @assert length(primtypes) == N
+    @assert length(ActivityTup) == N+1
+    @show N, primargs
     wrapped = Expr[]
     for i in 1:N
         expr = :(
                  if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i]))
                    @assert $(primtypes[i]) !== DataType
-                if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
+                    if !$forwardMode && active_reg($(primtypes[i]))
                     Active($(primargs[i]))
                  else
                      $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
@@ -996,19 +1004,19 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
 end
 
-@inline eltypeof(x) = eltype(Core.Typeof(x))
-
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(res[1]), Val(Width+1))
     ModifiedBetween = ntuple(i->false, Val(N+1))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
     return quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
@@ -1063,14 +1071,17 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(origRet), Val(Width+1))
     nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
+    nres3 = ntuple(i->:(res[3]), Val(Width))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
 
     return quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
@@ -1160,14 +1171,17 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         end
         shadowret = :(($(shadowret...),))
     end
+    
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
 
     quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
