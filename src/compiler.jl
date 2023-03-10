@@ -3690,7 +3690,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
                 length = LLVM.mul!(B, len, elSize)
                 isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
                 GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
-                LLVM.memset!(B, shadowres, LLVM.ConstantInt(i8, 0, false), length, algn)
+                LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
             if API.runtimeActivity()
                 prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
@@ -3709,7 +3709,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
                     length = LLVM.mul!(B, len, elSize)
                     isVolatile = LLVM.ConstantInt(LLVM.IntType(1; ctx), 0)
                     GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
-                    LLVM.memset!(B, callv, LLVM.ConstantInt(i8, 0, false), length, algn)
+                    LLVM.memset!(B, get_array_data(callv), LLVM.ConstantInt(i8, 0, false), length, algn)
                 end
                 if API.runtimeActivity()
                     prev = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
