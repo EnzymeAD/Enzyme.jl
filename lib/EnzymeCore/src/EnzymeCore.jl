@@ -2,7 +2,8 @@ module EnzymeCore
 
 using Adapt
 
-export Forward, Reverse, ReverseWithPrimal, ReverseSplit, ReverseSplitWithPrimal
+export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
+export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 
 function batch_size end
@@ -109,19 +110,29 @@ Abstract type for what differentiation mode will be used.
 abstract type Mode end
 
 """
-    struct Reverse{Split, ReturnPrimal} <: Mode
+    struct ReverseMode{ReturnPrimal} <: Mode
 
 Reverse mode differentiation.
-- `Split=false`: Enzyme will use a combined primal-reverse mode.
-- `Split=true`: Enzyme will run the augmented-forward function and return the tape + reverse thunk.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
 """
-struct ReverseMode{ReturnPrimal, Split} <: Mode end
-const Reverse = ReverseMode{false, false}()
-const ReverseWithPrimal = ReverseMode{true, false}()
-const ReverseSplit = ReverseMode{false, true}()
-const ReverseSplitWithPrimal = ReverseMode{true, true}()
+struct ReverseMode{ReturnPrimal} <: Mode end
+const Reverse = ReverseMode{false}()
+const ReverseWithPrimal = ReverseMode{true}()
 
+"""
+    struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween} <: Mode
+
+Reverse mode differentiation.
+- `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
+- `ReturnShadow`: Should Enzyme return the shadow return value from the augmented-forward.
+- `Width`: Batch Size (0 if to be automatically derived)
+- `ModifiedBetween`: Tuple of each argument's modified between state (true if to be automatically derived).
+"""
+struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween} <: Mode end
+const ReverseSplitNoPrimal = ReverseModeSplit{false, true, 0, true}()
+const ReverseSplitWithPrimal = ReverseModeSplit{true, true, 0, true}()
+@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, MBO}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,Width,MB,MBO} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB}()
+@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, WidthO, MB}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,Width,MB,WidthO} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB}()
 """
     struct Forward <: Mode
 

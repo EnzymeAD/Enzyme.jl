@@ -1,7 +1,7 @@
 module Enzyme
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal
-export Forward, Reverse, ReverseWithPrimal
+import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
+export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
 
 import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
@@ -16,7 +16,7 @@ export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
-import EnzymeCore: ReverseMode, ForwardMode, Annotation, Mode
+import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Annotation, Mode
 
 import EnzymeCore: EnzymeRules
 export EnzymeRules
@@ -27,8 +27,8 @@ include("pmap.jl")
 import LLVM
 include("api.jl")
 
-Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, false}) = API.DEM_ReverseModeCombined
-Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, true}) = API.DEM_ReverseModeGradient
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseModeSplit) = API.DEM_ReverseModeGradient
 Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 function guess_activity end
@@ -203,6 +203,33 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     thunk(args′...)
 end
 
+@inline function autodiff(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+    args′  = annotate(args...)
+    tt′    = Tuple{map(Core.Typeof, args′)...}
+    width = Width
+    if width == 0
+        width = same_or_one(args...)
+        if width == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+    end
+
+    if ModifiedBetweenT === false
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+
+    @assert ReturnShadow
+    forward, adjoint = Enzyme.Compiler.thunk(fn, dfn, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+    (forward(args′...)..., adjoint)
+end
 
 """
     autodiff(mode::Mode, f, args...)
@@ -735,7 +762,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
         res = (i == num ? primal2 : primal)(BatchDuplicated(x, dx))
         tape = res[1]
         j = 0
-        for shadow in res[2]
+        for shadow in res[3]
             j += 1
             @inbounds shadow[(i-1)*chunk+j] += one(eltype(typeof(shadow)))
         end
@@ -757,7 +784,7 @@ end
         dx = zero(x)
         res = primal(Duplicated(x, dx))
         tape = res[1]
-        @inbounds res[2][i] += one(eltype(typeof(res[2])))
+        @inbounds res[3][i] += one(eltype(typeof(res[3])))
         adjoint(Duplicated(x, dx), tape)
         return dx
     end

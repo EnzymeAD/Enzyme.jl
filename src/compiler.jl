@@ -842,20 +842,16 @@ function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ModifiedBetween::Val{MB}) where {width, MB}
+function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {width, ModifiedBetween}
     # TODO make this AD subcall type stable
-    forward, adjoint = thunk(fn, dfn, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween)
-
+    forward, adjoint = thunk(fn, dfn, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
+    
     taperef = Ref{Any}()
 
     function fclosure()
         res = forward()
         taperef[] = res[1]
-        if length(res) > 1
-            return res[2]
-        else
-            return nothing
-        end
+        return res[2]
     end
 
     ftask = ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
@@ -1032,7 +1028,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(origRet), Val(Width+1))
     nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
-    nres3 = ntuple(i->:(res[3]), Val(Width))
 
     return quote
         args = ($(wrapped...),)
@@ -1050,49 +1045,35 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         forward, adjoint = thunk(fn, dfn, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
 
-        res = forward(args...)
+        internal_tape, origRet, initShadow = forward(args...)
+        resT = typeof(origRet)
 
-        internal_tape = res[1]
-
-        if length(res) == 1
-            resT = Nothing
+        if annotation <: Const
             shadow_return = nothing
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            return ReturnType(($nnothing..., tape))
-        end
-        if annotation <: Const
-            let origRet = res[2], resT = typeof(origRet)
-                shadow_return = nothing
-                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-                return ReturnType(($(nres...), tape))
+            return ReturnType(($(nres...), tape))
+        elseif annotation <: Active
+            if $Width == 1
+                shadow_return = Ref(zero(resT))
+            else
+                shadow_return = ($(nzeros...),)
             end
-        end
-        if annotation <: Active
-            let origRet = res[2], resT = typeof(origRet)
-                if $Width == 1
-                    shadow_return = Ref(zero(resT))
-                else
-                    shadow_return = ($(nzeros...),)
-                end
-                tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-                if $Width == 1
-                    return ReturnType((origRet, shadow_return, tape))
-                else
-                    return ReturnType((origRet, shadow_return..., tape))
-                end
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            if $Width == 1
+                return ReturnType((origRet, shadow_return, tape))
+            else
+                return ReturnType((origRet, shadow_return..., tape))
             end
         end
 
         @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
 
-        origRet = res[2]
-        resT = typeof(origRet)
         shadow_return = nothing
         tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
         if $Width == 1
-            return ReturnType((origRet, res[3], tape))
+            return ReturnType((origRet, initShadow, tape))
         else
-            return ReturnType((origRet, $(nres3...), tape))
+            return ReturnType((origRet, initShadow..., tape))
         end
     end
 end
@@ -7927,10 +7908,15 @@ end
         push!(sret_types, jlRT)
     end
     if is_forward
+        if !returnPrimal && CC <: AugmentedForwardThunk
+            push!(sret_types, Nothing)
+        end
         if rettype <: Duplicated || rettype <: DuplicatedNoNeed
             push!(sret_types, jlRT)
         elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
             push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
+        elseif CC <: AugmentedForwardThunk
+            push!(sret_types, Nothing)
         end
     end
 
