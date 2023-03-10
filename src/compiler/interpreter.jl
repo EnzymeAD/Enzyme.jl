@@ -138,7 +138,7 @@ function isKWCallSignature(@nospecialize(TT))
     if VERSION >= v"1.9.0-DEV.1598"
         return TT <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
     else
-        if length(TT.parameters) >= 3
+        if hasproperty(TT, :parameters) && length(TT.parameters) >= 3
             kwftype = TT.parameters[1]
             ft = TT.parameters[3]
             if ccall(:jl_argument_method_table, Any, (Any,), ft) === nothing
