@@ -1772,7 +1772,29 @@ end
     inner(e) = c .+ e
     fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]    
-    @test fres ≈ [1.0, 1.0, 1.0]    
+    @test fres ≈ [1.0, 1.0, 1.0]   
+end
+
+@testset "View Splat" begin
+	function getloc(locs, i)
+		loss = 0.0
+		if i==1 
+			x, y = 0.0, 0.0
+		else
+		# correct
+			# x, y = locs[1,i-1], locs[2,i-1]
+		# incorrect
+		x, y = @inbounds locs[:,i-1]
+		end
+		loss += y
+		return loss
+	end
+
+	x0 = ones(2, 9)
+	din = zeros(2, 9)
+	Enzyme.autodiff(Reverse, getloc, Duplicated(x0, din), Const(2))
+	@test din[1, 1] ≈ 0.0
+	@test din[2, 1] ≈ 1.0
 end
 
 @testset "Uncached batch sizes" begin
