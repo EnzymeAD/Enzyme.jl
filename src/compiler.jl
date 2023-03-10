@@ -3979,7 +3979,6 @@ end
 function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     arraycopy_fwd(B, OrigCI, gutils, normalR, shadowR)
 
-    shadowres = LLVM.Value(unsafe_load(shadowR))
 
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
