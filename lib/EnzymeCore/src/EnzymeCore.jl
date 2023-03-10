@@ -144,6 +144,7 @@ const Forward = ForwardMode()
 
 function autodiff end
 function autodiff_deferred end
+function autodiff_thunk end
 
 include("rules.jl")
 

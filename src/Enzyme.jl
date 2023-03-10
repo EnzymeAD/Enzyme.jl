@@ -9,8 +9,8 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-import EnzymeCore: autodiff, autodiff_deferred
-export autodiff, autodiff_deferred
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk
+export autodiff, autodiff_deferred, autodiff_thunk
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
@@ -90,7 +90,11 @@ end
 @inline same_or_one_rec(current) = current
 @inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicated{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicatedNoNeed{T, N}}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
 
@@ -102,6 +106,7 @@ end
         return res
     end
 end
+
 """
     autodiff(::ReverseMode, f, Activity, args...)
 
@@ -201,34 +206,6 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         args′ = (args′..., one(rt))
     end
     thunk(args′...)
-end
-
-@inline function autodiff(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = Width
-    if width == 0
-        width = same_or_one(args...)
-        if width == 0
-            throw(ErrorException("Cannot differentiate with a batch size of 0"))
-        end
-    end
-
-    if ModifiedBetweenT === false
-        ModifiedBetween = Val(falses_from_args(Val(1), args...))
-    else
-        ModifiedBetween = Val(ModifiedBetweenT)
-    end
-
-    fn, dfn = if F <: Duplicated
-        (f.val, f.dval)
-    else
-        (f, nothing)
-    end
-
-    @assert ReturnShadow
-    forward, adjoint = Enzyme.Compiler.thunk(fn, dfn, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
-    (forward(args′...)..., adjoint)
 end
 
 """
@@ -476,6 +453,77 @@ end
     rt    = Core.Compiler.return_type(dupf.val, tt)
     A     = guess_activity(rt, mode)
     autodiff_deferred(mode, dupf, A, args′...)
+end
+
+"""
+    autodiff_thunk(::ReverseModeSplit, f, Activity, argtypes...)
+
+Provide the split forward and reverse pass functions for function `f` when
+called with args of type `argtypes` when using reverse mode.
+
+`Activity` is the Activity of the return value, it may be `Const`, `Active`,
+or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
+`BatchDuplicatedNoNeed`).
+
+The forward function will return a tape, the primal (or nothing if not requested),
+and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
+type arguements provided.
+
+The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
+arguments in place. The same arguments to the forward pass should be provided, followed by
+the adjoint of the return (if the return is active), and finally the tape from the forward pass.
+
+Example:
+
+```jldoctest
+
+A = [2.2]; ∂A = zero(A)
+v = 3.3
+
+function f(A, v)
+    res = A[1] * v
+    A[1] = 0
+    res
+end
+
+forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, f, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+
+tape, result, shadow_result  = forward(Duplicated(A, ∂A), Active(v))
+_, ∂v = reverse(Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
+
+result, ∂v, ∂A 
+
+# output
+
+(7.26, 2.2, [3.3])
+```
+"""
+@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+
+    @assert ReturnShadow
+    Enzyme.Compiler.thunk(fn, dfn, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable

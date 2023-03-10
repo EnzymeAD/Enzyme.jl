@@ -336,21 +336,25 @@ end
         end
     end
 
-    tape, primal, shadow, pullback0 = Enzyme.autodiff(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated(Float64[2.0], Float64[0.0]), Const(false))
+    forward, pullback0 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Duplicated(Float64[2.0], Float64[0.0]), Const(false))
     @test primal ≈ 2.0 
     @test shadow ≈ 0.0 
     
-    tape, primal, shadow, pullback1 = Enzyme.autodiff(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated(Float64[2.0], Float64[0.0]), Const(true))
+    forward, pullback1 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Duplicated(Float64[2.0], Float64[0.0]), Const(true))
     @test primal == Base._InitialValue() 
     @test shadow == Base._InitialValue()
     @test pullback0 == pullback1
     
-    tape, primal, shadow, pullback2 = Enzyme.autodiff(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated(Float64[2.0], Float64[0.0]), Const(false))
+    forward, pullback2 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Duplicated(Float64[2.0], Float64[0.0]), Const(false))
     @test primal == nothing
     @test shadow ≈ 0.0 
     @test pullback0 != pullback2
     
-    tape, primal, shadow, pullback3 = Enzyme.autodiff(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated(Float64[2.0], Float64[0.0]), Const(true))
+    forward, pullback3 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), fwdunion, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Duplicated(Float64[2.0], Float64[0.0]), Const(true))
     @test primal == nothing
     @test shadow == Base._InitialValue()    
     @test pullback2 == pullback3
