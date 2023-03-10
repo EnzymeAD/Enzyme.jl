@@ -1,7 +1,7 @@
 module Interpreter
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
-using GPUCompiler: CodeCache, WorldView
+using GPUCompiler: CodeCache, WorldView, @safe_debug
 import ..Enzyme
 import ..EnzymeRules
 
@@ -134,6 +134,32 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
+function isKWCallSignature(@nospecialize(TT))
+    if VERSION >= v"1.9.0-DEV.1598"
+        return TT <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    else
+        if hasproperty(TT, :parameters) && length(TT.parameters) >= 3
+            kwftype = TT.parameters[1]
+            ft = TT.parameters[3]
+            if ccall(:jl_argument_method_table, Any, (Any,), ft) === nothing
+                return false
+            end
+            if Core.kwftype(ft) == kwftype
+                return true
+            end
+        end
+        return false
+    end
+end
+
+function simplify_kw(specTypes)
+    if isKWCallSignature(specTypes)
+        return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+    else
+        return specTypes
+    end
+end
+
 # https://github.com/JuliaLang/julia/pull/46965
 @static if VERSION ≥ v"1.9.0-DEV.1535"
 
@@ -141,18 +167,26 @@ import Core.Compiler: CallInfo
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    if is_primitive_func(mi.specTypes)
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
+        @safe_debug "Blocking inlining for primitive func" mi.specTypes
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
+        @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
         return nothing
     end
+
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
+            @safe_debug "Blocking inlining due to frule" mi.specTypes
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
+            @safe_debug "Blocking inling due to rrule" mi.specTypes
             return nothing
         end
     end
@@ -167,18 +201,20 @@ elseif isdefined(Core.Compiler, :is_stmt_inline)
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    if is_primitive_func(mi.specTypes)
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
         return nothing
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
             return nothing
         end
     end
@@ -198,19 +234,21 @@ Core.Compiler.inlining_policy(interp::EnzymeInterpreter) = EnzymeInliningPolicy(
 
 function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:EnzymeInliningPolicy}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
     mi = todo.mi
-    if is_primitive_func(mi.specTypes) 
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     interp = state.policy.interp
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     end

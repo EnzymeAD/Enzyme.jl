@@ -44,6 +44,8 @@ include("typetree.jl")
 if Enzyme.EnzymeRules.issupported()
     include("rules.jl")
     include("rrules.jl")
+    include("kwrules.jl")
+    include("kwrrules.jl")
 end
 
 f0(x) = 1.0 + x
