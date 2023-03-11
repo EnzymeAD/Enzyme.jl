@@ -1,6 +1,7 @@
 using LLVM
 using ObjectFile
 using Libdl
+import EnzymeCore
 
 module FFI
     using LLVM
@@ -165,6 +166,53 @@ function check_ir!(job, errors, mod::LLVM.Module)
     return errors
 end
 
+function check_load(inst)
+    op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+    while isa(op, LLVM.ConstantExpr) && in(opcode(op), [LLVM.API.LLVMPtrToInt,LLVM.API.LLVMIntToPtr,LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast])
+        op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
+    end
+    if isa(op, ConstantInt)
+        rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op))
+        flib = Base.unsafe_pointer_to_objref(rep)
+        if in(flib, EnzymeCore.GlobalInlinedLoads)
+           lty = llvmtype(inst)
+           if isa(lty, LLVM.IntegerType)
+               TT = to_tape_type(lty)
+               rep = reinterpret(Ptr{TT}, rep)
+               val = unsafe_load(rep)
+               nval = LLVM.ConstantInt(lty, val)
+               replace_uses!(inst, nval)
+               return true
+            elseif isa(lty, LLVM.PointerType)
+                rep = reinterpret(Ptr{Int}, rep)
+                val = unsafe_load(rep)
+                nval = LLVM.ConstantInt(lty, val)
+                nval = LLVM.const_inttoptr(nval, LLVM.PointerType(eltype(lty)))
+                nval = LLVM.const_addrspacecast(nval, lty)
+                replace_uses!(inst, nval)
+                return true
+           end
+        end
+    end
+    return false 
+end
+
+function cleanup_global_loads!(mod)
+    for f in functions(mod)
+        toerase = LLVM.LoadInst[]
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.LoadInst)
+                if check_load(inst)
+                    push!(toerase)
+                end
+            end
+        end
+        for inst in toerase
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+end
+
 function check_ir!(job, errors, imported, f::LLVM.Function)
     calls = []
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
@@ -172,14 +220,16 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
         # remove illegal invariant.load and jtbaa_const invariants
-        elseif isInline && isa(inst, LLVM.LoadInst)
-            md = metadata(inst)
-            if haskey(md, LLVM.MD_tbaa)
-                modified = LLVM.Metadata(ccall((:EnzymeMakeNonConstTBAA, API.libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,), md[LLVM.MD_tbaa]))
-                setindex!(md, modified, LLVM.MD_tbaa)
-            end
-            if haskey(md, LLVM.MD_invariant_load)
-                delete!(md, LLVM.MD_invariant_load)
+        elseif isa(inst, LLVM.LoadInst)
+            if isInline 
+                md = metadata(inst)
+                if haskey(md, LLVM.MD_tbaa)
+                    modified = LLVM.Metadata(ccall((:EnzymeMakeNonConstTBAA, API.libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,), md[LLVM.MD_tbaa]))
+                    setindex!(md, modified, LLVM.MD_tbaa)
+                end
+                if haskey(md, LLVM.MD_invariant_load)
+                    delete!(md, LLVM.MD_invariant_load)
+                end
             end
         end
     end

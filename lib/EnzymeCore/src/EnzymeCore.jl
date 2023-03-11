@@ -134,6 +134,8 @@ const Forward = ForwardMode()
 function autodiff end
 function autodiff_deferred end
 
+const GlobalInlinedLoads = Set{Any}(())
+
 include("rules.jl")
 
 end # module EnzymeCore
