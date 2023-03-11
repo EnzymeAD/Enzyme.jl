@@ -1184,7 +1184,7 @@ function func_runtime_generic_rev(N, Width)
     end
 end
 
-@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
@@ -6978,9 +6978,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         else
             RT = eltype(llvmtype(first(parameters(entry_f))))
             returnRoots = deserves_rooting(RT)
-            if returnRoots
-                GPUCompiler.@safe_warn "Returned rooting not fully handled, segfault likely"
-            end
         end
     end
 
