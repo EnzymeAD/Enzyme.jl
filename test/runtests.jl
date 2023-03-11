@@ -1862,6 +1862,42 @@ end
 
 end
 
+@testset "Const Activity through intermediate" begin
+    struct RHS_terms
+        eta1::Vector{Float64}
+        u_t::Vector{Float64} 
+        eta_t::Vector{Float64}
+    end
+
+    @noinline function comp_u_v_eta_t(rhs) 
+        Base.unsafe_copyto!(rhs.eta_t, 1, rhs.u_t, 1, 1)
+        return nothing
+    end 
+
+    function advance(eta, rhs)
+
+        @inbounds rhs.eta1[1] = @inbounds eta[1]
+
+        comp_u_v_eta_t(rhs)
+
+        @inbounds eta[1] = @inbounds rhs.eta_t[1]
+
+        return nothing 
+
+    end
+
+    rhs_terms = RHS_terms(zeros(1), zeros(1), zeros(1))
+
+    u_v_eta = Float64[NaN]
+    ad_eta = zeros(1)
+
+    autodiff(Reverse, advance, 
+        Duplicated(u_v_eta, ad_eta),
+        Const(rhs_terms), 
+    )
+    @test ad_eta[1] ≈ 0.0
+end
+
 # Always run last since otherwise on 1.6 device functions cause breakage.
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
