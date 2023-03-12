@@ -22,7 +22,7 @@ function structure_check!(flag)
         @warn """
         Due to a bug in Julia (until 1.6.5 and 1.7.1), setting preferences in transitive dependencies
         is broken (https://github.com/JuliaPackaging/Preferences.jl/issues/24). To fix this either update
-        your version of Julia, or add EnzyemCore as a direct dependency to your project.
+        your version of Julia, or add EnzymeCore as a direct dependency to your project.
         """
     end
     return nothing
