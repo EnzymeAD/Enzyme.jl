@@ -1,7 +1,7 @@
 module Enzyme
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal
-export Forward, Reverse, ReverseWithPrimal
+import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
+export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
 
 import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
@@ -9,14 +9,14 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-import EnzymeCore: autodiff, autodiff_deferred
-export autodiff, autodiff_deferred
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk
+export autodiff, autodiff_deferred, autodiff_thunk
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
-import EnzymeCore: ReverseMode, ForwardMode, Annotation, Mode
+import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Annotation, Mode
 
 import EnzymeCore: EnzymeRules
 export EnzymeRules
@@ -27,8 +27,8 @@ include("pmap.jl")
 import LLVM
 include("api.jl")
 
-Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, false}) = API.DEM_ReverseModeCombined
-Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode{<:Any, true}) = API.DEM_ReverseModeGradient
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
+Base.convert(::Type{API.CDerivativeMode}, ::ReverseModeSplit) = API.DEM_ReverseModeGradient
 Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 function guess_activity end
@@ -90,7 +90,11 @@ end
 @inline same_or_one_rec(current) = current
 @inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicated{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicatedNoNeed{T, N}}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
 
@@ -102,6 +106,7 @@ end
         return res
     end
 end
+
 """
     autodiff(::ReverseMode, f, Activity, args...)
 
@@ -202,7 +207,6 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
     thunk(args′...)
 end
-
 
 """
     autodiff(mode::Mode, f, args...)
@@ -449,6 +453,77 @@ end
     rt    = Core.Compiler.return_type(dupf.val, tt)
     A     = guess_activity(rt, mode)
     autodiff_deferred(mode, dupf, A, args′...)
+end
+
+"""
+    autodiff_thunk(::ReverseModeSplit, f, Activity, argtypes...)
+
+Provide the split forward and reverse pass functions for function `f` when
+called with args of type `argtypes` when using reverse mode.
+
+`Activity` is the Activity of the return value, it may be `Const`, `Active`,
+or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
+`BatchDuplicatedNoNeed`).
+
+The forward function will return a tape, the primal (or nothing if not requested),
+and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
+type arguements provided.
+
+The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
+arguments in place. The same arguments to the forward pass should be provided, followed by
+the adjoint of the return (if the return is active), and finally the tape from the forward pass.
+
+Example:
+
+```jldoctest
+
+A = [2.2]; ∂A = zero(A)
+v = 3.3
+
+function f(A, v)
+    res = A[1] * v
+    A[1] = 0
+    res
+end
+
+forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, f, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+
+tape, result, shadow_result  = forward(Duplicated(A, ∂A), Active(v))
+_, ∂v = reverse(Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
+
+result, ∂v, ∂A 
+
+# output
+
+(7.26, 2.2, [3.3])
+```
+"""
+@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, f::F, ::Type{A}, args...) where {F, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    fn, dfn = if F <: Duplicated
+        (f.val, f.dval)
+    else
+        (f, nothing)
+    end
+
+    @assert ReturnShadow
+    Enzyme.Compiler.thunk(fn, dfn, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
@@ -735,7 +810,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
         res = (i == num ? primal2 : primal)(BatchDuplicated(x, dx))
         tape = res[1]
         j = 0
-        for shadow in res[2]
+        for shadow in res[3]
             j += 1
             @inbounds shadow[(i-1)*chunk+j] += one(eltype(typeof(shadow)))
         end
@@ -757,7 +832,7 @@ end
         dx = zero(x)
         res = primal(Duplicated(x, dx))
         tape = res[1]
-        @inbounds res[2][i] += one(eltype(typeof(res[2])))
+        @inbounds res[3][i] += one(eltype(typeof(res[3])))
         adjoint(Duplicated(x, dx), tape)
         return dx
     end
