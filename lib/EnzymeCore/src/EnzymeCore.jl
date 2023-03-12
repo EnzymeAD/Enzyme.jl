@@ -9,6 +9,25 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 
 const structure_check = parse(Bool, @load_preference("structure_check", "false"))
 
+"""
+    structure_check!(flag)
+
+Toggle the default setting for congruence/structure checking.
+"""
+function structure_check!(flag)
+    @set_preferences!("structure_check" => flag)
+    @info("structure_check toggled, restart your Julia session for this change to take effect!")
+
+    if VERSION <= v"1.6.5" || VERSION == v"1.7.0"
+        @warn """
+        Due to a bug in Julia (until 1.6.5 and 1.7.1), setting preferences in transitive dependencies
+        is broken (https://github.com/JuliaPackaging/Preferences.jl/issues/24). To fix this either update
+        your version of Julia, or add EnzyemCore as a direct dependency to your project.
+        """
+    end
+    return nothing
+end
+
 function batch_size end
 
 """
