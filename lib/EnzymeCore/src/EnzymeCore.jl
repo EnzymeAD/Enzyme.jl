@@ -1,10 +1,13 @@
 module EnzymeCore
 
 using Adapt
+using Preferences
 
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+
+const structure_check = parse(Bool, @load_preference("structure_check", "false"))
 
 function batch_size end
 
@@ -61,8 +64,8 @@ accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
-    function Duplicated(val::T, dval::T) where T
-        check_congruence(val, dval)
+    function Duplicated(val::T, dval::T; checked=structure_check) where T
+        checked && check_congruence(val, dval)
         new{T}(val, dval)
     end
 end
@@ -77,6 +80,10 @@ the original result and only compute the derivative values.
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
+    function DuplicatedNoNeed(val::T, dval::T; checked=structure_check) where T
+        checked && check_congruence(val, dval)
+        new{T}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
@@ -89,6 +96,10 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    function BatchDuplicated(val::T, dval::NTuple{N,T}; checked=structure_check) where {T, N}
+        checked && check_congruence(val, dval)
+        new{T, N}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -101,6 +112,10 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    function BatchDuplicatedNoNeed(val::T, dval::NTuple{N,T}; checked=structure_check) where {T, N}
+        checked && check_congruence(val, dval)
+        new{T, N}(val, dval)
+    end
 end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
@@ -113,8 +128,16 @@ Defines values to be congruent, e.g. structurally equivalent.
 """
 function congruent end
 
+congruent(a, b) = false
 congruent(a::T, b::T) where T<:Number = true
-congruent(a::T, b::T) where T<:AbstractArray = length(a) == length(b)
+function congruent(a::T, b::T) where T<:DenseArray
+    axes(a) == axes(b) && all(congruent, zip(a, b))
+end
+congruent(a::T, b::T) where T<:Ref = congruent(a[], b[])
+congruent(a::T, b::T) where T<:Tuple = all(congruent, zip(a, b))
+congruent(a::T, b::T) where T<:NamedTuple = all(congruent, zip(a, b))
+
+congruent(tup::Tuple{T, T}) where T = congruent(tup...)
 
 function check_congruence(a::T, b::T) where T
     # TODO: Use once hasmethod is static
@@ -127,10 +150,18 @@ function check_congruence(a::T, b::T) where T
         error("""
         Your values are not congruent, structural equivalence is
         requirement for the correctness of the adjoint pass.
+
+        You may need to implement EnzymeCore.congruent(a, b) for your type $T
         """)
     end
 end
- 
+
+function check_congruence(a::T, b::NTuple{N, T}) where {N, T}
+    ntuple(Val(N)) do i
+        check_congruence(a, b[i])
+    end
+end
+
 """
     abstract type Mode
 
