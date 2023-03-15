@@ -167,7 +167,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
+@inline function autodiff(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...;world=nothing) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -177,11 +177,15 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
+    if world === nothing
+        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(Tuple{Core.Typepf(f.val), tt...}, world)
         if !allocatedinline(rt) || rt isa Union
-            forward, adjoint = Enzyme.Compiler.thunk(FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
+            forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(f, args′...)
             tape = res[1]
             if ReturnPrimal
@@ -193,10 +197,10 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = eltype(Compiler.return_type(thunk))
+        rt = Core.Compiler.return_type(Tuple{Core.Typepf(f.val), tt...}, world)
         args′ = (args′..., one(rt))
     end
     thunk(f, args′...)
@@ -216,13 +220,16 @@ end
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff(mode::CMode, f::FA, args...) where {FA<:Annotation, CMode<:Mode}
+@inline function autodiff(mode::CMode, f::FA, args...; world=nothing) where {FA<:Annotation, CMode<:Mode}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f.val, tt)
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
+    rt    = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt...}, world)
     A     = guess_activity(rt, mode)
-    autodiff(mode, f, A, args′...)
+    autodiff(mode, f, A, args′...; world)
 end
 
 """
@@ -274,7 +281,7 @@ f(x) = x*x
 (6.28,)
 ```
 """
-@inline function autodiff(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
+@inline function autodiff(::ForwardMode, f::FA, ::Type{A}, args...;world=nothing) where {FA<:Annotation, A<:Annotation}
     args′  = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -305,8 +312,12 @@ f(x) = x*x
     end
     
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    if world === nothing
+        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
 
-    thunk = Enzyme.Compiler.thunk(FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal)
     thunk(f, args′...)
 end
@@ -330,9 +341,12 @@ code, as well as high-order differentiation.
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
+    tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
     if A isa UnionAll
-        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         rt = A{rt}
     else
         @assert A isa DataType
@@ -345,7 +359,7 @@ code, as well as high-order differentiation.
 
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
     
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     @assert primal_ptr === nothing
     thunk = Compiler.CombinedAdjointThunk{FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
@@ -362,7 +376,7 @@ end
 Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
+@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args...; world=nothing) where {FA<:Annotation, A<:Annotation}
     args′ = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -387,9 +401,12 @@ code, as well as high-order differentiation.
     else
         A
     end
+    tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
     if RT isa UnionAll
-        tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -407,7 +424,8 @@ code, as well as high-order differentiation.
     ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
+    
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
     thunk = Compiler.ForwardModeThunk{FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
     thunk(f, args′...)
@@ -427,15 +445,18 @@ end
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
 
-@inline function autodiff_deferred(mode::M, f::FA, args...) where {FA<:Annotation, M<:Mode}
+@inline function autodiff_deferred(mode::M, f::FA, args...; world) where {FA<:Annotation, M<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f.val, tt)
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
+    end
+    rt    = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt...}, world)
     if rt === Union{}
         error("return type is Union{}, giving up.")
     end
     rt    = guess_activity(rt, mode)
-    autodiff_deferred(mode, f, rt, args′...)
+    autodiff_deferred(mode, f, rt, args′...; world)
 end
 
 """
@@ -546,7 +567,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...; world=nothing) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
     # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
@@ -567,12 +588,17 @@ result, ∂v, ∂A
     @assert ReturnShadow
     TT = Tuple{args...}
    
+    if world === nothing
+        primal_tt = Tuple{map(eltype, args)...}
+        world = GPUCompiler.get_world(eltype(FA), primal_tt)
+    end
+
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+    nondef = Enzyme.Compiler.thunk(World, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
     TapeType = Compiler.get_tape_type(typeof(nondef[1]))
     A2 = Compiler.return_type(typeof(nondef[1]))
 
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
     AugT = Compiler.AugmentedForwardThunk{FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
     @assert AugT == typeof(nondef[1])
     AdjT = Compiler.AdjointThunk{FA, A2, TT, Val{width}, TapeType}
@@ -845,7 +871,8 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
+    World = Val(nothing)
+    primal, adjoint = Enzyme.Compiler.thunk(World, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -853,7 +880,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
+        primal2, adjoint2 = Enzyme.Compiler.thunk(World, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
     end
 
     tmp = ntuple(num) do i
@@ -882,7 +909,7 @@ end
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
+    primal, adjoint = Enzyme.Compiler.thunk(World, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
