@@ -983,7 +983,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         forward = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
-        res = forward(ActivityTup[1] ? Duplicated(f, df) : Const(df), args...)
+        res = forward(ActivityTup[1] ? Duplicated(f, df) : Const(f), args...)
 
         if length(res) == 0
             return ReturnType($nnothing)
@@ -1036,7 +1036,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
 
-        internal_tape, origRet, initShadow = forward(ActivityTup[1] ? Duplicated(f, df) : Const(df), args...)
+        internal_tape, origRet, initShadow = forward(ActivityTup[1] ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
 
         if annotation <: Const
@@ -1135,7 +1135,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
             args = (args..., $shadowret)
         end
 
-        tup = adjoint(ActivityTup[1] ? Duplicated(f, df) : Const(df), args..., tape.internal_tape)[1]
+        tup = adjoint(ActivityTup[1] ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
 
         $(outs...)
         return nothing
@@ -3072,7 +3072,7 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
-function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
+function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall, job)
     ctx = LLVM.context(orig)
     ops = collect(operands(orig))
     called = ops[end]
@@ -3090,12 +3090,19 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     uncacheable = Vector{UInt8}(undef, length(ops))
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
 
-    sret = false
+    interp = GPUCompiler.get_interpreter(job)
+    RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+
+    sret = is_sret(RT, ctx)
     returnRoots = false
+    if sret
+        lRT = eltype(llvmtype(ops[1]))
+    	returnRoots = deserves_rooting(lRT)
+    end
 
 	jlargs = classify_arguments(mi.specTypes, eltype(llvmtype(called)), sret, returnRoots)
 
-    op_idx = 1
+    op_idx = 1 + sret + returnRoots
 
     alloctx = LLVM.Builder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -3226,6 +3233,12 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
     end
 
+    if op_idx-1 != length(ops)
+        @show op_idx, ops
+        @show jlargs
+        @show orig
+        @show mi
+    end
     @assert op_idx-1 == length(ops)
 
     return args, activity, (overwritten...,), actives, kwtup
@@ -3293,7 +3306,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     end
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false, isKWCall)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false, isKWCall, job)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
 
     alloctx = LLVM.Builder(ctx)
@@ -3345,9 +3358,14 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     end
 
     sret = nothing
+    returnRoots = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
         sret = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[1])))
         pushfirst!(args, sret)
+        if deserves_rooting(eltype(llvmtype(parameters(llvmf)[1])))
+            returnRoots = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[2])))
+            insert!(args, 2, returnRoots)
+        end
     end
 
     for i in eachindex(args)
@@ -3454,7 +3472,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall, job)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
 
     alloctx = LLVM.Builder(ctx)
@@ -3582,9 +3600,14 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     # end
 
     sret = nothing
+    returnRoots = nothing
     if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
         sret = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[1])))
         pushfirst!(args, sret)
+        if deserves_rooting(eltype(llvmtype(parameters(llvmf)[1])))
+            returnRoots = alloca!(alloctx, eltype(llvmtype(parameters(llvmf)[2])))
+            insert!(args, 2, returnRoots)
+        end
     end
 
     if !forward
