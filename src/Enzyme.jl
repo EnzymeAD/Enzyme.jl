@@ -9,8 +9,8 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk
-export autodiff, autodiff_deferred, autodiff_thunk
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
@@ -498,6 +498,83 @@ result, ∂v, ∂A
 
     @assert ReturnShadow
     Enzyme.Compiler.thunk(FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+end
+
+"""
+    autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)
+
+Provide the split forward and reverse pass functions for annotated function type
+ftype when called with args of type `argtypes` when using reverse mode.
+
+`Activity` is the Activity of the return value, it may be `Const`, `Active`,
+or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
+`BatchDuplicatedNoNeed`).
+
+The forward function will return a tape, the primal (or nothing if not requested),
+and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
+type arguements provided.
+
+The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
+arguments in place. The same arguments to the forward pass should be provided, followed by
+the adjoint of the return (if the return is active), and finally the tape from the forward pass.
+
+Example:
+
+```jldoctest
+
+A = [2.2]; ∂A = zero(A)
+v = 3.3
+
+function f(A, v)
+    res = A[1] * v
+    A[1] = 0
+    res
+end
+
+forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+
+tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
+_, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
+
+result, ∂v, ∂A 
+
+# output
+
+(7.26, 2.2, [3.3])
+```
+"""
+@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+   
+    # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
+    nondef = Enzyme.Compiler.thunk(FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+    TapeType = Compiler.get_tape_type(typeof(nondef[1]))
+    A2 = Compiler.return_type(typeof(nondef[1]))
+
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    AugT = Compiler.AugmentedForwardThunk{FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
+    @assert AugT == typeof(nondef[1])
+    AdjT = Compiler.AdjointThunk{FA, A2, TT, Val{width}, TapeType}
+    @assert AdjT == typeof(nondef[2])
+    AugT(primal_ptr), AdjT(adjoint_ptr)
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable

@@ -11,7 +11,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween, returnPrimal, augmentedInit)
+    params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
     return Compiler.CompilerJob(target, primal, params)
 end
 

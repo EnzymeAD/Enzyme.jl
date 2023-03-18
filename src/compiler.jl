@@ -243,6 +243,7 @@ struct AdjointThunk{FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT, Wi
 end
 
 @inline return_type(::AbstractThunk{FA, RT, TT, Width}) where {FA, RT, TT, Width} = RT
+@inline return_type(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = RT
 @inline get_tape_type(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
 @inline get_tape_type(::Type{AdjointThunk{FA, RT, TT, Width, TapeType}}) where {FA, RT, TT, Width, TapeType} = TapeType
 
@@ -968,7 +969,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(f.val, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1028,7 +1029,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(fn, tt)
+        rt = Core.Compiler.return_type(f.val, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
@@ -1125,7 +1126,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(f.val, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
@@ -2620,7 +2621,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false,UnknownTapeType)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
 
             jctx = ctx
@@ -2642,7 +2643,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false)
+            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false,UnknownTapeType)
             ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -4955,7 +4956,7 @@ to_tape_type(::LLVM.LLVMFloat) = Float32
 to_tape_type(::LLVM.LLVMDouble) = Float64
 to_tape_type(::LLVM.LLVMFP128) = Float128
 
-function tape_type(LLVMType)
+function tape_type(LLVMType::LLVM.LLVMType)
     TT = to_tape_type(LLVMType)
     if TT == Any
         return AnonymousStruct(Tuple{Any})
@@ -5630,7 +5631,10 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     returnPrimal::Bool
     # Whether to (in aug fwd) += by one
     shadowInit::Bool
+    expectedTapeType::Type
 end
+
+struct UnknownTapeType end
 
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
@@ -6073,7 +6077,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules)
+function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
     rt  = job.params.rt
     shadow_init = job.params.shadowInit
     ctx = context(mod)
@@ -6268,12 +6272,15 @@ function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetTyp
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{LLVMType(tape_type(utape))}
+            TapeType = EnzymeTapeToLoad{tape_type(LLVMType(utape))}
             tape = utape
         elseif tape != C_NULL
             TapeType = tape_type(LLVMType(tape))
         else
             TapeType = Cvoid
+        end
+        if expectedTapeType !== UnknownTapeType
+            @assert expectedTapeType === TapeType
         end
 
         if wrap
@@ -6437,7 +6444,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{LLVMType(tape_type(utape))}
+            TapeType = EnzymeTapeToLoad{tape_type(LLVMType(utape))}
         elseif tape != C_NULL
             TapeType = tape_type(LLVMType(tape))
         else
@@ -7180,6 +7187,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, ctx = nothing,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
     params  = job.params
+    expectedTapeType = params.expectedTapeType
     mode   = params.mode
     adjoint = params.adjoint
     dupClosure = params.dupClosure
@@ -7546,7 +7554,7 @@ end
         end
 
         GC.@preserve job jobref begin
-            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules)
+            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
         end
         toremove = []
         # Inline the wrapper
@@ -8117,7 +8125,7 @@ end
     primal, adjoint = fspec(eltype(FA), TT)
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
     job    = Compiler.CompilerJob(target, primal, params)
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
@@ -8190,7 +8198,7 @@ end
 @inline function thunk(::Type{FA},::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
     primal, adjoint = fspec(eltype(FA), TT)
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
+    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
     job    = Compiler.CompilerJob(target, primal, params)
 
     specid = GPUCompiler.specialization_id(job)
@@ -8201,10 +8209,10 @@ end
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function gendeferred_codegen(::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit}=Val(false)) where {FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     primal, adjoint = fspec(eltype(FA), tt)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit)
+    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
     job    = CompilerJob(target, primal, params)
 
     adjoint_addr, primal_addr = get_trampoline(job)
@@ -8230,8 +8238,8 @@ import GPUCompiler: deferred_codegen_jobs
 end
 
 @inline function deferred_codegen(::Type{FA}, ::Val{tt}, ::Val{rt}, ::Val{Mode},
-                                     ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false)) where {FA<:Annotation,tt, rt,Mode, width, ModifiedBetween, ReturnPrimal}
-    gendeferred_codegen(FA, Val(tt), Val(rt), Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal))
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {FA<:Annotation,tt, rt,Mode, width, ModifiedBetween, ReturnPrimal,ShadowInit,ExpectedTapeType}
+    gendeferred_codegen(FA, Val(tt), Val(rt), Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal),Val(ShadowInit),ExpectedTapeType)
 end
 
 include("compiler/reflection.jl")
