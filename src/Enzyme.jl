@@ -207,8 +207,8 @@ end
 
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff(mode::CMode, f::F, ::Type{A}, args...) where {F, A<:Annotation, CMode<:Mode}
-    autodiff(mode, Const(f), A, args...)
+@inline function autodiff(mode::CMode, f::F, args...) where {F, CMode<:Mode}
+    autodiff(mode, Const(f), args...)
 end
 
 """
@@ -216,16 +216,11 @@ end
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff(mode::CMode, f::F, args...) where {F, CMode<:Mode}
+@inline function autodiff(mode::CMode, f::FA, args...) where {FA<:Annotation, CMode<:Mode}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    fn = if F <: Duplicated
-        f.val
-    else
-        f
-    end
-    rt    = Core.Compiler.return_type(fn, tt)
+    rt    = Core.Compiler.return_type(f.val, tt)
     A     = guess_activity(rt, mode)
     autodiff(mode, f, A, args′...)
 end
@@ -337,7 +332,7 @@ code, as well as high-order differentiation.
     end
     if A isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(f.val, tt)
         rt = A{rt}
     else
         @assert A isa DataType
@@ -367,7 +362,7 @@ end
 Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode, f::F, ::Type{A}, args...) where {F, A<:Annotation}
+@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
     args′ = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -419,25 +414,25 @@ code, as well as high-order differentiation.
 end
 
 """
+    autodiff_deferred(mode::Mode, f, ::Type{A}, args...)
+
+Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
+"""
+@inline function autodiff_deferred(mode::CMode, f::F, args...) where {F, CMode<:Mode}
+    autodiff(mode, Const(f), args...)
+end
+"""
     autodiff_deferred(mode, f, args...)
 
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff_deferred(mode::SMode, f::F, args...) where {F, SMode<:Mode}
+
+@inline function autodiff_deferred(mode::SMode, f::FA, args...) where {FA<:Annotation, SMode<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(f, tt)
+    rt    = Core.Compiler.return_type(f.val, tt)
     rt    = guess_activity(rt, mode)
     autodiff_deferred(mode, f, rt, args′...)
-end
-
-@inline function autodiff_deferred(mode::SMode, dupf::Duplicated{F}, args...) where {F, SMode<:Mode}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    rt    = Core.Compiler.return_type(dupf.val, tt)
-    A     = guess_activity(rt, mode)
-    autodiff_deferred(mode, dupf, A, args′...)
 end
 
 """
