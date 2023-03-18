@@ -347,7 +347,7 @@ code, as well as high-order differentiation.
     
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     @assert primal_ptr === nothing
-    thunk = Compiler.CombinedAdjointThunk{F, rt, tt′, typeof(Val(width)), Nothing, Val(ReturnPrimal)}(f, adjoint_ptr, dfn)
+    thunk = Compiler.CombinedAdjointThunk{FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -389,7 +389,7 @@ code, as well as high-order differentiation.
     end
     if RT isa UnionAll
         tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f, tt)
+        rt = Core.Compiler.return_type(f.val, tt)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -409,7 +409,7 @@ code, as well as high-order differentiation.
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
-    thunk = Compiler.ForwardModeThunk{F, rt, tt′, typeof(Val(width)), Nothing, ReturnPrimal}(f, adjoint_ptr, dfn)
+    thunk = Compiler.ForwardModeThunk{FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
     thunk(f, args′...)
 end
 
@@ -419,7 +419,7 @@ end
 Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
 """
 @inline function autodiff_deferred(mode::CMode, f::F, args...) where {F, CMode<:Mode}
-    autodiff(mode, Const(f), args...)
+    autodiff_deferred(mode, Const(f), args...)
 end
 """
     autodiff_deferred(mode, f, args...)

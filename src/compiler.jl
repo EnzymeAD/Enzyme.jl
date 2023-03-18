@@ -243,8 +243,8 @@ struct AdjointThunk{FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT, Wi
 end
 
 @inline return_type(::AbstractThunk{FA, RT, TT, Width}) where {FA, RT, TT, Width} = RT
-@inline GetTapeType(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
-@inline GetTapeType(::Type{AdjointThunk{FA, RT, TT, Width, TapeType}}) where {FA, RT, TT, Width, TapeType} = TapeType
+@inline get_tape_type(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
+@inline get_tape_type(::Type{AdjointThunk{FA, RT, TT, Width, TapeType}}) where {FA, RT, TT, Width, TapeType} = TapeType
 
 using .JIT
 
@@ -2467,7 +2467,7 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkT
 end
 
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}) where {ThunkTy, AnyJL}
-    TapeType = GetTapeType(ThunkTy)
+    TapeType = get_tape_type(ThunkTy)
     thunk = ThunkTy(ptr)
     tapes = if AnyJL
         Vector{TapeType}(undef, Base.Threads.nthreads())
@@ -2522,7 +2522,7 @@ function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid whe
 end
 
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, dynamic) where {ThunkTy, AnyJL}
-    TapeType = GetTapeType(ThunkTy)
+    TapeType = get_tape_type(ThunkTy)
     thunk = ThunkTy(ptr)
     ft = Duplicated(func, dfunc)
     tapes = if AnyJL
@@ -2757,9 +2757,9 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}}
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, Bool}
 end
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
@@ -2809,9 +2809,9 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     end
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, STT }
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT }
 else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(GetTapeType(thunkTy))}, STT, Bool}
+    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT, Bool}
 end
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
