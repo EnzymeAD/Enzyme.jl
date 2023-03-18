@@ -298,20 +298,24 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 return
             end
 
-            data = open(flib, "r") do io
-                lib = readmeta(io)
-                sections = Sections(lib)
-                if !(".llvmbc" in sections)
-                    return nothing
-                end
-                llvmbc = read(findfirst(sections, ".llvmbc"))
-                return llvmbc
-            end
-
             found = false
-            if data !== nothing
-                inmod = parse(LLVM.Module, data; ctx)
-                found = haskey(functions(inmod), fname)
+            
+            try
+                data = open(flib, "r") do io
+                    lib = readmeta(io)
+                    sections = Sections(lib)
+                    if !(".llvmbc" in sections)
+                        return nothing
+                    end
+                    llvmbc = read(findfirst(sections, ".llvmbc"))
+                    return llvmbc
+                end
+
+                if data !== nothing
+                    inmod = parse(LLVM.Module, data; ctx)
+                    found = haskey(functions(inmod), fname)
+                end
+            catch e
             end
 
             if found

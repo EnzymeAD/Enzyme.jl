@@ -969,7 +969,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1029,7 +1029,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
@@ -1126,7 +1126,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(typeof, args)...}
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         forward, adjoint = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
