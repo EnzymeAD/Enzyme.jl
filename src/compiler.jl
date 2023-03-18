@@ -825,7 +825,7 @@ end
 
 function runtime_newtask_fwd(fn::Any, dfn::Any, post::Any, ssize::Int, width)
     forward = thunk(Duplicated{Core.Typeof(fn)}, Const, Tuple{}, Val(API.DEM_ForwardMode), width, Val((false,)))
-    ft = Duplicated(func, dfunc)
+    ft = Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
         if length(res) > 1
@@ -841,7 +841,7 @@ end
 function runtime_newtask_augfwd(fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {width, ModifiedBetween}
     # TODO make this AD subcall type stable
     forward, adjoint = thunk(Duplicated{Core.Typeof(fn)}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
-    ft = Duplicated(func, dfunc)
+    ft = Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
     function fclosure()

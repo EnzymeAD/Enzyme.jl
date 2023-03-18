@@ -424,8 +424,8 @@ end
     t1 = Leaf(ps)
     t1Grads = Leaf(grads)
     
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), LeafF, Active, Duplicated{Leaf})
-    tape, primal, shadow = forward(Duplicated(t1, t1Grads))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(LeafF)}, Active, Duplicated{Leaf})
+    tape, primal, shadow = forward(Const(LeafF), Duplicated(t1, t1Grads))
     
 
     struct Foo2{X,Y}
@@ -455,8 +455,8 @@ end
     data = ones(Float64, 500)
     ddata = zeros(Float64, 500)
 
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), fwdunion, Active, Duplicated{Vector{Float64}})
-    tape, primal, shadow = forward(Duplicated(data, ddata))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(fwdunion)}, Active, Duplicated{Vector{Float64}})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(data, ddata))
 
 	function firstimpl(itr)
 		v = firstfold(itr)
