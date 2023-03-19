@@ -427,7 +427,7 @@ end
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
 
-@inline function autodiff_deferred(mode::SMode, f::FA, args...) where {FA<:Annotation, SMode<:Mode}
+@inline function autodiff_deferred(mode::M, f::FA, args...) where {FA<:Annotation, M<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     rt    = Core.Compiler.return_type(f.val, tt)
