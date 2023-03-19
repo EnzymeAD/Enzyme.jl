@@ -2711,40 +2711,43 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
+        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+        shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
-    B = LLVM.Builder(B)
+        B = LLVM.Builder(B)
 
-    funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
+        funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
-@static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}}
-else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Bool}
-end
-    mode = API.EnzymeGradientUtilsGetMode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
-    permit_inlining!(entry)
-    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
-
-@static if VERSION < v"1.8-"
-else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
-end
-
-    token = emit_gc_preserve_begin(B, to_preserve)
-
-    cal = LLVM.call!(B, entry, vals)
-    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-
-    emit_gc_preserve_end(B, token)
-
-    # Delete the primal code
-    if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+    @static if VERSION < v"1.8-"
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}}
     else
-        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Bool}
+    end
+        mode = API.EnzymeGradientUtilsGetMode(gutils)
+        entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
+        permit_inlining!(entry)
+        push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
+
+    @static if VERSION < v"1.8-"
+    else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
+    end
+
+        token = emit_gc_preserve_begin(B, to_preserve)
+
+        cal = LLVM.call!(B, entry, vals)
+        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
+
+        emit_gc_preserve_end(B, token)
+
+        # Delete the primal code
+        if normal !== nothing
+            unsafe_store!(normalR, C_NULL)
+        else
+            LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        end
     end
 end
 
@@ -2753,51 +2756,54 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
+        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+        shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
-    B = LLVM.Builder(B)
+        B = LLVM.Builder(B)
 
-    funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
+        funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
-@static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}}
-else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, Bool}
-end
-    mode = API.EnzymeGradientUtilsGetMode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
-    permit_inlining!(entry)
-    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
-
-@static if VERSION < v"1.8-"
-else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
-end
-
-    token = emit_gc_preserve_begin(B, to_preserve)
-    tape = LLVM.call!(B, entry, vals)
-    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
-
-    if !any_jltypes(get_tape_type(thunkTy))
-        if llvmtype(tape) != convert(LLVMType, Ptr{Cvoid}; ctx)
-            tape = LLVM.ConstantInt(0; ctx)
-            GPUCompiler.@safe_warn "Illegal calling convention for threadsfor augfwd"
-        end
-    end
-
-    emit_gc_preserve_end(B, token)
-
-    # Delete the primal code
-    if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+    @static if VERSION < v"1.8-"
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}}
     else
-        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, Bool}
+    end
+        mode = API.EnzymeGradientUtilsGetMode(gutils)
+        entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
+        permit_inlining!(entry)
+        push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
+
+    @static if VERSION < v"1.8-"
+    else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
     end
 
-    GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
+        token = emit_gc_preserve_begin(B, to_preserve)
+        tape = LLVM.call!(B, entry, vals)
+        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
 
-    unsafe_store!(tapeR, tape.ref)
+        if !any_jltypes(get_tape_type(thunkTy))
+            if llvmtype(tape) != convert(LLVMType, Ptr{Cvoid}; ctx)
+                tape = LLVM.ConstantInt(0; ctx)
+                GPUCompiler.@safe_warn "Illegal calling convention for threadsfor augfwd"
+            end
+        end
+
+        emit_gc_preserve_end(B, token)
+
+        # Delete the primal code
+        if normal !== nothing
+            unsafe_store!(normalR, C_NULL)
+        else
+            LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        end
+
+        GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
+
+        unsafe_store!(tapeR, tape.ref)
+    end
 
     return nothing
 end
@@ -2807,41 +2813,44 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    tape = LLVM.Value(tape)
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
+        tape = LLVM.Value(tape)
 
-    B = LLVM.Builder(B)
+        B = LLVM.Builder(B)
 
-    funcT, dfuncT, vals, thunkTy, to_preserve, TapeType = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
+        funcT, dfuncT, vals, thunkTy, to_preserve, TapeType = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
-    STT = if !any_jltypes(TapeType)
-        Ptr{TapeType}
+        STT = if !any_jltypes(TapeType)
+            Ptr{TapeType}
+        else
+            Vector{TapeType}
+        end
+
+    @static if VERSION < v"1.8-"
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT }
     else
-        Vector{TapeType}
+        tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT, Bool}
+    end
+        mode = API.EnzymeGradientUtilsGetMode(gutils)
+        entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
+        permit_inlining!(entry)
+        push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
+
+        push!(vals, tape)
+
+    @static if VERSION < v"1.8-"
+    else
+        push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
     end
 
-@static if VERSION < v"1.8-"
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT }
-else
-    tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT, Bool}
-end
-    mode = API.EnzymeGradientUtilsGetMode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
-    permit_inlining!(entry)
-    push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
+        token = emit_gc_preserve_begin(B, to_preserve)
 
-    push!(vals, tape)
+        cal = LLVM.call!(B, entry, vals)
+        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
 
-@static if VERSION < v"1.8-"
-else
-    push!(vals, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[end-1])))
-end
-
-    token = emit_gc_preserve_begin(B, to_preserve)
-
-    cal = LLVM.call!(B, entry, vals)
-    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-
-    emit_gc_preserve_end(B, token)
+        emit_gc_preserve_end(B, token)
+    end
     return nothing
 end
 
