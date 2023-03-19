@@ -61,7 +61,6 @@ const known_ops = Dict(
 )
 
 const nofreefns = Set{String}((
-    "cuStreamCreate",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_box_int64", "jl_box_int32",
@@ -114,7 +113,6 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
-    "cuStreamCreate",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_box_int64", "jl_box_int32",
@@ -3500,7 +3498,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     end
 
     # Delete the primal code
-    if needsPrimal
+    if needsPrimal && !is_sret(RealRt, ctx)
         unsafe_store!(normalR, normalV)
     else
         LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
@@ -3804,7 +3802,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         end
 
         # Delete the primal code
-        if needsPrimal
+        if needsPrimal && !is_sret(RealRt, ctx)
             unsafe_store!(normalR, normalV)
         else
             LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
