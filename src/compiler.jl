@@ -2463,7 +2463,7 @@ end
 if VERSION < v"1.8-"
 function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy})::Cvoid where ThunkTy
     thunk = ThunkTy(ptr)
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
     function fwd()
         thunk(ft)
     end
@@ -2480,7 +2480,7 @@ function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}) wh
         Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*Base.Threads.nthreads()))
     end
 
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
 
     function fwd()
         tres = thunk(ft)
@@ -2497,7 +2497,7 @@ end
 
 function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, tapes) where {ThunkTy, AnyJL}
     thunk = ThunkTy(ptr)
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
     function rev()
         tid = Base.Threads.threadid()
         tres = if !AnyJL
@@ -2518,7 +2518,7 @@ else
 
 function runtime_pfor_fwd(func, ptr, dfunc, ::Type{ThunkTy}, dynamic)::Cvoid where ThunkTy
     thunk = ThunkTy(ptr)
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
     function fwd(tid)
         thunk(ft, Const(tid))
     end
@@ -2529,7 +2529,7 @@ end
 function runtime_pfor_augfwd(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, dynamic) where {ThunkTy, AnyJL}
     TapeType = get_tape_type(ThunkTy)
     thunk = ThunkTy(ptr)
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
     tapes = if AnyJL
         Vector{TapeType}(undef, Base.Threads.nthreads())
     else
@@ -2550,7 +2550,7 @@ end
 
 function runtime_pfor_rev(func, ptr, dfunc, ::Type{ThunkTy}, ::Val{AnyJL}, tapes, dynamic) where {ThunkTy, AnyJL}
     thunk = ThunkTy(ptr)
-    ft = Duplicated(func, dfunc)
+    ft = dfunc === nothing ? Const(func) : Duplicated(func, dfunc)
     function rev(tid)
         tres = if !AnyJL
             unsafe_load(tapes, tid)
@@ -2778,6 +2778,13 @@ end
     token = emit_gc_preserve_begin(B, to_preserve)
     tape = LLVM.call!(B, entry, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, tape, orig)
+
+    if !any_jltypes(get_tape_type(thunkTy))
+        if llvmtype(tape) != convert(LLVMType, Ptr{Cvoid}; ctx)
+            tape = LLVM.ConstantInt(0; ctx)
+            GPUCompiler.@safe_warn "Illegal calling convention for threadsfor augfwd"
+        end
+    end
 
     emit_gc_preserve_end(B, token)
 
