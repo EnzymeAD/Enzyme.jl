@@ -4603,7 +4603,7 @@ end
 function jl_unhandled_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
-    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for "*string(origops[0]))
+    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for "*string(origops[end]))
     API.moveBefore(orig, err, C_NULL)
     return nothing
 end
