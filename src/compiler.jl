@@ -915,9 +915,9 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
             push!(typeargs, t)
         else
             prim = :($base[$base_idx])
-            t = :(typeof($prim))
             base_idx += 1
         end
+        t = :(Core.Typeof($prim))
         push!(primargs, prim)
         push!(primtypes, t)
         shadows = Union{Symbol,Expr}[]
@@ -930,7 +930,6 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
                 push!(typeargs, t)
             else
                 shad = :($base[$base_idx])
-                t = :(typeof($shad))
                 base_idx += 1
             end
             push!(shadows, shad)
@@ -944,7 +943,8 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     wrapped = Expr[]
     for i in 1:N
         expr = :(
-                if ActivityTup[$i+1] && !isghostty($(primtypes[i]))
+                 if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i]))
+                   @assert $(primtypes[i]) !== DataType
                 if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
                     Active($(primargs[i]))
                  else
@@ -960,7 +960,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
 end
 
-@inline eltypeof(x) = eltype(typeof(x))
+@inline eltypeof(x) = eltype(Core.Typeof(x))
 
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
@@ -972,7 +972,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(typeof, args)...}
+        tt′ = Tuple{map(Core.Typeof, args)...}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
@@ -1032,10 +1032,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(typeof, args)...}
+        tt′ = Tuple{map(Core.Typeof, args)...}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-
         forward, adjoint = thunk((ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
@@ -1129,7 +1128,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(typeof, args)...}
+        tt′ = Tuple{map(Core.Typeof, args)...}
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
