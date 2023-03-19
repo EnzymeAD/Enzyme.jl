@@ -1016,7 +1016,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, tt)
+        FT = Core.Typeof(f)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1079,9 +1080,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, tt)
+        FT = Core.Typeof(f)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
@@ -1126,13 +1127,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, World, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, World, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -1181,7 +1182,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, tt)
+        FT = Core.Typeof(f)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
@@ -5259,10 +5261,12 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
         p = bitcast!(B, p, T_prjlvalue)
+        @assert isa(p, LLVM.Instruction)
         push!(added, p.ref)
 
         vals = get_julia_inner_types(B, p, v, added=added)
         r = emit_writebarrier!(B, vals)
+        @assert isa(r, LLVM.Instruction)
         push!(added, r.ref)
     end
     if R2 != C_NULL
