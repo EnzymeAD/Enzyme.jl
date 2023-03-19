@@ -175,12 +175,11 @@ end
         push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(Int, unsafe_to_pointer(TapeType))); ctx))
     end
 
-        dfuncT = Nothing
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, TapeType}
+           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 
