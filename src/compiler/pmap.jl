@@ -8,14 +8,19 @@ function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
 end
 
 function runtime_pmap_augfwd(count, ::Type{ThunkTy}, ::Val{AnyJL}, forward, args...) where {ThunkTy, AnyJL}
-    TapeType = GetTapeType(ThunkTy)
+    TapeType = get_tape_type(ThunkTy)
+    TT = if AnyJL
+        Vector{TapeType}
+    else
+        Ptr{TapeType}
+    end
     tapes = if AnyJL
         Vector{TapeType}(undef, count)
     else
         Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*count))
     end
     function fwd(idx, tapes, f_func, f, df, fargs...)
-        st = raw_enzyme_call(ThunkTy(f, f_func, nothing), idx, fargs...)[1]
+        st = raw_enzyme_call(ThunkTy(f_func), Const(f), idx, fargs...)[1]
         if !AnyJL
             unsafe_store!(tapes, st, idx)
         else
@@ -33,7 +38,7 @@ function runtime_pmap_rev(count, ::Type{ThunkTy}, ::Val{AnyJL}, adjoint, tapes, 
         else
             @inbounds tapes[idx]
         end
-        raw_enzyme_call(ThunkTy(f, r_func, nothing), idx, rargs..., st)
+        raw_enzyme_call(ThunkTy(r_func), Const(f), idx, rargs..., st)
         # st = unsafe_load(tapes, idx)
         nothing
 	end
@@ -155,7 +160,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         funcOverwritten = true
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false)
+                                                #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
         ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
             
         jctx = ctx
@@ -175,12 +180,11 @@ end
         push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(Int, unsafe_to_pointer(TapeType))); ctx))
     end
 
-        dfuncT = Nothing
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, TapeType}
+           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 
@@ -276,7 +280,7 @@ end
 
     res = LLVM.call!(B, entry, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
-
+    
     return res
 end
 

@@ -116,4 +116,7 @@ end
     end
     @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1][2]
     @test 1.0 ≈ autodiff(Forward, thr_inactive, false, Duplicated(2.14, 1.0))[1]
+    
+    @test 1.0 ≈ autodiff(Reverse, thr_inactive, true, Active(2.14))[1][2]
+    @test 1.0 ≈ autodiff(Forward, thr_inactive, true, Duplicated(2.14, 1.0))[1]
 end

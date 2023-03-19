@@ -129,7 +129,7 @@ function get_trampoline(job)
         addr_primal_stub = nothing
     end
 
-    return address(orc, string(cc_adjoint.stub)), nothing
+    return address(orc, string(cc_adjoint.stub)), addr_primal_stub
 end
 
 

@@ -177,7 +177,6 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
         if T <: Module
             return TypeTree()
         end
-        error("$T is unknown leaf")
     end
 
     if !Base.isconcretetype(T)

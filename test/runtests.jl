@@ -58,39 +58,39 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
-    thunk_a = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_b = Enzyme.Compiler.thunk(f0, nothing, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_c = Enzyme.Compiler.thunk(f0, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_d = Enzyme.Compiler.thunk(f0, nothing, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    thunk_a = Enzyme.Compiler.thunk(Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    thunk_b = Enzyme.Compiler.thunk(Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    thunk_c = Enzyme.Compiler.thunk(Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    thunk_d = Enzyme.Compiler.thunk(Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test_broken thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
 
-    @test thunk_a(Active(2.0), 1.0) == ((1.0,),)
-    @test thunk_a(Active(2.0), 2.0) == ((2.0,),)
-    @test thunk_b(Const(2.0)) === ((nothing,),)
+    @test thunk_a(Const(f0), Active(2.0), 1.0) == ((1.0,),)
+    @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
+    @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(f0, nothing, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
+    forward, pullback = Enzyme.Compiler.thunk(Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
 
-    @test forward(Active(2.0)) == (nothing,nothing,nothing)
-    @test pullback(Active(2.0), 1.0, nothing) == ((1.0,),)
+    @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
+    @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
     
     function mul2(x)
         x[1] * x[2]
     end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     
-    forward, pullback = Enzyme.Compiler.thunk(mul2, nothing, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
-    res = forward(d)
+    forward, pullback = Enzyme.Compiler.thunk(Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
+    res = forward(Const(mul2), d)
     @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
-    pullback(d, 1.0, res[1])
+    pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0 
     
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    forward, pullback = Enzyme.Compiler.thunk(vrec, nothing, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
-    res = forward(Const(Int(1)), d)
-    pullback(Const(1), d, 1.0, res[1])
+    forward, pullback = Enzyme.Compiler.thunk(Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    res = forward(Const(vrec), Const(Int(1)), d)
+    pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
 
@@ -424,8 +424,8 @@ end
     t1 = Leaf(ps)
     t1Grads = Leaf(grads)
     
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), LeafF, Active, Duplicated{Leaf})
-    tape, primal, shadow = forward(Duplicated(t1, t1Grads))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(LeafF)}, Active, Duplicated{Leaf})
+    tape, primal, shadow = forward(Const(LeafF), Duplicated(t1, t1Grads))
     
 
     struct Foo2{X,Y}
@@ -455,8 +455,8 @@ end
     data = ones(Float64, 500)
     ddata = zeros(Float64, 500)
 
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), fwdunion, Active, Duplicated{Vector{Float64}})
-    tape, primal, shadow = forward(Duplicated(data, ddata))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(fwdunion)}, Active, Duplicated{Vector{Float64}})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(data, ddata))
 
 	function firstimpl(itr)
 		v = firstfold(itr)
