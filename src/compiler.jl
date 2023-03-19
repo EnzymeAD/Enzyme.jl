@@ -65,6 +65,8 @@ const nofreefns = Set{String}((
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
+    "jl_box_uint64", "jl_box_uint32",
+    "ijl_box_uint64", "ijl_box_uint32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
     "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
     "jl_breakpoint",
@@ -115,6 +117,8 @@ const inactivefns = Set{String}((
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
+    "jl_box_uint64", "jl_box_uint32",
+    "ijl_box_uint64", "ijl_box_uint32",
     "jl_subtype", "julia.get_pgcstack", "jl_in_threaded_region",
     "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
     "jl_breakpoint",
@@ -2665,12 +2669,10 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            dfuncT = dupClosure ? funcT : Nothing
-            thunkTy = AugmentedForwardThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-            dfuncT = dupClosure ? funcT : Nothing
-            thunkTy = AdjointThunk{funcT, Const{Nothing}, eadjoint.tt, Val{width}, dfuncT, TapeType}
+           thunkTy = AdjointThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
     else
