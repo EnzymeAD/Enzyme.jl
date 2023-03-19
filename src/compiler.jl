@@ -983,7 +983,6 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     @assert length(primargs) == N
     @assert length(primtypes) == N
     @assert length(ActivityTup) == N+1
-    @show N, primargs
     wrapped = Expr[]
     for i in 1:N
         expr = :(
