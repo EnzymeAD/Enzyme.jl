@@ -2704,6 +2704,7 @@ end
         push!(to_preserve, v)
     end
 
+    dfuncT = dupClosure ? funcT : Nothing
     return funcT, dfuncT, vals, thunkTy, to_preserve, TapeType
 end
 
@@ -3117,6 +3118,11 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall, job)
         true_idx += 1
 
         if arg.cc == GPUCompiler.GHOST
+            if isKWCall && true_idx == 2
+                Ty = arg.typ
+                kwtup = Ty
+                continue
+            end
             push!(activity, Const{arg.typ})
             push!(overwritten, false)
             continue
@@ -3259,6 +3265,14 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
     needsPrimal = needsPrimalP[] != 0
 
+    ctx = LLVM.context(orig)
+    sret = is_sret(RealRt, ctx)
+    if sret
+        activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1], #=isforeign=#false)
+        needsPrimal = activep == API.DFT_DUP_ARG
+        needsShadowP[] = true
+    end
+    
     if !needsPrimal && activep == API.DFT_DUP_ARG
         activep = API.DFT_DUP_NONEED
     end
@@ -3371,6 +3385,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
             insert!(args, 2, returnRoots)
         end
     end
+    @show fwd_RT, sret, returnRoots, is_sret(fwd_RT, ctx), convert(LLVMType, fwd_RT; ctx, allow_boxed=true)
+
+    if length(args) != length(parameters(llvmf))
+        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT
+        return
+    end
 
     for i in eachindex(args)
         party = llvmtype(parameters(llvmf)[i])
@@ -3409,7 +3429,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
                 emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return
             end
-            normalV = res.ref
+            if is_sret(RealRt, ctx)
+                val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
+                store!(B, res, val)
+            else
+                normalV = res.ref
+            end
         else
             if Nothing != fwd_RT
                 emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
@@ -3418,7 +3443,6 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         end
     else
         if !needsPrimal
-            shadowV = res.ref
             ST = RealRt
             if width != 1
                 ST = NTuple{Int64(width), ST}
@@ -3426,6 +3450,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
             if ST != fwd_RT
                 emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return
+            end
+            if is_sret(RealRt, ctx)
+                dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                store!(B, res, dval)
+            else
+                shadowV = res.ref
             end
         else
             ST = if width == 1
@@ -3437,8 +3467,15 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
                 emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return
             end
-            normalV = extract_value!(B, res, 0).ref
-            shadowV = extract_value!(B, res, 1).ref
+            if is_sret(RealRt, ctx)
+                val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
+                dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                store!(B, extract_value!(B, res, 0), val)
+                store!(B, extract_value!(B, res, 1), dval)
+            else
+                normalV = extract_value!(B, res, 0).ref
+                shadowV = extract_value!(B, res, 1).ref
+            end
         end
     end
 
@@ -3745,6 +3782,21 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             unsafe_store!(normalR, normalV)
         else
             LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        end
+    end
+    
+    if sret !== nothing
+        ld = load!(B, sret)
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
+            prim = needsShadow ? extract_value!(B, ld, 0) : ld
+            store!(B, prim, val)
+        end 
+
+        if needsShadow
+            dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+            shad = needsPrimal ? extract_value!(B, ld, 1) : ld
+            store!(B, shad, dval)
         end
     end
 
@@ -4126,11 +4178,14 @@ end
 
 function eqtableget_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+        if shadowR != C_NULL && normal !== nothing
+            unsafe_store!(shadowR, normal.ref)
+        end
     end
 
     return nothing
@@ -4138,11 +4193,14 @@ end
 
 function eqtableget_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_get")
+    
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
+        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_get")
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+        if shadowR != C_NULL && normal !== nothing
+            unsafe_store!(shadowR, normal.ref)
+        end
     end
 
     return nothing
@@ -4150,7 +4208,6 @@ end
 
 function eqtableget_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_eqtable_get")
     return nothing
 end
 
@@ -4602,9 +4659,10 @@ end
 
 function jl_unhandled_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    newo = API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)
     origops = collect(operands(orig))
     err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for "*string(origops[end]))
-    API.moveBefore(orig, err, C_NULL)
+    API.moveBefore(newo, err, C_NULL)
     return nothing
 end
 function jl_unhandled_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -5641,7 +5699,7 @@ function __init__()
         @cfunction(jl_array_ptr_copy_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("cuLaunchCooperativeKernel","cuLaunchCooperativeKernel"),
+        ("cuLaunchCooperativeKernel","cuLaunchKernel"),
         @cfunction(jl_unhandled_augfwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_unhandled_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_unhandled_fwd, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
