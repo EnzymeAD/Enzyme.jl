@@ -8,14 +8,19 @@ function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
 end
 
 function runtime_pmap_augfwd(count, ::Type{ThunkTy}, ::Val{AnyJL}, forward, args...) where {ThunkTy, AnyJL}
-    TapeType = GetTapeType(ThunkTy)
+    TapeType = get_tape_type(ThunkTy)
+    TT = if AnyJL
+        Vector{TapeType}
+    else
+        Ptr{TapeType}
+    end
     tapes = if AnyJL
         Vector{TapeType}(undef, count)
     else
         Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*count))
     end
     function fwd(idx, tapes, f_func, f, df, fargs...)
-        st = raw_enzyme_call(ThunkTy(f_func), df === nothing ? Const(f) : Duplicated(f, df), idx, fargs...)[1]
+        st = raw_enzyme_call(ThunkTy(f_func), Const(f), idx, fargs...)[1]
         if !AnyJL
             unsafe_store!(tapes, st, idx)
         else
@@ -33,7 +38,7 @@ function runtime_pmap_rev(count, ::Type{ThunkTy}, ::Val{AnyJL}, adjoint, tapes, 
         else
             @inbounds tapes[idx]
         end
-        raw_enzyme_call(ThunkTy(r_func), df === nothing ? Const(f) : Duplicated(f, df), idx, rargs..., st)
+        raw_enzyme_call(ThunkTy(r_func), Const(f), idx, rargs..., st)
         # st = unsafe_load(tapes, idx)
         nothing
 	end
@@ -275,7 +280,7 @@ end
 
     res = LLVM.call!(B, entry, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
-
+    
     return res
 end
 

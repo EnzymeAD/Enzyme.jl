@@ -8234,19 +8234,20 @@ const cache_lock = ReentrantLock()
     end
 end
 
-
-@generated function genthunk(::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}, ::Val{ShadowInit}) where {FA, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal, ShadowInit}
+@generated function genthunk(::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{ModifiedBetween}, ::Val{width}, ::Val{specid}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Val{parent_job}) where {FA, A<:Annotation, TT, Mode, ModifiedBetween, width, specid, ReturnPrimal, ShadowInit, parent_job}
     primal, adjoint = fspec(eltype(FA), TT)
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
     job    = Compiler.CompilerJob(target, primal, params)
 
+    if parent_job !== nothing
+        job = similar(parent_job, job.source)
+    end
+
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
 
-    # world = ...
-
-    interp = Core.Compiler.NativeInterpreter(job.source.world)
+    interp = GPUCompiler.get_interpreter(job)
 
     # TODO check compile return here, early
     # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
@@ -8309,7 +8310,7 @@ end
     end
 end
 
-@inline function thunk(::Type{FA},::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit}
+@inline function thunk(::Type{FA},::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false), ::Val{parent_job}=Val(nothing)) where {FA<:Annotation, A<:Annotation, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit, parent_job}
     primal, adjoint = fspec(eltype(FA), TT)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
@@ -8317,7 +8318,7 @@ end
 
     specid = GPUCompiler.specialization_id(job)
 
-    genthunk(FA, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal), Val(ShadowInit))
+    genthunk(FA, A, TT, Val(Mode), Val(ModifiedBetween), Val(width), Val(specid), Val(ReturnPrimal), Val(ShadowInit), Val(parent_job))
 end
 
 import GPUCompiler: deferred_codegen_jobs
