@@ -2372,6 +2372,21 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
     return nothing
 end
 
+
+struct EnzymeRuntimeException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    print(io, "Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+function throwerr(cstr::Cstring)
+    throw(EnzymeRuntimeException(cstr))    
+end
+
 function emit_error(B::LLVM.Builder, orig, string)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -2380,9 +2395,10 @@ function emit_error(B::LLVM.Builder, orig, string)
 
     # 1. get the error function
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
-    func = get_function!(mod, "jl_error", funcT, [EnumAttribute("noreturn"; ctx)])
-
-
+    ptr = @cfunction(throwerr, Union{}, (Cstring,))
+    ptr = convert(UInt, ptr)
+    ptr = LLVM.ConstantInt(ptr; ctx)
+    func = inttoptr!(B, ptr, LLVM.PointerType(funcT))
     if orig !== nothing
         bt = GPUCompiler.backtrace(orig)
         function printBT(io)
