@@ -99,6 +99,7 @@ end
 const nofreefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_backtrace_from_here", "ijl_backtrace_from_here",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
     "jl_box_uint64", "jl_box_uint32",
@@ -151,6 +152,7 @@ const nofreefns = Set{String}((
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_backtrace_from_here", "ijl_backtrace_from_here",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
     "jl_box_uint64", "jl_box_uint32",
@@ -982,7 +984,6 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     end
     @assert length(primargs) == N
     @assert length(primtypes) == N
-    @assert length(ActivityTup) == N+1
     wrapped = Expr[]
     for i in 1:N
         expr = :(
@@ -5207,11 +5208,15 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             if any_jltypes(ty)
                 if addrspace(ty) != 10
                     cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
-                    push!(added, cur.ref)
+                    if isa(cur, LLVM.Instruction)
+                        push!(added, cur.ref)
+                    end
                 end
                 if llvmtype(cur) != T_prjlvalue
                     cur = bitcast!(B, cur, T_prjlvalue)
-                    push!(added, cur.ref)
+                    if isa(cur, LLVM.Instruction)
+                        push!(added, cur.ref)
+                    end
                 end
                 push!(vals, cur)
             end
@@ -5221,7 +5226,9 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             if any_jltypes(ty)
                 for i=1:length(ty)
                     ev = extract_value!(B, cur, i-1)
-                    push!(added, ev.ref)
+                    if isa(ev, LLVM.Instruction)
+                        push!(added, ev.ref)
+                    end
                     push!(todo, ev)
                 end
             end
@@ -5231,7 +5238,9 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             for (i, t) in enumerate(LLVM.elements(ty))
                 if any_jltypes(t)
                     ev = extract_value!(B, cur, i-1)
-                    push!(added, ev.ref)
+                    if isa(ev, LLVM.Instruction)
+                        push!(added, ev.ref)
+                    end
                     push!(todo, ev)
                 end
             end
@@ -5273,6 +5282,7 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         unsafe_store!(R2, length(added))
         ptr = Base.unsafe_convert(Ptr{LLVM.API.LLVMValueRef}, Libc.malloc(sizeof(LLVM.API.LLVMValueRef)*length(added)))
         for (i, v) in enumerate(added)
+            @assert isa(LLVM.Value(v), LLVM.Instruction)
             unsafe_store!(ptr, v, i)
         end
         return ptr
