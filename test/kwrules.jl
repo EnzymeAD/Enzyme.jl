@@ -31,7 +31,7 @@ end
 
 # Test that this errors due to missing kwargs in rule definition
 g2(x, y) = f_kw2(x; val=y)
-@test_throws ErrorException autodiff(Forward, g2, Duplicated(2.0, 1.0), Const(42.0))[1] ≈ 14.0
+@test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Forward, g2, Duplicated(2.0, 1.0), Const(42.0))[1] ≈ 14.0
 
 function f_kw3(x; val=nothing)
     x^2
@@ -56,7 +56,7 @@ end
 # Test that this errors due to missing kwargs in rule definition
 g4(x, y) = f_kw4(x; y)
 @test autodiff(Forward, g4, Duplicated(2.0, 1.0), Const(42.0))[1] ≈ 42004.0 
-@test_throws ErrorException autodiff(Forward, g4, Duplicated(2.0, 1.0), Duplicated(42.0, 1.0))[1]
+@test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Forward, g4, Duplicated(2.0, 1.0), Duplicated(42.0, 1.0))[1]
 
 end # KWForwardRules
 
