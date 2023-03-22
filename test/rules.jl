@@ -87,11 +87,11 @@ function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
 end
 
 @testset "Registry" begin
-    @test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
 
     rh(cond, x) = cond ? g(x) : x
     @test Enzyme.autodiff(Forward, rh, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
-    @test_throws ErrorException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
 end
 
 function alloc_sq(x)
@@ -131,7 +131,7 @@ end
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
     @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
-    @test_throws ErrorException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
 
 end # module ForwardRules
