@@ -8274,7 +8274,7 @@ end
     job    = Compiler.CompilerJob(target, primal, params)
 
     if parent_job !== nothing
-        job = similar(parent_job, job.source)
+        job = GPUCompiler.CompilerJob(parent_job.target, job.source, parent_job.params)
     end
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
