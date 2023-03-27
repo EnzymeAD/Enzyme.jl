@@ -183,7 +183,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         if !allocatedinline(rt) || rt isa Union
             forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(f, args′...)
@@ -200,7 +200,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         args′ = (args′..., one(rt))
     end
     thunk(f, args′...)
@@ -227,7 +227,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
     if world === nothing
         world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
     end
-    rt    = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+    rt    = Core.Compiler.return_type(f.val, tt, world)
     A     = guess_activity(rt, mode)
     autodiff(mode, f, A, args′...; world)
 end
@@ -340,7 +340,7 @@ code, as well as high-order differentiation.
         world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
     end
     if A isa UnionAll
-        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         rt = A{rt}
     else
         @assert A isa DataType
@@ -400,7 +400,7 @@ code, as well as high-order differentiation.
         world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
     end
     if RT isa UnionAll
-        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(f.val, tt, world)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -445,7 +445,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
     if world === nothing
         world = GPUCompiler.get_world(Core.Typeof(f.val), tt)
     end
-    rt    = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
+    rt    = Core.Compiler.return_type(f.val, tt, world)
     if rt === Union{}
         error("return type is Union{}, giving up.")
     end
@@ -870,7 +870,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     if world === nothing
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
     end
-    rt = Core.Compiler.return_type(Tuple{Core.Typeof(f), tt.parameters...}, world)
+    rt = Core.Compiler.return_type(f, tt, world)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
     World = Val(nothing)
@@ -911,7 +911,7 @@ end
     if world === nothing
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
     end
-    rt = Core.Compiler.return_type(Tuple{Core.Typeof(f), tt.parameters...}, world)
+    rt = Core.Compiler.return_type(f, tt, world)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
     primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)

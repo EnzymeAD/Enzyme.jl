@@ -92,7 +92,7 @@ end
     
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     world = GPUCompiler.get_world(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
