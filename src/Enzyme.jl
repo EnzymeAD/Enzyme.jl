@@ -211,8 +211,8 @@ end
 
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff(mode::CMode, f::F, args...) where {F, CMode<:Mode}
-    autodiff(mode, Const(f), args...)
+@inline function autodiff(mode::CMode, f::F, args...; world=nothing) where {F, CMode<:Mode}
+    autodiff(mode, Const(f), args...; world)
 end
 
 """
@@ -322,19 +322,13 @@ f(x) = x*x
     thunk(f, args′...)
 end
 
-# F as first arg for `do` syntax
-@inline autodiff(dupf::Duplicated{F}, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, dupf, A, args...)
-@inline autodiff(f::F, mode::Mode, ::Type{A}, args...) where {F,A<:Annotation} = autodiff(mode, f, A, args...)
-@inline autodiff(dupf::Duplicated{F}, mode::Mode, args...) where {F} = autodiff(mode, dupf, args...)
-@inline autodiff(f::F, mode::Mode, args...) where {F} = autodiff(mode, f, args...)
-
 """
     autodiff_deferred(::ReverseMode, f, Activity, args...)
 
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
+@inline function autodiff_deferred(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...; world=nothing) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -436,8 +430,8 @@ end
 
 Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff_deferred(mode::CMode, f::F, args...) where {F, CMode<:Mode}
-    autodiff_deferred(mode, Const(f), args...)
+@inline function autodiff_deferred(mode::CMode, f::F, args...; world=nothing) where {F, CMode<:Mode}
+    autodiff_deferred(mode, Const(f), args...; world)
 end
 """
     autodiff_deferred(mode, f, args...)
@@ -445,7 +439,7 @@ end
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
 
-@inline function autodiff_deferred(mode::M, f::FA, args...; world) where {FA<:Annotation, M<:Mode}
+@inline function autodiff_deferred(mode::M, f::FA, args...; world=nothing) where {FA<:Annotation, M<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     if world === nothing
@@ -502,7 +496,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...; parent_job=Val(nothing)) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...; world=nothing, parent_job=Val(nothing)) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
     # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
@@ -520,8 +514,13 @@ result, ∂v, ∂A
         ModifiedBetween = Val(ModifiedBetweenT)
     end
 
+    tt    = Tuple{map(eltype, args′)...}
+    if world === nothing
+        world = GPUCompiler.get_world(eltype(FA), tt)
+    end
+    
     @assert ReturnShadow
-    Enzyme.Compiler.thunk(FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), parent_job)
+    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), parent_job)
 end
 
 """
@@ -594,7 +593,7 @@ result, ∂v, ∂A
     end
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(World, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
     TapeType = Compiler.get_tape_type(typeof(nondef[1]))
     A2 = Compiler.return_type(typeof(nondef[1]))
 
@@ -679,9 +678,9 @@ grad = gradient(Reverse, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient(::ReverseMode, f, x)
+@inline function gradient(::ReverseMode, f, x; world=nothing)
     dx = zero(x)
-    autodiff(Reverse, f, Duplicated(x, dx))
+    autodiff(Reverse, f, Duplicated(x, dx); world)
     dx
 end
 
@@ -707,9 +706,9 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient!(::ReverseMode, dx, f, x)
+@inline function gradient!(::ReverseMode, dx, f, x; world=nothing)
     dx .= 0
-    autodiff(Reverse, f, Duplicated(x, dx))
+    autodiff(Reverse, f, Duplicated(x, dx); world)
     dx
 end
 
@@ -734,11 +733,11 @@ grad = gradient(Forward, f, [2.0, 3.0])
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f, x; shadow=onehot(x), world)
     if length(x) == 0
         return ()
     end
-    values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+    values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow); world)))
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -773,19 +772,19 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk)), world=nothing) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     tmp = ntuple(length(shadow)) do i
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]); world)[1])
     end
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x), world=nothing) where {F,X}
     ntuple(length(shadow)) do i
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]); world)[1]
     end
 end
 
@@ -811,29 +810,29 @@ grad = jacobian(Forward, f, [2.0, 3.0])
  0.0  1.0
 ```
 """
-@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
+@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x), world=nothing)
     cols = if length(x) == 0
         return ()
     else
-        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow); world)))
     end
     reduce(hcat, cols)
 end
 
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk)), world=nothing) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     tmp = ntuple(length(shadow)) do i
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]); world)[1])
     end
     cols = tupleconcat(tmp...)
     reduce(hcat, cols)
 end
 
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x), world=nothing) where {F,X}
     cols = ntuple(length(shadow)) do i
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]); world)[1]
     end
     reduce(hcat, cols)
 end
@@ -859,7 +858,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
  0.0  1.0
 ```
 """
-@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}; world=nothing) where {F, X, chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -868,11 +867,14 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
-    rt = Core.Compiler.return_type(f, tt)
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+    end
+    rt = Core.Compiler.return_type(Tuple{Core.Typeof(f), tt.parameters...}, world)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
     World = Val(nothing)
-    primal, adjoint = Enzyme.Compiler.thunk(World, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
+    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -880,7 +882,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(World, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
+        primal2, adjoint2 = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
     end
 
     tmp = ntuple(num) do i
@@ -903,13 +905,16 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
-@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val}
+@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1); world=nothing) where {F, X, n_out_val}
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
-    rt = Core.Compiler.return_type(f, tt)
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+    end
+    rt = Core.Compiler.return_type(Tuple{Core.Typeof(f), tt.parameters...}, world)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(World, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
+    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
