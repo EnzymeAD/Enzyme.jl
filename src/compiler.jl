@@ -3421,13 +3421,13 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     if !isKWCall && EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
         @safe_debug "Applying custom forward rule" TT
         llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
-        fwd_RT = Core.Compiler.return_type(Tuple{EnzymeRules.forward, TT.parameters...}, world)
+        fwd_RT = Core.Compiler.return_type(Tuple{typeof(EnzymeRules.forward), TT.parameters...}, world)
     end
 
     if isKWCall && EnzymeRules.isapplicable(kwfunc, TT; world)
         @safe_debug "Applying custom forward rule (kwcall)" TT
         llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
-        fwd_RT = Core.Compiler.return_type(Tuple{kwfunc, TT.parameters...}, world)
+        fwd_RT = Core.Compiler.return_type(Tuple{Core.Typeof(kwfunc), TT.parameters...}, world)
     end
 
     if llvmf === nothing
@@ -3596,14 +3596,14 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
         augprimal_TT = Tuple{augprimal_tt...}
         kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        aug_RT = Core.Compiler.return_type(Tuple{kwfunc, augprimal_TT.parameters...}, world)
+        aug_RT = Core.Compiler.return_type(Tuple{Core.Typeof(kwfunc), augprimal_TT.parameters...}, world)
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        aug_RT = Core.Compiler.return_type(Tuple{EnzymeRules.augmented_primal, augprimal_TT.parameters...}, world)
+        aug_RT = Core.Compiler.return_type(Tuple{typeof(EnzymeRules.augmented_primal), augprimal_TT.parameters...}, world)
     end
 
     if kwtup !== nothing && kwtup <: Duplicated
@@ -3662,14 +3662,14 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if !isKWCall && EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
             @safe_debug "Applying custom reverse rule" TT=rev_TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
-            rev_RT = Core.Compiler.return_type(Tuple{EnzymeRules.reverse, rev_TT.parameters...}, world)
+            rev_RT = Core.Compiler.return_type(Tuple{typeof(EnzymeRules.reverse), rev_TT.parameters...}, world)
         end
         if isKWCall
             rkwfunc = Core.kwfunc(EnzymeRules.reverse)
             if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                rev_RT = Core.Compiler.return_type(Tuple{rkwfunc, rev_TT.parameters...}, world)
+                rev_RT = Core.Compiler.return_type(Tuple{Core.Typeof(rkwfunc), rev_TT.parameters...}, world)
             end
         end
 

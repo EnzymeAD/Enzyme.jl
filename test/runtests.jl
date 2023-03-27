@@ -8,6 +8,7 @@ if isfile(preferences_file) && !isfile(test_preferences_file)
 end
 end
 
+using GPUCompiler
 using Enzyme
 using Test
 using FiniteDifferences

@@ -183,7 +183,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(Tuple{Core.Typepf(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
         if !allocatedinline(rt) || rt isa Union
             forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
             res = forward(f, args′...)
@@ -200,7 +200,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(Tuple{Core.Typepf(f.val), tt.parameters...}, world)
+        rt = Core.Compiler.return_type(Tuple{Core.Typeof(f.val), tt.parameters...}, world)
         args′ = (args′..., one(rt))
     end
     thunk(f, args′...)
@@ -514,7 +514,7 @@ result, ∂v, ∂A
         ModifiedBetween = Val(ModifiedBetweenT)
     end
 
-    tt    = Tuple{map(eltype, args′)...}
+    tt    = Tuple{map(eltype, args)...}
     if world === nothing
         world = GPUCompiler.get_world(eltype(FA), tt)
     end

@@ -151,7 +151,7 @@ function get_trampoline(job)
         error("Delayed compilation not available.")
     end
 
-    mode = job.params.mode
+    mode = job.config.params.mode
     needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
 
     # We could also use one dylib per job

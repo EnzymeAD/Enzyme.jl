@@ -161,7 +161,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
                                                 #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
-        ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false))
             
         jctx = ctx
 @static if VERSION < v"1.9-"
@@ -196,10 +196,11 @@ end
 
     splat, _, _ = julia_activity(orig, mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
-    entry = nested_codegen!(mode, mod, runtime_fn, tt)
+    B = LLVM.Builder(B)
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
 
     # 5) Call the function
-    B = LLVM.Builder(B)
     
     T_int64 = LLVM.Int64Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)

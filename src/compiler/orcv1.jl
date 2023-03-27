@@ -102,7 +102,7 @@ function get_trampoline(job)
     tag = gensym(:tag)
     l_job = Base.ReentrantLock()
 
-    mode = job.params.mode
+    mode = job.config.params.mode
     needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
 
     cc_adjoint = CallbackContext(tag, job, gensym(:adjoint), l_job)
