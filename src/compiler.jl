@@ -27,6 +27,40 @@ end
 unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
 
 # Julia function to LLVM stem and arity
+@static if VERSION < v"1.8.0"
+const known_ops = Dict(
+    Base.cbrt => (:cbrt, 1),
+    Base.rem2pi => (:jl_rem2pi, 2),
+    Base.sqrt => (:sqrt, 1),
+    Base.sin => (:sin, 1),
+    Base.sinc => (:sincn, 1),
+    Base.sincos => (:__fd_sincos_1, 1),
+    Base.:^ => (:pow, 2),
+    Base.rem => (:fmod, 2),
+    Base.cos => (:cos, 1),
+    Base.tan => (:tan, 1),
+    Base.exp => (:exp, 1),
+    Base.exp2 => (:exp2, 1),
+    Base.expm1 => (:expm1, 1),
+    Base.exp10 => (:exp10, 1),
+    Base.FastMath.exp_fast => (:exp, 1),
+    Base.log => (:log, 1),
+    Base.log1p => (:log1p, 1),
+    Base.log2 => (:log2, 1),
+    Base.log10 => (:log10, 1),
+    Base.asin => (:asin, 1),
+    Base.acos => (:acos, 1),
+    Base.atan => (:atan, 1),
+    Base.atan => (:atan2, 2),
+    Base.sinh => (:sinh, 1),
+    Base.FastMath.sinh_fast => (:sinh, 1),
+    Base.cosh => (:cosh, 1),
+    Base.FastMath.cosh_fast => (:cosh, 1),
+    Base.tanh => (:tanh, 1),
+    Base.ldexp => (:ldexp, 2),
+    Base.FastMath.tanh_fast => (:tanh, 1)
+)
+else
 const known_ops = Dict(
     Base.fma_emulated => (:fma, 3),
     Base.cbrt => (:cbrt, 1),
@@ -60,6 +94,7 @@ const known_ops = Dict(
     Base.ldexp => (:ldexp, 2),
     Base.FastMath.tanh_fast => (:tanh, 1)
 )
+end
 
 const nofreefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
