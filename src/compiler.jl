@@ -28,6 +28,7 @@ unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)),
 
 # Julia function to LLVM stem and arity
 const known_ops = Dict(
+    Base.fma_emulated => (:fma, 3),
     Base.cbrt => (:cbrt, 1),
     Base.rem2pi => (:jl_rem2pi, 2),
     Base.sqrt => (:sqrt, 1),
