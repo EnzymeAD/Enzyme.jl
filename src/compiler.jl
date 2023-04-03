@@ -973,7 +973,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt, World)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -984,8 +984,10 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
                 annotation = BatchDuplicated{rt, $Width}
             end
         end
+        
+        world = GPUCompiler.get_world(Core.Typeof(f), tt)
 
-        forward = thunk(Val(World), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
+        forward = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
         res = forward(ActivityTup[1] ? Duplicated(f, df) : Const(f), args...)
 
@@ -1009,13 +1011,13 @@ function func_runtime_generic_fwd(N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, World, F, DF, $(typeargs...)}
+        function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, World, F, DF}
+@generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -1033,9 +1035,10 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt, World)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-        forward, adjoint = thunk(Val(World), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
+        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+        forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
 
@@ -1077,13 +1080,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, World, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, World, F, DF}
+@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -1129,10 +1132,12 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{map(eltypeof, args)...}
         tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt, World)
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
-        forward, adjoint = thunk(Val(World), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+
+        forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
@@ -1150,13 +1155,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, ::Val{World}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, World, F, DF, $(typeargs...)}
+        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, ::Val{World}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, World, F, DF}
+@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
@@ -1235,12 +1240,6 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
         shadow = bitcast!(B, shadow_ptr, LLVM.PointerType(convert(LLVMType, NT; ctx), addrspace(llvmtype(shadow_ptr))))
     end
    
-    # TODO apply latest, use runtime world
-    if true
-        world = enzyme_extract_world(LLVM.parent(position(B)))
-        pushfirst!(vals, unsafe_to_llvm(Val(world), ctx))
-    end
-
     if firstconst
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[start]))
         if lookup
@@ -3669,7 +3668,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT.parameters, world)
+                rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
             end
         end
 
