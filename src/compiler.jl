@@ -2843,11 +2843,11 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    
+    B = LLVM.Builder(B)
+    world = enzyme_extract_world(LLVM.parent(position(B)))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
         tape = LLVM.Value(tape)
 
-        B = LLVM.Builder(B)
 
         funcT, dfuncT, vals, thunkTy, to_preserve, TapeType = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient)
 
@@ -2863,7 +2863,7 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         tt = Tuple{funcT, Core.Ptr{Cvoid}, dfuncT, Type{thunkTy}, Val{any_jltypes(get_tape_type(thunkTy))}, STT, Bool}
     end
         mode = API.EnzymeGradientUtilsGetMode(gutils)
-        entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
+        entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
         permit_inlining!(entry)
         push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 

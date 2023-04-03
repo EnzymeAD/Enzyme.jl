@@ -154,7 +154,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         else
           RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...}, world)
         end
-        eprimal, eadjoint = fspec(funcT, e_tt)
+        eprimal, eadjoint = fspec(funcT, e_tt, world)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
     if augfwdnm === nothing
