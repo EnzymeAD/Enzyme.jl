@@ -42,44 +42,6 @@ struct EnzymeInterpreter <: AbstractInterpreter
     end
 end
 
-
-
-# call where the function is known exactly
-function Core.Compiler.abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
-        arginfo::Core.Compiler.ArgInfo, si::Core.Compiler.StmtInfo, sv::Union{InferenceState, Core.Compiler.IRCode},
-        max_methods::Int = isa(sv, InferenceState) ? get_max_methods(f, sv.mod, interp) : 0)
-    (; fargs, argtypes) = arginfo
-    la = length(argtypes)
-
-    if Core.Compiler.is_return_type(f)
-        wc = Base.get_world_counter()
-        @show f, argtypes, interp.world, wc
-        if all(x->isa(x, Core.Const), argtypes)
-            if length(argtypes) == 4 && isa(argtypes[4].val, UInt64)
-                world = argtypes[4].val
-                if world <= wc
-                    res = Core.Compiler.return_type(argtypes[2].val, argtypes[3].val, world)
-                    @show res
-                    info = Core.Compiler.verbose_stmt_info(interp) ? Core.Compiler.MethodResultPure(ReturnTypeCallInfo(call.info)) : Core.Compiler.MethodResultPure()
-                    return Core.Compiler.CallMeta(Core.Const(res), Core.Compiler.EFFECTS_TOTAL, info)
-                end
-            end
-            if length(argtypes) == 3 && isa(argtypes[3].val, UInt64)
-                world = argtypes[3].val
-                if world <= wc
-                    res = Core.Compiler.return_type(argtypes[2].val, world)
-                    @show res
-                    info = Core.Compiler.verbose_stmt_info(interp) ? Core.Compiler.MethodResultPure(ReturnTypeCallInfo(call.info)) : Core.Compiler.MethodResultPure()
-                    return Core.Compiler.CallMeta(Core.Const(res), Core.Compiler.EFFECTS_TOTAL, info)
-                end
-            end
-        end
-    end
-
-    return Base.@invoke Core.Compiler.abstract_call_known(interp::AbstractInterpreter,
-        f::Any, arginfo::Core.Compiler.ArgInfo, si::Core.Compiler.StmtInfo, sv::Union{InferenceState, Core.Compiler.IRCode}, max_methods::Int)
-end
-
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
 Core.Compiler.get_world_counter(interp::EnzymeInterpreter) = interp.world
