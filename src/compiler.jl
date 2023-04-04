@@ -12,7 +12,7 @@ import EnzymeCore: EnzymeRules
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
-import GPUCompiler: CompilerJob, FunctionSpec, codegen, safe_name
+import GPUCompiler: CompilerJob, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
@@ -671,7 +671,7 @@ function emit_methodinstance!(B, func, args)::LLVM.Value
     worlds = get_function!(mod, "jl_gf_invoke_lookup_worlds",
         LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]))
     end
-    EB = LLVM.Builder(ctx)
+    EB = LLVM.IRBuilder(ctx)
     position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
     minworld = alloca!(EB, sizeT)
     maxworld = alloca!(EB, sizeT)
@@ -721,7 +721,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
     typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
 
-    b = LLVM.Builder(B)
+    b = LLVM.IRBuilder(B)
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
@@ -1232,7 +1232,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_generic_rev(N, Width))
 end
 
-function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
+function emit_gc_preserve_begin(B::LLVM.IRBuilder, args=LLVM.Value[])
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1244,7 +1244,7 @@ function emit_gc_preserve_begin(B::LLVM.Builder, args=LLVM.Value[])
     return token
 end
 
-function emit_gc_preserve_end(B::LLVM.Builder, token)
+function emit_gc_preserve_end(B::LLVM.IRBuilder, token)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1266,7 +1266,7 @@ function unsafe_to_llvm(val, ctx)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.Builder,  lookup; sret=nothing, tape=nothing, firstconst=false)
+function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1404,7 +1404,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
     return cal
 end
 
-function allocate_sret!(B::LLVM.Builder, N, ctx)
+function allocate_sret!(B::LLVM.IRBuilder, N, ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     al = LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
@@ -1412,7 +1412,7 @@ function allocate_sret!(B::LLVM.Builder, N, ctx)
 end
 
 function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N, ctx)
-    sret = LLVM.Builder(ctx) do B
+    sret = LLVM.IRBuilder(ctx) do B
         position!(B, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
         allocate_sret!(B, N, ctx)
     end
@@ -1429,7 +1429,7 @@ function common_generic_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -1478,7 +1478,7 @@ function common_generic_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset, ctx, B, false)
         AT = LLVM.ArrayType(T_prjlvalue, 2+Int64(width))
@@ -1527,7 +1527,7 @@ function common_generic_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API
     orig = LLVM.Instruction(OrigCI)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         ctx = LLVM.context(orig)
 
         @assert tape !== C_NULL
@@ -1557,7 +1557,7 @@ function common_apply_latest_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         ctx = LLVM.context(orig)
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
     
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
@@ -1602,7 +1602,7 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         AT = LLVM.ArrayType(T_prjlvalue, 1+Int64(width))
@@ -1642,7 +1642,7 @@ function common_apply_latest_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLV
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
         ctx = LLVM.context(orig)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
@@ -1690,7 +1690,7 @@ function common_newstructv_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         shadowsin = LLVM.Value[
                         LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, o, B)) for o in origops[offset:end-1] ]
@@ -1727,7 +1727,7 @@ end
 
 function common_newstructv_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
     return nothing
 end
 
@@ -1783,7 +1783,7 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
         origops = collect(operands(orig))[offset:end]
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
-            B = LLVM.Builder(B)
+            B = LLVM.IRBuilder(B)
 
 
             shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
@@ -1843,12 +1843,12 @@ function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
     orig = LLVM.Instruction(OrigCI)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_getfield")
         return nothing
         origops = collect(operands(orig))[offset:end]
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
-            B = LLVM.Builder(B)
+            B = LLVM.IRBuilder(B)
 
             shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B), B))
             shadowout = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, orig, B), B))
@@ -1909,7 +1909,7 @@ function common_setfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.AP
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[4]) == 0
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         shadowin = if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
             LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
         else
@@ -1952,7 +1952,7 @@ end
 
 function common_setfield_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -1962,7 +1962,7 @@ end
 
 function common_setfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
   orig = LLVM.Instruction(OrigCI)
-  emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
+  emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled reverse for jl_f_setfield")
   return nothing
 end
 
@@ -1981,7 +1981,7 @@ end
 
 function common_apply_iterate_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -1993,7 +1993,7 @@ function common_apply_iterate_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI:
     orig = LLVM.Instruction(OrigCI)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         if shadowR != C_NULL && normal !== nothing
@@ -2007,7 +2007,7 @@ end
 function common_apply_iterate_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
     end
     return nothing
 end
@@ -2029,7 +2029,7 @@ end
 
 function common_f_svec_ref_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_f__svec_ref")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_f__svec_ref")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -2041,7 +2041,7 @@ function common_f_svec_ref_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LL
     orig = LLVM.Instruction(OrigCI)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__svec_ref")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_f__svec_ref")
 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         if shadowR != C_NULL && normal !== nothing
@@ -2055,7 +2055,7 @@ end
 function common_f_svec_ref_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__svec_ref")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_f__svec_ref")
     end
     return nothing
 end
@@ -2291,7 +2291,7 @@ function jl_nthfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
         origops = collect(operands(orig))
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-            B = LLVM.Builder(B)
+            B = LLVM.IRBuilder(B)
 
             shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
             if width == 1
@@ -2337,7 +2337,7 @@ end
 function jl_nthfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_nthfield")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: not yet implemented in reverse mode, jl_nthfield")
     end
     return nothing
 end
@@ -2353,7 +2353,7 @@ function common_invoke_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         AT = LLVM.ArrayType(T_prjlvalue, 1+Int64(width))
@@ -2396,7 +2396,7 @@ function common_invoke_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.A
 
         conv = LLVM.API.LLVMGetInstructionCallConv(orig)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         AT = LLVM.ArrayType(T_prjlvalue, 2+Int64(width))
@@ -2435,7 +2435,7 @@ function common_invoke_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
         ctx = LLVM.context(orig)
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, ctx, B, true; tape)
@@ -2474,7 +2474,7 @@ function throwerr(cstr::Cstring)
     throw(EnzymeRuntimeException(cstr))    
 end
 
-function emit_error(B::LLVM.Builder, orig, string)
+function emit_error(B::LLVM.IRBuilder, orig, string)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -2520,7 +2520,7 @@ function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     orig = LLVM.Instruction(OrigCI)
     newg = API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)
 
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
 
     real_ops = collect(operands(orig))
     ops = [LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, o), B)) for o in real_ops]
@@ -2542,7 +2542,7 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, wor
 else
     ctx = ctxToThreadSafe[ctx]
 end
-    funcspec = FunctionSpec(typeof(f), tt, world)
+    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
 
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
@@ -2723,8 +2723,6 @@ end
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
-    eprimal, eadjoint = fspec(funcT, e_tt, world)
-
     # TODO: Clean this up and add to `nested_codegen!` asa feature
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -2735,8 +2733,8 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false))
+            eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false))
 
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -2757,8 +2755,8 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false))
+            eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false))
             jctx = ctx
 @static if VERSION < v"1.9-"
 else
@@ -2826,7 +2824,7 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
@@ -2872,7 +2870,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         funcT, dfuncT, vals, thunkTy, to_preserve, _ = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
@@ -2925,7 +2923,7 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0 || API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
         tape = LLVM.Value(tape)
@@ -2975,7 +2973,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     
     world = enzyme_extract_world(LLVM.parent(position(B)))
     fun = nested_codegen!(mode, mod, runtime_newtask_fwd, Tuple{Val{world}, Any, Any, Any, Int, Val{width}}, world)
@@ -3032,7 +3030,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
 
     ModifiedBetween = (uncacheable[1] != 0,)
     
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
     fun = nested_codegen!(mode, mod, runtime_newtask_augfwd, Tuple{Val{world}, Any, Any, Any, Int, Val{width}, Val{ModifiedBetween}}, world)
@@ -3165,12 +3163,12 @@ function enq_work_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     waitfn = find_match(mod, "jl_wait")
     if waitfn === nothing
-        emit_error(LLVM.Builder(B), orig, "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work")
         return nothing
     end
     @assert waitfn !== nothing
     shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
-    cal = LLVM.call!(LLVM.Builder(B), waitfn, [shadowtask])
+    cal = LLVM.call!(LLVM.IRBuilder(B), waitfn, [shadowtask])
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
     LLVM.API.LLVMSetInstructionCallConv(cal, conv)
@@ -3200,12 +3198,12 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     enq_work_fn = find_match(mod, "jl_enq_work")
     if enq_work_fn === nothing
-        emit_error(LLVM.Builder(B), orig, "Enzyme: could not find jl_enq_work fn to create shadow of wait")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: could not find jl_enq_work fn to create shadow of wait")
         return nothing
     end
     @assert enq_work_fn !== nothing
     shadowtask = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B), B))
-    cal = LLVM.call!(LLVM.Builder(B), enq_work_fn, [shadowtask])
+    cal = LLVM.call!(LLVM.IRBuilder(B), enq_work_fn, [shadowtask])
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
     conv = LLVM.API.LLVMGetInstructionCallConv(orig)
     LLVM.API.LLVMSetInstructionCallConv(cal, conv)
@@ -3242,7 +3240,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     
     op_idx = 1 + sret + returnRoots
 
-    alloctx = LLVM.Builder(ctx)
+    alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     true_idx = 0
@@ -3450,7 +3448,7 @@ end
 function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
-    B  = LLVM.Builder(B)
+    B  = LLVM.IRBuilder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -3474,7 +3472,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false, isKWCall)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
 
-    alloctx = LLVM.Builder(ctx)
+    alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -3643,7 +3641,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
     orig = LLVM.Instruction(OrigCI)
     ctx = LLVM.context(orig)
-    B  = LLVM.Builder(B)
+    B  = LLVM.IRBuilder(B)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -3662,7 +3660,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall)
     RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
 
-    alloctx = LLVM.Builder(ctx)
+    alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     curent_bb = position(B)
@@ -3971,7 +3969,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
 
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         i8 = LLVM.IntType(8; ctx)
         algn = 0
 
@@ -4079,10 +4077,10 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     if fwd
         B0 = B
     elseif typeof(actualOp) <: LLVM.Argument
-        B0 = LLVM.Builder(ctx)
+        B0 = LLVM.IRBuilder(ctx)
         position!(B0, first(instructions(LLVM.BasicBlock(API.EnzymeGradientUtilsNewFromOriginal(gutils, LLVM.entry(LLVM.parent(LLVM.parent(orig))))))))
     else
-        B0 = LLVM.Builder(ctx)
+        B0 = LLVM.IRBuilder(ctx)
         nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(actualOp))
         while isa(nextInst, LLVM.PHIInst)
             nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(nextInst))
@@ -4168,7 +4166,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0 && API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
       shadowres = LLVM.Value(unsafe_load(shadowR))
 
-      arraycopy_common(#=fwd=#true, LLVM.Builder(B), orig, origops[1], gutils, shadowres)
+      arraycopy_common(#=fwd=#true, LLVM.IRBuilder(B), orig, origops[1], gutils, shadowres)
     end
 
 	return nothing
@@ -4179,7 +4177,7 @@ function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     origops = LLVM.operands(orig)
 
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0 && API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-      arraycopy_common(#=fwd=#false, LLVM.Builder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
+      arraycopy_common(#=fwd=#false, LLVM.IRBuilder(B), orig, origops[1], gutils, LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, orig, B)))
     end
 
     return nothing
@@ -4190,7 +4188,7 @@ function arrayreshape_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     origops = LLVM.operands(orig)
 
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
     shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
@@ -4232,7 +4230,7 @@ function boxfloat_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         flt = llvmtype(origops[1])
         shadowsin = LLVM.Value[
                                LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))]
@@ -4262,7 +4260,7 @@ function boxfloat_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         flt = llvmtype(origops[1])
         TT = to_tape_type(flt)
@@ -4291,7 +4289,7 @@ function boxfloat_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         ip = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, orig, B), B))
         flt = llvmtype(origops[1])
         if width == 1
@@ -4322,7 +4320,7 @@ function eqtableget_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     orig = LLVM.Instruction(OrigCI)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         if shadowR != C_NULL && normal !== nothing
@@ -4337,7 +4335,7 @@ function eqtableget_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     orig = LLVM.Instruction(OrigCI)
     
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
-        emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_get")
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_get")
 
         normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
         if shadowR != C_NULL && normal !== nothing
@@ -4355,7 +4353,7 @@ end
 
 function eqtableput_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4367,7 +4365,7 @@ end
 
 function eqtableput_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_put")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_eqtable_put")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4379,14 +4377,14 @@ end
 
 function eqtableput_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_eqtable_put")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_eqtable_put")
     return nothing
 end
 
 
 function idtablerehash_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4398,7 +4396,7 @@ end
 
 function idtablerehash_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_idtable_rehash")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented augmented forward for jl_idtable_rehash")
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4410,7 +4408,7 @@ end
 
 function idtablerehash_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: Not yet implemented reverse for jl_idtable_rehash")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_idtable_rehash")
     return nothing
 end
 
@@ -4422,7 +4420,7 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     to_preserve = LLVM.Value[]
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     for op in ops
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         push!(to_preserve, val)
@@ -4456,7 +4454,7 @@ function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
     to_preserve = LLVM.Value[]
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     for op in ops
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         push!(to_preserve, val)
@@ -4485,7 +4483,7 @@ end
 const GCToks = Dict{LLVM.Instruction, LLVM.Instruction}()
 
 function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    builder = LLVM.Builder(B)
+    builder = LLVM.IRBuilder(B)
     orig = LLVM.Instruction(OrigCI)
     if haskey(GCToks, orig)
         token = GCToks[orig]
@@ -4496,7 +4494,7 @@ function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         ctx = LLVM.context(mod)
 
 
-        token = emit_gc_preserve_begin(LLVM.Builder(B))
+        token = emit_gc_preserve_begin(LLVM.IRBuilder(B))
         # token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
         GCToks[orig] = token
     end
@@ -4527,7 +4525,7 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         end
     end
 
-    token = emit_gc_preserve_begin(LLVM.Builder(B), to_preserve)
+    token = emit_gc_preserve_begin(LLVM.IRBuilder(B), to_preserve)
 
     if haskey(GCToks, origPres)
         placeHolder = GCToks[origPres]
@@ -4545,7 +4543,7 @@ function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -4574,7 +4572,7 @@ function jl_array_grow_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.L
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -4626,7 +4624,7 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -4675,7 +4673,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -4718,7 +4716,7 @@ function jl_array_ptr_copy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         origops = collect(operands(orig))
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -4766,7 +4764,7 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
     origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
 
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))
@@ -4803,7 +4801,7 @@ function jl_unhandled_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     orig = LLVM.Instruction(OrigCI)
     newo = API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)
     origops = collect(operands(orig))
-    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for "*string(origops[end]))
+    err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled forward for "*string(origops[end]))
     API.moveBefore(newo, err, C_NULL)
     return nothing
 end
@@ -4817,13 +4815,13 @@ end
 function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     orig = LLVM.Instruction(OrigCI)
-    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
+    err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
     if shadowR != C_NULL && normal !== nothing
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         if width == 1
             shadowres = normal
         else
@@ -4840,12 +4838,12 @@ end
 function get_binding_or_error_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     orig = LLVM.Instruction(OrigCI)
-    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
+    err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        B = LLVM.Builder(B)
+        B = LLVM.IRBuilder(B)
         if width == 1
             shadowres = normal
         else
@@ -4861,14 +4859,14 @@ end
 
 function get_binding_or_error_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
     orig = LLVM.Instruction(OrigCI)
-    emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
     return nothing
 end
 
 function finalizer_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
     orig = LLVM.Instruction(OrigCI)
-    err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
+    err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
     API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4880,7 +4878,7 @@ end
 function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
     CI = API.EnzymeGradientUtilsNewFromOriginal(gutils, OrigCI)
-    # err = emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    # err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
     # API.moveBefore(CI, err, C_NULL)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -4896,7 +4894,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
 end
 
 function finalizer_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    # emit_error(LLVM.Builder(B), orig, "Enzyme: unhandled reverse for jl_gc_add_finalizer_th")
+    # emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled reverse for jl_gc_add_finalizer_th")
     return nothing
 end
 
@@ -5289,7 +5287,7 @@ function get_julia_inner_types(B, p, startvals...; added=[])
 end
 
 function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, R2)::Ptr{LLVM.API.LLVMValueRef}
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     SI = LLVM.Instruction(SI)
     v = operands(SI)[1]
     p = operands(SI)[2]
@@ -5334,7 +5332,7 @@ function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
 end
 
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8, ZI)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     Count = LLVM.Value(Count)
     AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
@@ -5342,7 +5340,7 @@ function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
 end
 
 function fixup_return(B, retval)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
 
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -5369,7 +5367,7 @@ function fixup_return(B, retval)
 end
 
 function zero_allocation(B, LLVMType, obj, isTape::UInt8)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     LLVMType = LLVM.LLVMType(LLVMType)
     obj = LLVM.Value(obj)
     jlType = tape_type(LLVMType)
@@ -5440,7 +5438,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
 end
 
 
-function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Size, zeroAll::Bool)::LLVM.API.LLVMValueRef
+function zero_allocation(B::LLVM.IRBuilder, jlType, LLVMType, obj, AlignedSize, Size, zeroAll::Bool)::LLVM.API.LLVMValueRef
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
     ctx = context(mod)
@@ -5453,7 +5451,7 @@ function zero_allocation(B::LLVM.Builder, jlType, LLVMType, obj, AlignedSize, Si
     wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [llvmtype(obj), T_int8, llvmtype(Size)]))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0; ctx))
     linkage!(wrapper_f, LLVM.API.LLVMInternalLinkage)
-    let builder = Builder(ctx)
+    let builder = IRBuilder(ctx)
         entry = BasicBlock(wrapper_f, "entry"; ctx)
         loop = BasicBlock(wrapper_f, "loop"; ctx)
         exit = BasicBlock(wrapper_f, "exit"; ctx)
@@ -5563,12 +5561,12 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
 function julia_deallocator(B::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRef)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     Obj = LLVM.Value(Obj)
     julia_deallocator(B, Obj)
 end
 
-function julia_deallocator(B::LLVM.Builder, Obj::LLVM.Value)
+function julia_deallocator(B::LLVM.IRBuilder, Obj::LLVM.Value)
     mod = LLVM.parent(LLVM.parent(position(B)))
     ctx = context(mod)
 
@@ -5585,7 +5583,7 @@ function julia_deallocator(B::LLVM.Builder, Obj::LLVM.Value)
 end
 
 function emit_inacterror(B, V, orig)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     curent_bb = position(B)
     orig = LLVM.Value(orig)
     fn = LLVM.parent(curent_bb)
@@ -5875,10 +5873,10 @@ end
 
 abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
 struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
-    adjoint::FunctionSpec
+    TT::Type{<:Tuple}
     mode::API.CDerivativeMode
     width::Int64
-    rt::Type{<:Annotation}
+    rt::Type{<:Annotation{T} where T}
     run_enzyme::Bool
     dupClosure::Bool
     abiwrap::Bool
@@ -5915,7 +5913,7 @@ GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 # provide a specific interpreter to use.
 GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-    Interpreter.EnzymeInterpreter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.source.world, job.config.params.mode)
+    Interpreter.EnzymeInterpreter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.world, job.config.params.mode)
 
 include("compiler/utils.jl")
 include("compiler/passes.jl")
@@ -5926,7 +5924,7 @@ include("compiler/validation.jl")
 import .Interpreter: isKWCallSignature
 
 """
-Create the `FunctionSpec` pair, and lookup the primal return type.
+Create the methodinstance pair, and lookup the primal return type.
 """
 @inline function fspec(@nospecialize(F), @nospecialize(TT), world::Integer)
     # primal function. Inferred here to get return type
@@ -5934,12 +5932,9 @@ Create the `FunctionSpec` pair, and lookup the primal return type.
 
     primal_tt = Tuple{map(eltype, _tt)...}
 
-    primal = FunctionSpec(F, primal_tt, world)
+    primal = GPUCompiler.methodinstance(F, primal_tt, world)
 
-    # Entry for the cache look-up
-    adjoint = FunctionSpec(F, TT, world)
-
-    return primal, adjoint
+    return primal
 end
 
 ##
@@ -6336,19 +6331,15 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
-    world = job.source.world
+function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
+    world = job.world
     rt  = job.config.params.rt
     shadow_init = job.config.params.shadowInit
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
-    F   = adjoint.ft
+    F   = TT.parameters[1]
 
-    tt = [adjoint.tt.parameters...,]
-
-    if eltype(rt) === Union{}
-        error("return type is Union{}, giving up.")
-    end
+    tt = [TT.parameters[2:end]...,]
 
     args_activity     = API.CDIFFE_TYPE[]
     uncacheable_args  = Bool[]
@@ -6724,9 +6715,11 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         if existed[3] != 0
             count_Sret += 1
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
-                push!(sret_types, actualRetType)
-            elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-                push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+                if width == 1
+                    push!(sret_types, actualRetType)
+                else
+                    push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+                end
             end
         else
             @assert rettype <: Const || rettype <: Active
@@ -6751,9 +6744,11 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
             push!(sret_types, actualRetType)
         end
         if rettype <: Duplicated || rettype <: DuplicatedNoNeed
-            push!(sret_types, actualRetType)
-        elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-            push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+            if width == 1
+                push!(sret_types, actualRetType)
+            else
+                push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+            end
         end
     end
 
@@ -6800,7 +6795,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
     params = [parameters(llvm_f)...]
 
-    LLVM.Builder(ctx) do builder
+    LLVM.IRBuilder(ctx) do builder
         entry = BasicBlock(llvm_f, "entry"; ctx)
         position!(builder, entry)
 
@@ -6913,10 +6908,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                                 push!(shadows, extract_value!(builder, eval, i-1))
                             end
                         end
-                        #cf = add_one_in_place_gen(eltype(rettype))
-                        #cf = inttoptr!(builder, cf, LLVM.PointerType(LLVM.FunctionType(T_void, [convert(LLVMType, eltype(rettype); ctx)])))
 
-                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{Any}, world)
+                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{actualRetType}, world)
                         push!(function_attributes(cf), EnumAttribute("alwaysinline", 0; ctx))
                         permit_inlining!(cf)
                         for shadowv in shadows
@@ -7045,7 +7038,6 @@ end
 
 # Modified from GPUCompiler classify_arguments
 function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret, has_returnroots)
-    source_types = [source_sig.parameters...]
     codegen_types = parameters(codegen_ft)
 
     args = []
@@ -7053,7 +7045,7 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
     if has_returnroots
         codegen_i += 1
     end
-    for (source_i, source_typ) in enumerate(source_types)
+    for (source_i, source_typ) in enumerate(source_sig.parameters)
         if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ) 
             push!(args, (cc=GPUCompiler.GHOST, typ=source_typ))
             continue
@@ -7258,7 +7250,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
 
     # emit IR performing the "conversions"
-    let builder = Builder(ctx)
+    let builder = IRBuilder(ctx)
         toErase = LLVM.CallInst[]
         for u in LLVM.uses(entry_f)
             ci = LLVM.user(u)
@@ -7451,7 +7443,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     params  = job.config.params
     expectedTapeType = params.expectedTapeType
     mode   = params.mode
-    adjoint = params.adjoint
+    TT = params.TT
     dupClosure = params.dupClosure
     width = params.width
     abiwrap = params.abiwrap
@@ -7516,7 +7508,7 @@ end
                 end
             end
             for ci in todo
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
                 position!(b, ci)
                 args = collect(collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)])
                 nc = call!(b, f, args)
@@ -7530,7 +7522,7 @@ end
                 f = functions(mod)[fname]
                 if isempty(LLVM.blocks(f))
                     entry = BasicBlock(f, "entry"; ctx)
-                    b = Builder(ctx)
+                    b = IRBuilder(ctx)
                     position!(b, entry)
                     emit_error(b, nothing, "BLAS Error")
                     ret!(b)
@@ -7561,7 +7553,7 @@ end
     foundTys = Dict{String, Tuple{LLVM.FunctionType, Core.MethodInstance}}()
 
     jobref = Ref(job)
-    world = job.source.world
+    world = job.world
 
     actualRetType = nothing
     customDerivativeNames = String[]
@@ -7737,7 +7729,7 @@ end
 
         wrapper_f = LLVM.Function(mod, safe_name(LLVM.name(llvmfn)*"mustwrap"), FT)
 
-        let builder = Builder(ctx)
+        let builder = IRBuilder(ctx)
             entry = BasicBlock(wrapper_f, "entry"; ctx)
             position!(builder, entry)
 
@@ -7762,7 +7754,7 @@ end
         primalf = wrapper_f
     end
 
-    source_sig = GPUCompiler.typed_signature(job)::Type
+    source_sig = job.source.specTypes
     primalf, returnRoots = lower_convention(source_sig, mod, primalf, actualRetType)
 
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
@@ -7812,11 +7804,11 @@ end
             push!(jlrules, fname)
         end
         for f in functions(mod)
-            push!(function_attributes(f), StringAttribute("enzymejl_world", string(job.source.world); ctx))
+            push!(function_attributes(f), StringAttribute("enzymejl_world", string(job.world); ctx))
         end
 
         GC.@preserve job jobref begin
-            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, adjoint, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
+            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
         end
         toremove = []
         # Inline the wrapper
@@ -8222,7 +8214,7 @@ end
 
 	mod = LLVM.parent(llvm_f)
     i64 = LLVM.IntType(64; ctx)
-	LLVM.Builder(ctx) do builder
+	LLVM.IRBuilder(ctx) do builder
 		entry = BasicBlock(llvm_f, "entry"; ctx)
 		position!(builder, entry)
 		callparams = collect(LLVM.Value, parameters(llvm_f))
@@ -8295,11 +8287,6 @@ end
 ##
 
 function _link(job, (mod, adjoint_name, primal_name, ctx, TapeType))
-    params = job.config.params
-    adjoint = params.adjoint
-
-    primal = job.source
-
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
     if VERSION >= v"1.9.0-DEV.115"
@@ -8328,8 +8315,6 @@ end
 
 # actual compilation
 function _thunk(job, ctx=nothing)
-    params = job.config.params
-
     # TODO: on 1.9, this actually creates a context. cache those.
     if ctx === nothing
         ctx = JuliaContext()
@@ -8359,13 +8344,8 @@ end
 const cache = Dict{UInt, Thunk}()
 
 const cache_lock = ReentrantLock()
-@inline function cached_compilation(@nospecialize(job::CompilerJob), key, specid)
-    # XXX: CompilerJob contains a world age, so can't be respecialized.
-    #      have specialization_id take a f/tt and return a world to construct a CompilerJob?
-    key = hash(hash(job, specid), key)
-
-    # XXX: by taking the hash, we index the compilation cache directly with the world age.
-    #      that's wrong; we should perform an intersection with the entry its bounds.
+@inline function cached_compilation(@nospecialize(job::CompilerJob))
+    key = hash(job)
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(cache_lock)
@@ -8382,12 +8362,19 @@ const cache_lock = ReentrantLock()
     end
 end
 
-@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false), ::Val{parent_job}=Val(nothing)) where {World, FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, parent_job}
-    primal, adjoint = fspec(eltype(FA), TT, World)
+@inline remove_innerty(::Type{<:Const}) = Const
+@inline remove_innerty(::Type{<:Active}) = Active
+@inline remove_innerty(::Type{<:Duplicated}) = Duplicated
+@inline remove_innerty(::Type{<:DuplicatedNoNeed}) = DuplicatedNoNeed
+@inline remove_innerty(::Type{<:BatchDuplicated}) = Duplicated
+@inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
+
+@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false), ::Val{parent_job}=Val(nothing)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, parent_job, World}
+    mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(adjoint, Mode, width, A, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
-    job    = Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false))
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
 
     if parent_job !== nothing
         job = similar(parent_job, job.source)
@@ -8399,13 +8386,7 @@ end
 
     # TODO check compile return here, early
     # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
-    rrt = nothing
-    for m in Base._methods_by_ftype(sig, -1, job.source.world)::Vector
-        m = m::Core.MethodMatch
-        ty = Core.Compiler.typeinf_type(interp, m.method, m.spec_types, m.sparams)
-        rrt = something(ty, Any)
-        break
-    end
+    rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
     if rrt == Union{}
         error("Return type inferred to be Union{}. Giving up.")
@@ -8433,10 +8414,10 @@ end
     # invalidations of the primal, which is managed by GPUCompiler.
 
 
-    thunk = cached_compilation(job, hash(hash(hash(hash(adjoint, hash(rt, UInt64(Mode))), UInt64(width)), hash(ModifiedBetween)), UInt64(ReturnPrimal)), World)::Thunk
+    thunk = cached_compilation(job)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType
-        AugT = AugmentedForwardThunk{FA, rt, adjoint.tt, Val{width}, Val(ReturnPrimal), TapeType}
+        AugT = AugmentedForwardThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
         AdjT = AdjointThunk{FA, rt, adjoint.tt, Val{width}, TapeType}
         return quote
             augmented = $AugT($(thunk.primal))
@@ -8444,12 +8425,12 @@ end
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
-        CAdjT = CombinedAdjointThunk{FA, rt, adjoint.tt, Val{width}, Val(ReturnPrimal)}
+        CAdjT = CombinedAdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
             $CAdjT($(thunk.adjoint))
         end
     elseif Mode == API.DEM_ForwardMode
-        FMT = ForwardModeThunk{FA, rt, adjoint.tt, Val{width}, Val(ReturnPrimal)}
+        FMT = ForwardModeThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
             $FMT($(thunk.adjoint))
         end
@@ -8462,10 +8443,10 @@ import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
         ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
-    primal, adjoint = fspec(eltype(FA), tt, World)
+    mi = fspec(eltype(FA), tt, World)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(adjoint, Mode, width, rt, true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
-    job    = Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false))
+    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
 
     adjoint_addr, primal_addr = get_trampoline(job)
     adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))

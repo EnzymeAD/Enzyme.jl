@@ -25,7 +25,7 @@ function nodecayed_phis!(mod::LLVM.Module)
             nty = LLVM.PointerType(eltype(ty), 10)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
                 position!(b, terminator(pb))
                 while isa(v, LLVM.AddrSpaceCastInst)
                     v = operands(v)[1]
@@ -35,7 +35,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                 end
                 push!(nvs, (v, pb))
             end
-            nb = Builder(ctx)
+            nb = IRBuilder(ctx)
             position!(nb, inst)
             nphi = phi!(nb, nty)
             append!(LLVM.incoming(nphi), nvs)
@@ -94,7 +94,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         push!(newvs, v)
                     end
 
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, st)
                     if intr == LLVM.Intrinsic("llvm.memcpy").id
                         newi = memcpy!(nb, newvs[1], 0, newvs[2], 0, newvs[3])
@@ -173,18 +173,18 @@ function fix_decayaddr!(mod::LLVM.Module)
                
                 elt = eltype(llvmtype(inst))
                 if temp === nothing
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, first(instructions(first(blocks(f)))))
                     temp = alloca!(nb, elt)
                 end
                 if mayread
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, st)
                     ld = load!(nb, elt, operands(inst)[1])
                     store!(nb, ld, temp)
                 end
                 if maywrite
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
                     ld = load!(nb, elt, temp)
                     si = store!(nb, ld, operands(inst)[1])

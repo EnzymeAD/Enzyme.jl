@@ -2,7 +2,7 @@ function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     orig = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     emit_error("fast pfor not implemented");
     return nothing
 end
@@ -142,7 +142,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
 
     ops = collect(operands(orig))[1:end-1] 
     
-    B = LLVM.Builder(B)
+    B = LLVM.IRBuilder(B)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     
     @assert GPUCompiler.isghosttype(funcT) || Core.Compiler.isconstType(funcT) 
@@ -216,7 +216,7 @@ end
     run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
     push!(vals, ptrtoint!(B, run_fn, llvmtype(LLVM.ConstantInt(Int(0); ctx))))
  
-    EB = LLVM.Builder(ctx)
+    EB = LLVM.IRBuilder(ctx)
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
 

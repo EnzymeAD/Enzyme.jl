@@ -210,7 +210,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             mod = LLVM.parent(ofn)
             ctx = context(mod)
 
-            b = Builder(ctx)
+            b = IRBuilder(ctx)
             position!(b, inst)
 
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
@@ -347,7 +347,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = Builder(ctx)
+                                b = IRBuilder(ctx)
                                 position!(b, ld)
                                 replace_uses!(ld, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
                             end
@@ -355,7 +355,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
 
                 position!(b, inst)
                 replace_uses!(inst, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
@@ -375,7 +375,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = Builder(ctx)
+                                b = IRBuilder(ctx)
                                 position!(b, ld)
                                 for u in LLVM.uses(ld)
                                     u = LLVM.user(u)
@@ -389,7 +389,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
                 position!(b, inst)
                 replacement = LLVM.inttoptr!(b, replaceWith, llvmtype(inst))
                             for u in LLVM.uses(inst)
