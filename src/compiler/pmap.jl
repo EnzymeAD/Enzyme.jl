@@ -272,10 +272,6 @@ end
             #             codegen=(typ=codegen_typ, i=codegen_i)))
         else
 			@assert false
-            push!(vals, load!(B, primal))
-            if shadow !== nothing
-                push!(vals, load!(B, shadow))
-            end
         end
         i += 1
     end

@@ -170,22 +170,23 @@ function fix_decayaddr!(mod::LLVM.Module)
                 end
                 
                 @assert sret
-                
+               
+                elt = eltype(llvmtype(inst))
                 if temp === nothing
                     nb = Builder(ctx)
                     position!(nb, first(instructions(first(blocks(f)))))
-                    temp = alloca!(nb, eltype(llvmtype(inst)))
+                    temp = alloca!(nb, elt)
                 end
                 if mayread
                     nb = Builder(ctx)
                     position!(nb, st)
-                    ld = load!(nb, operands(inst)[1])
+                    ld = load!(nb, elt, operands(inst)[1])
                     store!(nb, ld, temp)
                 end
                 if maywrite
                     nb = Builder(ctx)
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                    ld = load!(nb, temp)
+                    ld = load!(nb, elt, temp)
                     si = store!(nb, ld, operands(inst)[1])
                     julia_post_cache_store(si.ref, nb.ref, C_NULL)
                 end
