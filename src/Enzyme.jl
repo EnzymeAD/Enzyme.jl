@@ -199,7 +199,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt, world)
+        rt = Core.Compiler.return_type(f.val, tt)
         args′ = (args′..., one(rt))
     end
     thunk(f, args′...)
