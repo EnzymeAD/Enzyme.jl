@@ -1,10 +1,14 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int64=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, kwargs...)
-
-    primal, adjoint = fspec(Core.Typeof(func), types)
+        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int64=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, kwargs...)
 
     tt    = Tuple{map(eltype, types.parameters)...}
-    rt = Core.Compiler.return_type(func, tt)
+    if world === nothing
+        world = GPUCompiler.get_world(Core.Typeof(func), tt)
+    end
+    
+    primal, adjoint = fspec(Core.Typeof(func), types, world)
+
+    rt = Core.Compiler.return_type(func, tt, world)
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing
@@ -12,7 +16,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
     params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
-    return Compiler.CompilerJob(target, primal, params)
+    return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false))
 end
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);

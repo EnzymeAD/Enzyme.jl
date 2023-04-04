@@ -142,16 +142,19 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
 
     ops = collect(operands(orig))[1:end-1] 
     
+    B = LLVM.Builder(B)
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+    
     @assert GPUCompiler.isghosttype(funcT) || Core.Compiler.isconstType(funcT) 
 
     _, dup, overwritten = julia_activity(orig, mi.specTypes.parameters, [], ops, gutils)
         e_tt = Tuple{dup...}
         @static if VERSION >= v"1.8" 
-          RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...})
+          RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...}, world)
         else
-          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...})
+          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...}, world)
         end
-        eprimal, eadjoint = fspec(funcT, e_tt)
+        eprimal, eadjoint = fspec(funcT, e_tt, world)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
     if augfwdnm === nothing
@@ -161,7 +164,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
                                                 #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
-        ejob    = Compiler.CompilerJob(etarget, eprimal, eparams)
+        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false))
             
         jctx = ctx
 @static if VERSION < v"1.9-"
@@ -196,10 +199,9 @@ end
 
     splat, _, _ = julia_activity(orig, mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
-    entry = nested_codegen!(mode, mod, runtime_fn, tt)
+    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
 
     # 5) Call the function
-    B = LLVM.Builder(B)
     
     T_int64 = LLVM.Int64Type(ctx)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
