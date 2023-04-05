@@ -3,7 +3,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
-        world = GPUCompiler.get_world(Core.Typeof(func), tt)
+        world = GPUCompiler.codegen_world_age(Core.Typeof(func), tt)
     end
     
     primal, adjoint = fspec(Core.Typeof(func), types, world)
@@ -16,7 +16,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
     params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
-    return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false))
+    return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);

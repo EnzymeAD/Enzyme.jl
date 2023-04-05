@@ -1037,7 +1037,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             end
         end
         
-        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+        world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
 
         forward = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
@@ -1091,7 +1091,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         tt′ = Tuple{$(Types...)}
         rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-        world = GPUCompiler.get_world(Core.Typeof(f), Tuple{$(ElTypes...)})
+        world = GPUCompiler.codegen_world_age(Core.Typeof(f), Tuple{$(ElTypes...)})
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
@@ -1190,10 +1190,10 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
+        rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
-        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+        world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
 
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
@@ -2551,7 +2551,7 @@ end
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    job    = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false))
+    job    = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
 
     # TODO
     parent_job = nothing
@@ -2734,7 +2734,7 @@ end
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false))
+            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
 
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -2756,7 +2756,7 @@ end
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
             eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false))
+            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
             jctx = ctx
 @static if VERSION < v"1.9-"
 else
@@ -7457,9 +7457,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if parent_job === nothing
         primal_target = DefaultCompilerTarget()
         primal_params = PrimalCompilerParams(mode)
-        primal_job    = CompilerJob(primal, CompilerConfig(primal_target, primal_params; kernel=false))
+        primal_job    = CompilerJob(primal, CompilerConfig(primal_target, primal_params; kernel=false), job.world)
     else
-        primal_job = CompilerJob(primal, parent_job.config) # TODO EnzymeInterp params, etc
+        primal_job = CompilerJob(primal, parent_job.config, job.world) # TODO EnzymeInterp params, etc
     end
 
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
@@ -8374,7 +8374,7 @@ end
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     if parent_job !== nothing
         job = similar(parent_job, job.source)
@@ -8446,7 +8446,7 @@ import GPUCompiler: deferred_codegen_jobs
     mi = fspec(eltype(FA), tt, World)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     adjoint_addr, primal_addr = get_trampoline(job)
     adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))

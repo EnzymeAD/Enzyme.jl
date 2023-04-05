@@ -164,7 +164,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
                                                 #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
-        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false))
+        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
             
         jctx = ctx
 @static if VERSION < v"1.9-"
