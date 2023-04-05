@@ -65,7 +65,7 @@ end
     thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     @test thunk_a.adjoint !== thunk_b.adjoint
-    @test_broken thunk_c.adjoint === thunk_a.adjoint
+    @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
 
     @test thunk_a(Const(f0), Active(2.0), 1.0) == ((1.0,),)

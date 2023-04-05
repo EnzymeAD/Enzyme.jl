@@ -474,9 +474,9 @@ function emit_apply_generic!(B, args)::LLVM.Value
 
     gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
     @static if VERSION < v"1.8-"
-        inv = get_function!(mod, "jl_apply_generic", gen_FT)
+        inv, _ = get_function!(mod, "jl_apply_generic", gen_FT)
     else
-        inv = get_function!(mod, "ijl_apply_generic", gen_FT)
+        inv, _ = get_function!(mod, "ijl_apply_generic", gen_FT)
     end
 
     @static if VERSION < v"1.9.0-"
@@ -490,7 +490,7 @@ function emit_apply_generic!(B, args)::LLVM.Value
         julia_call, FT = get_function!(mod, "julia.call",
             LLVM.FunctionType(T_prjlvalue,
                               [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
-        res = call!(B, FT, julia_call, [inv, args...])
+        res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
     end
     return res
 end
@@ -2726,7 +2726,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
             ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
 
             jctx = ctx
@@ -2748,7 +2748,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{funcT, e_tt...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=shadowfunc=#dupClosure, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
             ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -3299,13 +3299,14 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         if activep == API.DFT_CONSTANT
             Ty = Const{arg.typ}
             llty = convert(LLVMType, Ty; ctx)
+            arty = convert(LLVMType, arg.typ; ctx, allow_boxed=true)
             al0 = al = emit_allocobj!(B, Ty)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
-            ptr = gep!(B, LLVM.ArrayType(llty, 1), al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
-                val = load!(B, llty, val)
+                val = load!(B, arty, val)
             end
             store!(B, val, ptr)
 
@@ -3320,13 +3321,14 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         elseif activep == API.DFT_OUT_DIFF
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty; ctx)
+            arty = convert(LLVMType, arg.typ; ctx, allow_boxed=true)
             al0 = al = emit_allocobj!(B, Ty)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
-            ptr = gep!(B, LLVM.ArrayType(llty, 1), al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
-                val = load!(B, llty, val)
+                val = load!(B, arty, val)
             end
             store!(B, val, ptr)
 
@@ -3360,7 +3362,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
             end
 
             llty = convert(LLVMType, Ty; ctx)
-            arty = convert(LLVMType, arg.typ; ctx)
+            arty = convert(LLVMType, arg.typ; ctx, allow_boxed=true)
             sarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, arty))
             al0 = al = emit_allocobj!(B, Ty)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
@@ -3798,7 +3800,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
-            ptr = gep!(B, LLVM.ArrayType(llty, 1), al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             store!(B, val, ptr)
 
             if any_jltypes(llty)
@@ -5868,7 +5870,6 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     width::Int64
     rt::Type{<:Annotation{T} where T}
     run_enzyme::Bool
-    dupClosure::Bool
     abiwrap::Bool
     # Whether, in split mode, acessible primal argument data is modified
     # between the call and the split
@@ -6321,13 +6322,14 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, dupClosure, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
+function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
     world = job.world
     rt  = job.config.params.rt
     shadow_init = job.config.params.shadowInit
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
     F   = eltype(TT.parameters[1])
+    dupClosure = !(TT.parameters[1] <: Const)
 
     tt = [TT.parameters[2:end]...,]
 
@@ -6343,10 +6345,10 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, du
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         typeTree = typetree(F, ctx, dl)
         push!(args_typeInfo, typeTree)
-        if dupClosure
-            push!(args_activity, API.DFT_DUP_ARG)
-        else
+        if TT.parameters[1] <: Const
             push!(args_activity, API.DFT_CONSTANT)
+        else
+            push!(args_activity, API.DFT_DUP_ARG)
         end
         push!(uncacheable_args, modifiedBetween[1])
         push!(args_known_values, API.IntList())
@@ -6387,6 +6389,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, du
         push!(uncacheable_args, modifiedBetween[1+i])
         push!(args_known_values, API.IntList())
     end
+    @assert length(uncacheable_args) == length(collect(parameters(primalf)))
 
     # The return of createprimal and gradient has this ABI
     #  It returns a struct containing the following values
@@ -6756,7 +6759,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 		if returnRoots
 	        tracked = CountTrackedPointers(jltype)
             root_ty = LLVM.ArrayType(T_prjlvalue, tracked.count)
-            pushfirst!(T_wrapperargs, LLVM.PointerType(rootty))
+            pushfirst!(T_wrapperargs, LLVM.PointerType(root_ty))
 
             pushfirst!(T_wrapperargs, LLVM.PointerType(jltype))
 		end
@@ -7435,7 +7438,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     expectedTapeType = params.expectedTapeType
     mode   = params.mode
     TT = params.TT
-    dupClosure = params.dupClosure
     width = params.width
     abiwrap = params.abiwrap
     primal  = job.source
@@ -7799,7 +7801,7 @@ end
         end
 
         GC.@preserve job jobref begin
-            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, dupClosure, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
+            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
         end
         toremove = []
         # Inline the wrapper
@@ -8365,7 +8367,7 @@ end
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     if parent_job !== nothing
@@ -8437,7 +8439,7 @@ import GPUCompiler: deferred_codegen_jobs
         ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     mi = fspec(eltype(FA), tt, World)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, !(FA <: Const), #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
+    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     adjoint_addr, primal_addr = get_trampoline(job)
