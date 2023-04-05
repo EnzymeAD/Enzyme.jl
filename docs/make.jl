@@ -21,6 +21,7 @@ const OUTPUT_DIR = joinpath(@__DIR__, "src/generated")
 examples = Pair{String,String}[
     "Box model" => "box"
     "AutoDiff API" => "autodiff"
+    "Custom rule" => "custom_rule"
 ]
 
 for (_, name) in examples
