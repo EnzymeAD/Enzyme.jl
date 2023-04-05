@@ -332,7 +332,8 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
 	ctx = context(mod)
 
 	T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
-    T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
 
     T_int8 = LLVM.Int8Type(ctx)
     T_pint8 = LLVM.PointerType(T_int8)
@@ -343,11 +344,11 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
     else
         pgcstack = reinsert_gcmarker!(fn, B)
         ct = inbounds_gep!(B,
-            eltype(value_type(pgcstack)),
+            T_pjlvalue,
             bitcast!(B, pgcstack, T_ppjlvalue),
             [LLVM.ConstantInt(current_task_offset(); ctx)])
         ptls_field = inbounds_gep!(B,
-            eltype(value_type(pgcstack)),
+            eltype(value_type(ct)),
             ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
@@ -2848,7 +2849,7 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
             unsafe_store!(normalR, C_NULL)
         else
             ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-            unsafe_delete!(parent(ni), ni)
+            unsafe_delete!(LLVM.parent(ni), ni)
         end
     end
 end
@@ -2901,7 +2902,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
             unsafe_store!(normalR, C_NULL)
         else
             ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-            unsafe_delete!(parent(ni), ni)
+            unsafe_delete!(LLVM.parent(ni), ni)
         end
 
         GPUCompiler.@safe_warn "active variables passed by value to jl_threadsfor are not yet supported"
@@ -3359,19 +3360,20 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
             end
 
             llty = convert(LLVMType, Ty; ctx)
-            sllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, sllty))
+            arty = convert(LLVMType, arg.typ; ctx)
+            sarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, arty))
             al0 = al = emit_allocobj!(B, Ty)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
 
-            ptr = gep!(B, LLVM.ArrayType(al, 2), [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
+            ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
-                val = load!(B, llty, val)
-                ival = load!(B, sllty, ival)
+                val = load!(B, arty, val)
+                ival = load!(B, sarty, ival)
             end
             store!(B, val, ptr)
 
-            iptr = gep!(B, LLVM.ArrayType(al, 2), [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 1)])
+            iptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 1)])
             store!(B, ival, iptr)
 
             if any_jltypes(llty)
@@ -3622,7 +3624,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         unsafe_store!(normalR, normalV)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(parent(ni), ni)
+        unsafe_delete!(LLVM.parent(ni), ni)
     end
 
     return nothing
@@ -4876,7 +4878,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(parent(ni), ni)
+        unsafe_delete!(LLVM.parent(ni), ni)
     end
     return nothing
 end
@@ -7722,7 +7724,7 @@ end
             entry = BasicBlock(wrapper_f, "entry"; ctx)
             position!(builder, entry)
 
-            res = call!(builder, LLVM.function_Type(llvmfn), llvmfn, collect(parameters(wrapper_f)))
+            res = call!(builder, LLVM.function_type(llvmfn), llvmfn, collect(parameters(wrapper_f)))
 
             if !isempty(parameters(llvmfn))
                 for attr in collect(parameter_attributes(llvmfn, 1))
@@ -8408,7 +8410,7 @@ end
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType
         AugT = AugmentedForwardThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-        AdjT = AdjointThunk{FA, rt, adjoint.tt, Val{width}, TapeType}
+        AdjT = AdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
         return quote
             augmented = $AugT($(thunk.primal))
             adjoint  = $AdjT($(thunk.adjoint))
