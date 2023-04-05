@@ -3993,7 +3993,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
             for idx in 1:width
                 ev = extract_value!(B, shadowin, idx-1)
-                callv = LLVM.call!(B, LLVM.called_value(orig), LLVM.called_value(orig), [ev])
+                callv = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), [ev])
                 if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
                     elSize = get_array_elsz(B, shadowin)
                     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
@@ -7264,7 +7264,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 			end
             for (parm, arg) in zip(ops[1+sret+returnRoots:end], args)
                 if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
-                    push!(nops, load!(builder, convert(LLVMType, arg.type; ctx), parm))
+                    push!(nops, load!(builder, convert(LLVMType, arg.typ; ctx), parm))
                 else
                     push!(nops, parm)
                 end

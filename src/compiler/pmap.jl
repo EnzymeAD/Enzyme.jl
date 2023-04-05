@@ -154,7 +154,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         else
           RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...}, world)
         end
-        eprimal, eadjoint = fspec(funcT, e_tt, world)
+        eprimal = fspec(funcT, e_tt, world)
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         
     if augfwdnm === nothing
@@ -162,8 +162,8 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         etarget = Compiler.EnzymeTarget()
         funcOverwritten = true
         indexOverwritten = false
-        eparams = Compiler.EnzymeCompilerParams(eadjoint, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=shadowfunc=#false, #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
+        eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
+                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
         ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
             
         jctx = ctx
@@ -184,10 +184,10 @@ end
     end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 
