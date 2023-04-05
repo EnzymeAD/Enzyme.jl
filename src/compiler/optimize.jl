@@ -10,7 +10,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                 nonphi = inst
                 break
             end
-            ty = llvmtype(inst)
+            ty = value_type(inst)
             if !isa(ty, LLVM.PointerType)
                 continue
             end
@@ -21,7 +21,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
 
         for inst in todo
-            ty = llvmtype(inst)
+            ty = value_type(inst)
             nty = LLVM.PointerType(eltype(ty), 10)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
@@ -30,7 +30,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                 while isa(v, LLVM.AddrSpaceCastInst)
                     v = operands(v)[1]
                 end
-                if llvmtype(v) != nty
+                if value_type(v) != nty
                     v = addrspacecast!(b, v, nty)
                 end
                 push!(nvs, (v, pb))
@@ -57,8 +57,8 @@ function fix_decayaddr!(mod::LLVM.Module)
             if !isa(inst, LLVM.AddrSpaceCastInst)
                 continue
             end
-            prety = llvmtype(operands(inst)[1])
-            postty = llvmtype(inst)
+            prety = value_type(operands(inst)[1])
+            postty = value_type(inst)
             if addrspace(prety) != 10
                 continue
             end
@@ -171,7 +171,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 
                 @assert sret
                
-                elt = eltype(llvmtype(inst))
+                elt = eltype(value_type(inst))
                 if temp === nothing
                     nb = IRBuilder(ctx)
                     position!(nb, first(instructions(first(blocks(f)))))
@@ -208,7 +208,7 @@ function detect_writeonly!(mod::LLVM.Module)
             continue
         end
         for (i, a) in enumerate(parameters(f))
-            if isa(llvmtype(a), LLVM.PointerType)
+            if isa(value_type(a), LLVM.PointerType)
                 todo = LLVM.Value[a]
                 seen = Set{LLVM.Value}()
                 mayread = false

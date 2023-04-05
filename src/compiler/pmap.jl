@@ -71,7 +71,7 @@ function julia_activity(orig, source_types, FTs, ops, gutils)
         end
         push!(overwritten, uncacheable[codegen_i])
 
-        codegen_typ = llvmtype(ops[codegen_i])
+        codegen_typ = value_type(ops[codegen_i])
         if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
             push!(args, source_typ)
             if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[codegen_i]) == 0
@@ -214,15 +214,15 @@ end
     
     # function
     run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
-    push!(vals, ptrtoint!(B, run_fn, llvmtype(LLVM.ConstantInt(Int(0); ctx))))
+    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0); ctx))))
  
     EB = LLVM.IRBuilder(ctx)
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
 
     # handle the accidental sret
-    if isa(llvmtype(parameters(entry)[1]), LLVM.PointerType)
-        a = alloca!(EB, eltype(llvmtype(parameters(entry)[1])))
+    if isa(value_type(parameters(entry)[1]), LLVM.PointerType)
+        a = alloca!(EB, eltype(value_type(parameters(entry)[1])))
         pushfirst!(vals, a)
     end
    
@@ -245,9 +245,9 @@ end
           nothing
         end
 
-        codegen_typ = llvmtype(parameters(entry)[length(vals)+1])
+        codegen_typ = value_type(parameters(entry)[length(vals)+1])
 
-        if codegen_typ == llvmtype(primal)
+        if codegen_typ == value_type(primal)
             push!(vals, primal)
             if shadow !== nothing
               push!(vals, shadow)
@@ -255,14 +255,14 @@ end
         elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
                !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
             if !GPUCompiler.deserves_argbox(source_typ)
-              primA = alloca!(EB, llvmtype(primal))
+              primA = alloca!(EB, value_type(primal))
               store!(B, primal, primA)
               primal = addrspacecast!(B, primA, codegen_typ)
             end
             push!(vals, primal)
             if shadow !== nothing
               if !GPUCompiler.deserves_argbox(source_typ) 
-                shadowA = alloca!(EB, llvmtype(shadow))
+                shadowA = alloca!(EB, value_type(shadow))
                 store!(B, shadow, shadowA)
                 shadow = addrspacecast!(B, shadowA, codegen_typ)
               end
@@ -276,7 +276,7 @@ end
         i += 1
     end
 
-    res = LLVM.call!(B, entry, vals)
+    res = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
     
     return res
