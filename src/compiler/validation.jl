@@ -234,7 +234,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, LLVM.GlobalVariable)
                 flib = LLVM.initializer(flib)
             end
-            if isa(flib, LLVM.ConstantArray) && eltype(value_type(flib)) == LLVM.IntType(8; ctx)
+            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8; ctx)
                 flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
@@ -245,7 +245,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
@@ -290,7 +290,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 

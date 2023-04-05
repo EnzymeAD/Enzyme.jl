@@ -1295,8 +1295,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     if tape !== nothing
         NT = NTuple{length(ops)*Int64(width), Ptr{Nothing}}
+        SNT = convert(LLVMType, NT; ctx)
         shadow_ptr = emit_allocobj!(B, NT)
-        shadow = bitcast!(B, shadow_ptr, LLVM.PointerType(convert(LLVMType, NT; ctx), addrspace(value_type(shadow_ptr))))
+        shadow = bitcast!(B, shadow_ptr, LLVM.PointerType(SNT, addrspace(value_type(shadow_ptr))))
     end
    
     if firstconst
@@ -1346,8 +1347,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
                 ev = addrspacecast!(B, ev, LLVM.PointerType(eltype(value_type(ev)), 11))
                 ev = emit_pointerfromobjref!(B, ev)
                 ev = ptrtoint!(B, ev, convert(LLVMType, Int; ctx))
-                AT = LLVM.ArrayType(T_prjlvalue, width)
-                LLVM.store!(B, ev, LLVM.inbounds_gep!(B, AT, shadow, idx))
+                LLVM.store!(B, ev, LLVM.inbounds_gep!(B, SNT, shadow, idx))
             end
         end
     end
@@ -1606,7 +1606,7 @@ function common_apply_latest_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::
         B = LLVM.IRBuilder(B)
 
         width = API.EnzymeGradientUtilsGetWidth(gutils)
-        AT = LLVM.ArrayType(T_prjlvalue, 1+Int64(width))
+        AT = LLVM.ArrayType(T_prjlvalue, 2+Int64(width))
         # sret = generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
         sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int64(width)), gutils, #=start=#offset+1, ctx, B, false)
 
@@ -4524,7 +4524,7 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         placeHolder = GCToks[origPres]
         LLVM.replace_uses!(placeHolder, token)
         delete!(GCToks, origPres)
-        unsafe_delete!(parent(placeHolder), placeHolder)
+        unsafe_delete!(LLVM.parent(placeHolder), placeHolder)
     else
         GCToks[origPres] = token
     end
