@@ -1,3 +1,11 @@
+# TODO once https://github.com/maleadt/LLVM.jl/pull/341 has a version, remove the below
+function LLVM.called_type(inst::CallBase)
+    @static if LLVM.version() >= v"11"
+        LLVM.LLVMType(LLVM.API.LLVMGetCalledFunctionType(inst))
+    else
+        LLVM.value_type(LLVM.called_value(inst))
+    end
+end
 
 function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
     if haskey(functions(mod), name)
