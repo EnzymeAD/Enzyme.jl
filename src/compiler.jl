@@ -2705,6 +2705,7 @@ end
 
     funcT = mi.specTypes.parameters[2]
 
+
     # TODO actually do modifiedBetween
 @static if VERSION < v"1.8-"
     e_tt = Tuple{}
@@ -2715,6 +2716,8 @@ else
 end
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    
+    mi2 = fspec(funcT, e_tt, world)
 
     # TODO: Clean this up and add to `nested_codegen!` asa feature
     width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -2726,8 +2729,8 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -2741,15 +2744,15 @@ end
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
             permit_inlining!(functions(mod)[fwdmodenm])
         end
-        thunkTy = ForwardModeThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width},  #=returnPrimal=#Val(false)}
+        thunkTy = ForwardModeThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(false)}
         subfunc = functions(mod)[fwdmodenm]
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
-            ejob    = Compiler.CompilerJob(mi, CompilerConfig(etarget, eparams; kernel=false), world)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
             jctx = ctx
 @static if VERSION < v"1.9-"
 else
@@ -2770,10 +2773,10 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, eadjoint.tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
     else
@@ -6390,6 +6393,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         push!(args_known_values, API.IntList())
     end
     @assert length(uncacheable_args) == length(collect(parameters(primalf)))
+    @assert length(args_typeInfo) == length(collect(parameters(primalf)))
 
     # The return of createprimal and gradient has this ABI
     #  It returns a struct containing the following values
