@@ -24,6 +24,15 @@ else
     include("compiler/orcv2.jl")
 end
 
+# TODO once https://github.com/maleadt/LLVM.jl/pull/341 has a version, remove the below
+function called_type(inst::LLVM.CallBase)
+    @static if LLVM.version() >= v"11"
+        LLVM.LLVMType(LLVM.API.LLVMGetCalledFunctionType(inst))
+    else
+        LLVM.value_type(LLVM.called_value(inst))
+    end
+end
+
 unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
 
 # Julia function to LLVM stem and arity
@@ -1699,7 +1708,7 @@ function common_newstructv_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
             if offset != 1
                 pushfirst!(shadowsin, origops[1])
             end
-            shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), shadowsin)
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), shadowsin)
             callconv!(shadowres, callconv(orig))
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -1710,7 +1719,7 @@ function common_newstructv_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.
                 if offset != 1
                     pushfirst!(args, origops[1])
                 end
-                tmp = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                tmp = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                 callconv!(tmp, callconv(orig))
                 shadowres = insert_value!(B, shadowres, tmp, idx-1)
             end
@@ -1797,7 +1806,7 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                 if offset != 1
                     pushfirst!(args, first(operands(orig)))
                 end
-                shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                 callconv!(shadowres, callconv(orig))
             else
                 shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -1812,7 +1821,7 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                     if offset != 1
                         pushfirst!(args, first(operands(orig)))
                     end
-                    tmp = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                    tmp = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                     callconv!(tmp, callconv(orig))
                     shadowres = insert_value!(B, shadowres, tmp, idx-1)
                 end
@@ -1864,7 +1873,7 @@ function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                                   o3
                                   shadowout
                                   ]
-                shadowres = LLVM.call!(B, LLVM.called_type(orig), setF, args)
+                shadowres = LLVM.call!(B, called_type(orig), setF, args)
                 callconv!(shadowres, callconv(orig))
             else
                 shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -1874,7 +1883,7 @@ function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
                                       o3
                                       extract_value!(B, shadowout, idx-1)
                                       ]
-                    tmp = LLVM.call!(B, LLVM.called_type(orig), setF, args)
+                    tmp = LLVM.call!(B, called_type(orig), setF, args)
                     callconv!(tmp, callconv(orig))
                 end
             end
@@ -1922,7 +1931,7 @@ function common_setfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.AP
             if offset != 1
                 pushfirst!(args, first(operands(orig)))
             end
-            shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
             callconv!(shadowres, callconv(orig))
         else
             for idx in 1:width
@@ -1935,7 +1944,7 @@ function common_setfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.AP
                 if offset != 1
                     pushfirst!(args, first(operands(orig)))
                 end
-                tmp = LLVM.call!(B, LLVM.called_type(orig), setF, args)
+                tmp = LLVM.call!(B, called_type(orig), setF, args)
                 callconv!(tmp, callconv(orig))
             end
         end
@@ -2292,7 +2301,7 @@ function jl_nthfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
                                   shadowin
                                   LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                                   ]
-                shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                 callconv!(shadowres, callconv(orig))
             else
                 shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -2301,7 +2310,7 @@ function jl_nthfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
                                       extract_value!(B, shadowin, idx-1)
                                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                                       ]
-                    tmp = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                    tmp = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                     callconv!(tmp, callconv(orig))
                     shadowres = insert_value!(B, shadowres, tmp, idx-1)
                 end
@@ -2515,7 +2524,7 @@ function duplicate_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
 
     real_ops = collect(operands(orig))
     ops = [LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, o), B)) for o in real_ops]
-    c = call!(B, LLVM.called_type(orig), ops[end], ops[1:end-1])
+    c = call!(B, called_type(orig), ops[end], ops[1:end-1])
     callconv!(c, callconv(orig))
 
     return nothing
@@ -3972,7 +3981,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         algn = 0
 
         if width == 1
-            shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), [shadowin])
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), [shadowin])
 
             # TODO zero based off runtime types, rather than presume floatlike?
             if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
@@ -3993,7 +4002,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
             for idx in 1:width
                 ev = extract_value!(B, shadowin, idx-1)
-                callv = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), [ev])
+                callv = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), [ev])
                 if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
                     elSize = get_array_elsz(B, shadowin)
                     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t); ctx))
@@ -4196,7 +4205,7 @@ function arrayreshape_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
                           shadowin
                           LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
                           ]
-        shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx in 1:width
@@ -4205,7 +4214,7 @@ function arrayreshape_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
                               extract_value!(B, shadowin, idx-1)
                               LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[3]))
                               ]
-            tmp = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+            tmp = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
             shadowres = insert_value!(B, shadowres, tmp, idx-1)
         end
     end
@@ -4233,7 +4242,7 @@ function boxfloat_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
         shadowsin = LLVM.Value[
                                LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[1], B))]
         if width == 1
-            shadowres = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), shadowsin)
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), shadowsin)
             callconv!(shadowres, callconv(orig))
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -4241,7 +4250,7 @@ function boxfloat_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
                 args = LLVM.Value[
                                   extract_value!(B, s, idx-1) for s in shadowsin
                                   ]
-                tmp = LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                tmp = LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
                 callconv!(tmp, callconv(orig))
                 shadowres = insert_value!(B, shadowres, tmp, idx-1)
             end
@@ -4549,14 +4558,14 @@ function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                               shadowin
                               LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                               ]
-            LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+            LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
         else
             for idx in 1:width
                 args = LLVM.Value[
                                   extract_value!(B, shadowin, idx-1)
                                   LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                                   ]
-                LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
             end
         end
     end
@@ -4589,7 +4598,7 @@ function jl_array_grow_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.L
             tot = mul!(B, inc, elsz)
 
             args = LLVM.Value[anti, inc]
-            LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+            LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
 
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[off])
@@ -4604,7 +4613,7 @@ function jl_array_grow_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.L
                 tot = mul!(B, inc, elsz)
 
                 args = LLVM.Value[anti, inc]
-                LLVM.call!(B, LLVM.called_type(orig), LLVM.called_value(orig), args)
+                LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
 
                 toset = get_array_data(B, anti)
                 toset = gep!(B, i8, toset, LLVM.Value[off])
