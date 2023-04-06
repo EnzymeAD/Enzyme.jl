@@ -73,8 +73,18 @@ g(y, x) = f(y, x)^2 # function to differentiate
 
 # ## A more comprehensive set of rules 
 
-# Our custom rule applies for the specific set of activities that are triggered in the above example. However,
-# Enzyme has a number of other annotations. And of course, we'd like rules for reverse-mode too!. 
-# Below we define a more comprehensive set of custom rules for our function `f`:
+# Our custom rule applies for the specific set of activities that are annotated for `f` in the above `autodiff` call. 
+# However, Enzyme has a number of other annotations. And of course, we'd like rules for reverse-mode too!. 
+# So let us define a more comprehensive set of custom rules for our function `f`.
 
-# TODO: code dump DuplicatedNoNeed, batch rules, reverse-mode rules (get accumulation v.s. assignment of shadows correct for this one).
+# If the output has a [`DuplicatedNoNeed`](@ref) annotation, it means we are only interested in its derivative.
+# To squeeze the last drop of performance, the below rule avoids computing the output of the original function and 
+# just computes its derivative.
+
+function forward(func::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, y::Duplicated, x::Duplicated)
+    y.val .= x.val.^2 
+    y.dval .+= 2 .* x.val .* x.dval
+    return sum(y.dval)
+end
+
+# TODO: code dump rest of DuplicatedNoNeed, batch rules, reverse-mode rules (get accumulation v.s. assignment of shadows correct for this one).
