@@ -76,7 +76,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # !!! note
 #     The `autodiff` call is not currently automatically recompiled when a custom rule is defined.
 #     As a workaround, when interactively developing custom rules, make sure to redefine the primal function
-#     in order to trigger recompilation of the `autodiff` call.
+#     when editing a custom rule in order to trigger recompilation of the `autodiff` call.
 #     See [Issue #696](https://github.com/EnzymeAD/Enzyme.jl/issues/696) for more information.
 
 # ## Handling more activities 
