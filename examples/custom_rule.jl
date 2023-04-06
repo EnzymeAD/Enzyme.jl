@@ -38,7 +38,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # We need to overload `forward` in order to define a custom forward rule, and we need to overload
 # `augmented_primal` and `reverse` in order to define a custom reverse rule.
 
-import Enzyme.EnzymeRules: forward, reverse
+import Enzyme.EnzymeRules: forward, reverse, augmented_primal
 
 # In this section, we write a simple forward rule to start out:
 
@@ -74,10 +74,10 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # We see that our custom forward rule has been triggered and gives the same answer as before.
 
 # !!! note
-#   The `autodiff` call is not currently automatically recompiled when a custom rule is defined.
-#   As a workaround, when interactively developing custom rules, make sure to redefine the primal function
-#   in order to trigger recompilation of the `autodiff` call.
-#   See [Issue #696](https://github.com/EnzymeAD/Enzyme.jl/issues/696) for more information.
+#     The `autodiff` call is not currently automatically recompiled when a custom rule is defined.
+#     As a workaround, when interactively developing custom rules, make sure to redefine the primal function
+#     in order to trigger recompilation of the `autodiff` call.
+#     See [Issue #696](https://github.com/EnzymeAD/Enzyme.jl/issues/696) for more information.
 
 # ## Handling more activities 
 
@@ -104,10 +104,11 @@ dy = [0.0, 0.0]
 @show autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. x[1]
 @show dy; # derivative of y w.r.t. x[1] when f is run
 
-# Finally, it may be that either `y` or `x`  are marked as [`Const`](@ref). We can in fact handle this case, along with
+# Finally, it may be that either `x` or `y`  are marked as [`Const`](@ref). We can in fact handle this case, along with
 # the previous two cases, together in a single rule:
 
-function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Duplicated}}, y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
+function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Duplicated}}, 
+                 y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
     println("Using custom rule!")
     y.val .= x.val.^2 
     if !(x <: Const) && !(y <: Const)
@@ -122,13 +123,21 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Dupl
     end
 end
 
-# Note that there are also exist batched duplicated annotations, i.e. `[`BatchDuplicated`](@ref)` and `[`BatchDuplicatedNoNeed`](@ref)`,
-# which are not covered in this tutorial.
+# Note that there are also exist batched duplicated annotations for forward mode, i.e. [`BatchDuplicated`](@ref)
+# and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
 
 # ## Reverse-mode
 
 # Finally, let's look at how to write a reverse-mode rule! First, we define [`EnzymeRules.augmented_primal`](@ref):
 
+# TODO
 
+# function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active, y::Active)
+#     if needs_primal(config)
+#         return AugmentedReturn(func.val(x.val), nothing, nothing)
+#     else
+#         return AugmentedReturn(nothing, nothing, nothing)
+#     end
+# end
 
 # TODO: code dump rest of DuplicatedNoNeed, batch rules, reverse-mode rules (get accumulation v.s. assignment of shadows correct for this one).
