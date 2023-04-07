@@ -7,10 +7,17 @@ Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules]
 Order = [:type, :constant]
 ```
 
-## Functions and macros
+## Differentiation functions and macros
 
 ```@index
-Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules]
+Modules = [Enzyme, EnzymeCore]
+Order = [:macro, :function]
+```
+
+## Custom rule functions
+
+```@index
+Modules = [EnzymeCore.EnzymeRules]
 Order = [:macro, :function]
 ```
 
