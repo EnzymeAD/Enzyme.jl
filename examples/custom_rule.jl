@@ -106,7 +106,7 @@ dy = [0.0, 0.0]
 @show dy; # derivative of y w.r.t. x[1] when f is run
 
 # !!! note "Custom rule dispatch"
-#     When multiple custom rules for a function are defined, the correct rule is chosen chosen using 
+#     When multiple custom rules for a function are defined, the correct rule is chosen using 
 #     [Julia's multiple dispatch](https://docs.julialang.org/en/v1/manual/methods/#Methods).
 #     In particular, it is important to understand that the custom rule does not *determine* the
 #     activities of the inputs and the outputs: rather, `Enzyme` decides the activity annotations independently,
