@@ -16,7 +16,7 @@ function create_ir!(ctx, mod, name, Type, Count, AlignedSize)
 
     fun = LLVM.Function(mod, name, FT)
 
-    Builder(ctx) do builder
+    IRBuilder(ctx) do builder
         entry = BasicBlock(fun, "entry"; ctx)
         position!(builder, entry)
 

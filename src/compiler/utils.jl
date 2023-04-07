@@ -3,7 +3,7 @@ function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
     if haskey(functions(mod), name)
         F = functions(mod)[name]
         PT = LLVM.PointerType(FT)
-        if llvmtype(F) != PT
+        if value_type(F) != PT
             F = LLVM.const_pointercast(F, PT)
         end
     else
@@ -12,7 +12,7 @@ function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
             push!(function_attributes(F), attr)
         end
     end
-    return F
+    return F, FT
 end
 
 function get_function!(builderF, mod::LLVM.Module, name)
@@ -30,8 +30,8 @@ function emit_ptls!(B)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    func = declare_ptls!(mod)
-    return call!(B, func)
+    func, fty = declare_ptls!(mod)
+    return call!(B, fty, func)
 end
 
 function get_ptls(func)
@@ -49,7 +49,7 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if ptls === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = IRBuilder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
@@ -75,8 +75,8 @@ function emit_pgcstack(B)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
-    func = declare_pgcstack!(mod)
-    return call!(B, func)
+    func, fty = declare_pgcstack!(mod)
+    return call!(B, fty, func)
 end
 
 function get_pgcstack(func)
@@ -94,7 +94,7 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        B = Builder(context(LLVM.parent(func)))
+        B = IRBuilder(context(LLVM.parent(func)))
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))

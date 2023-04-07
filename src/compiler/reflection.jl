@@ -3,10 +3,10 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
-        world = GPUCompiler.get_world(Core.Typeof(func), tt)
+        world = GPUCompiler.codegen_world_age(Core.Typeof(func), tt)
     end
     
-    primal, adjoint = fspec(Core.Typeof(func), types, world)
+    primal = fspec(Core.Typeof(func), types, world)
 
     rt = Core.Compiler.return_type(func, tt, world)
     rt = A{rt}
@@ -15,8 +15,8 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(adjoint, mode, width, rt, run_enzyme, dupClosure, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
-    return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false))
+    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
+    return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
