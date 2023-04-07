@@ -99,6 +99,7 @@ end
 const nofreefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_backtrace_from_here", "ijl_backtrace_from_here",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
     "jl_box_uint64", "jl_box_uint32",
@@ -151,6 +152,7 @@ const nofreefns = Set{String}((
 const inactivefns = Set{String}((
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
+    "jl_backtrace_from_here", "ijl_backtrace_from_here",
     "jl_box_int64", "jl_box_int32",
     "ijl_box_int64", "ijl_box_int32",
     "jl_box_uint64", "jl_box_uint32",
@@ -232,13 +234,17 @@ end
         return Active{T}
     end
 end
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Complex{<:AbstractFloat}}
+@inline function Enzyme.guess_activity(::Type{Complex{T}}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
     if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
+        return DuplicatedNoNeed{Complex{T}}
     else
-        return Active{T}
+        return Active{Complex{T}}
     end
 end
+
+@inline active_reg(::Type{Complex{T}}) where {T<:AbstractFloat} = true
+@inline active_reg(::Type{T}) where {T<:AbstractFloat} = true
+@inline active_reg(::Type{T}) where {T} = false
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
@@ -976,12 +982,14 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
             push!(shadowargs, :(($(shadows...),)))
         end
     end
+    @assert length(primargs) == N
+    @assert length(primtypes) == N
     wrapped = Expr[]
     for i in 1:N
         expr = :(
                  if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i]))
                    @assert $(primtypes[i]) !== DataType
-                if !$forwardMode && ($(primtypes[i]) <: AbstractFloat || $(primtypes[i]) <: Complex{<:AbstractFloat})
+                    if !$forwardMode && active_reg($(primtypes[i]))
                     Active($(primargs[i]))
                  else
                      $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
@@ -996,20 +1004,20 @@ function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothi
     return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
 end
 
-@inline eltypeof(x) = eltype(Core.Typeof(x))
-
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(res[1]), Val(Width+1))
     ModifiedBetween = ntuple(i->false, Val(N+1))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
     return quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt)
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1063,17 +1071,19 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(origRet), Val(Width+1))
     nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
+    nres3 = ntuple(i->:(res[3]), Val(Width))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
 
     return quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt)
+        tt′ = Tuple{$(Types...)}
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+        world = GPUCompiler.get_world(Core.Typeof(f), Tuple{$(ElTypes...)})
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
@@ -1160,15 +1170,19 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         end
         shadowret = :(($(shadowret...),))
     end
+    
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
 
     quote
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{map(eltypeof, args)...}
-        tt′ = Tuple{map(Core.Typeof, args)...}
-        rt = Core.Compiler.return_type(f, tt)
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
+        FT = Core.Typeof(f)
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
@@ -5192,11 +5206,15 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             if any_jltypes(ty)
                 if addrspace(ty) != 10
                     cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), 10))
-                    push!(added, cur.ref)
+                    if isa(cur, LLVM.Instruction)
+                        push!(added, cur.ref)
+                    end
                 end
                 if llvmtype(cur) != T_prjlvalue
                     cur = bitcast!(B, cur, T_prjlvalue)
-                    push!(added, cur.ref)
+                    if isa(cur, LLVM.Instruction)
+                        push!(added, cur.ref)
+                    end
                 end
                 push!(vals, cur)
             end
@@ -5206,7 +5224,9 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             if any_jltypes(ty)
                 for i=1:length(ty)
                     ev = extract_value!(B, cur, i-1)
-                    push!(added, ev.ref)
+                    if isa(ev, LLVM.Instruction)
+                        push!(added, ev.ref)
+                    end
                     push!(todo, ev)
                 end
             end
@@ -5216,7 +5236,9 @@ function get_julia_inner_types(B, p, startvals...; added=[])
             for (i, t) in enumerate(LLVM.elements(ty))
                 if any_jltypes(t)
                     ev = extract_value!(B, cur, i-1)
-                    push!(added, ev.ref)
+                    if isa(ev, LLVM.Instruction)
+                        push!(added, ev.ref)
+                    end
                     push!(todo, ev)
                 end
             end
@@ -5246,16 +5268,19 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
         p = bitcast!(B, p, T_prjlvalue)
+        @assert isa(p, LLVM.Instruction)
         push!(added, p.ref)
 
         vals = get_julia_inner_types(B, p, v, added=added)
         r = emit_writebarrier!(B, vals)
+        @assert isa(r, LLVM.Instruction)
         push!(added, r.ref)
     end
     if R2 != C_NULL
         unsafe_store!(R2, length(added))
         ptr = Base.unsafe_convert(Ptr{LLVM.API.LLVMValueRef}, Libc.malloc(sizeof(LLVM.API.LLVMValueRef)*length(added)))
         for (i, v) in enumerate(added)
+            @assert isa(LLVM.Value(v), LLVM.Instruction)
             unsafe_store!(ptr, v, i)
         end
         return ptr
