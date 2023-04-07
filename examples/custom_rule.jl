@@ -26,10 +26,15 @@ g(y, x) = f(y, x)^2 # function to differentiate
 
 # (See the [AutoDiff API tutorial](..autodiff.md) for more information on using `autodiff`.)
 
-# However, while Enzyme can efficiently handle a wide range of constructs, we may encounter cases where
-# we would like to use a custom rule for `f`. For example, `f` may make a foreign call that Enzyme cannot 
-# differentiate, or we may have special higher-level knowledge about `f` that enables us to write a more 
-# efficient rule. So let's see how to write a custom rule for `f`.
+# Let's see how to write a custom rule for `f`!
+
+# !!! warning "Don't use custom rules unnecessarily!"
+#   Enzyme can efficiently handle a wide range of constructs, and so a custom rule should only be required
+#   in certain special cases. For example, a function may make a foreign call that Enzyme cannot differentiate,
+#   or we may have higher-level mathematical knowledge that enables us to write a more efficient rule. 
+#   Even in these cases, try to make your custom rule encapsulate the minimum possible construct that Enzyme
+#   cannot differentiate, rather than expanding the scope of the rule unnecessarily. 
+#   For pedagogical purposes, we will disregard this principle here and go ahead and write a rule for `f` :)
 
 # ## Defining our first rule 
 
@@ -38,7 +43,8 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # We need to overload `forward` in order to define a custom forward rule, and we need to overload
 # `augmented_primal` and `reverse` in order to define a custom reverse rule.
 
-import Enzyme.EnzymeRules: forward, reverse, augmented_primal
+import .EnzymeRules: forward, reverse, augmented_primal
+using .EnzymeRules
 
 # In this section, we write a simple forward rule to start out:
 
@@ -73,12 +79,6 @@ g(y, x) = f(y, x)^2 # function to differentiate
 
 # We see that our custom forward rule has been triggered and gives the same answer as before.
 
-# !!! note
-#     The `autodiff` call is not currently automatically recompiled when a custom rule is defined.
-#     As a workaround, when interactively developing custom rules, make sure to redefine the primal function
-#     when editing a custom rule in order to trigger recompilation of the `autodiff` call.
-#     See [Issue #696](https://github.com/EnzymeAD/Enzyme.jl/issues/696) for more information.
-
 # ## Handling more activities 
 
 # Our custom rule applies for the specific set of activities that are annotated for `f` in the above `autodiff` call. 
@@ -94,7 +94,7 @@ function forward(func::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, y::Duplicat
     return sum(y.dval)
 end
 
-# This rule is triggered, for example, when we call `autodiff` directly on `f`:
+# Our rule is triggered, for example, when we call `autodiff` directly on `f`, as the output's derivative isn't needed:
 
 x  = [3.0, 1.0]
 dx = [1.0, 0.0]
@@ -104,12 +104,19 @@ dy = [0.0, 0.0]
 @show autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. x[1]
 @show dy; # derivative of y w.r.t. x[1] when f is run
 
-# Finally, it may be that either `x` or `y`  are marked as [`Const`](@ref). We can in fact handle this case, along with
-# the previous two cases, together in a single rule:
+# !!! note "Custom rule selection"
+#   When multiple custom rules for a function are defined, the correct rule is chosen chosen using 
+#   [Julia's multiple dispatch](https://docs.julialang.org/en/v1/manual/methods/#Methods).
+#   In particular, it is important to understand that the custom rule does not *determine* the
+#   activities of the inputs and the outputs: rather, `Enzyme` annotates the activities independently,
+#   and then *dispatches* to the custom rule handling the activities, if one exists.
+
+# Finally, it may be that either `x` or `y`  are marked as [`Const`](@ref). We can in fact handle this case, 
+# along with the previous two cases, together in a single rule:
 
 function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Duplicated}}, 
                  y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
-    println("Using custom rule!")
+    println("Using our general custom rule!")
     y.val .= x.val.^2 
     if !(x <: Const) && !(y <: Const)
         y.dval .= 2 .* x.val .* x.dval
@@ -123,21 +130,54 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Dupl
     end
 end
 
-# Note that there are also exist batched duplicated annotations for forward mode, i.e. [`BatchDuplicated`](@ref)
+# Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
 
 # ## Reverse-mode
 
-# Finally, let's look at how to write a reverse-mode rule! First, we define [`EnzymeRules.augmented_primal`](@ref):
+# Finally, let's look at how to write a simple reverse-mode rule! First, we write a method for [`EnzymeRules.augmented_primal`](@ref):
 
-# TODO
+function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, y::Duplicated, x::Duplicated)
+    println("In custom augmented primal rule.")
+    if needs_primal(config)
+        return AugmentedReturn(func.val(y.val, x.val), nothing, nothing)
+    else
+        return AugmentedReturn(nothing, nothing, nothing)
+    end
+end
 
-# function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active, y::Active)
-#     if needs_primal(config)
-#         return AugmentedReturn(func.val(x.val), nothing, nothing)
-#     else
-#         return AugmentedReturn(nothing, nothing, nothing)
-#     end
-# end
+# Let's unpack our signature for `augmented_primal` :
+# * We accepted a [`Config`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
+# * Our function `f` was annotated [`Const`](@ref) as usual.
+# * We dispatched on an [`Active`](@ref) annotation for the return value. This is a special annotation for scalar values, such as our return value,
+#   that indicates that that we care about the value's derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.
+# * We annotated `x` and `y` with `Duplicated` as in the forward mode case.
 
-# TODO: code dump rest of DuplicatedNoNeed, batch rules, reverse-mode rules (get accumulation v.s. assignment of shadows correct for this one).
+# The body of our function simply checks if the `config` requires the primal, running it if so.
+# Our function returns an `AugmentedReturn` object specifying the return value, its shadow, and any extra tape information (none in this csae).
+# Note that we return a shadow of `nothing` since the return value is marked [`Active`](@ref).
+
+# Now, we write a method for [`EnzymeRules.reverse`](@ref).
+
+function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, out::Active, tape, y::Duplicated, x::Duplicated)
+    println("In custom reverse rule.")
+    y.dval .+= out.val 
+    x.dval .+= 2 .* x.val .* y.dval # accumulate into shadow, don't assign!
+    return ()
+end
+
+# The activities match what we used for `augmented_primal`. One difference is that we know receive an *instance* of [`Active`](@ref)
+# for the return type. Here, `out.val` stores the accumulated derivative value for `out` (not the original return value!).
+
+# Finally, let's see our reverse rule in action!
+
+x  = [3.0, 1.0]
+dx = [0.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2
+
+autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. y[1]
+@show dx # derivative of f w.r.t. x
+@show dy # derivative of f w.r.t. y
