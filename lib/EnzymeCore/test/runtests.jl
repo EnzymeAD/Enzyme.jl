@@ -17,5 +17,3 @@ function forward(::Const{typeof(f)}, ::Type{<:Const}; kwargs...)
 end
 
 @test has_frule_from_sig(Base.signature_type(f, Tuple{}))
-
-
