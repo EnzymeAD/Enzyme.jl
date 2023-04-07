@@ -1085,7 +1085,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         FT = Core.Typeof(f)
         rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-        world = GPUCompiler.get_world(Core.Typeof(f), tt)
+        world = GPUCompiler.get_world(Core.Typeof(f), Tuple{$(ElTypes...)})
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
