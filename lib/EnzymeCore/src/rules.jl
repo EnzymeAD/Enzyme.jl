@@ -18,6 +18,17 @@ the annotated function arguments.
 """
 function forward end
 
+"""
+    Config{NeedsPrimal, NeedsShadow, Width, Overwritten}
+    ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+
+Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
+* `NeedsPrimal` and `NeedsShadow` are boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `Width` is an integer that specifies the number of adjoints/shadows simultaneously being propagated.
+* `Overwritten` is ??? (TODO) 
+
+Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
+"""
 struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
 const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 
@@ -26,6 +37,12 @@ const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 @inline width(::Config{<:Any, <:Any, Width}) where Width = Width
 @inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 
+"""
+    AugmentedReturn(primal, shadow, tape)
+
+Augment the primal return value of a function with its shadow, as well as any additional saved information 
+stored in `tape`. See also [`augmented_primal`](@ref).
+"""
 struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     primal::PrimalType
     shadow::ShadowType
