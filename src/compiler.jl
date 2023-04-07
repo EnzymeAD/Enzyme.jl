@@ -1017,8 +1017,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1082,8 +1081,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # TODO: Annotation of return value
         # tt0 = Tuple{$(primtypes...)}
         tt′ = Tuple{$(Types...)}
-        FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         world = GPUCompiler.get_world(Core.Typeof(f), Tuple{$(ElTypes...)})
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
@@ -1184,7 +1182,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
