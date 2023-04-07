@@ -1018,7 +1018,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -1083,7 +1083,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
         forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
@@ -1128,13 +1128,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, World, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Val{World}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, World, F, DF}
+@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -1184,7 +1184,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)}, World)
+        rt = Core.Compiler.return_type(Tuple{FT, $(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         world = GPUCompiler.get_world(Core.Typeof(f), tt)
