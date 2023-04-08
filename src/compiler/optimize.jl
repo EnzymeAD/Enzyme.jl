@@ -65,6 +65,17 @@ function fix_decayaddr!(mod::LLVM.Module)
             if addrspace(postty) != 0
                 continue
             end
+            okay = false
+            for u in LLVM.uses(inst)
+                st = LLVM.user(u)
+                if isa(st, LLVM.PtrToIntInst)
+                    okay = true
+                    continue
+                end
+            end
+            if okay
+                continue
+            end
             push!(invalid, inst)
         end
 
