@@ -75,7 +75,7 @@ function augmented_primal end
     reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
 Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
-as Active{T} with the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
+as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
 """
 function reverse end
 
