@@ -40,8 +40,12 @@ const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 """
     AugmentedReturn(primal, shadow, tape)
 
-Augment the primal return value of a function with its shadow, as well as any additional saved information 
-stored in `tape`. See also [`augmented_primal`](@ref).
+Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly 
+compute the reverse pass, stored in `tape`.  Unless specified by the config that a variable is not overwritten, rules must 
+assume any arrays/data structures/etc are overwritten between the forward and the reverse pass. Any floats or variables 
+passed by value are always preserved as is (as are the arrays themselves, just not necessarily the values in the array).
+
+See also [`augmented_primal`](@ref).
 """
 struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     primal::PrimalType
@@ -62,8 +66,8 @@ end
 """
     augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Must return an AugmentedReturn type.
-* The primal must be the same type of the original return if needs_primal(config), otherwise nothing.
+Must return an [`AugmentedReturn`](@ref) type.
+* The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
 * The shadow must be nothing if needs_shadow(config) is false. If width is 1, the shadow should be the same
   type of the original return. If the width is greater than 1, the shadow should be NTuple{original return, width}.
 * The tape can be any type (including Nothing) and is preserved for the reverse call.
