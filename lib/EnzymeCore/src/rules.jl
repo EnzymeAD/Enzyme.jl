@@ -23,9 +23,9 @@ function forward end
     ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
-* `NeedsPrimal` and `NeedsShadow` are boolean values specifying whether the primal and shadow (resp.) should be returned. 
-* `Width` is an integer that specifies the number of adjoints/shadows simultaneously being propagated.
-* `Overwritten` is ??? (TODO) 
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
+* `Overwritten`: a collection of booleans of whether each argument is modified between state (true if to be automatically derived).
 
 Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
 """
