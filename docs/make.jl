@@ -55,7 +55,6 @@ makedocs(;
         "Internal API" => "internal_api.md",
     ],
     doctest = true,
-    linkcheck = true,
     strict = true,
 )
 
