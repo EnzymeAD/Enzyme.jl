@@ -111,6 +111,8 @@ dy = [0.0, 0.0]
 #     In particular, it is important to understand that the custom rule does not *determine* the
 #     activities of the inputs and the outputs: rather, `Enzyme` decides the activity annotations independently,
 #     and then *dispatches* to the custom rule handling the activities, if one exists.
+#     If a custom rule is specified for the correct function/argument types, but not the correct activity annotation, 
+#     a runtime error will be thrown alerting the user to the missing activity rule rather than silently ignoring the rule."
 
 # Finally, it may be that either `x` or `y` are marked as [`Const`](@ref). We can in fact handle this case, 
 # along with the previous two cases, all together in a single rule:
