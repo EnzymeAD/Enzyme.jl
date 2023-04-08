@@ -41,9 +41,11 @@ const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
     AugmentedReturn(primal, shadow, tape)
 
 Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly 
-compute the reverse pass, stored in `tape`.  Unless specified by the config that a variable is not overwritten, rules must 
-assume any arrays/data structures/etc are overwritten between the forward and the reverse pass. Any floats or variables 
-passed by value are always preserved as is (as are the arrays themselves, just not necessarily the values in the array).
+compute the reverse pass, stored in `tape`.
+
+Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are 
+overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is 
+(as are the arrays themselves, just not necessarily the values in the array).
 
 See also [`augmented_primal`](@ref).
 """
