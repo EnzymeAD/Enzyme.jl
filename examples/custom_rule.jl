@@ -114,24 +114,38 @@ dy = [0.0, 0.0]
 #     If a custom rule is specified for the correct function/argument types, but not the correct activity annotation, 
 #     a runtime error will be thrown alerting the user to the missing activity rule rather than silently ignoring the rule."
 
-# Finally, it may be that either `x` or `y` are marked as [`Const`](@ref). We can in fact handle this case, 
+# Finally, it may be that either `x`, `y`, or the output are marked as [`Const`](@ref). We can in fact handle this case, 
 # along with the previous two cases, all together in a single rule:
 
-function forward(func::Const{typeof(f)}, RT::Type{<:Union{DuplicatedNoNeed, Duplicated}}, 
+function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, 
                  y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
     println("Using our general custom rule!")
     y.val .= x.val.^2 
-    if !(x <: Const) && !(y <: Const)
+    if !(x isa Const) && !(y isa Const)
         y.dval .= 2 .* x.val .* x.dval
-    elseif !(y <: Const) 
+    elseif !(y isa Const) 
         y.dval .= 0
     end
-    if RT <: DuplicatedNoNeed
-        return sum(y.dval)
+    dout = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
+    if RT <: Const
+        return nothing
+    elseif RT <: DuplicatedNoNeed
+        return dout 
     else
-        return Duplicated(sum(y.val), sum(y.dval))
+        return Duplicated(sum(y.val), dout)
     end
 end
+
+x  = [3.0, 1.0]
+dx = [1.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2 # function to differentiate 
+
+@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
+@show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
+@show autodiff(Forward, g, Const(y), Const(x)) # derivative of g w.r.t. x[1], with x and y annotated Const
 
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
