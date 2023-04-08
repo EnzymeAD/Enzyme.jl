@@ -158,38 +158,56 @@ g(y, x) = f(y, x)^2 # function to differentiate
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
                           y::Duplicated, x::Duplicated)
     println("In custom augmented primal rule.")
+    # Compute primal
     if needs_primal(config)
-        return AugmentedReturn(func.val(y.val, x.val), nothing, nothing)
+        primal = func.val(y.val, x.val)
     else
-        return AugmentedReturn(nothing, nothing, nothing)
+        y.val .= x.val.^2 # y still needs to be mutated even if primal not needed!
+        primal = nothing
     end
+    # Save x in tape if x will be overwritten
+    if overwritten(config)[3]
+        tape = copy(x.val) 
+    else
+        tape = nothing
+    end
+    # Return an AugmentedReturn object with shadow = nothing
+    return AugmentedReturn(primal, nothing, tape)
 end
 
 # Let's unpack our signature for `augmented_primal` :
 # * We accepted a [`EnzymeRules.Config`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
-# * Our function `f` was annotated [`Const`](@ref) as usual.
+# * We annotated `f` with [`Const`](@ref) as usual.
 # * We dispatched on an [`Active`](@ref) annotation for the return value. This is a special annotation for scalar values, such as our return value,
 #   that indicates that that we care about the value's derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.
-# * We annotated `x` and `y` with [`Duplicated`](@ref) as in the forward mode case.
+# * We annotated `x` and `y` with [`Duplicated`](@ref) as for our first simple forward rule.
 
-# The body of our function simply checks if the `config` requires the primal, running it if so.
-# Our function returns an `AugmentedReturn` object specifying the return value, its shadow, and any extra tape information (none in this csae).
-# Note that we return a shadow of `nothing` since the return value is marked [`Active`](@ref).
+# Now, let's unpack the body of our `augmented_primal` rule:
+# * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
+# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`Config`](@ref). 
+#   If so, we save the value of `x` on the `tape` of the returned [`AugmentedReturn`](@ref) objet.
+# * We return a shadow of `nothing` since the return value is [`Active`](@ref) and hence does not need a shadow.
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
 
 function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, out::Active, tape,
                  y::Duplicated, x::Duplicated)
     println("In custom reverse rule.")
-    y.dval .+= out.val 
-    x.dval .+= 2 .* x.val .* y.dval # accumulate into shadow, don't assign!
+    # retrieve x value, either from original x or from tape if x may have been overwritten.
+    xval = overwritten(config)[3] ? tape : x.val 
+    # accumulate into x's shadow, don't assign!
+    @show out.val
+    @show xval
+    x.dval .+= 2 .* xval .* out.val 
     return ()
 end
 
 # The activities used in the signature match what we used for `augmented_primal`. 
 # One key difference is that we know receive an *instance* `out` of [`Active`](@ref) for the return type, not just a type annotation.
 # Here, `out.val` stores the derivative value for `out` (not the original return value!).
-# Using this derivative value, we accumulate the backpropagated derivatives for `x` and `y` into their shadows. 
+# Using this derivative value, we accumulate the backpropagated derivatives for `x` into its shadow. 
+# Note that we do not accumulate anything into `y`'s shadow! This is because `y` is overwritten within `f`, so there is no derivative
+# w.r.t. to the `y` that was originally inputted.
 
 # Finally, let's see our reverse rule in action!
 
@@ -200,6 +218,39 @@ dy = [0.0, 0.0]
 
 g(y, x) = f(y, x)^2
 
-autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. y[1]
-@show dx # derivative of f w.r.t. x
-@show dy; # derivative of f w.r.t. y
+autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx))
+@show dx # derivative of g w.r.t. x
+@show dy # derivative of g w.r.t. y
+
+# Also try a function which mutates x afterwards
+function h(y, x)
+    out = f(y, x)
+    x .= x.^2
+    return out# + sum(x)
+end
+
+x  = [3.0, 1.0]
+y  = [0.0, 0.0]
+dx .= 0
+dy .= 0
+
+autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
+@show dx # derivative of h w.r.t. x
+@show dy; # derivative of h w.r.t. y
+
+function a(y, x)
+    y .= x.^2
+    out = sum(y) 
+    x .= x.^2
+    return out^2
+end
+
+x  = [3.0, 1.0]
+y  = [0.0, 0.0]
+dx .= 0
+dy .= 0
+
+
+autodiff(Reverse, a, Duplicated(y, dy), Duplicated(x, dx))
+@show dx
+@show dy
