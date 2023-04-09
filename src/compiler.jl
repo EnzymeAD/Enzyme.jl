@@ -2768,7 +2768,7 @@ end
 
             if has_active
                 refed = true
-                e_tt = Tuple{Duplicated{Ref{funcT}}, e_tt.parameters...}
+                e_tt = Tuple{Duplicated{Base.RefValue{funcT}}, e_tt.parameters...}
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
