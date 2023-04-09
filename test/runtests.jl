@@ -691,8 +691,8 @@ end
     include("DiffTests.jl")
 
     n = rand()
-    x, y = rand(5, 5), rand(5)
-    A, B = rand(5, 5), rand(5, 5)
+    x, y = 1 .+ rand(5, 5), 1 .+ rand(5)
+    A, B = 1 .+ rand(5, 5), 1 .+ rand(5, 5)
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
