@@ -2997,6 +2997,12 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         byRef, sname, dfuncT, vals, thunkTy, _, copies = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
     @static if VERSION < v"1.8-"
+        if byRef
+            emit_error(B, orig, "Enzyme: active variable in Threads.@threads closure "*(string(eltype(dfuncT)))*" not supported")
+        end
+    end
+
+    @static if VERSION < v"1.8-"
         tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}}
     else
         tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}, Bool}
@@ -6448,8 +6454,6 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     shadow_init = job.config.params.shadowInit
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
-    F   = eltype(TT.parameters[1])
-    dupClosure = !(TT.parameters[1] <: Const)
 
     tt = [TT.parameters[2:end]...,]
 
@@ -6460,21 +6464,9 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
     ctx = LLVM.context(mod)
 
-    @assert length(modifiedBetween) == length(tt) + 1
-
-    if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-        typeTree = typetree(F, ctx, dl)
-        push!(args_typeInfo, typeTree)
-        if TT.parameters[1] <: Const
-            push!(args_activity, API.DFT_CONSTANT)
-        else
-            push!(args_activity, API.DFT_DUP_ARG)
-        end
-        push!(uncacheable_args, modifiedBetween[1])
-        push!(args_known_values, API.IntList())
-    end
-
-    for (i, T) in enumerate(tt)
+    @assert length(modifiedBetween) == length(TT.parameters)
+    
+    for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             if !(T <: Const)
@@ -6487,7 +6479,6 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
         elseif T <: Active
-
             if isboxed
                 push!(args_activity, API.DFT_DUP_ARG)
             else
@@ -6500,13 +6491,13 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         else
             error("illegal annotation type")
         end
-        T = source_typ
+        typeTree = typetree(source_typ, ctx, dl)
         if isboxed
-            T = Ptr{T}
+            merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+            only!(typeTree, -1)
         end
-        typeTree = typetree(T, ctx, dl)
         push!(args_typeInfo, typeTree)
-        push!(uncacheable_args, modifiedBetween[1+i])
+        push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
     end
     @assert length(uncacheable_args) == length(collect(parameters(primalf)))
@@ -6649,7 +6640,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         end
 
         if wrap
-          augmented_primalf = create_abi_wrapper(augmented_primalf, F, tt, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, dupClosure, width, returnUsed, shadow_init, world)
+            augmented_primalf = create_abi_wrapper(augmented_primalf, TT, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, width, returnUsed, shadow_init, world)
         end
 
         # TODOs:
@@ -6662,7 +6653,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             #=additionalArg=#tape, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, dupClosure, width, #=returnPrimal=#false, shadow_init, world)
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, width, #=returnPrimal=#false, shadow_init, world)
         end
     elseif mode == API.DEM_ReverseModeCombined
         returnUsed = !GPUCompiler.isghosttype(actualRetType)
@@ -6674,7 +6665,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, dupClosure, width, returnUsed, shadow_init, world)
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnUsed, shadow_init, world)
         end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(GPUCompiler.isghosttype(actualRetType) || Core.Compiler.isconstType(actualRetType))
@@ -6687,7 +6678,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         augmented_primalf = nothing
         if wrap
           pf = adjointf
-          adjointf = create_abi_wrapper(adjointf, F, tt, rt, actualRetType, API.DEM_ForwardMode, nothing, dupClosure, width, returnUsed, shadow_init, world)
+          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -6697,14 +6688,14 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     return adjointf, augmented_primalf, TapeType
 end
 
-function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, dupClosure, width, returnPrimal, shadow_init, world)
+function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, width, returnPrimal, shadow_init, world)
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
 
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
-
+    
     push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0; ctx))
     T_void = convert(LLVMType, Nothing; ctx)
     ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
@@ -6725,17 +6716,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         actualRetType = Any
     end
 
-    if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-        isboxed = GPUCompiler.deserves_argbox(F)
-        llvmT = isboxed ? T_prjlvalue : convert(LLVMType, F; ctx)
-        push!(T_wrapperargs, llvmT)
-        if dupClosure
-            push!(T_wrapperargs, llvmT)
-        end
-    end
-
     ActiveRetTypes = Type[]
-    for (i, T) in enumerate(argtypes)
+    for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
         if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
@@ -6748,14 +6730,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         push!(T_wrapperargs, llvmT)
 
         if T <: Const
-            if is_adjoint
+            if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
             continue
         end
 
         if T <: Active
-            if is_adjoint
+            if is_adjoint && i != 1
                 count_Sret += 1
                 if width == 1
                     push!(ActiveRetTypes, source_typ)
@@ -6766,12 +6748,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
         elseif T <: Duplicated || T <: DuplicatedNoNeed
             @assert width == 1
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-            if is_adjoint
+            if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
         elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-            if is_adjoint
+            if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
         else
@@ -6940,16 +6922,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
 
         activeNum = 0
 
-        if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
-            push!(realparms, params[i])
-            i+=1
-            if dupClosure
-                push!(realparms, params[i])
-                i+=1
-            end
-        end
-
-        for T in argtypes
+        for T in TT.parameters
             T′ = eltype(T)
 
             if GPUCompiler.isghosttype(T′) || Core.Compiler.isconstType(T′)
@@ -7058,10 +7031,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, F, argtypes, rettype, actua
                     end
                 end
             end
-            for T in argtypes
-                T′ = eltype(T)
-                isboxed = GPUCompiler.deserves_argbox(T′)
+            for T in TT.parameters[2:end]
                 if T <: Active
+                    T′ = eltype(T)
+                    isboxed = GPUCompiler.deserves_argbox(T′)
                     if !isboxed
                         eval = extract_value!(builder, val, returnNum)
                         store!(builder, eval, gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), activeNum)]))
@@ -8120,6 +8093,7 @@ end
     if !GPUCompiler.isghosttype(F) && !Core.Compiler.isconstType(F)
         isboxed = GPUCompiler.deserves_argbox(F)
         argexpr = :(fn.val)
+
         if isboxed
             push!(types, Any)
         else

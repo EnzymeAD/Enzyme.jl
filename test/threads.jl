@@ -73,8 +73,12 @@ end
 
     out = [1.0, 2.0]
     dout = [1.0, 1.0]
+@static if VERSION < v"1.8"
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+else
     res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
     @test res[1][2] ≈ 2.0
+end
 end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin
