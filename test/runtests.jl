@@ -690,7 +690,7 @@ end
 @testset "DiffTest" begin
     include("DiffTests.jl")
 
-    n = rand()
+    n = 1 + rand()
     x, y = 1 .+ rand(5, 5), 1 .+ rand(5)
     A, B = 1 .+ rand(5, 5), 1 .+ rand(5, 5)
 
