@@ -1047,11 +1047,17 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             end
         end
         
-        world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+            dupClosure = false
+        end
 
-        forward = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
+        world = GPUCompiler.codegen_world_age(FT, tt)
 
-        res = forward(ActivityTup[1] ? Duplicated(f, df) : Const(f), args...)
+        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
+
+        res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
         if length(res) == 0
             return ReturnType($nnothing)
@@ -1101,12 +1107,20 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         tt′ = Tuple{$(Types...)}
         rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
-        world = GPUCompiler.codegen_world_age(Core.Typeof(f), Tuple{$(ElTypes...)})
-        forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, 
+        
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+            dupClosure = false
+        end
+        
+        world = GPUCompiler.codegen_world_age(FT, Tuple{$(ElTypes...)})
+        
+        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
 
-        internal_tape, origRet, initShadow = forward(ActivityTup[1] ? Duplicated(f, df) : Const(f), args...)
+        internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
 
         if annotation <: Const
@@ -1199,19 +1213,23 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        FT = Core.Typeof(f)
         rt = Core.Compiler.return_type(f, tt)
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
+ 
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+            dupClosure = false
+        end
+        world = GPUCompiler.codegen_world_age(FT, tt)
 
-        world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
-
-        forward, adjoint = thunk(Val(world), (ActivityTup[1] ? Duplicated : Const){Core.Typeof(f)}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
         end
 
-        tup = adjoint(ActivityTup[1] ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
+        tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
 
         $(outs...)
         return nothing
@@ -2998,7 +3016,7 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     @static if VERSION < v"1.8-"
         if byRef
-            emit_error(B, orig, "Enzyme: active variable in Threads.@threads closure "*(string(eltype(dfuncT)))*" not supported")
+            emit_error(B, orig, "Enzyme: active variable in Threads.@threads closure "*(string(eltype(eltype(dfuncT))))*" not supported")
         end
     end
 
