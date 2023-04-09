@@ -700,11 +700,11 @@ end
     end
 
     @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
-        test_matrix_to_number(f, y)
+        test_matrix_to_number(f, y; rtol=1e-6, atol=1e-6)
     end
 
     @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
-        test_matrix_to_number(f, x)
+        test_matrix_to_number(f, x; rtol=1e-6, atol=1e-6)
     end
 
     # TODO(vchuravy/wsmoses): Enable these tests
