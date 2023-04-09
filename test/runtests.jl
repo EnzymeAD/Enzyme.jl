@@ -39,6 +39,28 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     end
 end
 
+function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
+    dx_fd = map(eachindex(x)) do i
+        fdm(x[i]) do xi
+            x2 = copy(x)
+            x2[i] = xi
+            f(x2)
+        end
+    end
+
+    dx = zero(x)
+    autodiff(Reverse, f, Active, Duplicated(x, dx))
+    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
+
+    dx_fwd = map(eachindex(x)) do i
+        dx = zero(x)
+        dx[i] = 1
+        ∂x = autodiff(Forward, f, Duplicated(x, dx))
+        isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
+    end
+    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
+end
+
 include("abi.jl")
 include("typetree.jl")
 
