@@ -888,8 +888,10 @@ function permit_inlining!(f::LLVM.Function)
 end
 
 function runtime_newtask_fwd(world::Val{World}, fn::Any, dfn::Any, post::Any, ssize::Int, width) where World
-    forward = thunk(world, Duplicated{Core.Typeof(fn)}, Const, Tuple{}, Val(API.DEM_ForwardMode), width, Val((false,)))
-    ft = Duplicated(fn, dfn)
+    FT = Core.Typeof(fn)
+    ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
+    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), width, Val((false,)))
+    ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
         if length(res) > 1
@@ -904,8 +906,10 @@ end
 
 function runtime_newtask_augfwd(world::Val{World}, fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {World, width, ModifiedBetween}
     # TODO make this AD subcall type stable
-    forward, adjoint = thunk(world, Duplicated{Core.Typeof(fn)}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
-    ft = Duplicated(fn, dfn)
+    FT = Core.Typeof(fn)
+    ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
+    forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
+    ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
     function fclosure()
