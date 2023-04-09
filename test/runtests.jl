@@ -691,7 +691,7 @@ end
     include("DiffTests.jl")
 
     n = rand()
-    x, y = rand(5, 5), rand(26)
+    x, y = rand(5, 5), rand(5)
     A, B = rand(5, 5), rand(5, 5)
 
     # f returns Number
@@ -699,15 +699,15 @@ end
         test_scalar(f, n)
     end
 
+    @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, y)
+    end
+
+    @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, x)
+    end
+
     # TODO(vchuravy/wsmoses): Enable these tests
-    # for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
-    #     @test isa(f(y), Number)
-    # end
-
-    # for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
-    #     @test isa(f(x), Number)
-    # end
-
     # for f in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS
     #     @test isa(f(A, B, x), Number)
     # end
