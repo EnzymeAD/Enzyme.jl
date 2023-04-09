@@ -887,10 +887,10 @@ function permit_inlining!(f::LLVM.Function)
     end
 end
 
-function runtime_newtask_fwd(world::Val{World}, fn::Any, dfn::Any, post::Any, ssize::Int, width) where World
+function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
-    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), width, Val((false,)))
+    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)))
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
@@ -904,7 +904,7 @@ function runtime_newtask_fwd(world::Val{World}, fn::Any, dfn::Any, post::Any, ss
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(world::Val{World}, fn::Any, dfn::Any, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {World, width, ModifiedBetween}
+function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {FT1, FT2, World, width, ModifiedBetween}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
@@ -3111,6 +3111,7 @@ include("compiler/pmap.jl")
 
 function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
     orig = LLVM.Instruction(OrigCI)
+    ctx = LLVM.context(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -3119,21 +3120,21 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     B = LLVM.IRBuilder(B)
     
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    fun = nested_codegen!(mode, mod, runtime_newtask_fwd, Tuple{Val{world}, Any, Any, Any, Int, Val{width}}, world)
-    permit_inlining!(fun)
-
 
     ops = collect(operands(orig))
 
-    vals = LLVM.Value[ LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
+    vals = LLVM.Value[
+                       unsafe_to_llvm(runtime_newtask_fwd, ctx),
+                       unsafe_to_llvm(Val(world), ctx),
+                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))]
+                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       unsafe_to_llvm(Val(width), ctx),
+                      ]
 
-    to_preserve = LLVM.Value[vals[1], vals[2], vals[3]]
-    token = emit_gc_preserve_begin(B, to_preserve)
-
-    ntask = LLVM.call!(B, LLVM.function_type(fun), fun, vals)
+    ntask = emit_apply_generic!(B, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, ntask, orig)
 
     # TODO: GC, ret
     if shadowR != C_NULL
@@ -3143,8 +3144,6 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     if normalR != C_NULL
         unsafe_store!(normalR, ntask.ref)
     end
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
@@ -3176,31 +3175,25 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     B = LLVM.IRBuilder(B)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    fun = nested_codegen!(mode, mod, runtime_newtask_augfwd, Tuple{Val{world}, Any, Any, Any, Int, Val{width}, Val{ModifiedBetween}}, world)
-    permit_inlining!(fun)
-
-    sret = allocate_sret!(gutils, 2, ctx)
-    AT = LLVM.ArrayType(T_prjlvalue, 2)
-
-    ops = collect(operands(orig))[1:end-1]
-
-    vals = LLVM.Value[sret,
+    
+    ops = collect(operands(orig))
+    
+    vals = LLVM.Value[
+                       unsafe_to_llvm(runtime_newtask_augfwd, ctx),
+                       unsafe_to_llvm(Val(world), ctx),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))]
+                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       unsafe_to_llvm(Val(width), ctx),
+                       unsafe_to_llvm(Val(ModifiedBetween), ctx),
+                      ]
 
-    to_preserve = LLVM.Value[vals[2], vals[3], vals[4]] # All Any should be preserved
-    token = emit_gc_preserve_begin(B, to_preserve)
-
-    cal = LLVM.call!(B, LLVM.function_type(fun), fun, vals)
-
-    attr = if LLVM.version().major >= 12
-        TypeAttribute("sret", AT; ctx)
-    else
-        EnumAttribute("sret"; ctx)
-    end
-    LLVM.API.LLVMAddCallSiteAttribute(cal, LLVM.API.LLVMAttributeIndex(1), attr)
+    ntask = emit_apply_generic!(B, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, ntask, orig)
+        
+    AT = LLVM.ArrayType(T_prjlvalue, 2)
+    sret = LLVM.pointercast!(B, ntask, LLVM.PointerType(AT, 10))
 
     if shadowR != C_NULL
         shadow = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(1; ctx)]))
@@ -3211,8 +3204,6 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
-
-    emit_gc_preserve_end(B, token)
 
     return nothing
 end
