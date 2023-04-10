@@ -159,7 +159,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # Let's look at how to write a simple reverse-mode rule! 
 # First, we write a method for [`EnzymeRules.augmented_primal`](@ref):
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
                           y::Duplicated, x::Duplicated)
     println("In custom augmented primal rule.")
     ## Compute primal
@@ -180,7 +180,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type
 end
 
 # Let's unpack our signature for `augmented_primal` :
-# * We accepted a [`EnzymeRules.Config`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
+# * We accepted a [`EnzymeRules.ReverseConfig`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
 # * We annotated `f` with [`Const`](@ref) as usual.
 # * We dispatched on an [`Active`](@ref) annotation for the return value. This is a special annotation for scalar values, such as our return value,
 #   that indicates that that we care about the value's derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.
@@ -188,13 +188,13 @@ end
 
 # Now, let's unpack the body of our `augmented_primal` rule:
 # * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
-# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.Config`](@ref). 
+# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.ReverseConfig`](@ref). 
 #   If so, we save the elements of `x` on the `tape` of the returned [`EnzymeRules.AugmentedReturn`](@ref) object.
 # * We return a shadow of `nothing` since the return value is [`Active`](@ref) and hence does not need a shadow.
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
 
-function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
+function reverse(config::ReverseConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
                  y::Duplicated, x::Duplicated)
     println("In custom reverse rule.")
     ## retrieve x value, either from original x or from tape if x may have been overwritten.
