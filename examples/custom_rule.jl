@@ -188,8 +188,8 @@ end
 
 # Now, let's unpack the body of our `augmented_primal` rule:
 # * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
-# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`Config`](@ref). 
-#   If so, we save the value of `x` on the `tape` of the returned [`AugmentedReturn`](@ref) objet.
+# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.Config`](@ref). 
+#   If so, we save the value of `x` on the `tape` of the returned [`EnzymeRules.AugmentedReturn`](@ref) objet.
 # * We return a shadow of `nothing` since the return value is [`Active`](@ref) and hence does not need a shadow.
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
