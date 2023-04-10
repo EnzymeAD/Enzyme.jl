@@ -37,7 +37,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 #     cannot differentiate, rather than expanding the scope of the rule unnecessarily.
 #     For pedagogical purposes, we will disregard this principle here and go ahead and write a custom rule for `f` :)
 
-# ## Defining our first (forward-mode) rule 
+# ## Defining our first rule 
 
 # First, we import the functions [`EnzymeRules.forward`](@ref), [`EnzymeRules.augmented_primal`](@ref),
 # and [`EnzymeRules.reverse`](@ref).
