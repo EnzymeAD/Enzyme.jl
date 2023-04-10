@@ -117,7 +117,7 @@ dy = [0.0, 0.0]
 # Finally, it may be that either `x`, `y`, or the return value are marked as [`Const`](@ref). We can in fact handle this case, 
 # along with the previous two cases, all together in a single rule:
 
-Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any, N} where N))) # delete our old rules
+Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any}))) # delete our old rules
 
 function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, 
                  y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
