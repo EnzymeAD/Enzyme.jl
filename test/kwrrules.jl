@@ -11,7 +11,7 @@ end
 import .EnzymeRules: augmented_primal, reverse
 using .EnzymeRules
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
     @show kwargs
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
@@ -20,7 +20,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw)}, ::T
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
+function reverse(config::ReverseConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
     @show kwargs # TODO do we want them here?
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
@@ -41,7 +41,7 @@ function f_kw2(x; kwargs...)
     x^2
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw2)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f_kw2)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -49,7 +49,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw2)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw2)}, dret::Active, tape, x::Active)
+function reverse(config::ReverseConfigWidth{1}, ::Const{typeof(f_kw2)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -66,7 +66,7 @@ function f_kw3(x; val=nothing)
     x^2
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw3)}, ::Type{<:Active}, x::Active; dval=nothing)
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f_kw3)}, ::Type{<:Active}, x::Active; dval=nothing)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -74,7 +74,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw3)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw3)}, dret::Active, tape, x::Active; dval=nothing)
+function reverse(config::ReverseConfigWidth{1}, ::Const{typeof(f_kw3)}, dret::Active, tape, x::Active; dval=nothing)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -90,7 +90,7 @@ function f_kw4(x; y=2.0)
     x*y
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::Type{<:Active}, x::Active; y)
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f_kw4)}, ::Type{<:Active}, x::Active; y)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -98,7 +98,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw4)}, dret::Active, tape, x::Active; y)
+function reverse(config::ReverseConfigWidth{1}, ::Const{typeof(f_kw4)}, dret::Active, tape, x::Active; y)
     return (1000*y+2*x.val*dret.val,)
 end
 

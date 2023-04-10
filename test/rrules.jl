@@ -14,7 +14,7 @@ end
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::ReverseConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -22,7 +22,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
+function reverse(config::ReverseConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -30,13 +30,13 @@ function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape,
     end
 end
 
-function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function augmented_primal(::ReverseConfig{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     v = x.val[1]
     x.val[1] *= v
     return AugmentedReturn(nothing, nothing, v)
 end
 
-function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
+function reverse(::ReverseConfig{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
     return ()
 end

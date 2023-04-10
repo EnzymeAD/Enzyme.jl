@@ -3803,7 +3803,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    C = EnzymeRules.ReverseConfig{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
 
     augprimal_tt = copy(activity)
     if isKWCall

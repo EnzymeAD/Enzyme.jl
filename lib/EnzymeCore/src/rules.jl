@@ -1,7 +1,7 @@
 module EnzymeRules
 
 import EnzymeCore: Annotation, Const, Duplicated
-export Config, ConfigWidth, AugmentedReturn
+export ReverseConfig, ReverseConfigWidth, AugmentedReturn
 export needs_primal, needs_shadow, width, overwritten
 export primal_type, shadow_type, tape_type
 
@@ -19,8 +19,8 @@ the annotated function arguments.
 function forward end
 
 """
-    Config{NeedsPrimal, NeedsShadow, Width, Overwritten}
-    ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+    ReverseConfig{NeedsPrimal, NeedsShadow, Width, Overwritten}
+    ReverseConfigWidth{Width} = ReverseConfig{<:Any,<:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
@@ -30,13 +30,13 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 
 Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
 """
-struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
-const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+struct ReverseConfig{NeedsPrimal, NeedsShadow, Width, Overwritten} end
+const ReverseConfigWidth{Width} = ReverseConfig{<:Any,<:Any, Width}
 
-@inline needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-@inline needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-@inline width(::Config{<:Any, <:Any, Width}) where Width = Width
-@inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline needs_primal(::ReverseConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::ReverseConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline width(::ReverseConfig{<:Any, <:Any, Width}) where Width = Width
+@inline overwritten(::ReverseConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 
 """
     AugmentedReturn(primal, shadow, tape)
@@ -67,7 +67,7 @@ end
 @inline shadow_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
 @inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
 """
-    augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+    augmented_primal(::ReverseConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
 Must return an [`AugmentedReturn`](@ref) type.
 * The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
@@ -78,8 +78,8 @@ Must return an [`AugmentedReturn`](@ref) type.
 function augmented_primal end
 
 """
-    reverse(::Config, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
-    reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
+    reverse(::ReverseConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
+    reverse(::ReverseConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
 Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
 as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
@@ -120,7 +120,7 @@ function has_rrule_from_sig(@nospecialize(TT);
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = Tuple{<:ReverseConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
