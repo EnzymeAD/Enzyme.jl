@@ -3674,7 +3674,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf
+        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn
         return
     end
 
@@ -3930,6 +3930,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     end
 
     if !forward
+        if needsTape
+            @assert tape != C_NULL
+            insert!(args, 1+(kwtup!==nothing), LLVM.Value(tape))
+        end
         if RT <: Active
 
             llty = convert(LLVMType, RT; ctx)
@@ -3948,10 +3952,6 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
             insert!(args, 1+(kwtup!==nothing), al)
         end
-        if needsTape
-            @assert tape != C_NULL
-            insert!(args, 1+(kwtup!==nothing), LLVM.Value(tape))
-        end
     end
 
     for i in 1:length(args)
@@ -3959,7 +3959,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT
+        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn
         return tapeV
     end
 
