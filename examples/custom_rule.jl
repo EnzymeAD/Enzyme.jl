@@ -58,7 +58,7 @@ end
 
 # In the signature of our rule, we have made use of `Enzyme`'s activity annotations. Let's break down each one:
 # - the [`Const`](@ref) annotation on `f` indicates that we accept a function `f` that does not have a derivative component,
-#   which makes sense since `f` itself does not depend on any parameters.
+#   which makes sense since `f` is not a closure with data that could be differentiated. 
 # - the [`Duplicated`](@ref) annotation given in the second argument annotates the return value of `f`. This means that
 #   our `forward` function should return an output of type `Duplicated`, containing the original output `sum(y)` and its derivative.
 # - the [`Duplicated`](@ref) annotations for `x` and `y` mean that our `forward` function handles inputs `x` and `y`
@@ -189,7 +189,7 @@ end
 # Now, let's unpack the body of our `augmented_primal` rule:
 # * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
 # * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.Config`](@ref). 
-#   If so, we save the value of `x` on the `tape` of the returned [`EnzymeRules.AugmentedReturn`](@ref) objet.
+#   If so, we save the elements of `x` on the `tape` of the returned [`EnzymeRules.AugmentedReturn`](@ref) object.
 # * We return a shadow of `nothing` since the return value is [`Active`](@ref) and hence does not need a shadow.
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
