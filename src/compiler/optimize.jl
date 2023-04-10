@@ -10,7 +10,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                 nonphi = inst
                 break
             end
-            ty = llvmtype(inst)
+            ty = value_type(inst)
             if !isa(ty, LLVM.PointerType)
                 continue
             end
@@ -21,21 +21,21 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
 
         for inst in todo
-            ty = llvmtype(inst)
+            ty = value_type(inst)
             nty = LLVM.PointerType(eltype(ty), 10)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
                 position!(b, terminator(pb))
                 while isa(v, LLVM.AddrSpaceCastInst)
                     v = operands(v)[1]
                 end
-                if llvmtype(v) != nty
+                if value_type(v) != nty
                     v = addrspacecast!(b, v, nty)
                 end
                 push!(nvs, (v, pb))
             end
-            nb = Builder(ctx)
+            nb = IRBuilder(ctx)
             position!(nb, inst)
             nphi = phi!(nb, nty)
             append!(LLVM.incoming(nphi), nvs)
@@ -57,8 +57,8 @@ function fix_decayaddr!(mod::LLVM.Module)
             if !isa(inst, LLVM.AddrSpaceCastInst)
                 continue
             end
-            prety = llvmtype(operands(inst)[1])
-            postty = llvmtype(inst)
+            prety = value_type(operands(inst)[1])
+            postty = value_type(inst)
             if addrspace(prety) != 10
                 continue
             end
@@ -94,7 +94,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         push!(newvs, v)
                     end
 
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, st)
                     if intr == LLVM.Intrinsic("llvm.memcpy").id
                         newi = memcpy!(nb, newvs[1], 0, newvs[2], 0, newvs[3])
@@ -170,22 +170,23 @@ function fix_decayaddr!(mod::LLVM.Module)
                 end
                 
                 @assert sret
-                
+               
+                elt = eltype(value_type(inst))
                 if temp === nothing
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, first(instructions(first(blocks(f)))))
-                    temp = alloca!(nb, eltype(llvmtype(inst)))
+                    temp = alloca!(nb, elt)
                 end
                 if mayread
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, st)
-                    ld = load!(nb, operands(inst)[1])
+                    ld = load!(nb, elt, operands(inst)[1])
                     store!(nb, ld, temp)
                 end
                 if maywrite
-                    nb = Builder(ctx)
+                    nb = IRBuilder(ctx)
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                    ld = load!(nb, temp)
+                    ld = load!(nb, elt, temp)
                     si = store!(nb, ld, operands(inst)[1])
                     julia_post_cache_store(si.ref, nb.ref, C_NULL)
                 end
@@ -207,7 +208,7 @@ function detect_writeonly!(mod::LLVM.Module)
             continue
         end
         for (i, a) in enumerate(parameters(f))
-            if isa(llvmtype(a), LLVM.PointerType)
+            if isa(value_type(a), LLVM.PointerType)
                 todo = LLVM.Value[a]
                 seen = Set{LLVM.Value}()
                 mayread = false

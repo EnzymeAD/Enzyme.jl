@@ -130,7 +130,7 @@ function restore_lookups(mod::LLVM.Module)
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
-            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), llvmtype(f))))
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), value_type(f))))
             unsafe_delete!(mod, f)
         end
     end
@@ -152,10 +152,10 @@ function check_ir!(job, errors, mod::LLVM.Module)
         ctx = context(mod)
         ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
 
-        prev_ft = eltype(llvmtype(f)::LLVM.PointerType)::LLVM.FunctionType
+        prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
 
         mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
-        replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, llvmtype(f))))
+        replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
         unsafe_delete!(mod, f)
     end
     for f in collect(functions(mod))
@@ -210,16 +210,16 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             mod = LLVM.parent(ofn)
             ctx = context(mod)
 
-            b = Builder(ctx)
+            b = IRBuilder(ctx)
             position!(b, inst)
 
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
             if mfn == C_NULL
                 ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
-                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [llvmtype(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
+                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
             end
             mfn2 = LLVM.Function(mfn)
-            nval = ptrtoint!(b, call!(b, mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), llvmtype(inst))
+            nval = ptrtoint!(b, call!(b, LLVM.function_type(mfn2), mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), value_type(inst))
             replace_uses!(inst, nval)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         elseif fn == "jl_load_and_lookup"
@@ -234,7 +234,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, LLVM.GlobalVariable)
                 flib = LLVM.initializer(flib)
             end
-            if isa(flib, LLVM.ConstantArray) && eltype(llvmtype(flib)) == LLVM.IntType(8; ctx)
+            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8; ctx)
                 flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
@@ -245,7 +245,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
@@ -290,7 +290,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if isa(fname, LLVM.ConstantArray) && eltype(llvmtype(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 
@@ -347,18 +347,18 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = Builder(ctx)
+                                b = IRBuilder(ctx)
                                 position!(b, ld)
-                                replace_uses!(ld, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                                replace_uses!(ld, LLVM.pointercast!(b, replaceWith, value_type(inst)))
                             end
                         end
                     end
                 end
 
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
 
                 position!(b, inst)
-                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, llvmtype(inst)))
+                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, value_type(inst)))
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
@@ -375,7 +375,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = Builder(ctx)
+                                b = IRBuilder(ctx)
                                 position!(b, ld)
                                 for u in LLVM.uses(ld)
                                     u = LLVM.user(u)
@@ -383,15 +383,15 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                         push!(calls, u)
                                     end
                                 end
-                                replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, llvmtype(inst)))
+                                replace_uses!(ld, LLVM.inttoptr!(b, replaceWith, value_type(inst)))
                             end
                         end
                     end
                 end
 
-                b = Builder(ctx)
+                b = IRBuilder(ctx)
                 position!(b, inst)
-                replacement = LLVM.inttoptr!(b, replaceWith, llvmtype(inst))
+                replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
                             for u in LLVM.uses(inst)
                                 u = LLVM.user(u)
                                 if isa(u, LLVM.CallInst)
@@ -412,7 +412,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                                         push!(calls, u1)
                                                     end
                                                 end
-                                                replace_uses!(u, LLVM.inttoptr!(b, replaceWith, llvmtype(u)))
+                                                replace_uses!(u, LLVM.inttoptr!(b, replaceWith, value_type(u)))
                                             end
                                         end
                                     end

@@ -106,23 +106,74 @@ function _annotate_tt(@nospecialize(TT0))
     return ft, tt
 end
 
-function has_frule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
+function has_frule_from_sig(@nospecialize(TT);
+                            world::UInt=Base.get_world_counter(),
+                            method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:Annotation{ft}, Type{<:Annotation}, tt...}
-    isapplicable(forward, TT; world)
+    return isapplicable(forward, TT; world, method_table, caller)
 end
 
-function has_rrule_from_sig(@nospecialize(TT); world=Base.get_world_counter())
+function has_rrule_from_sig(@nospecialize(TT);
+                            world::UInt=Base.get_world_counter(),
+                            method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
-    isapplicable(augmented_primal, TT; world)
+    return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
-# Base.hasmethod is a precise match we want the broader query.
-function isapplicable(@nospecialize(f), @nospecialize(TT); world=Base.get_world_counter())
+# `hasmethod` is a precise match using `Core.Compiler.findsup`,
+# but here we want the broader query using `Core.Compiler.findall`.
+# Also add appropriate backedges to the caller `MethodInstance` if given.
+function isapplicable(@nospecialize(f), @nospecialize(TT);
+                      world::UInt=Base.get_world_counter(),
+                      method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                      caller::Union{Nothing,Core.MethodInstance}=nothing)
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
-    return !isempty(Base._methods_by_ftype(sig, -1, world)) # TODO cheaper way of querying?
+    @static if VERSION < v"1.7.0"
+        return !isempty(Base._methods_by_ftype(sig, -1, world))
+    end
+    mt = ccall(:jl_method_table_for, Any, (Any,), sig)
+    mt isa Core.MethodTable || return false
+    if method_table === nothing
+        method_table = Core.Compiler.InternalMethodTable(world)
+    end
+    result = Core.Compiler.findall(sig, method_table; limit=-1)
+    (result === nothing || result === missing) && return false
+    @static if isdefined(Core.Compiler, :MethodMatchResult)
+        (; matches) = result
+    else
+        matches = result
+    end
+    fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
+    if caller !== nothing
+        fullmatch || add_mt_backedge!(caller, mt, sig)
+    end
+    if Core.Compiler.isempty(matches)
+        return false
+    else
+        if caller !== nothing
+            for i = 1:Core.Compiler.length(matches)
+                match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
+                edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
+                add_backedge!(caller, edge, sig)
+            end
+        end
+        return true
+    end
+end
+
+function add_backedge!(caller::Core.MethodInstance, callee::Core.MethodInstance, @nospecialize(sig))
+    ccall(:jl_method_instance_add_backedge, Cvoid, (Any, Any, Any), callee, sig, caller)
+    return nothing
+end
+
+function add_mt_backedge!(caller::Core.MethodInstance, mt::Core.MethodTable, @nospecialize(sig))
+    ccall(:jl_method_table_add_backedge, Cvoid, (Any, Any, Any), mt, sig, caller)
+    return nothing
 end
 
 function issupported()
@@ -134,15 +185,17 @@ function issupported()
 end
 
 """
-    inactive(func::typeof(f), args::...)
+    inactive(func::typeof(f), args...)
 
 Mark a particular function as always being inactive in both its return result and the function call itself.
 """
 function inactive end
 
-# Base.hasmethod is a precise match we want the broader query.
-function is_inactive_from_sig(@nospecialize(TT); world=Base.get_world_counter())
-    return isapplicable(inactive, TT; world)
+function is_inactive_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+    return isapplicable(inactive, TT; world, method_table, caller)
 end
 
 end # EnzymeRules

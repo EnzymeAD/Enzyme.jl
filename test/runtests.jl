@@ -26,8 +26,8 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     else
       @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
     end
-  
-    rm = ∂x 
+
+    rm = ∂x
     if typeof(x) <: Integer
         x = Float64(x)
     end
@@ -42,11 +42,15 @@ end
 include("abi.jl")
 include("typetree.jl")
 
-if Enzyme.EnzymeRules.issupported()
+@static if Enzyme.EnzymeRules.issupported()
     include("rules.jl")
     include("rrules.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
+    @static if VERSION ≥ v"1.9-"
+        # XXX invalidation does not work on Julia 1.8
+        include("ruleinvalidation.jl")
+    end
 end
 
 f0(x) = 1.0 + x
@@ -59,13 +63,13 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
-    world = GPUCompiler.get_world(typeof(f0), Tuple{Float64})
+    world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     @test thunk_a.adjoint !== thunk_b.adjoint
-    @test_broken thunk_c.adjoint === thunk_a.adjoint
+    @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
 
     @test thunk_a(Const(f0), Active(2.0), 1.0) == ((1.0,),)
@@ -76,22 +80,22 @@ end
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
-    
+
     function mul2(x)
         x[1] * x[2]
     end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    
-    world = GPUCompiler.get_world(typeof(mul2), Tuple{Vector{Float64}})
+
+    world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
-    @test d.dval[2] ≈ 3.0 
-    
+    @test d.dval[2] ≈ 3.0
+
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    world = GPUCompiler.get_world(typeof(vrec), Tuple{Int, Vector{Float64}})
+    world = GPUCompiler.codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
@@ -240,8 +244,8 @@ end
     autodiff(Reverse, arsum, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
-    
-    @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0 
+
+    @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
 @testset "Advanced array tests" begin
@@ -253,7 +257,7 @@ end
     autodiff(Reverse, arsum2, Active, Duplicated(inp, dinp))
     @test inp ≈ Float64[1.0, 2.0]
     @test dinp ≈ Float64[1.0, 1.0]
-    
+
     @test autodiff(Forward, arsum2, Duplicated(inp, dinp))[1] ≈ 2.0
 end
 
@@ -270,12 +274,12 @@ end
     @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0,),)
     @test dparams[:var] == 5.0
 
-    
+
     mutable struct MD
         v::Float64
         d::Dict{Symbol, MD}
     end
-    
+
     # TODO without Float64 on return
     # there is a potential phi bug
     function sum_rec(d::Dict{Symbol,MD})::Float64
@@ -290,7 +294,7 @@ end
     par = Dict{Symbol, MD}()
     par[:var] = MD(10.0, Dict{Symbol, MD}())
     par[:sub] = MD(2.0, Dict{Symbol, MD}(:a=>MD(3.0, Dict{Symbol, MD}())))
-    
+
     dpar = Dict{Symbol, MD}()
     dpar[:var] = MD(0.0, Dict{Symbol, MD}())
     dpar[:sub] = MD(0.0, Dict{Symbol, MD}(:a=>MD(0.0, Dict{Symbol, MD}())))
@@ -298,12 +302,12 @@ end
     # TODO
     # autodiff(Reverse, sum_rec, Duplicated(par, dpar))
     # @show par, dpar, sum_rec(par)
-    # @test dpar[:var].v ≈ 1.0 
-    # @test dpar[:sub].v ≈ 1.0 
-    # @test dpar[:sub].d[:a].v ≈ 1.0 
+    # @test dpar[:var].v ≈ 1.0
+    # @test dpar[:sub].v ≈ 1.0
+    # @test dpar[:sub].d[:a].v ≈ 1.0
 end
 
-let 
+let
     function loadsin(xp)
         x = @inbounds xp[1]
         @inbounds xp[1] = 0.0
@@ -400,7 +404,7 @@ end
         end
         return mean(a)
     end
-    
+
     @test Enzyme.autodiff(Reverse, gc_copy, Active, Active(5.0))[1][1] ≈ 10
     @test Enzyme.autodiff(Forward, gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
@@ -416,22 +420,22 @@ end
         return r[1]
     end
 
-    ps = 
+    ps =
         (
             b2 = 1.0f0,
         )
 
-    grads = 
+    grads =
         (
             b2 = 0.0f0,
         )
 
     t1 = Leaf(ps)
     t1Grads = Leaf(grads)
-    
+
     forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(LeafF)}, Active, Duplicated{Leaf})
     tape, primal, shadow = forward(Const(LeafF), Duplicated(t1, t1Grads))
-    
+
 
     struct Foo2{X,Y}
         x::X
@@ -487,7 +491,7 @@ end
 	end
 
 	data = ones(Float64, 1)
-	 
+
 	weights = [0.2]
 	dweights = [0.0]
 	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
@@ -496,15 +500,15 @@ end
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
         sum(
             sum(
-                weight 
+                weight
                 for (weight, mean) in zip(weights, weights)
-            ) 
+            )
             for x in data
         )
     end
 
     data = ones(Float64, 20)
-     
+
     weights = [0.2, 0.8]
     dweights = [0.0, 0.0]
 
@@ -849,7 +853,7 @@ end
 	function inactive_gen(x)
 		n = 1
 		for k in 1:2
-			y = falses(n)        
+			y = falses(n)
 		end
 		return x
 	end
@@ -872,7 +876,7 @@ end
     dx = [1.0]
 
     Enzyme.autodiff(Reverse, invtest, Duplicated(x, dx))
-    
+
     @test 10.0 ≈ x[1]
     @test 5.0 ≈ dx[1]
 end
@@ -922,7 +926,7 @@ end
         out[] = x*x
         nothing
     end
-        
+
     out = Ref(0.0)
     dout = Ref(1.0)
     dout2 = Ref(10.0)
@@ -989,7 +993,7 @@ end
     for i in 1:10
         @test 1.0 ≈ fo[i]
     end
-    
+
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
 end
 
@@ -1008,47 +1012,47 @@ end
 @testset "Copy" begin
     function advance(u_v_eta)
         eta = copy(u_v_eta)
-        return @inbounds eta[1] 
-    end 
+        return @inbounds eta[1]
+    end
 
     u_v_eta = [0.0]
     ad_struct = [1.0]
 
     autodiff(Reverse, advance, Active, Duplicated(u_v_eta, ad_struct))
-    @test ad_struct[1] ≈ 2.0 
-    
+    @test ad_struct[1] ≈ 2.0
+
     function advance2(u_v_eta)
         eta = copy(u_v_eta)
         return @inbounds eta[1][]
-    end 
+    end
 
     u_v_eta = [Ref(0.0)]
     ad_struct = [Ref(1.0)]
 
     autodiff(Reverse, advance2, Active, Duplicated(u_v_eta, ad_struct))
-    @test ad_struct[1][] ≈ 2.0 
-    
+    @test ad_struct[1][] ≈ 2.0
+
 
     function incopy(u_v_eta, val, i)
         eta = copy(u_v_eta)
         eta[1] = val
         return @inbounds eta[i]
-    end 
+    end
 
     u_v_eta = [0.0]
 
     v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), 1)[1][2]
-    @test v ≈ 1.0 
-    @test u_v_eta[1] ≈ 0.0 
-    
+    @test v ≈ 1.0
+    @test u_v_eta[1] ≈ 0.0
+
     function incopy2(val, i)
         eta = Float64[2.3]
         eta[1] = val
         return @inbounds eta[i]
-    end 
+    end
 
     v = autodiff(Reverse, incopy2, Active, Active(3.14), 1)[1][1]
-    @test v ≈ 1.0 
+    @test v ≈ 1.0
 end
 
 
@@ -1064,12 +1068,12 @@ end
     shadow_a_in = shadow_a_out
 
     autodiff(Reverse, f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
-    
+
     @test shadow_a_in ≈ Float64[0.0, 1.0, 1.0, 2.0]
     @test shadow_a_out ≈ Float64[0.0, 1.0, 1.0, 2.0]
-    
+
     autodiff(Forward, f!, Const, Duplicated(a_out, shadow_a_out), Duplicated(a_in, shadow_a_in))
-    
+
     @test shadow_a_in ≈ Float64[1.0, 1.0, 2.0, 2.0]
     @test shadow_a_out ≈ Float64[1.0, 1.0, 2.0, 2.0]
 end
@@ -1083,7 +1087,7 @@ end
     end
     @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][2]
     @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
-    
+
     @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
     @test_throws Base.UndefVarError autodiff(Forward, f_undef, true, Duplicated(2.14, 1.0))
 end
@@ -1101,7 +1105,7 @@ end
 
     @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][2]
 	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
-	
+
 	function tobedifferentiated2(cond, a)::Float64
 		if cond
 			a + t
@@ -1204,7 +1208,7 @@ end
             if i == 1
                 continue
             end
-            if knots[i] == last_knot 
+            if knots[i] == last_knot
                 @warn knots[i]
                 @inbounds knots[i] *= knots[i]
             else
@@ -1249,9 +1253,9 @@ end
 		@inbounds F2[1] * F2[2]
 	end
 	autodiff(Reverse, copytest, Duplicated(F, dF))
-	@test F ≈ [1.234, 5.678] 
+	@test F ≈ [1.234, 5.678]
 	@test dF ≈ [3.0, 2.0]
-	
+
     @test 31.0 ≈ autodiff(Forward, copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
 end
 
@@ -1350,7 +1354,7 @@ end
 
     GC.@preserve x y dx dy begin
       autodiff(Reverse, foo,
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)), 
+                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
 end
@@ -1366,7 +1370,7 @@ end
     #    x = x::Float64
     #    2 * x
     # end
-    
+
     # function gf2(v::MyType, fld, fld2)
     #    x = getfield(v, fld)
     #    y = getfield(v, fld2)
@@ -1379,14 +1383,14 @@ end
     # Enzyme.autodiff(gf, Active, Duplicated(x, dx), Const(:x))
     # @test x.x ≈ 3.0
     # @test dx.x ≈ 2.0
-    
+
     # x = MyType(3.0)
     # dx = MyType(0.0)
 
     # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
     # @test x.x ≈ 3.0
     # @test dx.x ≈ 2.0
-    # 
+    #
     # x = MyType(3.0)
     # dx = MyType(0.0)
     # dx2 = MyType(0.0)
@@ -1428,7 +1432,7 @@ end
     @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
-    
+
     f_exc(x) = sum(x*x)
     y = [[1.0, 2.0] [3.0,4.0]]
     f_x = zero.(y)
@@ -1505,7 +1509,7 @@ end
     end
     y, = Enzyme.autodiff(Reverse, double_push,Active(1.0))[1]
     @test y == 1.0
-    
+
     function aloss(a, arr)
         for i in 1:2500
             push!(arr, a)
@@ -1533,7 +1537,7 @@ end
     @test bres[1][1] ≈  6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
-    
+
     bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
     @test bres[1][1] ≈  6.0 + 14.0im
     @test bres[1][2] ≈ 12.0 + 28.0im
@@ -1591,7 +1595,7 @@ end
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
     end
 
-    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))	
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(1))
     @test size(jac) == (3, 2)
     @test jac ≈ [ 0.0   1.0;
                   4.0   0.0;
@@ -1606,7 +1610,7 @@ end
     @test jac == Enzyme.jacobian(Forward, inout, [2.0, 3.0])
     @test jac == ForwardDiff.jacobian(inout, [2.0, 3.0])
 
-    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))	
+    jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))
     @test size(jac) == (3, 2)
     @test jac ≈ [ 0.0   1.0;
                   4.0   0.0;
@@ -1636,7 +1640,7 @@ end
     J_r_1(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_1(A, θ), x, Val(5))
     J_r_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(5))
     J_r_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(5))
-    
+
     J_f_1(A, x) = Enzyme.jacobian(Forward, θ -> f_test_1(A, θ), x)
     J_f_2(A, x) = Enzyme.jacobian(Forward, θ -> f_test_2(A, θ), x)
     J_f_3(u, A, x) = Enzyme.jacobian(Forward, θ -> f_test_3!(u, A, θ), x)
@@ -1660,7 +1664,7 @@ end
         1.0  0.0  0.0  0.0  1.0  0.0;
         1.0  0.0  0.0  0.0  0.0  1.0;
     ]
-   
+
     @test J_f_1(A, x) == [
         1.0  1.0  0.0  0.0  0.0  0.0;
         1.0  0.0  1.0  0.0  0.0  0.0;
@@ -1734,7 +1738,7 @@ end
 
 	autodiff(Reverse, rs, Duplicated(data, ddata))
 	@test ddata ≈ [3.0, 5.0, 2.0, 2.0]
-	
+
     data = Float64[1.,2.,3.,4.]
 	ddata = ones(4)
 	autodiff(Forward, rs, Duplicated(data, ddata))
@@ -1770,21 +1774,21 @@ end
     end
 
     dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
-    
+
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
 
     c = ones(3)
     inner(e) = c .+ e
     fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
-    @test c ≈ [1.0, 1.0, 1.0]    
-    @test fres ≈ [1.0, 1.0, 1.0]   
+    @test c ≈ [1.0, 1.0, 1.0]
+    @test fres ≈ [1.0, 1.0, 1.0]
 end
 
 @testset "View Splat" begin
 	function getloc(locs, i)
 		loss = 0.0
-		if i==1 
+		if i==1
 			x, y = 0.0, 0.0
 		else
 		# correct
@@ -1817,7 +1821,7 @@ end
     @assert length(res) == 40
 end
 @testset "Large dynamic tape" begin
-	
+
 	function ldynloss(X, Y, ps, bs)
 		ll = 0.0f0
 		for (x, y) in zip(X, Y)
@@ -1861,7 +1865,7 @@ end
     dx0 = [0.0]
 
     autodiff(Reverse, test, Const(t), Duplicated(x0, dx0))
-        
+
     @test obs[1] ≈ 1.0
     @test x0[1] ≈ 0.0
     @test dx0[1] ≈ -2.0
@@ -1871,14 +1875,14 @@ end
 @testset "Const Activity through intermediate" begin
     struct RHS_terms
         eta1::Vector{Float64}
-        u_t::Vector{Float64} 
+        u_t::Vector{Float64}
         eta_t::Vector{Float64}
     end
 
-    @noinline function comp_u_v_eta_t(rhs) 
+    @noinline function comp_u_v_eta_t(rhs)
         Base.unsafe_copyto!(rhs.eta_t, 1, rhs.u_t, 1, 1)
         return nothing
-    end 
+    end
 
     function advance(eta, rhs)
 
@@ -1888,7 +1892,7 @@ end
 
         @inbounds eta[1] = @inbounds rhs.eta_t[1]
 
-        return nothing 
+        return nothing
 
     end
 
@@ -1897,9 +1901,9 @@ end
     u_v_eta = Float64[NaN]
     ad_eta = zeros(1)
 
-    autodiff(Reverse, advance, 
+    autodiff(Reverse, advance,
         Duplicated(u_v_eta, ad_eta),
-        Const(rhs_terms), 
+        Const(rhs_terms),
     )
     @test ad_eta[1] ≈ 0.0
 end
