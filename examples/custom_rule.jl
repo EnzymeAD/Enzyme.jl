@@ -44,7 +44,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # We need to overload `forward` in order to define a custom forward rule, and we need to overload
 # `augmented_primal` and `reverse` in order to define a custom reverse rule.
 
-import .EnzymeRules: forward, reverse, augmented_primal
+import .EnzymeRules: forward, reverse, augmented_primal, inactive
 using .EnzymeRules
 
 # In this section, we write a simple forward rule to start out:
@@ -248,15 +248,19 @@ autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
 # So long as there exists a matching dispatch to [`EnzymeRules.inactive`](@ref), the function will be considered inactive.
 # For example:
 
-function printhi()
-    println("Hi!")
-end
-
-EnzymeRules.inactive(::typeof(printhi), args...) = nothing
+printhi() = println("Hi!")
+inactive(::typeof(printhi), args...) = nothing
 
 function k(x)
     printhi()
     return x^2
 end
 
-autodiff(Forward, k, Duplicated(3.0, 1.0)) 
+autodiff(Forward, k, Duplicated(2.0, 1.0)) 
+
+# Or for a case where we incorrectly mark a function inactive:
+
+double(x) = 2*x
+inactive(::typeof(double), args...) = nothing
+
+autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
