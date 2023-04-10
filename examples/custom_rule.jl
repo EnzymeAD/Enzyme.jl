@@ -184,7 +184,7 @@ end
 # * We annotated `f` with [`Const`](@ref) as usual.
 # * We dispatched on an [`Active`](@ref) annotation for the return value. This is a special annotation for scalar values, such as our return value,
 #   that indicates that that we care about the value's derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.
-# * We annotated `x` and `y` with [`Duplicated`](@ref) as for our first simple forward rule.
+# * We annotated `x` and `y` with [`Duplicated`](@ref), similar to our first simple forward rule.
 
 # Now, let's unpack the body of our `augmented_primal` rule:
 # * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
@@ -205,7 +205,7 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
 end
 
 # The activities used in the signature match what we used for `augmented_primal`. 
-# One key difference is that we know receive an *instance* `dret` of [`Active`](@ref) for the return type, not just a type annotation.
+# One key difference is that we now receive an *instance* `dret` of [`Active`](@ref) for the return type, not just a type annotation.
 # Here, `dret.val` stores the derivative value for `dret` (not the original return value!).
 # Using this derivative value, we accumulate the backpropagated derivatives for `x` into its shadow. 
 # Note that we do not accumulate anything into `y`'s shadow! This is because `y` is overwritten within `f`, so there is no derivative
@@ -229,7 +229,7 @@ autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx))
 function h(y, x)
     ret = f(y, x)
     x .= x.^2
-    return ret
+    return ret^2
 end
 
 x  = [3.0, 1.0]
