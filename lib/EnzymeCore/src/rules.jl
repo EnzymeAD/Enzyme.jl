@@ -18,6 +18,18 @@ the annotated function arguments.
 """
 function forward end
 
+"""
+    Config{NeedsPrimal, NeedsShadow, Width, Overwritten}
+    ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+
+Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
+* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
+   forward and reverse pass (true if potentially modified between).
+
+Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
+"""
 struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
 const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 
@@ -26,6 +38,18 @@ const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
 @inline width(::Config{<:Any, <:Any, Width}) where Width = Width
 @inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 
+"""
+    AugmentedReturn(primal, shadow, tape)
+
+Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly 
+compute the reverse pass, stored in `tape`.
+
+Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are 
+overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is 
+(as are the arrays themselves, just not necessarily the values in the array).
+
+See also [`augmented_primal`](@ref).
+"""
 struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     primal::PrimalType
     shadow::ShadowType
@@ -45,8 +69,8 @@ end
 """
     augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Must return an AugmentedReturn type.
-* The primal must be the same type of the original return if needs_primal(config), otherwise nothing.
+Must return an [`AugmentedReturn`](@ref) type.
+* The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
 * The shadow must be nothing if needs_shadow(config) is false. If width is 1, the shadow should be the same
   type of the original return. If the width is greater than 1, the shadow should be NTuple{original return, width}.
 * The tape can be any type (including Nothing) and is preserved for the reverse call.
@@ -58,7 +82,7 @@ function augmented_primal end
     reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
 Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
-as Active{T} with the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
+as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
 """
 function reverse end
 
