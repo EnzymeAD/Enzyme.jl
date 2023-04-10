@@ -199,17 +199,23 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
     println("In custom reverse rule.")
     ## retrieve x value, either from original x or from tape if x may have been overwritten.
     xval = overwritten(config)[3] ? tape : x.val 
-    ## accumulate into x's shadow, don't assign!
+    ## accumulate dret into x's shadow. don't assign!
     x.dval .+= 2 .* xval .* dret.val 
+    ## also accumulate any derivative in y's shadow into x's shadow. 
+    y.dval .+= 2 .* xval .* y.dval 
+    y.dval .= 0
     return ()
 end
 
-# The activities used in the signature match what we used for `augmented_primal`. 
-# One key difference is that we now receive an *instance* `dret` of [`Active`](@ref) for the return type, not just a type annotation.
-# Here, `dret.val` stores the derivative value for `dret` (not the original return value!).
-# Using this derivative value, we accumulate the backpropagated derivatives for `x` into its shadow. 
-# Note that we do not accumulate anything into `y`'s shadow! This is because `y` is overwritten within `f`, so there is no derivative
-# w.r.t. to the `y` that was originally inputted.
+# Let's make a few observations about our reverse rule:
+# * The activities used in the signature correspond to what we used for `augmented_primal`. 
+# * However, for [`Active`](@ref) return types such as in this case, we now receive an *instance* `dret` of [`Active`](@ref) for the return type, not just a type annotation,
+#   which stores the derivative value for `ret` (not the original return value!). For the other annotations (e.g. [`Duplicated`](@ref)), we still receive only the type.
+#   In that case, if necessary a reference to the shadow of the output should be placed on the tape in `augmented_primal`.
+# * Using `dret.val` and `y.dval`, we accumulate the backpropagated derivatives for `x` into its shadow `x.dval`.  
+#   Note that we have to accumulate from both `y.dval` and `dret.val`. This is because in reverse-mode AD we have to sum up the derivatives from all uses: 
+#   if `y` was read after our function, we need to consider derivatives from that use as well.
+# * Finally, we zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
 
 # Finally, let's see our reverse rule in action!
 
