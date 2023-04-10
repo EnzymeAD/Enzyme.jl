@@ -230,12 +230,13 @@ autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx))
 @show dx # derivative of g w.r.t. x
 @show dy; # derivative of g w.r.t. y
 
-# Let's also try a function which mutates `x` after running `f`:
+# Let's also try a function which mutates `x` after running `f`, and also uses `y` directly rather than only `ret` after running `f` 
+# (but ultimately gives the same result as above):
 
 function h(y, x)
     ret = f(y, x)
     x .= x.^2
-    return ret^2
+    return ret * sum(y)
 end
 
 x  = [3.0, 1.0]
