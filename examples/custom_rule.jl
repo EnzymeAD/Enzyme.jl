@@ -83,7 +83,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # ## Handling more activities 
 
 # Our custom rule applies for the specific set of activities that are annotated for `f` in the above `autodiff` call. 
-# However, Enzyme has a number of other annotations. Let us consider a particular case as an example, where the output
+# However, Enzyme has a number of other annotations. Let us consider a particular example, where the output
 # has a [`DuplicatedNoNeed`](@ref) annotation. This means we are only interested in its derivative, not its value.
 # To squeeze out the last drop of performance, the below rule avoids computing the output of the original function and 
 # just computes its derivative.
