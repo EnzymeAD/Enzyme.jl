@@ -156,7 +156,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 
 # ## Defining a reverse-mode rule
 
-# Finally, let's look at how to write a simple reverse-mode rule! 
+# Let's look at how to write a simple reverse-mode rule! 
 # First, we write a method for [`EnzymeRules.augmented_primal`](@ref):
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
@@ -240,3 +240,23 @@ dy .= 0
 autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
 @show dx # derivative of h w.r.t. x
 @show dy; # derivative of h w.r.t. y
+
+# ## Marking functions inactive
+
+# If we want to tell Enzyme that the function call does not affect the differentiation result in any form 
+# (i.e. not by side effects or through its return values), we can simply use [`EnzymeRules.inactive`](@ref).
+# So long as there exists a matching dispatch to [`EnzymeRules.inactive`](@ref), the function will be considered inactive.
+# For example:
+
+function printhi()
+    println("Hi!")
+end
+
+EnzymeRules.inactive(::typeof(printhi), args...) = nothing
+
+function k(x)
+    printhi()
+    return x^2
+end
+
+autodiff(Forward, k, Duplicated(3.0, 1.0)) 
