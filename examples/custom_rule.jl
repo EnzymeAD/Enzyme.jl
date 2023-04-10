@@ -237,6 +237,6 @@ y  = [0.0, 0.0]
 dx .= 0
 dy .= 0
 
-## autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
+autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
 @show dx # derivative of h w.r.t. x
 @show dy; # derivative of h w.r.t. y
