@@ -3386,7 +3386,10 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
                 continue
             end
             push!(activity, Const{arg.typ})
-            push!(overwritten, false)
+            # Don't push overwritten for Core.kwcall
+            if !(isKWCall && true_idx == 1)
+                push!(overwritten, false)
+            end
             if Core.Compiler.isconstType(arg.typ) && !Core.Compiler.isconstType(Const{arg.typ})
                 llty = convert(LLVMType, Const{arg.typ}; ctx)
                 al0 = al = emit_allocobj!(B, Const{arg.typ})
@@ -3409,7 +3412,10 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         @assert !(GPUCompiler.isghosttype(arg.typ) || Core.Compiler.isconstType(arg.typ))
 
         op = ops[op_idx]
-        push!(overwritten, uncacheable[op_idx] != 0)
+        # Don't push the keyword args to uncacheable
+        if !(isKWCall && true_idx == 2)
+            push!(overwritten, uncacheable[op_idx] != 0)
+        end
         op_idx+=1
 
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
