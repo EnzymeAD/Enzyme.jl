@@ -1,3 +1,42 @@
+function addNA(inst, node::LLVM.Metadata, MD)
+    md = metadata(inst)
+    next = nothing 
+    ctx = LLVM.context(inst)
+    if haskey(md, MD)
+        next = LLVM.MDNode(Metadata[node, operands(md[MD])...]; ctx)
+    else
+        next = LLVM.MDNode(Metadata[node]; ctx)
+    end
+    setindex!(md, next, MD)
+end
+
+function addr13NoAlias(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+    dom = API.EnzymeAnonymousAliasScopeDomain("addr13", ctx)
+    scope = API.EnzymeAnonymousAliasScope(dom, "na_addr13")
+    aliasscope = noalias = scope
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.StoreInst)
+            addNA(inst, noalias, LLVM.MD_noalias)
+        elseif isa(inst, LLVM.CallInst)
+            fn = LLVM.called_value(inst)
+            if isa(fn, LLVM.Function)
+                name = LLVM.name(fn)
+                if startswith(name, "llvm.memcpy") || startswith(name, "llvm.memmove")
+                    addNA(inst, noalias, LLVM.MD_noalias)
+                end
+            end
+        elseif isa(inst, LLVM.LoadInst)
+            ty =value_type(inst)
+            if isa(ty, LLVM.PointerType)
+                if addrspace(ty) == 13
+                    addNA(inst, aliasscope, LLVM.MD_alias_scope)
+                end
+            end
+        end
+    end
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
@@ -269,6 +308,7 @@ function detect_writeonly!(mod::LLVM.Module)
 end
 
 function optimize!(mod::LLVM.Module, tm)
+    addr13NoAlias(mod)
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
     ModulePassManager() do pm
@@ -487,6 +527,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
 end
 
 function post_optimze!(mod, tm, machine=true)
+    addr13NoAlias(mod)
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)

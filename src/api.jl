@@ -478,4 +478,7 @@ function EnzymeReplaceFunctionImplementation(mod)
     ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
 
+EnzymeAnonymousAliasScopeDomain(str, ctx) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScopeDomain, libEnzyme), LLVM.API.LLVMMetadataRef, (Cstring,LLVMContextRef), str, ctx))
+EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScope, libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,Cstring), dom.ref, str))
+
 end
