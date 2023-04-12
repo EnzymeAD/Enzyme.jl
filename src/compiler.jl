@@ -8483,16 +8483,12 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicated}) = Duplicated
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
-@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false), ::Val{parent_job}=Val(nothing)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, parent_job, World}
+@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World}
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
-
-    if parent_job !== nothing
-        job = similar(parent_job, job.source)
-    end
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
 
