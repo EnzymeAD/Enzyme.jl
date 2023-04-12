@@ -6669,7 +6669,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, width,
-            #=additionalArg=#tape, typeInfo,
+            #=additionalArg=#tape, #=forceAnonymousTape=#false, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
             adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, width, #=returnPrimal=#false, shadow_init, world)
@@ -6680,7 +6680,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
             #=returnValue=#returnUsed, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, width,
-            #=additionalArg=#C_NULL, typeInfo,
+            #=additionalArg=#C_NULL, #=forceAnonymousTape=#false, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
