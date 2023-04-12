@@ -39,6 +39,28 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     end
 end
 
+function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
+    dx_fd = map(eachindex(x)) do i
+        fdm(x[i]) do xi
+            x2 = copy(x)
+            x2[i] = xi
+            f(x2)
+        end
+    end
+
+    dx = zero(x)
+    autodiff(Reverse, f, Active, Duplicated(x, dx))
+    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
+
+    dx_fwd = map(eachindex(x)) do i
+        dx = zero(x)
+        dx[i] = 1
+        ∂x = autodiff(Forward, f, Duplicated(x, dx))
+        isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
+    end
+    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
+end
+
 include("abi.jl")
 include("typetree.jl")
 
@@ -672,24 +694,24 @@ end
 @testset "DiffTest" begin
     include("DiffTests.jl")
 
-    n = rand()
-    x, y = rand(5, 5), rand(26)
-    A, B = rand(5, 5), rand(5, 5)
+    n = 1 + rand()
+    x, y = 1 .+ rand(5, 5), 1 .+ rand(5)
+    A, B = 1 .+ rand(5, 5), 1 .+ rand(5, 5)
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
         test_scalar(f, n)
     end
 
+    @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, y; rtol=1e-6, atol=1e-6)
+    end
+
+    @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, x; rtol=1e-6, atol=1e-6)
+    end
+
     # TODO(vchuravy/wsmoses): Enable these tests
-    # for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
-    #     @test isa(f(y), Number)
-    # end
-
-    # for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
-    #     @test isa(f(x), Number)
-    # end
-
     # for f in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS
     #     @test isa(f(A, B, x), Number)
     # end
