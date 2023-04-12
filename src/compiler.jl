@@ -7565,7 +7565,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         primal_params = PrimalCompilerParams(mode)
         primal_job    = CompilerJob(primal, CompilerConfig(primal_target, primal_params; kernel=false), job.world)
     else
-        primal_job = CompilerJob(primal, parent_job.config, job.world) # TODO EnzymeInterp params, etc
+        config2 = CompilerConfig(parent_job.config.target, parent_job.config.params; kernel=false, parent_job.config.entry_abi, parent_job.config.name, parent_job.config.always_inline)
+        primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
     end
 
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
