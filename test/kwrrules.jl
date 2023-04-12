@@ -13,7 +13,7 @@ using .EnzymeRules
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
     @show kwargs
-    @assert length(overwritten(config)) == 1
+    @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -23,7 +23,7 @@ end
 
 function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
     @show kwargs # TODO do we want them here?
-    @assert length(overwritten(config)) == 1
+    @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -93,7 +93,7 @@ function f_kw4(x; y=2.0)
 end
 
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::Type{<:Active}, x::Active; y)
-    @assert length(overwritten(config)) == 1
+    @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -102,7 +102,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::
 end
 
 function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw4)}, dret::Active, tape, x::Active; y)
-    @assert length(overwritten(config)) == 1
+    @assert length(overwritten(config)) == 2
     return (1000*y+2*x.val*dret.val,)
 end
 

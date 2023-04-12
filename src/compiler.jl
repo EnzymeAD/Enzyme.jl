@@ -3810,6 +3810,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     world = enzyme_extract_world(fn)
 
     C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     augprimal_tt = copy(activity)
     if isKWCall
@@ -3822,15 +3824,20 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
         augprimal_TT = Tuple{augprimal_tt...}
         kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
+        ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+        ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
     end
+    target = DefaultCompilerTarget()
+    params = PrimalCompilerParams(mode)
+    job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
+    interp = GPUCompiler.get_interpreter(job)
+    aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
@@ -3847,7 +3854,6 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         TapeT = EnzymeRules.tape_type(aug_RT)
     end
 
-    mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
