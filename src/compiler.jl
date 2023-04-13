@@ -369,6 +369,9 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
         # This doesn't allow for optimizations
         alty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
         alloc_obj, _ = get_function!(mod, "jl_gc_alloc_typed", alty)
+	if value_type(Size) != T_size_t # Fix Int32/Int64 issues on 32bit systems
+            Size = trunc!(B, Size, T_size_t)
+        end
         return call!(B, alty, alloc_obj, [ptls, Size, tag])
     end
 
