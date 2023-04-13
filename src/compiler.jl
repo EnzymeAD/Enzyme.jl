@@ -2558,6 +2558,11 @@ const ctxToThreadSafe = Dict{LLVM.Context, LLVM.ThreadSafeContext}()
 end
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
+    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
+    nested_codegen!(mode, mod, funcspec, world)
+end
+
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, funcspec::Core.MethodInstance, world)
     # TODO: Put a cache here index on `mod` and f->tt
 
     ctx = LLVM.context(mod)
@@ -2566,8 +2571,6 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, wor
 else
     ctx = ctxToThreadSafe[ctx]
 end
-    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
-
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
     #  - GPU support
@@ -3386,7 +3389,10 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
                 continue
             end
             push!(activity, Const{arg.typ})
-            push!(overwritten, false)
+            # Don't push overwritten for Core.kwcall
+            if !(isKWCall && true_idx == 1)
+                push!(overwritten, false)
+            end
             if Core.Compiler.isconstType(arg.typ) && !Core.Compiler.isconstType(Const{arg.typ})
                 llty = convert(LLVMType, Const{arg.typ}; ctx)
                 al0 = al = emit_allocobj!(B, Const{arg.typ})
@@ -3409,7 +3415,10 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         @assert !(GPUCompiler.isghosttype(arg.typ) || Core.Compiler.isconstType(arg.typ))
 
         op = ops[op_idx]
-        push!(overwritten, uncacheable[op_idx] != 0)
+        # Don't push the keyword args to uncacheable
+        if !(isKWCall && true_idx == 2)
+            push!(overwritten, uncacheable[op_idx] != 0)
+        end
         op_idx+=1
 
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
@@ -3804,6 +3813,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     world = enzyme_extract_world(fn)
 
     C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
+
+    ami = nothing
 
     augprimal_tt = copy(activity)
     if isKWCall
@@ -3816,14 +3829,34 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
         augprimal_TT = Tuple{augprimal_tt...}
         kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        aug_RT = Core.Compiler.return_type(kwfunc, augprimal_TT, world)
+        try
+            ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
+            @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
+        catch e
+        end
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        aug_RT = Core.Compiler.return_type(EnzymeRules.augmented_primal, augprimal_TT, world)
+        try
+            ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
+            @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
+        catch e
+        end
+    end
+    
+    if ami !== nothing
+        target = DefaultCompilerTarget()
+        params = PrimalCompilerParams(mode)
+        job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
+        interp = GPUCompiler.get_interpreter(job)
+        aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
+    else
+        @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
+        emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
+        return C_NULL
     end
 
     if kwtup !== nothing && kwtup <: Duplicated
@@ -3841,29 +3874,13 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         TapeT = EnzymeRules.tape_type(aug_RT)
     end
 
-    mode = API.EnzymeGradientUtilsGetMode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
 
     if forward
-        if isKWCall
-            if EnzymeRules.isapplicable(kwfunc, augprimal_TT; world)
-                @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
-                llvmf = nested_codegen!(mode, mod, kwfunc, augprimal_TT, world)
-            end
-        else
-            if EnzymeRules.isapplicable(EnzymeRules.augmented_primal, augprimal_TT; world)
-                @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
-                llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT, world)
-            end
-        end
-
-        if llvmf == nothing
-            @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-            emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
-            return C_NULL
-        end
+        llvmf = nested_codegen!(mode, mod, ami, world)
+        @assert llvmf !== nothing
     else
         tt = copy(activity)
         if isKWCall
@@ -5347,8 +5364,9 @@ from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.Pointe
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
 from_tape_type(::Type{Any}, ctx) = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
 function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
-    if length(B.parameters) >= 1 && all(B.parameters[1] == b for b in B.parameters)
-        return LLVM.ArrayType(from_tape_type(B.parameters[1], ctx), length(B.parameters))
+    ar = LLVM.LLVMType[from_tape_type(b, ctx) for b in B.parameters]
+    if length(B.parameters) >= 1 && all(ar[1] == b for b in ar)
+        return LLVM.ArrayType(ar[1], length(B.parameters))
     else
         return LLVM.StructType(LLVM.LLVMType[from_tape_type(b, ctx) for b in B.parameters]; ctx)
     end
