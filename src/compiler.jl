@@ -2558,6 +2558,11 @@ const ctxToThreadSafe = Dict{LLVM.Context, LLVM.ThreadSafeContext}()
 end
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
+    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
+    nested_codegen!(mode, mod, funcspec, world)
+end
+
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, funcspec::Core.MethodInstance, world)
     # TODO: Put a cache here index on `mod` and f->tt
 
     ctx = LLVM.context(mod)
@@ -2566,8 +2571,6 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, wor
 else
     ctx = ctxToThreadSafe[ctx]
 end
-    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
-
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
     #  - GPU support
@@ -3813,6 +3816,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     
     mode = API.EnzymeGradientUtilsGetMode(gutils)
 
+    ami = nothing
+
     augprimal_tt = copy(activity)
     if isKWCall
         popfirst!(augprimal_tt)
@@ -3824,20 +3829,35 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
         augprimal_TT = Tuple{augprimal_tt...}
         kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
+        try
+            ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
+            @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
+        catch e
+        end
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
+        try
+            ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
+            @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
+        catch e
+        end
     end
-    target = DefaultCompilerTarget()
-    params = PrimalCompilerParams(mode)
-    job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
-    interp = GPUCompiler.get_interpreter(job)
-    aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
+    
+    if ami !== nothing
+        target = DefaultCompilerTarget()
+        params = PrimalCompilerParams(mode)
+        job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
+        interp = GPUCompiler.get_interpreter(job)
+        aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
+    else
+        @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
+        emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
+        return C_NULL
+    end
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
@@ -3859,23 +3879,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     llvmf = nothing
 
     if forward
-        if isKWCall
-            if EnzymeRules.isapplicable(kwfunc, augprimal_TT; world)
-                @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
-                llvmf = nested_codegen!(mode, mod, kwfunc, augprimal_TT, world)
-            end
-        else
-            if EnzymeRules.isapplicable(EnzymeRules.augmented_primal, augprimal_TT; world)
-                @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
-                llvmf = nested_codegen!(mode, mod, EnzymeRules.augmented_primal, augprimal_TT, world)
-            end
-        end
-
-        if llvmf == nothing
-            @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-            emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
-            return C_NULL
-        end
+        llvmf = nested_codegen!(mode, mod, ami, world)
+        @assert llvmf !== nothing
     else
         tt = copy(activity)
         if isKWCall
