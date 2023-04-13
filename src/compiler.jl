@@ -869,7 +869,7 @@ struct Return3
     ret2::Any
     ret3::Any
 end
-AnyArray(Length::Int64) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
+AnyArray(Length::Int) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
 
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
@@ -949,7 +949,7 @@ struct Tape{TapeTy,ShadowTy,ResT}
     shadow_return::ShadowTy
 end
 
-function setup_macro_wraps(forwardMode::Bool, N::Int64, Width::Int64, base=nothing)
+function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
     primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
     primtypes = Union{Symbol,Expr}[]
@@ -6012,7 +6012,7 @@ abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
 struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     TT::Type{<:Tuple}
     mode::API.CDerivativeMode
-    width::Int64
+    width::Int
     rt::Type{<:Annotation{T} where T}
     run_enzyme::Bool
     abiwrap::Bool

@@ -808,7 +808,7 @@ end
 @testset "No speculation" begin
 	mutable struct SpecFoo
 
-		iters::Int64
+		iters::Int
 		a::Float64
 		b::Vector{Float64}
 
@@ -1199,7 +1199,7 @@ typeunknownvec = Float64[]
 
     struct AGriddedInterpolation{K<:Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
         knots::K
-        v::Int64
+        v::Int
     end
 
     function AGriddedInterpolation(A::AbstractArray{Float64, 1})
