@@ -516,6 +516,69 @@ result, ∂v, ∂A
 end
 
 """
+    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes...)
+
+Provide the thunk forward mode function for annotated function type
+ftype when called with args of type `argtypes`.
+
+`Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
+(or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and`BatchDuplicatedNoNeed`).
+
+The forward function will return the primal (if requested) and the shadow
+(or nothing if not a `Duplicated` variant).
+
+Example returning both original return and derivative:
+
+```jldoctest
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
+res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+
+# output
+
+(9.8596, 6.28)
+```
+
+Example returning just the derivative:
+
+```jldoctest
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated{Float64})
+∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+
+# output
+
+(6.28,)
+```
+"""
+@inline function autodiff_thunk(::ForwardMode, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
+    # args′  = annotate(args...)
+    width = same_or_one(A, args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+
+    tt    = Tuple{map(eltype, args)...}
+        
+    world = GPUCompiler.codegen_world_age(eltype(FA), tt)
+    
+    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false))
+end
+
+"""
     autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)
 
 Provide the split forward and reverse pass functions for annotated function type
