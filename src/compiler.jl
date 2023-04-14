@@ -6257,7 +6257,7 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     while isa(ce, ConstantExpr)
         ce = operands(ce)[1]
     end
-    ptr = reinterpret(Ptr{Cvoid}, convert(UInt64, ce))
+    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
     typ = Base.unsafe_pointer_to_objref(ptr)
 
     ctx = LLVM.context(LLVM.Value(val))
