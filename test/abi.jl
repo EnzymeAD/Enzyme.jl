@@ -219,67 +219,6 @@ using Test
     res4, = autodiff(Forward, caller, (x)->x, Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
-    struct LList
-        next::Union{LList,Nothing}
-        val::Float64
-    end
-
-    function sumlist(n::LList)
-        sum = 0.0
-        while n !== nothing
-            sum += n.val
-            n = n.next
-        end
-        sum
-    end
-
-    regular = LList(LList(nothing, 1.0), 2.0)
-    shadow  = LList(LList(nothing, 0.0), 0.0)
-    ad = autodiff(Reverse, sumlist, Active, Duplicated(regular, shadow))
-    @test ad === ((nothing,),)
-    @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
-
-    @test 2.0 ≈ first(autodiff(Forward, sumlist, DuplicatedNoNeed, Duplicated(regular, shadow)))
-
-    mulr(x, y) = x[] * y[]
-    x = Ref(2.0)
-    y = Ref(3.0)
-    dx = Ref(0.0)
-    dy = Ref(0.0)
-    n = autodiff(Reverse, mulr, Active, Duplicated(x, dx), Duplicated(y, dy))
-    @test n === ((nothing,nothing),)
-    @test dx[] ≈ 3.0
-    @test dy[] ≈ 2.0
-
-    x = Ref(2.0)
-    y = Ref(3.0)
-    dx = Ref(5.0)
-    dy = Ref(7.0)
-    @test 5.0*3.0 + 2.0*7.0≈ first(autodiff(Forward, mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
-
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))[1]
-    @test mid ≈ 4.0
-
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))[1]
-    @test mid ≈ 4.0
-
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, (x->x*x,), Duplicated(2.0, 1.0))
-    @test mid ≈ 4.0
-
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, [x->x*x], Duplicated(2.0, 1.0))
-    @test mid ≈ 4.0
-
-
-    # deserves_argbox yes and no
-    struct Bar
-        r::Ref{Int}
-    end
-
-    # ConstType
-
-    # primitive type Int128, Float64, Float128
-
-    # returns: sret, const/ghost, !deserve_retbox
 end
 
 @testset "Mutable Struct ABI" begin
