@@ -4887,7 +4887,7 @@ function jl_array_ptr_copy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
             vargs = args
             cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), vargs, length(vargs), orig, valTys, length(valTys), B, #=lookup=#false)
             API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-            callconv!(cal, callconv(orig))
+            callconv!(LLVM.Instruction(cal), callconv(orig))
         else
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
             for idx in 1:width
@@ -4898,7 +4898,7 @@ function jl_array_ptr_copy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                 push!(vargs, args[end])
                 cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), vargs, length(vargs), orig, valTys, length(valTys), B, #=lookup=#false)
                 API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-                callconv!(cal, callconv(orig))
+                callconv!(LLVM.Instruction(cal), callconv(orig))
             end
         end
 
