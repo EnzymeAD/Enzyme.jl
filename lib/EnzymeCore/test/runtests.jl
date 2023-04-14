@@ -1,6 +1,8 @@
 using Test
 using EnzymeCore
 
+@test_throws ErrorException Active([2.0])
+
 import EnzymeCore.EnzymeRules: forward, has_frule_from_sig
 
 g(x) = x ^ 2

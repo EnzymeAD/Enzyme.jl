@@ -45,6 +45,9 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 """
 struct Active{T} <: Annotation{T}
     val::T
+    Active(_::T1) where T1 = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
+    Active(flt::T1) where {T1 <: AbstractFloat} = new{T1}(flt)
+    Active(flt::Complex{T1}) where {T1 <: AbstractFloat} = new{Complex{T1}}(flt)
 end
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
