@@ -204,7 +204,7 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
     ## also accumulate any derivative in y's shadow into x's shadow. 
     x.dval .+= 2 .* xval .* y.dval
     y.dval .= 0
-    return ()
+    return (nothing, nothing)
 end
 
 # Let's make a few observations about our reverse rule:

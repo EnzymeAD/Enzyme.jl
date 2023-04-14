@@ -4065,7 +4065,14 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
             return tapeV
         end
-        Tys = Type[eltype(A) for A in activity if A <: Active]
+        Tys = Type[]
+        for A in activity[2:end]
+            if A <: Active
+                push!(Tys, eltype(A))
+            else
+                push!(Tys, Nothing)
+            end
+        end
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))

@@ -38,7 +38,7 @@ end
 
 function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
-    return ()
+    return (nothing,)
 end
 
 @testset "has_rrule" begin
