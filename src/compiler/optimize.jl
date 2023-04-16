@@ -350,6 +350,7 @@ end
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         gvn!(pm)
+    
         # This InstCombine needs to be after GVN
         # Otherwise it will generate load chains in GPU code...
         instruction_combining!(pm)
@@ -365,6 +366,9 @@ end
         jump_threading!(pm)
         correlated_value_propagation!(pm)
         # SLP_Vectorizer -- not for Enzyme
+        
+        run!(pm, mod)
+
         aggressive_dce!(pm)
         instruction_combining!(pm)
         # Loop Vectorize -- not for Enzyme
@@ -377,14 +381,45 @@ end
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
+        
+        run!(pm, mod)
+    end
+    
+    # Prevent dead-arg-elimination of functions which we may require args for in the derivative
+    ctx = LLVM.context(mod)
+    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
+    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx)])
+   
+    for fn in functions(mod)
+        if isempty(blocks(fn))
+            continue
+        end
+        attrs = collect(function_attributes(fn))
+        prevent = any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
+        if prevent
+            B = IRBuilder(ctx)
+            position!(B, first(instructions(first(blocks(fn)))))
+            call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
+        end
+    end
+    ModulePassManager() do pm
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
+
+    for fn in functions(mod)
+        for b in blocks(fn)
+            inst = first(LLVM.instructions(b))
+            if isa(inst, LLVM.CallInst)
+                fn = LLVM.called_value(inst)
+                if fn == func
+                    unsafe_delete!(b, inst)
+                end
+            end
+        end
+    end
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
-    # @safe_show "omod", mod
-    # flush(stdout)
-    # flush(stderr)
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L603

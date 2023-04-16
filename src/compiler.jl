@@ -5845,7 +5845,7 @@ function emit_inacterror(B, V, orig)
     fmt = globalstring_ptr!(B, "%s:\nBacktrace\n"*bts)
 
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))], vararg=true)
-    func = get_function!(mod, "jl_errorf", funcT, [EnumAttribute("noreturn"; ctx)])
+    func, _ = get_function!(mod, "jl_errorf", funcT, [EnumAttribute("noreturn"; ctx)])
 
     call!(B, funcT, func, LLVM.Value[fmt, LLVM.Value(V)])
     return nothing
