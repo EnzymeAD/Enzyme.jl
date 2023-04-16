@@ -369,7 +369,7 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
         # This doesn't allow for optimizations
         alty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
         alloc_obj, _ = get_function!(mod, "jl_gc_alloc_typed", alty)
-	if value_type(Size) != T_size_t # Fix Int32/Int64 issues on 32bit systems
+        if value_type(Size) != T_size_t # Fix Int32/Int64 issues on 32bit systems
             Size = trunc!(B, Size, T_size_t)
         end
         return call!(B, alty, alloc_obj, [ptls, Size, tag])
@@ -5379,17 +5379,68 @@ function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
 end
 const Tracked = 10
 
-# TODO: Calculate that constant... see get_current_task
-if VERSION >= v"1.9.0-"
-  current_task_offset() = -13
-else
-  current_task_offset() = -12
+
+const task_offset=Ref{Int}(0)
+function current_task_offset()
+    if task_offset[] == 0
+        ctx = JuliaContext()
+        f = Core.Typeof(Base.current_task)
+        world = Base.get_world_counter()
+        target = Enzyme.Compiler.DefaultCompilerTarget()
+        params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.CDerivativeMode(0))
+        funcspec = GPUCompiler.methodinstance(f, Tuple{}, world)
+        job = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
+
+        otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
+
+        LLVM.ModulePassManager() do pm
+            dce!(pm)
+            run!(pm, otherMod)
+        end
+
+        fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
+        bb = only(blocks(fn))
+        gep = only((i for i in instructions(bb) if isa(i, LLVM.GetElementPtrInst)))
+        op = only(operands(gep)[2:end])
+        off = convert(Int, op)
+        task_offset[] = off
+    end
+    return task_offset[]
 end
-if VERSION >= v"1.9.0-"
-  current_ptls_offset() = 15
+
+@static if VERSION < v"1.7.0"
 else
-  current_ptls_offset() = 14
+const ptls_offset=Ref{Int}(0)
+function current_ptls_offset()
+    if ptls_offset[] == 0
+		mod = """
+		declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*)
+
+		define void @gc_alloc_lowering({}** %current_task) {
+		top:
+			%v = call noalias {} addrspace(10)* @julia.gc_alloc_obj({}** %current_task, i64 8, {} addrspace(10)* undef)
+			ret void
+		}
+		"""
+
+		ctx = JuliaContext()
+		otherMod = parse(LLVM.Module, mod; ctx)
+
+		LLVM.ModulePassManager() do pm
+			LLVM.Interop.late_lower_gc_frame!(pm)
+			run!(pm, otherMod)
+		end
+		fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
+		bb = only(blocks(fn))
+		gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
+		op = only(operands(gep)[2:end])
+		off = convert(Int, op)
+        ptls_offset[] = off
+    end
+    return ptls_offset[]
 end
+end
+
 function get_julia_inner_types(B, p, startvals...; added=[])
     ctx = LLVM.context(p)
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -5769,6 +5820,11 @@ function emit_inacterror(B, V, orig)
 end
 
 function __init__()
+    current_task_offset()
+@static if VERSION < v"1.7.0"
+else
+    current_ptls_offset()
+end
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
