@@ -367,7 +367,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 else
                     res = ccall(:ijl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
                 end
-                replaceWith = LLVM.ConstantInt(LLVM.IntType(64; ctx), reinterpret(UInt64, res))
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int); ctx), reinterpret(UInt, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
