@@ -5437,6 +5437,7 @@ function current_ptls_offset()
 		end
 		fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
 		bb = only(blocks(fn))
+        @show mod
         gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
 		op = only(operands(gep)[2:end])
 		off = convert(Int, op)
