@@ -3686,7 +3686,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT
+        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
         return
     end
 
@@ -3695,7 +3695,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn
+        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn, args, sret, returnRoots
         return
     end
 
@@ -3943,17 +3943,6 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...}, world)
     # end
 
-    sret = nothing
-    returnRoots = nothing
-    if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
-        sret = alloca!(alloctx, eltype(value_type(parameters(llvmf)[1])))
-        pushfirst!(args, sret)
-        if deserves_rooting(eltype(value_type(parameters(llvmf)[1])))
-            returnRoots = alloca!(alloctx, eltype(value_type(parameters(llvmf)[2])))
-            insert!(args, 2, returnRoots)
-        end
-    end
-
     if !forward
         if needsTape
             @assert tape != C_NULL
@@ -3979,12 +3968,28 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         end
     end
 
+    sret = nothing
+    returnRoots = nothing
+    if !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
+        sret = alloca!(alloctx, eltype(value_type(parameters(llvmf)[1])))
+        pushfirst!(args, sret)
+        if deserves_rooting(eltype(value_type(parameters(llvmf)[1])))
+            returnRoots = alloca!(alloctx, eltype(value_type(parameters(llvmf)[2])))
+            insert!(args, 2, returnRoots)
+        end
+    end
+
+    if length(args) != length(parameters(llvmf))
+        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, augprimal_TT, rev_TT, fn, sret, returnRoots
+        return
+    end
+    
     for i in 1:length(args)
         party =  value_type(parameters(llvmf)[i])
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn
+        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn, args, sret, returnRoots
         return tapeV
     end
 
