@@ -5414,11 +5414,6 @@ const ptls_offset=Ref{Int}(0)
 function current_ptls_offset()
     if ptls_offset[] == 0
         @static if VERSION < v"1.8.0"
-            if sizeof(Int) == sizeof(Int32)
-                return 19
-            else
-                return 14
-            end
             f = Core.Typeof(Base.Ref)
             world = Base.get_world_counter()
             ctx = JuliaContext()
@@ -5459,9 +5454,18 @@ function current_ptls_offset()
             end
             fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
             bb = only(blocks(fn))
-            gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
-            op = only(operands(gep)[2:end])
-            off = convert(Int, op)
+            off = 0
+            for i in instructions(bb)
+                if LLVM.name(i) == "ptls_field"
+                    op = only(operands(i)[2:end])
+                    off_n = convert(Int, op)
+                    if off != 0
+                        @assert off == off_n
+                    end
+                    off = off_n
+                end
+            end
+            @assert off != 0
             ptls_offset[] = off
         end
     end
