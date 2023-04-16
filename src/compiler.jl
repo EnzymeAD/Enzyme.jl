@@ -5413,35 +5413,57 @@ else
 const ptls_offset=Ref{Int}(0)
 function current_ptls_offset()
     if ptls_offset[] == 0
-        task_off = current_task_offset()
-		mod = """
-        declare {}*** @julia.get_pgcstack()
-		declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*)
+        @static if VERSION < v"1.8.0"
+            if sizeof(Int) == sizeof(Int32)
+                return 19
+            else
+                return 14
+            end
+            f = Core.Typeof(Base.Ref)
+            world = Base.get_world_counter()
+            ctx = JuliaContext()
+            target = Enzyme.Compiler.DefaultCompilerTarget()
+            params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.CDerivativeMode(0))
+            funcspec = GPUCompiler.methodinstance(f, Tuple{Float64}, world)
+            job = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
+            otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
 
-		define void @gc_alloc_lowering() {
-		top:
-            %pgc = call {}*** @julia.get_pgcstack()
-            %t = bitcast {}*** %pgc to {}**
-            %current_task = getelementptr inbounds {}*, {}** %t, i64 $task_off
-			%v = call noalias {} addrspace(10)* @julia.gc_alloc_obj({}** %current_task, i64 8, {} addrspace(10)* undef)
-			ret void
-		}
-		"""
+            fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
+            bb = only(blocks(fn))
+            gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
+            op = only(operands(gep)[2:end])
+            off = convert(Int, op)
+            ptls_offset[] = off
+        else 
+            task_off = current_task_offset()
+            mod = """
+            declare {}*** @julia.get_pgcstack()
+            declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*)
 
-		ctx = LLVM.Context()
-		otherMod = parse(LLVM.Module, mod; ctx)
+            define void @gc_alloc_lowering() {
+            top:
+                %pgc = call {}*** @julia.get_pgcstack()
+                %t = bitcast {}*** %pgc to {}**
+                %current_task = getelementptr inbounds {}*, {}** %t, i64 $task_off
+                %v = call noalias {} addrspace(10)* @julia.gc_alloc_obj({}** %current_task, i64 8, {} addrspace(10)* undef)
+                ret void
+            }
+            """
 
-		LLVM.ModulePassManager() do pm
-			LLVM.Interop.late_lower_gc_frame!(pm)
-			run!(pm, otherMod)
-		end
-		fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
-		bb = only(blocks(fn))
-        @show mod
-        gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
-		op = only(operands(gep)[2:end])
-		off = convert(Int, op)
-        ptls_offset[] = off
+            ctx = LLVM.Context()
+            otherMod = parse(LLVM.Module, mod; ctx)
+
+            LLVM.ModulePassManager() do pm
+                LLVM.Interop.late_lower_gc_frame!(pm)
+                run!(pm, otherMod)
+            end
+            fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
+            bb = only(blocks(fn))
+            gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
+            op = only(operands(gep)[2:end])
+            off = convert(Int, op)
+            ptls_offset[] = off
+        end
     end
     return ptls_offset[]
 end

@@ -126,7 +126,7 @@ end
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    T_size_t = convert(LLVM.LLVMType, Int; ctx)
+    T_size_t = convert(LLVM.LLVMType, Int; ctx=LLVM.context(mod))
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
