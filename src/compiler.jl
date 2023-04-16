@@ -5383,9 +5383,9 @@ const Tracked = 10
 const task_offset=Ref{Int}(0)
 function current_task_offset()
     if task_offset[] == 0
-        ctx = JuliaContext()
         f = Core.Typeof(Base.current_task)
         world = Base.get_world_counter()
+        ctx = JuliaContext()
         target = Enzyme.Compiler.DefaultCompilerTarget()
         params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.CDerivativeMode(0))
         funcspec = GPUCompiler.methodinstance(f, Tuple{}, world)
@@ -5413,17 +5413,22 @@ else
 const ptls_offset=Ref{Int}(0)
 function current_ptls_offset()
     if ptls_offset[] == 0
+        task_off = current_task_offset()
 		mod = """
+        declare {}*** @julia.get_pgcstack()
 		declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*)
 
-		define void @gc_alloc_lowering({}** %current_task) {
+		define void @gc_alloc_lowering() {
 		top:
+            %pgc = call {}*** @julia.get_pgcstack()
+            %t = bitcast {}*** %pgc to {}**
+            %current_task = getelementptr inbounds {}*, {}** %t, i64 $task_off
 			%v = call noalias {} addrspace(10)* @julia.gc_alloc_obj({}** %current_task, i64 8, {} addrspace(10)* undef)
 			ret void
 		}
 		"""
 
-		ctx = JuliaContext()
+		ctx = LLVM.Context()
 		otherMod = parse(LLVM.Module, mod; ctx)
 
 		LLVM.ModulePassManager() do pm
@@ -5432,7 +5437,7 @@ function current_ptls_offset()
 		end
 		fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
 		bb = only(blocks(fn))
-		gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
+        gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
 		op = only(operands(gep)[2:end])
 		off = convert(Int, op)
         ptls_offset[] = off
