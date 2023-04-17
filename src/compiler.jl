@@ -7835,7 +7835,7 @@ end
 
         foundTys[k_name] = (eltype(value_type(llvmfn)), mi)
         if has_custom_rule
-            handleCustom("enzyme_custom")
+            handleCustom("enzyme_custom", [StringAttribute("enzyme_preserve_primal", "*"; ctx)])
             continue
         end
 
