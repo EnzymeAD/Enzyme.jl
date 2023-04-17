@@ -6245,7 +6245,7 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     expectedTapeType::Type
     method_table
 end
-GPUCompiler.method_table(@nospecialize(job::CompilerJob{T,EnzymeCompilerParams})) where T = job.config.params.method_table
+GPUCompiler.method_table(@nospecialize(job::CompilerJob{T,EnzymeCompilerParams})) where T = job.config.params.method_table !== nothing ? job.config.params.method_table : GPUCompiler.GLOBAL_METHOD_TABLE
 
 struct UnknownTapeType end
 

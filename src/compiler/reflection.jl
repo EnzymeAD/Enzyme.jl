@@ -1,5 +1,5 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, kwargs...)
+        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, parent_target=nothing, method_table=nothing, kwargs...)
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
