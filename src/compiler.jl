@@ -2718,7 +2718,9 @@ end
     ctx = LLVM.context(orig)
 
     llvmfn = LLVM.called_value(orig)
-    mi = nothing
+    
+    mi, job = enzyme_custom_extract_mi(orig)
+    
     fwdmodenm = nothing
     augfwdnm = nothing
     adjointnm = nothing
@@ -2776,8 +2778,8 @@ end
     subfunc = nothing
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
-            etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            etarget = Compiler.EnzymeTarget(job.config.target.parent_target)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, GPUCompiler.method_table(job))
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             jctx = ctx
@@ -2829,9 +2831,8 @@ end
         end
 
         if augfwdnm === nothing || adjointnm === nothing
-            etarget = Compiler.EnzymeTarget()
-            # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            etarget = Compiler.EnzymeTarget(job.config.target.parent_target)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, GPUCompiler.method_table(job))
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -3160,7 +3161,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
                        emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
-                       unsafe_to_llvm(Val(width), ctx),
+                       unsafe_to_llvm(Val(Int(width)), ctx),
                       ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -3215,7 +3216,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
                        emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
-                       unsafe_to_llvm(Val(width), ctx),
+                       unsafe_to_llvm(Val(Int(width)), ctx),
                        unsafe_to_llvm(Val(ModifiedBetween), ctx),
                       ]
 
@@ -8731,7 +8732,7 @@ end
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget(parent_job !== nothing ? parent_job.target : nothing)
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, parent_job !== nothing ? GPUCompiler.get_method_table(parent_job) : nothing)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, parent_job !== nothing ? GPUCompiler.method_table(parent_job) : nothing)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
@@ -8772,7 +8773,8 @@ end
 end
 
 @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, ::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World}
-    thunk, rt = innerthunk(World, FA, A, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit)
+    parent_job=nothing
+    thunk, rt = innerthunk(World, FA, A, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit, parent_job)
 
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType

@@ -113,8 +113,9 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
+    mi, job = enzyme_custom_extract_mi(orig)
+    
     llvmfn = LLVM.called_value(orig)
-    mi = nothing
     adjointnm = nothing
     augfwdnm = nothing
     TapeType = nothing
@@ -159,11 +160,11 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         
     if augfwdnm === nothing
         # TODO: Clean this up and add to `nested_codegen!` asa feature
-        etarget = Compiler.EnzymeTarget()
+        etarget = Compiler.EnzymeTarget(job.config.target.parent_target)
         funcOverwritten = true
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
+                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType, GPUCompiler.method_table(job))
         ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
             
         jctx = ctx

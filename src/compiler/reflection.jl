@@ -10,12 +10,12 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 
     rt = Core.Compiler.return_type(func, tt, world)
     rt = A{rt}
-    target = Compiler.EnzymeTarget()
+    target = Compiler.EnzymeTarget(parent_target)
     if modifiedBetween === nothing
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType, method_table)
     return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 
