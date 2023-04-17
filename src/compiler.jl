@@ -5392,14 +5392,27 @@ function current_task_offset()
         job = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
 
         otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
+        
+        fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
+        bb = only(blocks(fn))
+
+        todel = LLVM.Instruction[]
+        for i in instructions(bb)
+            if isa(i, LLVM.CallInst) && isa(value_type(i), LLVM.VoidType)
+                push!(todel, i)
+            elseif isa(i, LLVM.FenceInst)
+                push!(todel, i)
+            end
+        end
+        for i in todel
+            unsafe_delete!(bb, i)
+        end
 
         LLVM.ModulePassManager() do pm
             dce!(pm)
             run!(pm, otherMod)
         end
 
-        fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
-        bb = only(blocks(fn))
         gep = only((i for i in instructions(bb) if isa(i, LLVM.GetElementPtrInst)))
         op = only(operands(gep)[2:end])
         off = convert(Int, op)
