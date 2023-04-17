@@ -44,6 +44,7 @@ const known_ops = Dict(
     Base.sin => (:sin, 1),
     Base.sinc => (:sincn, 1),
     Base.sincos => (:__fd_sincos_1, 1),
+    Base.sincospi => (:sincospi, 1),
     Base.:^ => (:pow, 2),
     Base.rem => (:fmod, 2),
     Base.cos => (:cos, 1),
@@ -78,6 +79,7 @@ const known_ops = Dict(
     Base.sin => (:sin, 1),
     Base.sinc => (:sincn, 1),
     Base.sincos => (:__fd_sincos_1, 1),
+    Base.sincospi => (:sincospi, 1),
     Base.:^ => (:pow, 2),
     Base.rem => (:fmod, 2),
     Base.cos => (:cos, 1),
@@ -7836,7 +7838,7 @@ end
            all(==(T), sparam_vals) || continue
         end
 
-        if name == :__fd_sincos_1
+        if name == :__fd_sincos_1 || name == :sincospi
           source_sig = Base.signature_type(func, sparam_vals)
           llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
           k_name = LLVM.name(llvmfn)
