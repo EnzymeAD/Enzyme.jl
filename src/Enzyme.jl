@@ -39,6 +39,7 @@ include("typetree.jl")
 include("utils.jl")
 include("compiler.jl")
 include("internal_rules.jl")
+include("rules/LinearAlgebra/blas.jl")
 
 import .Compiler: CompilationException
 
