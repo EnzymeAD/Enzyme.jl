@@ -105,4 +105,28 @@ end
     @test Enzyme.autodiff(Reverse, h2, Active(3.0))  == ((1080.0,),)
 end
 
+q(x) = x^2
+function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(q)}, ::Type{<:Active}, x::Active)
+    tape = (Ref(2.0), Ref(3.4))
+    if needs_primal(config)
+        return AugmentedReturn(func.val(x.val), nothing, tape)
+    else
+        return AugmentedReturn(nothing, nothing, tape)
+    end
+end
+
+function reverse(config::ConfigWidth{1}, ::Const{typeof(q)}, dret::Active, tape, x::Active)
+    @test tape[1][] == 2.0
+    @test tape[2][] == 3.4
+    if needs_primal(config)
+        return (10+2*x.val*dret.val,)
+    else
+        return (100+2*x.val*dret.val,)
+    end
+end
+
+@testset "Byref Tape" begin
+    @test Enzyme.autodiff(Enzyme.Reverse, q, Active(2.0))[1][1] ≈ 104.0
+end
+
 end # ReverseRules
