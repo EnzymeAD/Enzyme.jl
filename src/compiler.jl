@@ -2329,8 +2329,8 @@ function jlcall2_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
 end
 
 function jl_nthfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
-    if shadowR != C_NULL
-        orig = LLVM.Instruction(OrigCI)
+    orig = LLVM.Instruction(OrigCI)
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) == 0
         origops = collect(operands(orig))
         width = API.EnzymeGradientUtilsGetWidth(gutils)
         if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) == 0
