@@ -334,7 +334,7 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do ctx
         LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
     end
 end
-function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround)
+function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::Bool)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -3955,7 +3955,19 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     if !forward
         if needsTape
             @assert tape != C_NULL
-            insert!(args, 1+(kwtup!==nothing), LLVM.Value(tape))
+            tape = LLVM.Value(tape)
+            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)])
+            if innerTy != value_type(tape)
+                llty = convert(LLVMType, TapeT; ctx)
+                al0 = al = emit_allocobj!(B, TapeT)
+                al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
+                store!(B, tape, al)
+                if any_jltypes(llty)
+                    emit_writebarrier!(B, get_julia_inner_types(B, al0, tape))
+                end
+                tape = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
+            end
+            insert!(args, 1+(kwtup!==nothing), tape)
         end
         if RT <: Active
 
