@@ -126,11 +126,11 @@ end
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    i64 = LLVM.IntType(64; ctx=context(mod))
+    T_size_t = convert(LLVM.LLVMType, Int; ctx=LLVM.context(mod))
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
-            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(i64, convert(Int, v)), value_type(f))))
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(T_size_t, convert(UInt, v)), value_type(f))))
             unsafe_delete!(mod, f)
         end
     end
@@ -367,7 +367,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 else
                     res = ccall(:ijl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
                 end
-                replaceWith = LLVM.ConstantInt(LLVM.IntType(64; ctx), reinterpret(UInt64, res))
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int); ctx), reinterpret(UInt, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
