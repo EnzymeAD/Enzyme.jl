@@ -5,6 +5,9 @@ using LinearAlgebra.BLAS
 
 const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
 
+_safe_similar(x::AbstractArray, n::Integer) = similar(x, n)
+_safe_similar(x::Ptr, n::Integer) = Array{eltype(x)}(undef, n)
+
 for (fname, Ttype, trans) in (
     (:dot, :(BLAS.BlasReal), :identity),
     (:dotu, :(BLAS.BlasComplex), :identity),
@@ -57,13 +60,13 @@ for (fname, Ttype, trans) in (
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
             # copy only the elements we need to the tape
             if Xow
-                Xtape = X.val isa Ptr ? Array{T}(undef, n.val) : similar(X.val, n.val)
+                Xtape = _safe_similar(X.val, n.val)
                 BLAS.blascopy!(n.val, X.val, incx.val, Xtape, 1)
             else
                 Xtape = nothing
             end
             if Yow
-                Ytape = Y.val isa Ptr ? Array{T}(undef, n.val) : similar(Y.val, n.val)
+                Ytape = _safe_similar(Y.val, n.val)
                 BLAS.blascopy!(n.val, Y.val, incy.val, Ytape, 1)
             else
                 Ytape = nothing
