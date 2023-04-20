@@ -1,3 +1,5 @@
+module BLASRules
+
 const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
 
 for (fname, Ttype, trans) in (
@@ -103,3 +105,5 @@ for (fname, Ttype, trans) in (
         end
     end
 end
+
+end  # module
