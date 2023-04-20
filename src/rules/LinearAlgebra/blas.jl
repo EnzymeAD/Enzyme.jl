@@ -14,8 +14,6 @@ function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     return xtape
 end
 
-_tape_stride(xtape::AbstractArray) = stride(xtape, 1)
-
 function _maybe_primal_shadow(config, func, args)
     needs_primal = EnzymeRules.needs_primal(config)
     needs_shadow = EnzymeRules.needs_shadow(config)
@@ -29,11 +27,7 @@ function _maybe_primal_shadow(config, func, args)
     return primal, shadow
 end
 
-for (fname, Ttype, trans) in (
-    (:dot, :(BLAS.BlasReal), :identity),
-    (:dotu, :(BLAS.BlasComplex), :identity),
-    (:dotc, :(BLAS.BlasComplex), :conj),
-)
+for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasComplex))
     @eval begin
         function EnzymeRules.forward(
             func::Const{typeof(BLAS.$fname)},
@@ -43,8 +37,7 @@ for (fname, Ttype, trans) in (
             incx::Const{<:Integer},
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
-        ) where {T<:$Ttype}
-            RT <: Const && return nothing
+        ) where {T<:BLAS.$Ttype}
             dval = if !(X isa Const) && !(Y isa Const)
                 func.val(n.val, X.dval, incx.val, Y.val, incy.val) +
                 func.val(n.val, X.val, incx.val, Y.dval, incy.val)
@@ -55,33 +48,52 @@ for (fname, Ttype, trans) in (
             else
                 nothing
             end
-            if RT <: DuplicatedNoNeed
-                return dval
+
+            if RT <: Const
+                return nothing
+            elseif RT <: DuplicatedNoNeed
+                dval === nothing ? zero(T) : dval
             else
                 val = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-                return Duplicated(val, dval)
+                return Duplicated(val, dval === nothing ? zero(T) : dval)
             end
         end
 
         function EnzymeRules.augmented_primal(
             config::EnzymeRules.ConfigWidth{1},
             func::Const{typeof(BLAS.$fname)},
-            ::Type{<:Union{Active,Duplicated}},
+            RT::Type{<:Union{Const,Active,Duplicated}},
             n::Const{<:Integer},
             X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
-        ) where {T<:$Ttype}
+        ) where {T<:BLAS.$Ttype}
             primal, shadow = _maybe_primal_shadow(
                 config, func.val, (n.val, X.val, incx.val, Y.val, incy.val)
             )
 
             # build tape
-            _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-            Xtape = Xow ? _strided_tape(n.val, X.val, incx.val) : nothing
-            Ytape = Yow ? _strided_tape(n.val, Y.val, incy.val) : nothing
-            tape = (Xtape, Ytape)
+            if !(RT <: Const)
+                _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
+                if Xow || BLAS.$fname === BLAS.dotu
+                    Xtape = _strided_tape(n.val, X.val, incx.val)
+                else
+                    Xtape = nothing
+                end
+                if Yow || BLAS.$fname === BLAS.dotu
+                    Ytape = _strided_tape(n.val, Y.val, incy.val)
+                else
+                    Ytape = nothing
+                end
+                if BLAS.$fname === BLAS.dotu
+                    conj!(Xtape)
+                    conj!(Ytape)
+                end
+                tape = (Xtape, Ytape)
+            else
+                tape = nothing
+            end
 
             return EnzymeRules.AugmentedReturn(primal, shadow, tape)
         end
@@ -89,25 +101,26 @@ for (fname, Ttype, trans) in (
         function EnzymeRules.reverse(
             config::EnzymeRules.ConfigWidth{1},
             ::Const{typeof(BLAS.$fname)},
-            dret::Active,
+            dret::Union{Active,Type{<:Const}},
             tape,
             n::Const{<:Integer},
             X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
-        ) where {T<:$Ttype}
-            # restore from tape
-            _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-            (Xtape, Ytape) = tape
-            (Xval, incxval) = Xow ? (Xtape, _tape_stride(Xtape)) : (X.val, incx.val)
-            (Yval, incyval) = Yow ? (Ytape, _tape_stride(Ytape)) : (Y.val, incy.val)
+        ) where {T<:BLAS.$Ttype}
+            ret = (nothing, nothing, nothing, nothing, nothing)
+            dret isa Type{<:Const} && return ret
 
-            X isa Const ||
-                BLAS.axpy!(n.val, $(trans)(dret.val), Yval, incyval, X.dval, incx.val)
+            # restore from tape
+            (Xtape, Ytape) = tape
+            (Xval, incxval) = Xtape === nothing ? (X.val, incx.val) : (Xtape, 1)
+            (Yval, incyval) = Ytape === nothing ? (Y.val, incy.val) : (Ytape, 1)
+
+            X isa Const || BLAS.axpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
             Y isa Const || BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
 
-            return (nothing, nothing, nothing, nothing, nothing)
+            return ret
         end
     end
 end
