@@ -14,7 +14,7 @@ function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     return xtape
 end
 
-_tape_stride(xtape::AbstractArray) = 1
+_tape_stride(xtape::AbstractArray) = stride(xtape, 1)
 
 function _maybe_primal_shadow(config, func, args)
     needs_primal = EnzymeRules.needs_primal(config)
