@@ -8,6 +8,26 @@ const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
 _safe_similar(x::AbstractArray, n::Integer) = similar(x, n)
 _safe_similar(x::Ptr, n::Integer) = Array{eltype(x)}(undef, n)
 
+function _stride_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
+    xtape = _safe_similar(x, n)
+    BLAS.blascopy!(n, x, incx, xtape, 1)
+    return xtape
+end
+_tape_stride(xtape::AbstractArray) = 1
+
+function _maybe_primal_shadow(config, func, args)
+    needs_primal = EnzymeRules.needs_primal(config)
+    needs_shadow = EnzymeRules.needs_shadow(config)
+    if needs_primal || needs_shadow
+        r = func(args...)
+    else
+        r = nothing
+    end
+    primal = needs_primal ? r : nothing
+    shadow = needs_shadow ? zero(r) : nothing
+    return primal, shadow
+end
+
 for (fname, Ttype, trans) in (
     (:dot, :(BLAS.BlasReal), :identity),
     (:dotu, :(BLAS.BlasComplex), :identity),
@@ -52,30 +72,14 @@ for (fname, Ttype, trans) in (
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
-            needs_primal = EnzymeRules.needs_primal(config)
-            needs_shadow = EnzymeRules.needs_shadow(config)
-            if needs_primal || needs_shadow
-                r = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-            else
-                r = nothing
-            end
-            primal = needs_primal ? r : nothing
-            shadow = needs_shadow ? zero(r) : nothing
+            primal, shadow = _maybe_primal_shadow(
+                config, func.val, (n.val, X.val, incx.val, Y.val, incy.val)
+            )
 
+            # build tape
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-            # copy only the elements we need to the tape
-            if Xow
-                Xtape = _safe_similar(X.val, n.val)
-                BLAS.blascopy!(n.val, X.val, incx.val, Xtape, 1)
-            else
-                Xtape = nothing
-            end
-            if Yow
-                Ytape = _safe_similar(Y.val, n.val)
-                BLAS.blascopy!(n.val, Y.val, incy.val, Ytape, 1)
-            else
-                Ytape = nothing
-            end
+            Xtape = Xow ? _stride_tape(n.val, X.val, incx.val) : nothing
+            Ytape = Yow ? _stride_tape(n.val, Y.val, incy.val) : nothing
             tape = (Xtape, Ytape)
 
             return EnzymeRules.AugmentedReturn(primal, shadow, tape)
@@ -92,10 +96,11 @@ for (fname, Ttype, trans) in (
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
+            # restore from tape
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
             (Xtape, Ytape) = tape
-            (Xval, incxval) = Xow ? (Xtape, 1) : (X.val, incx.val)
-            (Yval, incyval) = Yow ? (Ytape, 1) : (Y.val, incy.val)
+            (Xval, incxval) = Xow ? (Xtape, _tape_stride(Xtape)) : (X.val, incx.val)
+            (Yval, incyval) = Yow ? (Ytape, _tape_stride(Ytape)) : (Y.val, incy.val)
 
             X isa Const ||
                 BLAS.axpy!(n.val, $(trans)(dret.val), Yval, incyval, X.dval, incx.val)
