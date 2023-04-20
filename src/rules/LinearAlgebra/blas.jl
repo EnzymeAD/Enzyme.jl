@@ -15,9 +15,9 @@ for (fname, Ttype, trans) in (
             func::Const{typeof(BLAS.$fname)},
             RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
             n::Const{<:Integer},
-            X::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
-            Y::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
             RT <: Const && return nothing
@@ -44,34 +44,26 @@ for (fname, Ttype, trans) in (
             func::Const{typeof(BLAS.$fname)},
             ::Type{<:Union{Active,Duplicated}},
             n::Const{<:Integer},
-            X::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
-            Y::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
             r = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-            if EnzymeRules.needs_primal(config)
-                primal = r
-            else
-                primal = nothing
-            end
 
-            if EnzymeRules.needs_shadow(config)
-                shadow = zero(r)
-            else
-                shadow = nothing
-            end
+            primal = EnzymeRules.needs_primal(config) ? r : nothing
+            shadow = EnzymeRules.needs_shadow(config) ? zero(r) : nothing
 
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
             # copy only the elements we need to the tape
             if Xow
-                Xtape = similar(X.val, n.val)
+                Xtape = X.val isa Ptr ? Array{T}(undef, n.val) : similar(X.val, n.val)
                 BLAS.blascopy!(n.val, X.val, incx.val, Xtape, 1)
             else
                 Xtape = nothing
             end
             if Yow
-                Ytape = similar(Y.val, n.val)
+                Ytape = Y.val isa Ptr ? Array{T}(undef, n.val) : similar(Y.val, n.val)
                 BLAS.blascopy!(n.val, Y.val, incy.val, Ytape, 1)
             else
                 Ytape = nothing
@@ -87,9 +79,9 @@ for (fname, Ttype, trans) in (
             dret::Active,
             tape,
             n::Const{<:Integer},
-            X::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
-            Y::Union{ConstOrDuplicated{<:AbstractArray{T}}},
+            Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
