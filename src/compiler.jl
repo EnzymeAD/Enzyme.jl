@@ -3381,6 +3381,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
     uncacheable = Vector{UInt8}(undef, length(ops))
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     sret = false
     returnRoots = false
@@ -3487,7 +3488,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF
+        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(arg.typ) )
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty; ctx)
             arty = convert(LLVMType, arg.typ; ctx, allow_boxed=true)
@@ -4100,24 +4101,31 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             idx+=1
         end
     else
-        if length(actives) >= 1 && !isa(value_type(res), LLVM.StructType) && !isa(value_type(res), LLVM.ArrayType)
-            GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
-            return tapeV
-        end
         Tys = (A <: Active ? eltype(A) : Nothing for A in activity[2+isKWCall:end])
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
             return C_NULL
         end
+        if length(actives) >= 1 && !isa(value_type(res), LLVM.StructType) && !isa(value_type(res), LLVM.ArrayType)
+            GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
+            return tapeV
+        end
 
         idx = 0
-        for v in actives
+        dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig)))))
+        for (v, Ty) in zip(actives, Tys)
+            TT = typetree(Ty, ctx, dl)
+            Typ = C_NULL
             ext = extract_value!(B, res, idx)
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(v)))
+            if value_type(ext) != shadowVType
+                @show res, ext, v, shadowVType
+                ext = load!(B, value_type(v), ext)
+            else
             @assert value_type(ext) == shadowVType
-            Typ = C_NULL
-            API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
+                API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
+            end
             idx+=1
         end
     end
