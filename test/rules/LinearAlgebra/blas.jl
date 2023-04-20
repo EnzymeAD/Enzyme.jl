@@ -10,7 +10,7 @@ using Test
     n = 10
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
-        @testset for T in (fun == BLAS.dot ? RTs : RCs,)
+        @testset for T in (fun == BLAS.dot ? RTs : RCs),
             (sx, incx) in ((10, 1), ((2, 10), 2)), (sy, incy) in ((10, 1), ((2, 10), 2))
 
             @testset "forward" begin
