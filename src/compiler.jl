@@ -4042,11 +4042,11 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if needsPrimal
             @assert !GPUCompiler.isghosttype(RealRt)
             normalV = extract_value!(B, res, idx)
-            @assert value_type(normalV) == value_type(orig)
             if is_sret(RealRt, ctx)
                 val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
                 store!(B, extract_value!(B, res, 0), val)
             else
+                @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
             end
             idx+=1
@@ -4054,11 +4054,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if needsShadow
             @assert !GPUCompiler.isghosttype(RealRt)
             shadowV = extract_value!(B, res, idx)
-            @assert value_type(shadowV) == shadowType
             if is_sret(RealRt, ctx)
                 dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
                 store!(B, extract_value!(B, res, 1), dval)
+                shadowV = C_NULL
             else
+                @assert value_type(shadowV) == shadowType
                 shadowV = shadowV.ref
             end
             idx+=1
@@ -4091,7 +4092,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     end
 
     if forward
-        if shadowR != C_NULL
+        if shadowR != C_NULL && shadowV != C_NULL
             unsafe_store!(shadowR, shadowV)
         end
 
