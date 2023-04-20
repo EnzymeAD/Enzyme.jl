@@ -33,7 +33,27 @@ jobs:
           - os: windows-latest
             arch: x64
             libEnzyme: local
-        # include:
+        include:
+          - os: ubuntu-latest
+            arch: x86
+            libEnzyme: packaged
+            version: '1.6'
+            assertions: false
+          - os: ubuntu-latest
+            arch: x86
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: false
+          - os: ubuntu-latest
+            arch: x86
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: false
+          - os: ubuntu-latest
+            arch: x86
+            libEnzyme: packaged
+            version: '~1.9.0-0'
+            assertions: false
           # special test with LLVM assertions enabled
           # TODO: enable this across all versions
           #       (needs LLVM.jl fixes, and julia-actions/setup-julia support)

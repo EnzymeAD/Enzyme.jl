@@ -112,7 +112,7 @@ function is_primitive_func(@nospecialize(TT))
        ft === typeof(Base.sinh) || ft === typeof(Base.FastMath.sinh_fast) ||
        ft === typeof(Base.cosh) || ft === typeof(Base.FastMath.cosh_fast) ||
        ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
-       ft === typeof(Base.sqrt) || ft === typeof(Base.sincos)
+       ft === typeof(Base.sqrt) || ft === typeof(Base.sincos) || ft === typeof(Base.sincospi)
         if TT <: Tuple{ft, Float32} || TT <: Tuple{ft, Float64} || TT <: Tuple{ft, Float16}
             return true
         end
