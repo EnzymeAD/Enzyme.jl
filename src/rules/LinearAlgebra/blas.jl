@@ -1,5 +1,8 @@
 module BLASRules
 
+using ..Enzyme
+using LinearAlgebra.BLAS
+
 const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
 
 for (fname, Ttype, trans) in (
