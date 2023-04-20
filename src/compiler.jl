@@ -5575,8 +5575,16 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx, c
                 end
                 continue
             end
-            if isa(ty, LLVM.ArrayType) || isa(ty, LLVM.VectorType)
+            if isa(ty, LLVM.ArrayType) 
                 for i=1:length(ty)
+                    npath = copy(path)
+                    push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
+                    push!(todo, (npath, eltype(ty), eltype(jlty)))
+                end
+                continue
+            end
+            if isa(ty, LLVM.VectorType) 
+                for i=1:size(ty)
                     npath = copy(path)
                     push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
                     push!(todo, (npath, eltype(ty), eltype(jlty)))
@@ -7106,9 +7114,19 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     store!(builder, load!(builder, ty, outloc), loc)
                     continue
                 end
-                if isa(ty, LLVM.ArrayType) || isa(ty, LLVM.VectorType)
+                if isa(ty, LLVM.ArrayType)
                     if any_jltypes(ty)
                         for i=1:length(ty)
+                            npath = copy(path)
+                            push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
+                            push!(todo, (npath, eltype(ty)))
+                        end
+                    end
+                    continue
+                end
+                if isa(ty, LLVM.VectorType)
+                    if any_jltypes(ty)
+                        for i=1:size(ty)
                             npath = copy(path)
                             push!(npath, LLVM.ConstantInt(LLVM.IntType(32; ctx), i-1))
                             push!(todo, (npath, eltype(ty)))
