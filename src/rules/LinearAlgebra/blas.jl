@@ -8,11 +8,12 @@ const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
 _safe_similar(x::AbstractArray, n::Integer) = similar(x, n)
 _safe_similar(x::Ptr, n::Integer) = Array{eltype(x)}(undef, n)
 
-function _stride_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
+function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     xtape = _safe_similar(x, n)
     BLAS.blascopy!(n, x, incx, xtape, 1)
     return xtape
 end
+
 _tape_stride(xtape::AbstractArray) = 1
 
 function _maybe_primal_shadow(config, func, args)
@@ -78,8 +79,8 @@ for (fname, Ttype, trans) in (
 
             # build tape
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-            Xtape = Xow ? _stride_tape(n.val, X.val, incx.val) : nothing
-            Ytape = Yow ? _stride_tape(n.val, Y.val, incy.val) : nothing
+            Xtape = Xow ? _strided_tape(n.val, X.val, incx.val) : nothing
+            Ytape = Yow ? _strided_tape(n.val, Y.val, incy.val) : nothing
             tape = (Xtape, Ytape)
 
             return EnzymeRules.AugmentedReturn(primal, shadow, tape)
