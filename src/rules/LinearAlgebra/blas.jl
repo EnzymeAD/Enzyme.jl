@@ -52,10 +52,15 @@ for (fname, Ttype, trans) in (
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:$Ttype}
-            r = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-
-            primal = EnzymeRules.needs_primal(config) ? r : nothing
-            shadow = EnzymeRules.needs_shadow(config) ? zero(r) : nothing
+            needs_primal = EnzymeRules.needs_primal(config)
+            needs_shadow = EnzymeRules.needs_shadow(config)
+            if needs_primal || needs_shadow
+                r = func.val(n.val, X.val, incx.val, Y.val, incy.val)
+            else
+                r = nothing
+            end
+            primal = needs_primal ? r : nothing
+            shadow = needs_shadow ? zero(r) : nothing
 
             _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
             # copy only the elements we need to the tape
