@@ -92,12 +92,9 @@ for (fname, Ttype, trans) in (
             (Xval, incxval) = Xow ? (Xtape, 1) : (X.val, incx.val)
             (Yval, incyval) = Yow ? (Ytape, 1) : (Y.val, incy.val)
 
-            if !(X isa Const)
+            X isa Const ||
                 BLAS.axpy!(n.val, $(trans)(dret.val), Yval, incyval, X.dval, incx.val)
-            end
-            if !(Y isa Const)
-                BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
-            end
+            Y isa Const || BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
 
             return (nothing, nothing, nothing, nothing, nothing)
         end
