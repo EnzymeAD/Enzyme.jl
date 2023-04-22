@@ -108,6 +108,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
@@ -163,6 +164,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
@@ -6309,6 +6311,23 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.EnumAttribute("nofree", 0; ctx))
+            end
         end
     end
 
