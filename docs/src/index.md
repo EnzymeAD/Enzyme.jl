@@ -19,7 +19,7 @@ Enzyme.jl can be installed in the usual way Julia packages are installed:
 
 The Enzyme binary dependencies will be installed automatically via Julia's binary actifact system.
 
-The Enzyme.jl API revolves around the function [`autodiff`](@ref), see it's documentation for details and a usage example. Also see [Implementing pullbacks](@ref) on how to use Enzyme.jl to implement back-propagation for functions with non-scalar results.
+The Enzyme.jl API revolves around the function [`autodiff`](@ref), see its documentation for details and a usage example. Also see [Implementing pullbacks](@ref) on how to use Enzyme.jl to implement back-propagation for functions with non-scalar results.
 
 ## Getting started
 
