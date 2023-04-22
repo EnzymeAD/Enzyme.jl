@@ -108,6 +108,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_backtrace_from_here", "ijl_backtrace_from_here",
@@ -162,6 +163,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_backtrace_from_here", "ijl_backtrace_from_here",
