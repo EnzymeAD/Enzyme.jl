@@ -122,10 +122,10 @@ Limitations:
 
 `args` may be numbers, arrays, structs of numbers, structs of arrays and so
 on. Enzyme will only differentiate in respect to arguments that are wrapped
-in an [`Active`](@ref) (for immutable arguments like primitive types and
-structs thereof) or [`Duplicated`](@ref) (for mutable arguments like arrays,
-`Ref`s and structs thereof). Non-annotated arguments will automatically be
-treated as [`Const`](@ref).
+in an [`Active`](@ref) (for arguments whose derivative result must be returned
+rather than mutated in place, such as primitive types and structs thereof)
+or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
+thereof). Non-annotated arguments will automatically be treated as [`Const`](@ref).
 
 `Activity` is the Activity of the return value, it may be `Const` or `Active`.
 
@@ -238,7 +238,8 @@ on. Enzyme will only differentiate in respect to arguments that are wrapped
 in a [`Duplicated`](@ref) or similar argument. Non-annotated arguments will
 automatically be treated as [`Const`](@ref). Unlike reverse mode in
 [`autodiff`](@ref), [`Active`](@ref) arguments are not allowed here, since
-all 
+all derivative results of immutable objects will be returned and should
+instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 
 `Activity` is the Activity of the return value, it may be:
 * `Const` if the return is not to be differentiated with respect to
@@ -246,6 +247,10 @@ all
   both the original value and the derivative return are desired
 * `DuplicatedNoNeed`, if the return is being differentiated with respect to
   and only the derivative return is desired.
+* `BatchDuplicated`, like `Duplicated`, but computing multiple derivatives
+  at once. All batch sizes must be the same for all arguments.
+* `BatchDuplicatedNoNeed`, like `DuplicatedNoNeed`, but computing multiple
+  derivatives at one. All batch sizes must be the same for all arguments.
 
 Example returning both original return and derivative:
 
