@@ -3974,7 +3974,6 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             tape = LLVM.Value(tape)
             sret = !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
             innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)+sret+(RT <: Active)])
-            @show llvmf, sret, 1+(kwtup!==nothing)+sret, tape
             if innerTy != value_type(tape)
                 llty = convert(LLVMType, TapeT; ctx, allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
