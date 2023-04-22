@@ -3972,9 +3972,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if needsTape
             @assert tape != C_NULL
             tape = LLVM.Value(tape)
-            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)])
+            sret = !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
+            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)+sret])
             if innerTy != value_type(tape)
-                llty = convert(LLVMType, TapeT; ctx)
+                llty = convert(LLVMType, TapeT; ctx, allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 store!(B, tape, al)
@@ -6326,7 +6327,7 @@ function annotate!(mod, mode)
                 if operands(c)[1] != fn
                     continue
                 end
-                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.EnumAttribute("nofree", 0; ctx))
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nofree", 0; ctx))
             end
         end
     end
