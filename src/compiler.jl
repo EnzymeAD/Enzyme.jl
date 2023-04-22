@@ -3567,6 +3567,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     interp = GPUCompiler.get_interpreter(job)
     RealRt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -3589,7 +3590,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     if activep == API.DFT_CONSTANT
         RT = Const{RealRt}
 
-    elseif activep == API.DFT_OUT_DIFF
+    elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(RealRt) )
         RT = Active{RealRt}
 
     elseif activep == API.DFT_DUP_ARG
@@ -3984,7 +3985,20 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
             llty = convert(LLVMType, RT; ctx)
 
-            val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
+            if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, #=isforeign=#false) == API.DFT_OUT_DIFF
+                val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
+            else
+                llety = convert(LLVMType, eltype(RT); ctx)
+                ptr_val = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
+                for idx in 1:width
+                    ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                    ld = load!(B, llety, ev)
+                    store!(B, LLVM.null(llety), ev)
+                    val = (width == 1 ) ? ld : insert_value!(B, val, ld, idx-1)
+                end
+            end
+
             al0 = al = emit_allocobj!(B, RT)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
@@ -4120,10 +4134,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             ext = extract_value!(B, res, idx)
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(v)))
             if value_type(ext) != shadowVType
-                @show res, ext, v, shadowVType
-                ext = load!(B, value_type(v), ext)
+                size = sizeof(Ty)
+                align = 0
+                premask = C_NULL
+                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, C_NULL, TT, size, v,           ext, B, align, premask)
             else
-            @assert value_type(ext) == shadowVType
+                @assert value_type(ext) == shadowVType
                 API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
             end
             idx+=1
