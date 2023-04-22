@@ -3381,6 +3381,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
     uncacheable = Vector{UInt8}(undef, length(ops))
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     sret = false
     returnRoots = false
@@ -3487,7 +3488,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF
+        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(arg.typ) )
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty; ctx)
             arty = convert(LLVMType, arg.typ; ctx, allow_boxed=true)
@@ -3566,6 +3567,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     interp = GPUCompiler.get_interpreter(job)
     RealRt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+    mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -3588,7 +3590,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     if activep == API.DFT_CONSTANT
         RT = Const{RealRt}
 
-    elseif activep == API.DFT_OUT_DIFF
+    elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(RealRt) )
         RT = Active{RealRt}
 
     elseif activep == API.DFT_DUP_ARG
@@ -3983,7 +3985,20 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
 
             llty = convert(LLVMType, RT; ctx)
 
-            val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
+            if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, #=isforeign=#false) == API.DFT_OUT_DIFF
+                val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
+            else
+                llety = convert(LLVMType, eltype(RT); ctx)
+                ptr_val = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
+                for idx in 1:width
+                    ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                    ld = load!(B, llety, ev)
+                    store!(B, LLVM.null(llety), ev)
+                    val = (width == 1 ) ? ld : insert_value!(B, val, ld, idx-1)
+                end
+            end
+
             al0 = al = emit_allocobj!(B, RT)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, 11))
@@ -4100,24 +4115,33 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             idx+=1
         end
     else
-        if length(actives) >= 1 && !isa(value_type(res), LLVM.StructType) && !isa(value_type(res), LLVM.ArrayType)
-            GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
-            return tapeV
-        end
         Tys = (A <: Active ? eltype(A) : Nothing for A in activity[2+isKWCall:end])
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
             return C_NULL
         end
+        if length(actives) >= 1 && !isa(value_type(res), LLVM.StructType) && !isa(value_type(res), LLVM.ArrayType)
+            GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ", res
+            return tapeV
+        end
 
         idx = 0
-        for v in actives
+        dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig)))))
+        for (v, Ty) in zip(actives, Tys)
+            TT = typetree(Ty, ctx, dl)
+            Typ = C_NULL
             ext = extract_value!(B, res, idx)
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(v)))
-            @assert value_type(ext) == shadowVType
-            Typ = C_NULL
-            API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
+            if value_type(ext) != shadowVType
+                size = sizeof(Ty)
+                align = 0
+                premask = C_NULL
+                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, C_NULL, TT, size, v,           ext, B, align, premask)
+            else
+                @assert value_type(ext) == shadowVType
+                API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
+            end
             idx+=1
         end
     end

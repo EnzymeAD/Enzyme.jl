@@ -129,4 +129,41 @@ end
     @test Enzyme.autodiff(Enzyme.Reverse, q, Active(2.0))[1][1] ≈ 104.0
 end
 
+foo(x::Complex) = 2x
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.ConfigWidth{1},
+    func::Const{typeof(foo)},
+    ::Type{<:Active},
+    x
+)
+    r = func.val(x.val)
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(x.val)
+    else
+        primal = nothing
+    end
+    if EnzymeRules.needs_shadow(config)
+        shadow = zero(r)
+    else
+        shadow = nothing
+    end
+    tape = nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, tape)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.ConfigWidth{1},
+    func::Const{typeof(foo)},
+    dret,
+    tape,
+    y
+)
+    return (dret.val+13.0im,)
+end
+
+@testset "Complex values" begin
+    @test Enzyme.autodiff(Enzyme.Reverse, foo, Active(1.0+3im))[1][1] ≈ 1.0+13.0im
+end
+
 end # ReverseRules
