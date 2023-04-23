@@ -108,6 +108,8 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_f_typeassert", "jl_f_typeassert",
+    "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_backtrace_from_here", "ijl_backtrace_from_here",
@@ -162,6 +164,8 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_f_typeassert", "jl_f_typeassert",
+    "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
     "julia.ptls_states", "julia.write_barrier", "julia.typeof",
     "jl_backtrace_from_here", "ijl_backtrace_from_here",
@@ -3968,9 +3972,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
         if needsTape
             @assert tape != C_NULL
             tape = LLVM.Value(tape)
-            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)])
+            sret = !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret"; ctx)), collect(parameter_attributes(llvmf, 1))))
+            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)+sret+(RT <: Active)])
             if innerTy != value_type(tape)
-                llty = convert(LLVMType, TapeT; ctx)
+                llty = convert(LLVMType, TapeT; ctx, allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 store!(B, tape, al)
@@ -4090,7 +4095,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             normalV = extract_value!(B, res, idx)
             if is_sret(RealRt, ctx)
                 val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
-                store!(B, extract_value!(B, res, 0), val)
+                store!(B, normalV, val)
             else
                 @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
@@ -4102,7 +4107,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             shadowV = extract_value!(B, res, idx)
             if is_sret(RealRt, ctx)
                 dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
-                store!(B, extract_value!(B, res, 1), dval)
+                store!(B, shadowV, dval)
                 shadowV = C_NULL
             else
                 @assert value_type(shadowV) == shadowType
@@ -6307,6 +6312,23 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0; ctx))
+            for u in LLVM.uses(fn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_value(c)
+                if !isa(cf, LLVM.Function)
+                    continue
+                end
+                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                    continue
+                end
+                if operands(c)[1] != fn
+                    continue
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nofree", 0; ctx))
+            end
         end
     end
 
