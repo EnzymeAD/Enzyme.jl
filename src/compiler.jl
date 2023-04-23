@@ -4095,7 +4095,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             normalV = extract_value!(B, res, idx)
             if is_sret(RealRt, ctx)
                 val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
-                store!(B, extract_value!(B, res, 0), val)
+                store!(B, normalV, val)
             else
                 @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
@@ -4107,7 +4107,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             shadowV = extract_value!(B, res, idx)
             if is_sret(RealRt, ctx)
                 dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
-                store!(B, extract_value!(B, res, 1), dval)
+                store!(B, shadowV, dval)
                 shadowV = C_NULL
             else
                 @assert value_type(shadowV) == shadowType
