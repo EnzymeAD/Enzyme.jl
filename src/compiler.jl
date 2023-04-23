@@ -6686,6 +6686,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 end
 
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
+    @show mod
     world = job.world
     rt  = job.config.params.rt
     shadow_init = job.config.params.shadowInit
