@@ -8681,6 +8681,7 @@ function _thunk(job, ctx=nothing, postopt=true)
     if postopt
         post_optimze!(mod, JIT.get_tm())
     end
+    @show mod
     return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
 end
 
