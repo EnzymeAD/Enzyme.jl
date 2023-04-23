@@ -18,6 +18,19 @@ import LLVM: Target, TargetMachine
 
 using Printf
 
+function cpu_name()
+    ccall(:jl_get_cpu_name, String, ())
+end
+
+function cpu_features()
+    @static if Sys.ARCH == :x86_64 ||
+               Sys.ARCH == :x86
+        return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
+    else
+        return ""
+    end
+end
+
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else

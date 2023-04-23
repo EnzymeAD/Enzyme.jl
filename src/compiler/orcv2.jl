@@ -5,7 +5,8 @@ import LLVM:TargetMachine
 
 import GPUCompiler
 import ..Compiler
-import ..Compiler: API
+import ..Compiler: API, cpu_name, cpu_features
+
 
 export get_trampoline
 
@@ -59,11 +60,11 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tempTM = LLVM.JITTargetMachine(;optlevel=optlevel)
+    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel) 
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    tempTM = LLVM.JITTargetMachine(;optlevel)
+    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
 
     if haskey(ENV, "ENABLE_GDBLISTENER")

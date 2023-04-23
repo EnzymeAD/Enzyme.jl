@@ -5,7 +5,7 @@ import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob
 import ..Compiler
-import ..Compiler: API
+import ..Compiler: API, cpu_name, cpu_features
 
 export get_trampoline
 
@@ -25,7 +25,7 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tm[] = LLVM.JITTargetMachine(optlevel=optlevel)
+    tm[] = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tm[], true)
 
     jit[] = OrcJIT(tm[]) # takes ownership of tm
