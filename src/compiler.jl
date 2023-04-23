@@ -5777,6 +5777,8 @@ function zero_allocation(B::LLVM.IRBuilder, jlType, LLVMType, obj, AlignedSize, 
 
     wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(ctx), [value_type(obj), T_int8, value_type(Size)]))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0; ctx))
+    push!(parameter_attributes(wrapper_f, 1), EnumAttribute("nocapture", 0; ctx))
+    push!(parameter_attributes(wrapper_f, 1), EnumAttribute("writeonly", 0; ctx))
     linkage!(wrapper_f, LLVM.API.LLVMInternalLinkage)
     let builder = IRBuilder(ctx)
         entry = BasicBlock(wrapper_f, "entry"; ctx)
@@ -5865,6 +5867,10 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
         if ZI != C_NULL
             unsafe_store!(ZI, zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, #=ZeroAll=#false))
+        else
+            @assert convert(Int64, Count) == 1
+            nobj = pointercast!(B, obj, LLVM.PointerType(LLVMType, addrspace(llvmtype(obj))))
+            zero_single_allocation(B, TT, LLVMType, nobj, #=zeroAll=#false, LLVM.ConstantInt(T_int64, 0), ctx)
         end
         AS = Tracked
     else
