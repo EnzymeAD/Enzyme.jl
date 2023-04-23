@@ -62,7 +62,7 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
         function EnzymeRules.augmented_primal(
             config::EnzymeRules.ConfigWidth{1},
             func::Const{typeof(BLAS.$fname)},
-            RT::Type{<:Union{Const,Active,Duplicated}},
+            RT::Type{<:Union{Const,Active}},
             n::Const{<:Integer},
             X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
