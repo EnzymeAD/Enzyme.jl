@@ -25,7 +25,7 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tm[] = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(). cpu_features(); optlevel)
+    tm[] = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tm[], true)
 
     jit[] = OrcJIT(tm[]) # takes ownership of tm
