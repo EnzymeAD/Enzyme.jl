@@ -2609,6 +2609,10 @@ end
     parent_job = nothing
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
     entry = name(meta.entry)
+   
+    for f in functions(otherMod)
+        permit_inlining!(f)
+    end
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -3012,7 +3016,6 @@ function threadsfor_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
         mode = API.EnzymeGradientUtilsGetMode(gutils)
         world = enzyme_extract_world(LLVM.parent(position(B)))
         entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
-        permit_inlining!(entry)
         push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
         pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}; ctx))
@@ -3060,7 +3063,6 @@ function threadsfor_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         mode = API.EnzymeGradientUtilsGetMode(gutils)
         world = enzyme_extract_world(LLVM.parent(position(B)))
         entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
-        permit_inlining!(entry)
         push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
         pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}; ctx))
@@ -3117,7 +3119,6 @@ function threadsfor_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
     end
         mode = API.EnzymeGradientUtilsGetMode(gutils)
         entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
-        permit_inlining!(entry)
         push!(function_attributes(entry), EnumAttribute("alwaysinline"; ctx))
 
         pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}; ctx))
@@ -7245,7 +7246,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
                         cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{actualRetType}, world)
                         push!(function_attributes(cf), EnumAttribute("alwaysinline", 0; ctx))
-                        permit_inlining!(cf)
                         for shadowv in shadows
                             c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
                             if LLVM.get_subprogram(enzymefn) !== nothing
