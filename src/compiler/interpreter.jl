@@ -102,7 +102,7 @@ function is_primitive_func(@nospecialize(TT))
        ft === typeof(Base.exp10) ||
        ft === typeof(Base.exp2) ||
        ft === typeof(Base.expm1) ||
-       ft === typeof(Base.log) ||
+       ft === typeof(Base.log) || ft === typeof(Base.FastMath.log) ||
        ft === typeof(Base.log1p) ||
        ft === typeof(Base.log2) ||
        ft === typeof(Base.log10) ||

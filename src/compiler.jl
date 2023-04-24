@@ -68,6 +68,7 @@ const known_ops = Dict(
     Base.exp10 => (:exp10, 1),
     Base.FastMath.exp_fast => (:exp, 1),
     Base.log => (:log, 1),
+    Base.FastMath.log => (:log, 1),
     Base.log1p => (:log1p, 1),
     Base.log2 => (:log2, 1),
     Base.log10 => (:log10, 1),
@@ -103,6 +104,7 @@ const known_ops = Dict(
     Base.exp10 => (:exp10, 1),
     Base.FastMath.exp_fast => (:exp, 1),
     Base.log => (:log, 1),
+    Base.FastMath.log => (:log, 1),
     Base.log1p => (:log1p, 1),
     Base.log2 => (:log2, 1),
     Base.log10 => (:log10, 1),
@@ -2746,7 +2748,7 @@ end
                 mi = Base.unsafe_pointer_to_objref(ptr)
             end
             if kind(fattr) == "enzymejl_tapetype"
-                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
                 TapeType = Base.unsafe_pointer_to_objref(ptr)
             end
             if kind(fattr) == "enzymejl_forward"
@@ -2865,7 +2867,7 @@ end
             push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
             permit_inlining!(functions(mod)[adjointnm])
 
-            push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(Int, unsafe_to_pointer(TapeType))); ctx))
+            push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType))); ctx))
         end
 
         if mode == API.DEM_ReverseModePrimal
@@ -3171,7 +3173,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
                        unsafe_to_llvm(Val(width), ctx),
                       ]
 
@@ -3226,7 +3228,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
                        unsafe_to_llvm(Val(width), ctx),
                        unsafe_to_llvm(Val(ModifiedBetween), ctx),
                       ]
@@ -3516,6 +3518,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
             ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
+                @assert !overwritten[end]
                 val = load!(B, arty, val)
             end
             store!(B, val, ptr)
@@ -3597,8 +3600,8 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     sret = is_sret(RealRt, ctx)
     if sret
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1], #=isforeign=#false)
-        needsPrimal = activep == API.DFT_DUP_ARG
-        needsShadowP[] = true
+        needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
+        needsShadowP[] = false
     end
 
     if !needsPrimal && activep == API.DFT_DUP_ARG
@@ -3704,6 +3707,8 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
         return nothing
     end
+    
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
     sret = nothing
     returnRoots = nothing
@@ -3961,6 +3966,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             return C_NULL
         end
     end
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
     needsTape = !GPUCompiler.isghosttype(TapeT) && !Core.Compiler.isconstType(TapeT)
 

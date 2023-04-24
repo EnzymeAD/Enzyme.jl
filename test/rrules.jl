@@ -2,6 +2,7 @@ module ReverseRules
 
 using Enzyme
 using Enzyme: EnzymeRules
+using LinearAlgebra
 using Test
 
 f(x) = x^2
@@ -164,6 +165,56 @@ end
 
 @testset "Complex values" begin
     @test Enzyme.autodiff(Enzyme.Reverse, foo, Active(1.0+3im))[1][1] ≈ 1.0+13.0im
+end
+
+_scalar_dot(x, y) = conj(x) * y
+
+function _dot(X::StridedArray{T}, Y::StridedArray{T}) where {T<:Union{Real,Complex}}
+    return mapreduce(_scalar_dot, +, X, Y)
+end
+
+function augmented_primal(
+    config::ConfigWidth{1},
+    func::Const{typeof(_dot)},
+    ::Type{<:Union{Const,Active}},
+    X::Duplicated{<:StridedArray{T}},
+    Y::Duplicated{<:StridedArray{T}},
+) where {T<:Union{Real,Complex}}
+    r = func.val(X.val, Y.val)
+    primal = needs_primal(config) ? r : nothing
+    shadow = needs_shadow(config) ? zero(r) : nothing
+    tape = (copy(X.val), copy(Y.val))
+    return AugmentedReturn(primal, shadow, tape)
+end
+
+function reverse(
+    ::ConfigWidth{1},
+    ::Const{typeof(_dot)},
+    dret::Union{Active,Type{<:Const}},
+    tape,
+    X::Duplicated{<:StridedArray{T}},
+    Y::Duplicated{<:StridedArray{T}},
+) where {T<:Union{Real,Complex}}
+    if !(dret isa Type{<:Const})
+        Xtape, Ytape = tape
+        X.dval .+= dret.val .* Ytape
+        Y.dval .+= dret.val .* Xtape
+    end
+    return (nothing, nothing)
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/761
+@testset "Correct primal computation for custom `dot`" begin
+    @testset for T in (Float32, Float64, ComplexF32, ComplexF64)
+        n = 10
+        x, y = randn(T, n), randn(T, n);
+        ∂x, ∂y = map(zero, (x, y));
+        val_exp = _dot(x, y)
+        _, val = autodiff(
+            ReverseWithPrimal, _dot, Const, Duplicated(x, ∂x), Duplicated(y, ∂y),
+        )
+        @test val ≈ val_exp
+    end
 end
 
 end # ReverseRules
