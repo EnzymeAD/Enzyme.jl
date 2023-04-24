@@ -180,7 +180,7 @@ end
         attributes = function_attributes(llvmfn)
         push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
         push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(Int, unsafe_to_pointer(TapeType))); ctx))
+        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType))); ctx))
     end
 
         if mode == API.DEM_ReverseModePrimal
