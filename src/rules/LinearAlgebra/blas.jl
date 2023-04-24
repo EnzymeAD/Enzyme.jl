@@ -38,6 +38,7 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:BLAS.$Ttype}
+            RT <: Const && return nothing
             dval = if !(X isa Const) && !(Y isa Const)
                 func.val(n.val, X.dval, incx.val, Y.val, incy.val) +
                 func.val(n.val, X.val, incx.val, Y.dval, incy.val)
@@ -46,16 +47,14 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             elseif !(Y isa Const)
                 func.val(n.val, X.val, incx.val, Y.dval, incy.val)
             else
-                nothing
+                zero(T)
             end
 
-            if RT <: Const
-                return nothing
-            elseif RT <: DuplicatedNoNeed
-                dval === nothing ? zero(T) : dval
+            if RT <: DuplicatedNoNeed
+                return dval
             else
                 val = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-                return Duplicated(val, dval === nothing ? zero(T) : dval)
+                return Duplicated(val, dval)
             end
         end
 
