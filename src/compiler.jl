@@ -3707,6 +3707,8 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
         return nothing
     end
+    
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
     sret = nothing
     returnRoots = nothing
@@ -3964,6 +3966,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
             return C_NULL
         end
     end
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
     needsTape = !GPUCompiler.isghosttype(TapeT) && !Core.Compiler.isconstType(TapeT)
 
