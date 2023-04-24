@@ -1,5 +1,5 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, kwargs...)
+        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, parent_target=nothing, method_table=nothing, kwargs...)
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
@@ -10,12 +10,12 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 
     rt = Core.Compiler.return_type(func, tt, world)
     rt = A{rt}
-    target = Compiler.EnzymeTarget()
+    target = Compiler.EnzymeTarget(parent_target)
     if modifiedBetween === nothing
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType, method_table)
     return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 

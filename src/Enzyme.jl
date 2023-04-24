@@ -9,8 +9,8 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 import EnzymeCore: batch_size
 export batch_size
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
@@ -518,6 +518,38 @@ result, ∂v, ∂A
     
     @assert ReturnShadow
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false))
+end
+
+@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...; parent_job=nothing) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = falses_from_args(Val(1), args...)
+    else
+        ModifiedBetween = ModifiedBetweenT
+    end
+
+    tt    = Tuple{map(eltype, args)...}
+        
+    world = GPUCompiler.codegen_world_age(eltype(FA), tt)
+    
+    @assert ReturnShadow
+    if parent_job !== nothing
+        forward, reverse = Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), Val(ModifiedBetween), #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false))
+        Compiler.get_tape_type(forward)
+    else
+        thunk, rt = Enzyme.Compiler.innerthunk(world, FA, A, Tuple{args...}, #=Split=#API.DEM_ReverseModeGradient, width, ModifiedBetween, #=ReturnPrimal=#ReturnPrimal, #=ShadowInit=#false; parent_job)
+        thunk.TapeType
+    end
 end
 
 """
