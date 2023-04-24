@@ -11,7 +11,8 @@ using Test
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
         @testset for T in (fun == BLAS.dot ? RTs : RCs),
-            (sx, incx) in ((10, 1), ((2, 10), 2)), (sy, incy) in ((10, 1), ((2, 10), 2))
+            (sx, incx) in ((10, 1), ((2, 10), 2)),
+            (sy, incy) in ((10, 1), ((2, 10), 2))
 
             @testset "forward" begin
                 @testset for Tx in (Duplicated, Const),
@@ -57,23 +58,26 @@ using Test
             end
 
             @testset "reverse" begin
+                fun_overwrite_x = (x, y) -> (s = dot(x, y); fill!(x, 0); s)
+                fun_overwrite_y = (x, y) -> (s = dot(x, y); fill!(y, 0); s)
+
                 @testset for Tx in (Duplicated, Const),
                     Ty in (Duplicated, Const),
                     Tret in (Const, Active),
-                    pfun in (identity, pointer)
+                    pfun in (identity, pointer),
+                    f in (fun, fun_overwrite_x, fun_overwrite_y)
 
                     Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
 
                     x, ∂x = ntuple(_ -> randn(T, sx), 2)
                     y, ∂y = ntuple(_ -> randn(T, sy), 2)
                     ∂z = randn(T)
-                    ∂xcopy = copy(∂x)
-                    ∂ycopy = copy(∂y)
+                    xcopy, ycopy, ∂xcopy, ∂ycopy = map(copy, (x, y, ∂x, ∂y))
 
                     x_annot =
-                        Tx <: Const ? Const(pfun(x)) : Duplicated(pfun(x), pfun(∂xcopy))
+                        Tx <: Const ? Const(pfun(x)) : Duplicated(pfun(xcopy), pfun(∂xcopy))
                     y_annot =
-                        Ty <: Const ? Const(pfun(y)) : Duplicated(pfun(y), pfun(∂ycopy))
+                        Ty <: Const ? Const(pfun(y)) : Duplicated(pfun(ycopy), pfun(∂ycopy))
 
                     dexp = FiniteDifferences.j′vp(
                         fdm, (x, y) -> fun(n, x, incx, y, incy), one(T), x, y
