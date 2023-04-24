@@ -130,7 +130,7 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNee
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
     if RT <: Const
-        return nothing
+        return sum(y.val)
     elseif RT <: DuplicatedNoNeed
         return dret 
     else
