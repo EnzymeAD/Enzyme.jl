@@ -11,11 +11,11 @@ using Test
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
         @testset "forward" begin
-            @testset for T in (fun == BLAS.dot ? RTs : RCs),
-                Tret in (Const, Duplicated, DuplicatedNoNeed),
+            @testset for Tret in (Const, Duplicated, DuplicatedNoNeed),
                 Tx in (Const, Duplicated),
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
+                T in (fun == BLAS.dot ? RTs : RCs),
                 (sz, inc) in ((10, 1), ((2, 10), 2))
 
                 Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
@@ -46,17 +46,51 @@ using Test
                     @test only(ret) ≈ dexp
                 end
             end
+
+            @testset for Tret in (BatchDuplicated, BatchDuplicatedNoNeed),
+                T in (fun == BLAS.dot ? RTs : RCs)
+
+                batch_size = 3
+                inc = 1
+                x = randn(T, n)
+                y = randn(T, n)
+                ∂xs = ntuple(_ -> randn(T, n), batch_size)
+                ∂ys = ntuple(_ -> randn(T, n), batch_size)
+                vexp = fun(n, x, inc, y, inc)
+                dexp = map(∂xs, ∂ys) do ∂x, ∂y
+                    FiniteDifferences.jvp(
+                        fdm, (x, y) -> fun(n, x, inc, y, inc), (x, ∂x), (y, ∂y)
+                    )[1]
+                end
+                ret = autodiff(
+                    Forward,
+                    fun,
+                    Tret,
+                    Const(n),
+                    BatchDuplicated(x, ∂xs),
+                    Const(inc),
+                    BatchDuplicated(y, ∂ys),
+                    Const(inc),
+                )
+                if Tret <: BatchDuplicated
+                    v, ds = ret
+                    @test v ≈ vexp
+                else
+                    ds = only(ret)
+                end
+                @test all(map(≈, values(ds), dexp))
+            end
         end
 
         @testset "reverse" begin
             fun_overwrite_x = (x, y) -> (s = dot(x, y); fill!(x, 0); s)
             fun_overwrite_y = (x, y) -> (s = dot(x, y); fill!(y, 0); s)
 
-            @testset for T in (fun == BLAS.dot ? RTs : RCs),
-                Tret in (Const, Active),
+            @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated),
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
+                T in (fun == BLAS.dot ? RTs : RCs),
                 (sz, inc) in ((10, 1), ((2, 10), 2)),
                 f in (fun, fun_overwrite_x, fun_overwrite_y)
 
