@@ -4,6 +4,7 @@ using ..Enzyme
 using LinearAlgebra.BLAS
 
 const ConstOrDuplicated{T} = Union{Const{T},Duplicated{T}}
+const ConstOrBatchDuplicated{T} = Union{ConstOrDuplicated{T},BatchDuplicated{T}}
 
 _safe_similar(x::AbstractArray, n::Integer) = similar(x, n)
 _safe_similar(x::Ptr, n::Integer) = Array{eltype(x)}(undef, n)
@@ -27,35 +28,45 @@ function _maybe_primal_shadow(config, func, args)
     return primal, shadow
 end
 
+_map_tuple(f, xs::Tuple...) = map(f, xs...)
+_map_tuple(f, xs...) = f(xs...)
+
+
 for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasComplex))
     @eval begin
         function EnzymeRules.forward(
             func::Const{typeof(BLAS.$fname)},
-            RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
+            RT::Type{
+                <:Union{
+                    Const,DuplicatedNoNeed,Duplicated,BatchDuplicatedNoNeed,BatchDuplicated
+                },
+            },
             n::Const{<:Integer},
-            X::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
+            X::ConstOrBatchDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incx::Const{<:Integer},
-            Y::ConstOrDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
+            Y::ConstOrBatchDuplicated{<:Union{Ptr{T},AbstractArray{T}}},
             incy::Const{<:Integer},
         ) where {T<:BLAS.$Ttype}
             RT <: Const && return func.val(n.val, X.val, incx.val, Y.val, incy.val)
 
             dval = if !(X isa Const) && !(Y isa Const)
-                func.val(n.val, X.dval, incx.val, Y.val, incy.val) +
-                func.val(n.val, X.val, incx.val, Y.dval, incy.val)
+                _map_tuple(X.dval, Y.dval) do dX, dY
+                    func.val(n.val, dX, incx.val, Y.val, incy.val) +
+                    func.val(n.val, X.val, incx.val, dY, incy.val)
+                end
             elseif !(X isa Const)
-                func.val(n.val, X.dval, incx.val, Y.val, incy.val)
+                _map_tuple(dX -> func.val(n.val, dX, incx.val, Y.val, incy.val), X.dval)
             elseif !(Y isa Const)
-                func.val(n.val, X.val, incx.val, Y.dval, incy.val)
+                _map_tuple(dY -> func.val(n.val, X.val, incx.val, dY, incy.val), Y.dval)
             else
                 zero(T)
             end
 
-            if RT <: DuplicatedNoNeed
+            if RT <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
                 return dval
             else
                 val = func.val(n.val, X.val, incx.val, Y.val, incy.val)
-                return Duplicated(val, dval)
+                return RT(val, dval)
             end
         end
 
