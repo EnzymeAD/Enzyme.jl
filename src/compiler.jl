@@ -3518,6 +3518,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
             ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
+                @assert !overwritten[end]
                 val = load!(B, arty, val)
             end
             store!(B, val, ptr)
@@ -3599,8 +3600,8 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
     sret = is_sret(RealRt, ctx)
     if sret
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1], #=isforeign=#false)
-        needsPrimal = activep == API.DFT_DUP_ARG
-        needsShadowP[] = true
+        needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
+        needsShadowP[] = false
     end
 
     if !needsPrimal && activep == API.DFT_DUP_ARG
