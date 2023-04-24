@@ -3758,7 +3758,8 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     normalV = C_NULL
 
     if RT <: Const
-        if needsPrimal
+        # TODO introduce const-no-need
+        if needsPrimal || true
             if RealRt != fwd_RT
                 emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return
