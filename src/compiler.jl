@@ -3173,7 +3173,7 @@ function newtask_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
                        unsafe_to_llvm(Val(width), ctx),
                       ]
 
@@ -3228,7 +3228,7 @@ function newtask_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1])),
                        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)),
                        LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])),
-                       emit_box_int64!(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
+                       (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[3]))),
                        unsafe_to_llvm(Val(width), ctx),
                        unsafe_to_llvm(Val(ModifiedBetween), ctx),
                       ]
