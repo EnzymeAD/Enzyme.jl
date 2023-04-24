@@ -31,7 +31,6 @@ end
 _map_tuple(f, xs::Tuple...) = map(f, xs...)
 _map_tuple(f, xs...) = f(xs...)
 
-
 for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasComplex))
     @eval begin
         function EnzymeRules.forward(
