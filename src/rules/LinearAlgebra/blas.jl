@@ -21,7 +21,7 @@ function _strided_view(n::Integer, x::AbstractArray, incx::Integer)
 end
 function _strided_view(n::Integer, x::Ptr, incx::Integer)
     ind = range(1; step=incx, length=n)
-    dim = abs(last(ind) - first(ind) + 1)
+    dim = abs(last(ind) - first(ind)) + 1
     y = Base.unsafe_wrap(Array, x, dim)
     return view(y, ind)
 end
