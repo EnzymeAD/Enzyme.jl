@@ -292,7 +292,7 @@ function one_step_forward(state_now, state_old, out_now, out_old, parameters, dt
 
 end
 
-# One difference to note is that`one_step_forward` now returns nothing, but is rather a function of both its input
+# One difference to note is that `one_step_forward` now returns nothing, but is rather a function of both its input
 # and output. Since the output of the function is a vector, we need to have this return nothing for Enzyme to work.
 # Now we can move on to some examples using Enzyme. 
 
@@ -380,15 +380,15 @@ autodiff(Reverse,
 
 @show dstate_now_new
 
-# # What happened? Enzyme is actually taking the computed gradient and acting on what we
-# # give as input to dout_now and dout_old. Checking this, we see
+# What happened? Enzyme is actually taking the computed gradient and acting on what we
+# give as input to `dout_now` and `dout_old`. Checking this, we see
 
 @show 2*dstate_now
 
 # and they match the new results. This exactly matches what we'd expect to happen since 
 # we scaled `dout_now` by two. 
 
-# Example 2: Full sensitivity calculations
+# # Example 2: Full sensitivity calculations
 
 # Now we want to use Enzyme for a bit more than just a single derivative. Let's 
 # say we'd like to understand how sensitive the final temperature of Box One is to the initial 
