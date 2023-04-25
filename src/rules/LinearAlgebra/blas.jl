@@ -16,12 +16,18 @@ function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     return xtape, increment
 end
 
+function _strided_range(n, x, incx)
+    r = range(1; step=abs(incx), length=n)
+    incx < 0 && return reverse(r)
+    return r
+end
+
 function _strided_view(n::Integer, x::AbstractArray, incx::Integer)
-    ind = range(1; step=incx, length=n)
+    ind = _strided_range(n, x, incx)
     return view(x, ind)
 end
 function _strided_view(n::Integer, x::Ptr, incx::Integer)
-    ind = range(1; step=incx, length=n)
+    ind = _strided_range(n, x, incx)
     dim = abs(last(ind) - first(ind)) + 1
     y = Base.unsafe_wrap(Array, x, dim)
     return view(y, ind)
