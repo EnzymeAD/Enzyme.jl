@@ -42,6 +42,14 @@ end
 _map_tuple(f, xs::Tuple...) = map(f, xs...)
 _map_tuple(f, xs...) = f(xs...)
 
+# axpy!(a, conj.(x), y)
+function _aconjxpy!(n, a, x, incx, y, incy)
+    xview = _strided_view(n, x, incx)
+    yview = _strided_view(n, y, incy)
+    yview .+= a .* conj.(xview)
+    return y
+end
+
 for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasComplex))
     @eval begin
         function EnzymeRules.forward(
@@ -129,22 +137,11 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             ret = (nothing, nothing, nothing, nothing, nothing)
             dret isa Type{<:Const} && return ret
 
-            # restore from tape
             Xval, incxval, Yval, incyval = tape
 
-            if fun.val === BLAS.dotu
-                if !(X isa Const)
-                    dXview = _strided_view(n.val, X.dval, incx.val)
-                    dXview .+= conj.(_strided_view(n.val, Yval, incyval)) .* dret.val
-                end
-                if !(Y isa Const)
-                    dYview = _strided_view(n.val, Y.dval, incy.val)
-                    dYview .+= conj.(_strided_view(n.val, Xval, incxval)) .* dret.val
-                end
-            else
-                X isa Const || BLAS.axpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
-                Y isa Const || BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
-            end
+            atransxpy! = fun.val === BLAS.dotu ? _aconjxpy! : BLAS.axpy!
+            X isa Const || atransxpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
+            Y isa Const || atransxpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
 
             return ret
         end
