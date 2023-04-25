@@ -12,7 +12,8 @@ _safe_similar(x::Ptr, n::Integer) = Array{eltype(x)}(undef, n)
 function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     xtape = _safe_similar(x, n)
     BLAS.blascopy!(n, x, incx, xtape, 1)
-    return xtape
+    increment = 1
+    return xtape, increment
 end
 
 function _strided_view(n::Integer, x::AbstractArray, incx::Integer)
@@ -103,22 +104,12 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             )
 
             # build tape
-            if !(RT <: Const)
-                _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-                Xtape = if Xow && !(Y isa Const)
-                    (_strided_tape(n.val, X.val, incx.val), 1)
-                else
-                    (X.val, incx.val)
-                end
-                Ytape = if Yow && !(X isa Const)
-                    (_strided_tape(n.val, Y.val, incy.val), 1)
-                else
-                    (Y.val, incy.val)
-                end
-                tape = (Xtape..., Ytape...)
-            else
-                tape = nothing
-            end
+            _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
+            tape_X = !(RT <: Const) && !(Y isa Const) && Xow
+            tape_Y = !(RT <: Const) && !(X isa Const) && Yow
+            Xtape = tape_X ? _strided_tape(n.val, X.val, incx.val) : (X.val, incx.val)
+            Ytape = tape_Y ? _strided_tape(n.val, Y.val, incy.val) : (Y.val, incy.val)
+            tape = (Xtape, Ytape)
 
             return EnzymeRules.AugmentedReturn(primal, shadow, tape)
         end
@@ -137,7 +128,7 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             ret = (nothing, nothing, nothing, nothing, nothing)
             dret isa Type{<:Const} && return ret
 
-            Xval, incxval, Yval, incyval = tape
+            (Xval, incxval), (Yval, incyval) = tape
 
             atransxpy! = fun.val === BLAS.dotu ? _aconjxpy! : BLAS.axpy!
             X isa Const || atransxpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
