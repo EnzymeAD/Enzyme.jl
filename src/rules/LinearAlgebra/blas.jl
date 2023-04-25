@@ -15,6 +15,17 @@ function _strided_tape(n::Integer, x::Union{AbstractArray,Ptr}, incx::Integer)
     return xtape
 end
 
+function _strided_view(n::Integer, x::AbstractArray, incx::Integer)
+    ind = range(1; step=incx, length=n)
+    return view(x, ind)
+end
+function _strided_view(n::Integer, x::Ptr, incx::Integer)
+    ind = range(1; step=incx, length=n)
+    dim = abs(last(ind) - first(ind) + 1)
+    y = Base.unsafe_wrap(Array, x, dim)
+    return view(y, ind)
+end
+
 function _maybe_primal_shadow(config, func, args)
     needs_primal = EnzymeRules.needs_primal(config)
     needs_shadow = EnzymeRules.needs_shadow(config)
@@ -86,21 +97,17 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             # build tape
             if !(RT <: Const)
                 _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
-                if Xow || BLAS.$fname === BLAS.dotu
-                    Xtape = _strided_tape(n.val, X.val, incx.val)
+                Xtape = if Xow && !(Y isa Const)
+                    (_strided_tape(n.val, X.val, incx.val), 1)
                 else
-                    Xtape = nothing
+                    (X.val, incx.val)
                 end
-                if Yow || BLAS.$fname === BLAS.dotu
-                    Ytape = _strided_tape(n.val, Y.val, incy.val)
+                Ytape = if Yow && !(X isa Const)
+                    (_strided_tape(n.val, Y.val, incy.val), 1)
                 else
-                    Ytape = nothing
+                    (Y.val, incy.val)
                 end
-                if BLAS.$fname === BLAS.dotu
-                    conj!(Xtape)
-                    conj!(Ytape)
-                end
-                tape = (Xtape, Ytape)
+                tape = (Xtape..., Ytape...)
             else
                 tape = nothing
             end
@@ -110,7 +117,7 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
 
         function EnzymeRules.reverse(
             config::EnzymeRules.ConfigWidth{1},
-            ::Const{typeof(BLAS.$fname)},
+            fun::Const{typeof(BLAS.$fname)},
             dret::Union{Active,Type{<:Const}},
             tape,
             n::Const{<:Integer},
@@ -123,12 +130,21 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             dret isa Type{<:Const} && return ret
 
             # restore from tape
-            (Xtape, Ytape) = tape
-            (Xval, incxval) = Xtape === nothing ? (X.val, incx.val) : (Xtape, 1)
-            (Yval, incyval) = Ytape === nothing ? (Y.val, incy.val) : (Ytape, 1)
+            Xval, incxval, Yval, incyval = tape
 
-            X isa Const || BLAS.axpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
-            Y isa Const || BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
+            if fun.val === BLAS.dotu
+                if !(X isa Const)
+                    dXview = _strided_view(n.val, X.dval, incx.val)
+                    dXview .+= conj.(_strided_view(n.val, Yval, incyval)) .* dret.val
+                end
+                if !(Y isa Const)
+                    dYview = _strided_view(n.val, Y.dval, incy.val)
+                    dYview .+= conj.(_strided_view(n.val, Xval, incxval)) .* dret.val
+                end
+            else
+                X isa Const || BLAS.axpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
+                Y isa Const || BLAS.axpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
+            end
 
             return ret
         end
