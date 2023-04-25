@@ -16,7 +16,7 @@ using Test
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
                 T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 10), 2))
+                (sz, inc) in ((10, 1), ((2, 20), -2))
 
                 Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
 
@@ -91,7 +91,7 @@ using Test
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
                 T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 10), 2)),
+                (sz, inc) in ((10, 1), ((2, 20), -2)),
                 f in (fun, fun_overwrite_x, fun_overwrite_y)
 
                 Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
