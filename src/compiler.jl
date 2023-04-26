@@ -378,7 +378,7 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::
             bitcast!(B, pgcstack, T_ppjlvalue),
             [LLVM.ConstantInt(current_task_offset(); ctx)])
         ptls_field = inbounds_gep!(B,
-            eltype(value_type(ct)),
+            T_pjlvalue,
             ct, [LLVM.ConstantInt(current_ptls_offset(); ctx)])
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
@@ -1415,7 +1415,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
             push!(vals, ev)
             if tape !== nothing
                 idx = LLVM.Value[LLVM.ConstantInt(0; ctx), LLVM.ConstantInt((i-1)*Int(width) + w-1; ctx)]
-                ev = addrspacecast!(B, ev, LLVM.PointerType(eltype(value_type(ev)), 11))
+                ev = addrspacecast!(B, ev, is_opaque(value_type(ev)) ? LLVM.PointerType(11; ctx) : LLVM.PointerType(eltype(value_type(ev)), 11))
                 ev = emit_pointerfromobjref!(B, ev)
                 ev = ptrtoint!(B, ev, convert(LLVMType, Int; ctx))
                 LLVM.store!(B, ev, LLVM.inbounds_gep!(B, SNT, shadow, idx))
@@ -1922,7 +1922,7 @@ function common_jl_getfield_rev(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
             shadowout = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, orig, B), B))
 			callval = LLVM.called_value(orig)
 			callval = first(operands(callval))::LLVM.Function
-        	funcT = eltype(value_type(callval)::LLVM.PointerType)::LLVM.FunctionType
+            funcT = called_type(orig)
 			setF = get_function!(LLVM.parent(callval), "jl_f_setfield", funcT)
 			setF = LLVM.const_pointercast(setF, LLVM.PointerType(LLVM.FunctionType(value_type(orig), LLVM.LLVMType[]; vararg=true)))
 
@@ -3411,7 +3411,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     	returnRoots = deserves_rooting(lRT)
     end
 
-	jlargs = classify_arguments(mi.specTypes, eltype(value_type(called)), sret, returnRoots)
+	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots)
 
     op_idx = 1 + sret + returnRoots
 
@@ -4873,7 +4873,7 @@ function jl_array_grow_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
         called_value = origops[end]
-        funcT = eltype(value_type(called_value)::LLVM.PointerType)::LLVM.FunctionType
+        funcT = called_type(orig)
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         delF, fty = get_function!(mod, "jl_array_del_end", funcT)
 
@@ -4922,7 +4922,7 @@ function jl_array_del_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         width = API.EnzymeGradientUtilsGetWidth(gutils)
 
         called_value = origops[end]
-        funcT = eltype(value_type(called_value)::LLVM.PointerType)::LLVM.FunctionType
+        funcT = called_type(orig)
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
         delF, fty = get_function!(mod, "jl_array_grow_end", funcT)
 
@@ -6652,7 +6652,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     	returnRoots = deserves_rooting(lRT)
     end
 
-    jlargs = classify_arguments(mi.specTypes, eltype(value_type(called)), sret, returnRoots)
+    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
@@ -7559,7 +7559,7 @@ end
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
     ctx = context(mod)
-    entry_ft = eltype(value_type(entry_f)::LLVM.PointerType)::LLVM.FunctionType
+    entry_ft = LLVM.function_type(entry_f)
 
     RT = LLVM.return_type(entry_ft)
 
@@ -8162,7 +8162,7 @@ end
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
             f = functions(mod)[fname]
-            if eltype(value_type(f)) != ftyp
+            if function_type(f) != ftyp
                 continue
             end
             attributes = function_attributes(f)
