@@ -179,7 +179,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
-    
+
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f.val, tt)
@@ -311,9 +311,9 @@ f(x) = x*x
     else
         A
     end
-    
+
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
-    
+
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
 
@@ -336,9 +336,9 @@ code, as well as high-order differentiation.
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        
+
     world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
-    
+
     if A isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
         rt = A{rt}
@@ -352,7 +352,7 @@ code, as well as high-order differentiation.
     end
 
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
-    
+
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     @assert primal_ptr === nothing
     thunk = Compiler.CombinedAdjointThunk{FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
@@ -396,9 +396,9 @@ code, as well as high-order differentiation.
         A
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    
+
     world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
-    
+
     if RT isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
         rt = RT{rt}
@@ -418,7 +418,7 @@ code, as well as high-order differentiation.
     ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
-    
+
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
     thunk = Compiler.ForwardModeThunk{FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
@@ -487,7 +487,7 @@ forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Acti
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -513,9 +513,9 @@ result, ∂v, ∂A
     end
 
     tt    = Tuple{map(eltype, args)...}
-        
+
     world = GPUCompiler.codegen_world_age(eltype(FA), tt)
-    
+
     @assert ReturnShadow
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false))
 end
@@ -577,9 +577,9 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     tt    = Tuple{map(eltype, args)...}
-        
+
     world = GPUCompiler.codegen_world_age(eltype(FA), tt)
-    
+
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false))
 end
 
@@ -619,7 +619,7 @@ forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, Const{typeof(
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -646,7 +646,7 @@ result, ∂v, ∂A
 
     @assert ReturnShadow
     TT = Tuple{args...}
-   
+
     primal_tt = Tuple{map(eltype, args)...}
     world = GPUCompiler.codegen_world_age(eltype(FA), primal_tt)
 
@@ -926,7 +926,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 """
 @inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val}
     num = ((n_out_val + chunk - 1) ÷ chunk)
-    
+
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -939,7 +939,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     FA = Const{Core.Typeof(f)}
     World = Val(nothing)
     primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
-    
+
     if num * chunk == n_out_val
         last_size = chunk
         primal2, adjoint2 = primal, adjoint
@@ -989,5 +989,7 @@ end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
+# Precompile the init
+# Compiler.__init__()
 
 end # module
