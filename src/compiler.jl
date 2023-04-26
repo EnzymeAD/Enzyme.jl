@@ -7972,7 +7972,7 @@ end
             nothing
         end
 
-        foundTys[k_name] = (eltype(value_type(llvmfn)), mi)
+        foundTys[k_name] = (LLVM.function_type(llvmfn), mi)
         if has_custom_rule
             handleCustom("enzyme_custom", [StringAttribute("enzyme_preserve_primal", "*"; ctx)])
             continue
@@ -8092,7 +8092,7 @@ end
 
     if must_wrap
         llvmfn = primalf
-        FT = eltype(value_type(llvmfn)::LLVM.PointerType)::LLVM.FunctionType
+        FT = LLVM.function_type(llvmfn)
 
         wrapper_f = LLVM.Function(mod, safe_name(LLVM.name(llvmfn)*"mustwrap"), FT)
 
