@@ -990,6 +990,6 @@ end
 end
 
 # Precompile the init
-# Compiler.__init__()
+Compiler.__init__()
 
 end # module
