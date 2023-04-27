@@ -134,4 +134,21 @@ end
     @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
 
+foo(x) = 2x;
+
+function EnzymeRules.forward(
+    func::Const{typeof(foo)},
+    RT::Type{<:Union{Duplicated,BatchDuplicated}},
+    x::Union{Duplicated,BatchDuplicated},
+)
+    return RT(func.val(x.val), map(func.val, x.dval))
+end
+
+@testset "Batch complex" begin
+     res = autodiff(Forward, foo, BatchDuplicated, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))  # errors, see below
+     @test res[1] ≈ 0.2 + 0.0im
+     @test res[2][1] ≈ 0.4 + 0.0im
+     @test res[2][2] ≈ 0.6 + 0.0im
+end
+
 end # module ForwardRules
