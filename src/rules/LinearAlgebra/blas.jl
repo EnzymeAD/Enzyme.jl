@@ -137,7 +137,8 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             (Xval, incxval), (Yval, incyval) = tape
 
             atransxpy! = fun.val === BLAS.dotu ? _aconjxpy! : BLAS.axpy!
-            X isa Const || atransxpy!(n.val, dret.val, Yval, incyval, X.dval, incx.val)
+            dval_X = fun.val === BLAS.dotu ? dret.val : conj(dret.val)
+            X isa Const || atransxpy!(n.val, dval_X, Yval, incyval, X.dval, incx.val)
             Y isa Const || atransxpy!(n.val, dret.val, Xval, incxval, Y.dval, incy.val)
 
             return ret
