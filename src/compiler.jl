@@ -3562,7 +3562,13 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
             ptr = gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64; ctx), 0), LLVM.ConstantInt(LLVM.IntType(32; ctx), 0)])
             if value_type(val) != eltype(value_type(ptr))
                 val = load!(B, arty, val)
-                ival = load!(B, sarty, ival)
+                ptr_val = ival
+                ival = UndefValue(sarty)
+                for idx in 1:width
+                    ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                    ld = load!(B, arty, ev)
+                    ival = (width == 1 ) ? ld : insert_value!(B, ival, ld, idx-1)
+                end
             end
             store!(B, val, ptr)
 
@@ -3787,8 +3793,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
                 return
             end
             if is_sret(RealRt, ctx)
-                dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
-                store!(B, res, dval)
+                dval_ptr = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                for idx in 1:width
+                    ev = (width == 1) ? dval : extract_value!(B, dval, idx-1)
+                    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx-1)
+                    store!(B, res, pev)
+                end
             else
                 shadowV = res.ref
             end
@@ -3804,9 +3814,15 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
             end
             if is_sret(RealRt, ctx)
                 val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, operands(orig)[1]))
-                dval = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
                 store!(B, extract_value!(B, res, 0), val)
-                store!(B, extract_value!(B, res, 1), dval)
+                
+                dval_ptr = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, operands(orig)[1], B))
+                dval = extract_value!(B, res, 1)
+                for idx in 1:width
+                    ev = (width == 1) ? dval : extract_value!(B, dval, idx-1)
+                    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx-1)
+                    store!(B, ev, pev)
+                end
             else
                 normalV = extract_value!(B, res, 0).ref
                 shadowV = extract_value!(B, res, 1).ref
