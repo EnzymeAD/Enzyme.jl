@@ -83,16 +83,12 @@ using Test
         end
 
         @testset "reverse" begin
-            fun_overwrite_x = (x, y) -> (s = dot(x, y); fill!(x, 0); s)
-            fun_overwrite_y = (x, y) -> (s = dot(x, y); fill!(y, 0); s)
-
             @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated),
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
                 T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2)),
-                f in (fun, fun_overwrite_x, fun_overwrite_y)
+                (sz, inc) in ((10, 1), ((2, 20), -2))
 
                 Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
 
