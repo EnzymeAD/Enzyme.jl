@@ -110,7 +110,7 @@ for (fname, Ttype) in ((:dot, :BlasReal), (:dotu, :BlasComplex), (:dotc, :BlasCo
             )
 
             # build tape
-            _, _, Xow, _, Yow = EnzymeRules.overwritten(config)
+            _, Xow, _, Yow, _ = EnzymeRules.overwritten(config)
             tape_X = !(RT <: Const) && !(Y isa Const) && Xow
             tape_Y = !(RT <: Const) && !(X isa Const) && Yow
             Xtape = tape_X ? _strided_tape(n.val, X.val, incx.val) : (X.val, incx.val)
