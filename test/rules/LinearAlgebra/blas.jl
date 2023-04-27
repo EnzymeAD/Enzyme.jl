@@ -83,12 +83,20 @@ using Test
         end
 
         @testset "reverse" begin
+            function fun_overwrite!(n, x, incx, y, incy)
+                d = fun(n, x, incx, y, incy)
+                x[1] = 0
+                y[1] = 0
+                return d
+            end
+
             @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated),
                 Ty in (Const, Duplicated),
                 pfun in (identity, pointer),
                 T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2))
+                (sz, inc) in ((10, 1), ((2, 20), -2)),
+                f in (pfun === identity ? (fun, fun_overwrite!) : (fun,))
 
                 Tx <: Const && Ty <: Const && !(Tret <: Const) && continue
 
@@ -111,21 +119,25 @@ using Test
                 )
                 fwd, rev = autodiff_thunk(
                     ReverseSplitWithPrimal,
-                    Const{typeof(fun)},
+                    Const{typeof(f)},
                     Tret,
                     map(typeof, activities)...,
                 )
-                tape, val, shadow_val = fwd(Const(fun), activities...)
+                tape, val, shadow_val = fwd(Const(f), activities...)
                 if Tret <: Const
-                    dval, = rev(Const(fun), activities..., tape)
+                    dval, = rev(Const(f), activities..., tape)
                 else
-                    dval, = rev(Const(fun), activities..., dret, tape)
+                    dval, = rev(Const(f), activities..., dret, tape)
                 end
 
                 @test all(isnothing, dval)
                 @test val ≈ vexp
-                @test ∂xcopy ≈ dexp[1] * !(Tx <: Const || Tret <: Const) + ∂x
-                @test ∂ycopy ≈ dexp[2] * !(Ty <: Const || Tret <: Const) + ∂y
+                @test ∂xcopy ≈
+                    dexp[1] .* !(Tx <: Const || Tret <: Const) .+
+                      ∂x .* ((Tx <: Const) .| (x .== xcopy))
+                @test ∂ycopy ≈
+                    dexp[2] .* !(Ty <: Const || Tret <: Const) .+
+                      ∂y .* ((Ty <: Const) .| (y .== ycopy))
             end
         end
     end
