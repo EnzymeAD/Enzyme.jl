@@ -101,22 +101,26 @@ using Test
                     Tx <: Const ? Const(pfun(x)) : Duplicated(pfun(xcopy), pfun(∂xcopy))
                 y_annot =
                     Ty <: Const ? Const(pfun(y)) : Duplicated(pfun(ycopy), pfun(∂ycopy))
+                activities = (Const(n), x_annot, Const(inc), y_annot, Const(inc))
 
                 vexp = fun(n, x, inc, y, inc)
+                dret = randn(typeof(vexp))
+
                 dexp = FiniteDifferences.j′vp(
-                    fdm, (x, y) -> fun(n, x, inc, y, inc), one(T), x, y
+                    fdm, (x, y) -> fun(n, x, inc, y, inc), dret, x, y
                 )
-                ret = autodiff(
-                    ReverseWithPrimal,
-                    fun,
+                fwd, rev = autodiff_thunk(
+                    ReverseSplitWithPrimal,
+                    Const{typeof(fun)},
                     Tret,
-                    Const(n),
-                    x_annot,
-                    Const(inc),
-                    y_annot,
-                    Const(inc),
+                    map(typeof, activities)...,
                 )
-                dval, val = ret
+                tape, val, shadow_val = fwd(Const(fun), activities...)
+                if Tret <: Const
+                    dval, = rev(Const(fun), activities..., tape)
+                else
+                    dval, = rev(Const(fun), activities..., dret, tape)
+                end
 
                 @test all(isnothing, dval)
                 @test val ≈ vexp
