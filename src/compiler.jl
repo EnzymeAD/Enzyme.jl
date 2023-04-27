@@ -6885,6 +6885,26 @@ function annotate!(mod, mode)
         end
     end
 
+    blas_types = ("s", "d")
+    blas_readonly = ("dot", "asum", "nrm2", "amax")
+    blas_argmemonly = ("scal", "axpy", "copy", "swap", "gemv", "ger", "spmv", "spr", "gbmv", "sbmv", "trmv", "trsv", "tbmv", "tbsv", "gemm", "symm", "trmm", "trsm", "syrk", "syr2k")
+    blas_endings = ("_", "_64_")
+    blas_fncs_ro = [(x*y*z) for x in blas_types for y in blas_readonly for z in blas_endings]
+    blas_fncs_mo = [(x*y*z) for x in blas_types for y in blas_argmemonly for z in blas_endings]
+    for fname in blas_fncs_ro
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
+            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
+        end
+    end
+    for fname in blas_fncs_mo
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
+        end
+    end
+
     for fname in ("jl_f_getfield","ijl_f_getfield","jl_get_nth_field_checked","ijl_get_nth_field_checked")
         if haskey(fns, fname)
             fn = fns[fname]
@@ -8398,66 +8418,66 @@ end
 
     primalf = meta.entry
     check_ir(job, mod)
-    if API.EnzymeBitcodeReplacement(mod) != 0
-        ModulePassManager() do pm
-            instruction_combining!(pm)
-            run!(pm, mod)
-        end
-        toremove = []
-        for f in functions(mod)
-            if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline"; ctx)), collect(function_attributes(f))))
-                continue
-            end
-            if !any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(f))))
-                push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
-                push!(toremove, name(f))
-            end
-            todo = LLVM.CallInst[]
-            for u in LLVM.uses(f)
-                ci = LLVM.user(u)
-                if isa(ci, LLVM.CallInst) && called_value(ci) == f
-                    push!(todo, ci)
-                end
-            end
-            for ci in todo
-                b = IRBuilder(ctx)
-                position!(b, ci)
-                args = collect(collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)])
-                nc = call!(b, LLVM.function_type(f), f, args)
-                replace_uses!(ci, nc)
-                LLVM.API.LLVMInstructionEraseFromParent(ci)
-            end
-        end
+    # if API.EnzymeBitcodeReplacement(mod) != 0
+    #     ModulePassManager() do pm
+    #         instruction_combining!(pm)
+    #         run!(pm, mod)
+    #     end
+    #     toremove = []
+    #     for f in functions(mod)
+    #         if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline"; ctx)), collect(function_attributes(f))))
+    #             continue
+    #         end
+    #         if !any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(f))))
+    #             push!(function_attributes(f), EnumAttribute("returns_twice"; ctx))
+    #             push!(toremove, name(f))
+    #         end
+    #         todo = LLVM.CallInst[]
+    #         for u in LLVM.uses(f)
+    #             ci = LLVM.user(u)
+    #             if isa(ci, LLVM.CallInst) && called_value(ci) == f
+    #                 push!(todo, ci)
+    #             end
+    #         end
+    #         for ci in todo
+    #             b = IRBuilder(ctx)
+    #             position!(b, ci)
+    #             args = collect(collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)])
+    #             nc = call!(b, LLVM.function_type(f), f, args)
+    #             replace_uses!(ci, nc)
+    #             LLVM.API.LLVMInstructionEraseFromParent(ci)
+    #         end
+    #     end
 
-        for fname in ("cblas_xerbla",)
-            if haskey(functions(mod), fname)
-                f = functions(mod)[fname]
-                if isempty(LLVM.blocks(f))
-                    entry = BasicBlock(f, "entry"; ctx)
-                    b = IRBuilder(ctx)
-                    position!(b, entry)
-                    emit_error(b, nothing, "BLAS Error")
-                    ret!(b)
-                end
-            end
-        end
+    #     for fname in ("cblas_xerbla",)
+    #         if haskey(functions(mod), fname)
+    #             f = functions(mod)[fname]
+    #             if isempty(LLVM.blocks(f))
+    #                 entry = BasicBlock(f, "entry"; ctx)
+    #                 b = IRBuilder(ctx)
+    #                 position!(b, entry)
+    #                 emit_error(b, nothing, "BLAS Error")
+    #                 ret!(b)
+    #             end
+    #         end
+    #     end
 
-        ModulePassManager() do pm
-            always_inliner!(pm)
-            run!(pm, mod)
-        end
-        for fname in toremove
-            if haskey(functions(mod), fname)
-                f = functions(mod)[fname]
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
-            end
-        end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
-        ModulePassManager() do pm
-            global_optimizer!(pm)
-            run!(pm, mod)
-        end
-    end
+    #     ModulePassManager() do pm
+    #         always_inliner!(pm)
+    #         run!(pm, mod)
+    #     end
+    #     for fname in toremove
+    #         if haskey(functions(mod), fname)
+    #             f = functions(mod)[fname]
+    #             LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
+    #         end
+    #     end
+    #     GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
+    #     ModulePassManager() do pm
+    #         global_optimizer!(pm)
+    #         run!(pm, mod)
+    #     end
+    # end
 
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
