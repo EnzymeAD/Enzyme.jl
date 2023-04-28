@@ -6680,6 +6680,10 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         op_idx = arg.codegen.i
         rest = typetree(arg.typ, ctx, dl)
         if arg.cc == GPUCompiler.BITS_REF
+            # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+            # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+            # aka the next field after this in the bigger object isn't guaranteed to also be the same.
+            shift!(rest, dl, 0, sizeof(arg.typ), 0)
             merge!(rest, TypeTree(API.DT_Pointer, ctx))
             only!(rest, -1)
         else
