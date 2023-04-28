@@ -7167,10 +7167,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     T_ret = returnRoots ? T_void : jltype
     FT = LLVM.FunctionType(T_ret, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
-    sfn = LLVM.get_subprogram(enzymefn)
-    if sfn !== nothing
-        LLVM.set_subprogram!(llvm_f, sfn)
-    end
+    # sfn = LLVM.get_subprogram(enzymefn)
+    # if sfn !== nothing
+    #     LLVM.set_subprogram!(llvm_f, sfn)
+    # end
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
