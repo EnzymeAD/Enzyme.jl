@@ -240,6 +240,69 @@ function fix_decayaddr!(mod::LLVM.Module)
     return nothing
 end
 
+function propagate_returned!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+
+    tofinalize = LLVM.Function[]
+    for fn in functions(mod)
+        if isempty(blocks(fn))
+            continue
+        end
+        attrs = collect(function_attributes(fn))
+        if any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) 
+            continue
+        end
+        argn = nothing
+        for i in 1:length(parameters(fn))
+            if any(kind(attr) == kind(EnumAttribute("returned"; ctx)) for attr in collect(parameter_attributes(fn, i)))
+                argn = i
+            end
+        end
+        if argn === nothing
+            continue
+        end
+        illegalUse = linkage(fn) != LLVM.API.LLVMInternalLinkage
+        for u in LLVM.uses(fn)
+            un = LLVM.user(u)
+            if !isa(un, LLVM.CallInst)
+                illegalUse = true
+                continue
+            end
+            ops = collect(operands(un))[1:end-1]
+            bad = false
+            for op in ops
+                if op == fn
+                    bad = true
+                    break
+                end
+            end
+            if bad
+                illegalUse = true
+                continue
+            end
+            LLVM.replace_uses!(un, ops[argn])
+        end
+        if !illegalUse
+            push!(tofinalize, fn)
+        end
+    end
+    for fn in tofinalize
+        try
+            nfn = LLVM.Function(API.EnzymeCloneFunctionWithoutReturn(fn))
+            todo = LLVM.CallInst[]
+            for u in LLVM.uses(fn)
+                un = LLVM.user(u)
+                push!(todo, un)
+            end
+            for un in todo
+                API.EnzymeSetCalledFunction(un, nfn)
+            end
+            unsafe_delete!(mod, fn)
+        catch
+            break
+        end
+    end
+end
 function detect_writeonly!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
     for f in functions(mod)
@@ -403,6 +466,14 @@ end
         end
     end
     ModulePassManager() do pm
+        API.EnzymeAddAttributorLegacyPass(pm)
+        run!(pm, mod)
+    end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end

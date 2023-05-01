@@ -201,6 +201,8 @@ const CustomReversePass = Ptr{Cvoid}
 EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomAugmentedForwardPass, CustomReversePass), name, fwdhandle, revhandle)
 EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall((:EnzymeRegisterFwdCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass), name, fwdhandle)
 
+EnzymeSetCalledFunction(ci::LLVM.CallInst, fn::LLVM.Function) = ccall((:EnzymeSetCalledFunction, libEnzyme), Cvoid, (LLVMValueRef, LLVMValueRef), ci, fn)
+EnzymeCloneFunctionWithoutReturn(fn::LLVM.Function) = ccall((:EnzymeCloneFunctionWithoutReturn, libEnzyme), LLVMValueRef, (LLVMValueRef,), fn)
 EnzymeGetShadowType(width, T) = ccall((:EnzymeGetShadowType, libEnzyme), LLVMTypeRef, (UInt64,LLVMTypeRef), width, T)
 
 EnzymeGradientUtilsGetMode(gutils) = ccall((:EnzymeGradientUtilsGetMode, libEnzyme), CDerivativeMode, (EnzymeGradientUtilsRef,), gutils)
