@@ -6680,6 +6680,12 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         op_idx = arg.codegen.i
         rest = typetree(arg.typ, ctx, dl)
         if arg.cc == GPUCompiler.BITS_REF
+            # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+            # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+            # aka the next field after this in the bigger object isn't guaranteed to also be the same.
+            if allocatedinline(arg.typ)
+                shift!(rest, dl, 0, sizeof(arg.typ), 0)
+            end
             merge!(rest, TypeTree(API.DT_Pointer, ctx))
             only!(rest, -1)
         else
@@ -7167,10 +7173,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     T_ret = returnRoots ? T_void : jltype
     FT = LLVM.FunctionType(T_ret, T_wrapperargs)
     llvm_f = LLVM.Function(mod, safe_name(LLVM.name(enzymefn)*"wrap"), FT)
-    sfn = LLVM.get_subprogram(enzymefn)
-    if sfn !== nothing
-        LLVM.set_subprogram!(llvm_f, sfn)
-    end
+    API.EnzymeCloneFunctionDISubprogramInto(llvm_f, enzymefn)
     dl = datalayout(mod)
 
     params = [parameters(llvm_f)...]
@@ -7253,8 +7256,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
 
         val = call!(builder, LLVM.function_type(enzymefn), enzymefn, realparms)
-        if LLVM.get_subprogram(enzymefn) !== nothing
-            metadata(val)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(enzymefn) )
+        if LLVM.get_subprogram(llvm_f) !== nothing
+            metadata(val)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(llvm_f) )
         end
 
         if Mode == API.DEM_ReverseModePrimal
@@ -7284,8 +7287,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                         push!(function_attributes(cf), EnumAttribute("alwaysinline", 0; ctx))
                         for shadowv in shadows
                             c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
-                            if LLVM.get_subprogram(enzymefn) !== nothing
-                                metadata(c)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(enzymefn) )
+                            if LLVM.get_subprogram(llvm_f) !== nothing
+                                metadata(c)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(llvm_f) )
                             end
                         end
                     end
