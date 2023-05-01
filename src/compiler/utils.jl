@@ -1,5 +1,5 @@
 
-function get_function!(mod::LLVM.Module, name, FT::LLVM.FunctionType, attrs=[])
+function get_function!(mod::LLVM.Module, name::AbstractString, FT::LLVM.FunctionType, attrs=[])
     if haskey(functions(mod), name)
         F = functions(mod)[name]
         PT = LLVM.PointerType(FT)
