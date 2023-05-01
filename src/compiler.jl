@@ -6771,6 +6771,10 @@ function annotate!(mod, mode)
                     continue
                 end
                 cf = LLVM.called_value(c)
+                if cf == fn
+                    LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0; ctx))
+                    LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("inaccessiblememonly", 0; ctx))
+                end
                 if !isa(cf, LLVM.Function)
                     continue
                 end
