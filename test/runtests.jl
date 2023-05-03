@@ -1386,13 +1386,27 @@ end
        x::Float64
     end
 
-    function gf(v::MyType, fld)
+    getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
+
+    function gf(v::MyType, fld::Symbol)
        x = getfield(v, fld)
        x = x::Float64
        2 * x
     end
 
-    function gf2(v::MyType, fld, fld2)
+    function gf(v::MyType, fld::Integer)
+       x = getfield_idx(v, fld)
+       x = x::Float64
+       2 * x
+    end
+
+    function gf2(v::MyType, fld::Integer, fld2::Integer)
+       x = getfield_idx(v, fld)
+       y = getfield_idx(v, fld2)
+       x + y
+    end
+
+    function gf2(v::MyType, fld::Symbol, fld2::Symbol)
        x = getfield(v, fld)
        y = getfield(v, fld2)
        x + y
@@ -1405,6 +1419,15 @@ end
     @test mx.x ≈ 3.0
     @test dx.x ≈ 2.0
 
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+
     mx = MyType(3.0)
     dx = MyType(0.0)
 
@@ -1414,15 +1437,38 @@ end
 
     mx = MyType(3.0)
     dx = MyType(0.0)
-    dx2 = MyType(0.0)
 
-    function forbatch(v, fld, out)
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(0), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+    function forbatch(v, fld::Symbol, out)
         x = getfield(v, fld)
         x = x::Float64
         out[] = 2 * x
         nothing
     end
+    function forbatch(v, fld::Integer, out)
+        x = getfield_idx(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
     Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(:x), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(0), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
     @test mx.x ≈ 3.0
     @test dx.x ≈ 2.0
     @test dx2.x ≈ 6.28
