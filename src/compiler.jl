@@ -1935,15 +1935,7 @@ getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-
-    func = if typeof(symname) <: Integer
-        getfield_idx
-    else
-        getfield
-    end
-
-    res = func(dptr, symname)
-
+    res = getfield(dptr, symname)
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
@@ -1955,34 +1947,56 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
         if length(dptrs) == 0
             return res
         else
-            return (res, (func(dv, symname) for dv in dptrs)...)
+            return (res, (getfield(dv, symname) for dv in dptrs)...)
+        end
+    end
+end
+
+function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
+    res = getfield_idx(dptr, symname)
+    RT = Core.Typeof(res)
+    if active_reg(RT)
+        if length(dptrs) == 0
+            return Ref{RT}(0)
+        else
+            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+        end
+    else
+        if length(dptrs) == 0
+            return res
+        else
+            return (res, (getfield(dv, symname) for dv in dptrs)...)
         end
     end
 end
 
 function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    func = if typeof(symname) <: Integer
-        getfield_idx
-    else
-        getfield
-    end
-
-    sfunc = if typeof(symname) <: Integer
-        setfield_idx
-    else
-        setfield!
-    end
-
-    cur = func(dptr, symname)
+    cur = getfield(dptr, symname)
 
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            sfunc(dptr, symname, cur+dret[])
+            setfield!(dptr, symname, cur+dret[])
         else
-            sfunc(dptr, symname, cur+dret[1][])
+            setfield!(dptr, symname, cur+dret[1][])
             for i in 1:length(dptrs)
-                sfunc(dptrs[i], symname, cur+dret[1+i][])
+                setfield!(dptrs[i], symname, cur+dret[1+i][])
+            end
+        end
+    end
+    return nothing
+end
+function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
+    cur = getfield_idx(dptr, symname)
+
+    RT = Core.Typeof(cur)
+    if active_reg(RT) && !isconst
+        if length(dptrs) == 0
+            setfield_idx(dptr, symname, cur+dret[])
+        else
+            setfield_idx(dptr, symname, cur+dret[1][])
+            for i in 1:length(dptrs)
+                setfield_idx(dptrs[i], symname, cur+dret[1+i][])
             end
         end
     end
@@ -2210,7 +2224,7 @@ function jl_nthfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(rt_jl_getfield_aug, ctx))
+    pushfirst!(vals, unsafe_to_llvm(idx_jl_getfield_aug, ctx))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -2290,7 +2304,7 @@ function jl_nthfield_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(rt_jl_getfield_rev, ctx))
+    pushfirst!(vals, unsafe_to_llvm(idx_jl_getfield_rev, ctx))
 
     cal = emit_apply_generic!(B, vals)
 
