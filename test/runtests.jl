@@ -432,6 +432,7 @@ end
 end
 
 @testset "Null init tape" begin
+    Enzyme.API.printall!(true)
     struct Leaf
         params::NamedTuple
     end
