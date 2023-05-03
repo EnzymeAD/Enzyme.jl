@@ -919,7 +919,7 @@ end
 function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
-    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)))
+    forward = thunk((ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)))
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
@@ -937,7 +937,7 @@ function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any,
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
-    forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
+    forward, adjoint = thunk((ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
@@ -1086,9 +1086,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             dupClosure = false
         end
 
-        world = GPUCompiler.codegen_world_age(FT, tt)
 
-        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
+        forward = thunk((dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
@@ -1147,9 +1146,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             dupClosure = false
         end
 
-        world = GPUCompiler.codegen_world_age(FT, Tuple{$(ElTypes...)})
 
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
+        forward, adjoint = thunk((dupClosure ? Duplicated : Const){FT},
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
 
@@ -1254,9 +1252,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
             dupClosure = false
         end
-        world = GPUCompiler.codegen_world_age(FT, tt)
 
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+        forward, adjoint = thunk((dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
@@ -8713,12 +8710,12 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicated}) = Duplicated
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
-@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World}
-    mi = fspec(eltype(FA), TT, World)
+function thunk(::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit}
+    mi = methodinstance(eltype(FA), eltype(TT))
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), GPUCompiler.tls_world_age())
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
 
@@ -8759,21 +8756,15 @@ end
         TapeType = thunk.TapeType
         AugT = AugmentedForwardThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
         AdjT = AdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
-        return quote
-            augmented = $AugT($(thunk.primal))
-            adjoint  = $AdjT($(thunk.adjoint))
-            (augmented, adjoint)
-        end
+        augmented = AugT(thunk.primal)
+        adjoint  = AdjT(thunk.adjoint)
+        return  (augmented, adjoint)
     elseif Mode == API.DEM_ReverseModeCombined
         CAdjT = CombinedAdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-        return quote
-            $CAdjT($(thunk.adjoint))
-        end
+        return CAdjT(thunk.adjoint)
     elseif Mode == API.DEM_ForwardMode
         FMT = ForwardModeThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-        return quote
-            $FMT($(thunk.adjoint))
-        end
+        return FMT(thunk.adjoint)
     else
         @assert false
     end
@@ -8781,12 +8772,12 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
-        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
-    mi = fspec(eltype(FA), tt, World)
+function deferred_codegen(::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
+    mi = GPUCompiler.methodinstance(eltype(FA), eltype(tt))
     target = EnzymeTarget()
     params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), GPUCompiler.tls_world_age())
 
     adjoint_addr, primal_addr = get_trampoline(job)
     adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))
@@ -8799,15 +8790,13 @@ import GPUCompiler: deferred_codegen_jobs
         primal_id = 0
     end
 
-    quote
-        adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
-        primal = if $(primal_addr !== nothing)
-            ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
-        else
-            nothing
-        end
-        adjoint, primal
+    adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), (reinterpret(Ptr{Cvoid}, adjoint_id)))
+    primal = if (primal_addr !== nothing)
+        ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), (reinterpret(Ptr{Cvoid}, primal_id)))
+    else
+        nothing
     end
+    return adjoint, primal
 end
 
 include("compiler/reflection.jl")
