@@ -608,6 +608,32 @@ function emit_apply_type!(B, Ty, args)::LLVM.Value
     legal = true
     found = []
     for arg in args
+        if isa(arg, LLVM.CallInst)
+            fn = LLVM.called_value(arg)
+            nm = ""
+            if isa(fn, LLVM.Function)
+                nm = LLVM.name(fn)
+            end
+            match = false
+            for (fname, ty) in (
+                                 ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
+                                 ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
+                                 ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
+                                 ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                                )
+                if nm == "jl_box_int64" || nm == "ijl_box_int64"
+                    v = first(operands(arg))
+                    if isa(v, ConstantInt)
+                        push!(found, convert(Int64, v))
+                        match = true
+                        break
+                    end
+                end
+            end
+            if match
+                continue
+            end
+        end
         if !isa(arg, ConstantExpr)
             legal = false
             break
