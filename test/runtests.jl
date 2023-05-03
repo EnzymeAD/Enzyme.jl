@@ -1382,45 +1382,50 @@ end
 end
 
 @testset "GetField" begin
-    # TODO
-    # mutable struct MyType
-    #    x::Float64
-    # end
+    mutable struct MyType
+       x::Float64
+    end
 
-    # function gf(v::MyType, fld)
-    #    x = getfield(v, fld)
-    #    x = x::Float64
-    #    2 * x
-    # end
+    function gf(v::MyType, fld)
+       x = getfield(v, fld)
+       x = x::Float64
+       2 * x
+    end
 
-    # function gf2(v::MyType, fld, fld2)
-    #    x = getfield(v, fld)
-    #    y = getfield(v, fld2)
-    #    x + y
-    # end
+    function gf2(v::MyType, fld, fld2)
+       x = getfield(v, fld)
+       y = getfield(v, fld2)
+       x + y
+    end
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    mx = MyType(3.0)
+    dx = MyType(0.0)
 
-    # Enzyme.autodiff(gf, Active, Duplicated(x, dx), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    mx = MyType(3.0)
+    dx = MyType(0.0)
 
-    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    #
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
-    # dx2 = MyType(0.0)
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(:x), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
 
-    # Enzyme.autodiff(gf, Active, BatchDuplicated(x, dx, dx2), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    # @test dx2.x ≈ 2.0
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    function forbatch(v, fld, out)
+        x = getfield(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(:x), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
 
     mutable struct MyType2
        x::Float64
