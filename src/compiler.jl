@@ -329,6 +329,8 @@ using .JIT
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
+snapshot = GPUCompiler.ci_cache_snapshot()
+
 safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
 macro safe_show(exs...)
     blk = Expr(:block)
@@ -6286,6 +6288,7 @@ function emit_inacterror(B, V, orig)
 end
 
 function __init__()
+    GPUCompiler.ci_cache_insert(persistent_cache)
     current_task_offset()
 @static if VERSION < v"1.7.0"
 else
@@ -9162,5 +9165,6 @@ import GPUCompiler: deferred_codegen_jobs
 end
 
 include("compiler/reflection.jl")
-
+current_task_offset()
+const persistent_cache = GPUCompiler.ci_cache_delta(snapshot)
 end
