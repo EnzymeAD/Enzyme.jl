@@ -495,6 +495,7 @@ end
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
+    propagate_returned!(mod)
 
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
