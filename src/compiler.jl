@@ -2907,6 +2907,44 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, wor
     nested_codegen!(mode, mod, funcspec, world)
 end
 
+function prepare_llvm(mod, job, meta)
+    ctx = LLVM.context(mod)
+    interp = GPUCompiler.get_interpreter(job)
+    for f in functions(mod)
+        attributes = function_attributes(f)
+        push!(attributes, StringAttribute("enzymejl_world", string(job.world); ctx))
+    end
+    for (mi, k) in meta.compiled
+        k_name = GPUCompiler.safe_name(k.specfunc)
+        if !haskey(functions(mod), k_name)
+            continue
+        end
+        llvmfn = functions(mod)[k_name]
+    
+        RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+
+        sret = is_sret(RT, ctx)
+        returnRoots = false
+        if sret
+            lRT = eltype(value_type(parameters(llvmfn)[1]))
+            returnRoots = deserves_rooting(lRT)
+        end
+
+        attributes = function_attributes(llvmfn)
+        push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
+        push!(attributes, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT))); ctx))
+        if returnRoots
+            attr = StringAttribute("enzymejl_returnRoots", ""; ctx)
+            push!(parameter_attributes(llvmfn, 2), attr)
+            for u in LLVM.uses(llvmfn)
+                u = LLVM.user(u)
+                @assert isa(u, LLVM.CallInst)
+                LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
+            end
+        end
+    end
+end
+
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, funcspec::Core.MethodInstance, world)
     # TODO: Put a cache here index on `mod` and f->tt
 
@@ -2928,6 +2966,8 @@ end
     # TODO
     parent_job = nothing
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
+    prepare_llvm(otherMod, job, meta)
+
     entry = name(meta.entry)
    
     for f in functions(otherMod)
@@ -8155,6 +8195,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, cleanup=false, validate=false, parent_job=parent_job, ctx)
+    prepare_llvm(mod, primal_job, meta)
     inserted_ts = false
     if ctx !== nothing && ctx isa LLVM.Context
         @assert ctx == context(mod)
@@ -8292,7 +8333,6 @@ end
             for a in attrs
                 push!(attributes, a)
             end
-            push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
             push!(attributes, StringAttribute("enzymejl_job", string(convert(UInt, pointer_from_objref(jobref))); ctx))
             push!(attributes, StringAttribute("enzyme_math", name; ctx))
             push!(attributes, EnumAttribute("noinline", 0; ctx))
@@ -8446,11 +8486,14 @@ end
 
             dispose(builder)
         end
+        attributes = function_attributes(wrapper_f)
+        push!(attributes, StringAttribute("enzymejl_world", string(job.world); ctx))
         primalf = wrapper_f
     end
 
     source_sig = job.source.specTypes
     primalf, returnRoots = lower_convention(source_sig, mod, primalf, actualRetType)
+    push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world); ctx))
 
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()
@@ -8494,12 +8537,8 @@ end
                 continue
             end
             attributes = function_attributes(f)
-            push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
             push!(attributes, StringAttribute("enzymejl_job", string(convert(UInt, pointer_from_objref(jobref))); ctx))
             push!(jlrules, fname)
-        end
-        for f in functions(mod)
-            push!(function_attributes(f), StringAttribute("enzymejl_world", string(job.world); ctx))
         end
 
         GC.@preserve job jobref begin

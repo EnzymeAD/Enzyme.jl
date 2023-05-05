@@ -243,7 +243,7 @@ end
 function propagate_returned!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
 
-    tofinalize = LLVM.Function[]
+    tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
     for fn in functions(mod)
         if isempty(blocks(fn))
             continue
@@ -253,12 +253,16 @@ function propagate_returned!(mod::LLVM.Module)
             continue
         end
         argn = nothing
-        for i in 1:length(parameters(fn))
+        toremove = Int64[]
+        for (i, arg) in enumerate(parameters(fn))
             if any(kind(attr) == kind(EnumAttribute("returned"; ctx)) for attr in collect(parameter_attributes(fn, i)))
                 argn = i
             end
+            if length(collect(LLVM.uses(arg))) == 0
+                push!(toremove, i-1)
+            end
         end
-        if argn === nothing
+        if argn === nothing && length(toremove) == 0
             continue
         end
         illegalUse = linkage(fn) != LLVM.API.LLVMInternalLinkage
@@ -280,26 +284,28 @@ function propagate_returned!(mod::LLVM.Module)
                 illegalUse = true
                 continue
             end
-            LLVM.replace_uses!(un, ops[argn])
+            if argn !== nothing
+                LLVM.replace_uses!(un, ops[argn])
+            end
         end
         if !illegalUse
-            push!(tofinalize, fn)
+            push!(tofinalize, (fn, argn === nothing, toremove))
         end
     end
-    for fn in tofinalize
+    for (fn, keepret, toremove) in tofinalize
         try
-            nfn = LLVM.Function(API.EnzymeCloneFunctionWithoutReturn(fn))
             todo = LLVM.CallInst[]
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 push!(todo, un)
             end
+            nfn = LLVM.Function(API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove))
             for un in todo
-                API.EnzymeSetCalledFunction(un, nfn)
+                API.EnzymeSetCalledFunction(un, nfn, toremove)
             end
             unsafe_delete!(mod, fn)
         catch
-            break
+           break
         end
     end
 end
@@ -452,10 +458,22 @@ end
     ctx = LLVM.context(mod)
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
     func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx)])
-   
+    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"; ctx), EnumAttribute("argmemonly"; ctx), EnumAttribute("nocapture"; ctx)])
+  
     for fn in functions(mod)
         if isempty(blocks(fn))
             continue
+        end
+        # Ensure that interprocedural optimizations do not delete the use of returnRoots
+        if length(collect(parameters(fn))) >= 2 && any(kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) for attr in collect(parameter_attributes(fn, 2)))
+            for u in LLVM.uses(fn)
+                u = LLVM.user(u)
+                @assert isa(u, LLVM.CallInst)
+                B = IRBuilder(ctx)
+                nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                position!(B, nextInst)
+                cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+            end
         end
         attrs = collect(function_attributes(fn))
         prevent = any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
@@ -478,6 +496,11 @@ end
         run!(pm, mod)
     end
 
+    for u in LLVM.uses(rfunc)
+        u = LLVM.user(u)
+        unsafe_delete!(LLVM.parent(u), u)
+    end
+    unsafe_delete!(mod, rfunc)
     for fn in functions(mod)
         for b in blocks(fn)
             inst = first(LLVM.instructions(b))
@@ -489,6 +512,7 @@ end
             end
         end
     end
+    unsafe_delete!(mod, func)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
 end
