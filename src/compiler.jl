@@ -3729,13 +3729,29 @@ function wait_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gut
     return nothing
 end
 
+function removed_ret_parms(orig::LLVM.CallInst)
+    F = LLVM.called_value(orig)
+    if !isa(F, LLVM.Function)
+        return false, UInt64[]
+    end
+            
+    retRemove = haskey(md, "enzyme_retremove")
+    parmsRemoved = UInt64[]
+    if haskey(md, "enzyme_parmremove")
+        str = md["enzyme_parmremove"]
+        for v in eachsplit(str, ",")
+            push!(parmsRemove, parse(UInt64, v))
+        end
+    end
+    return retRemove, parmsRemoved
+end
+
 function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     ctx = LLVM.context(orig)
     ops = collect(operands(orig))
     called = ops[end]
     ops = ops[1:end-1]
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-
     kwtup = nothing
 
     args = LLVM.Value[]
@@ -3747,6 +3763,8 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     uncacheable = Vector{UInt8}(undef, length(ops))
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
     mode = API.EnzymeGradientUtilsGetMode(gutils)
+    
+    retRemoved, parmsRemoved = removed_ret_parms(orig)
 
     sret = false
     returnRoots = false
@@ -3756,28 +3774,22 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     	returnRoots = deserves_rooting(lRT)
     end
 
-	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots)
-
-    op_idx = 1 + sret + returnRoots
+	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots, parmsRemoved)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    true_idx = 0
-
     for arg in jlargs
-        true_idx += 1
-
         if arg.cc == GPUCompiler.GHOST
             @assert GPUCompiler.isghosttype(arg.typ) || Core.Compiler.isconstType(arg.typ)
-            if isKWCall && true_idx == 2
+            if isKWCall && arg.arg_i == 2
                 Ty = arg.typ
                 kwtup = Ty
                 continue
             end
             push!(activity, Const{arg.typ})
             # Don't push overwritten for Core.kwcall
-            if !(isKWCall && true_idx == 1)
+            if !(isKWCall && arg.arg_i == 1)
                 push!(overwritten, false)
             end
             if Core.Compiler.isconstType(arg.typ) && !Core.Compiler.isconstType(Const{arg.typ})
@@ -3801,12 +3813,11 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         end
         @assert !(GPUCompiler.isghosttype(arg.typ) || Core.Compiler.isconstType(arg.typ))
 
-        op = ops[op_idx]
+        op = ops[arg.codegen.i]
         # Don't push the keyword args to uncacheable
-        if !(isKWCall && true_idx == 2)
-            push!(overwritten, uncacheable[op_idx] != 0)
+        if !(isKWCall && arg.arg_i == 2)
+            push!(overwritten, uncacheable[arg.codegen.i] != 0)
         end
-        op_idx+=1
 
         val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
         if reverse
@@ -3815,7 +3826,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, #=isforeign=#false)
 
-        if isKWCall && true_idx == 2
+        if isKWCall && arg.arg_i == 2
             Ty = arg.typ
 
             push!(args, val)
@@ -3929,8 +3940,6 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
         end
 
     end
-
-    @assert op_idx-1 == length(ops)
 
     return args, activity, (overwritten...,), actives, kwtup
 end
@@ -7017,7 +7026,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     	returnRoots = deserves_rooting(lRT)
     end
 
-    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots)
+    retRemoved, parmsRemoved = removed_ret_parms(orig)
+    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots, parmsRemoved)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
@@ -7068,19 +7078,27 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     rtt = typetree(RT, ctx, dl)
 
     if sret
-        merge!(rtt, TypeTree(API.DT_Pointer, ctx))
-        only!(rtt, -1)
-        API.EnzymeMergeTypeTree(unsafe_load(args, 1), rtt)
-        if returnRoots
-            allpointer = TypeTree(API.DT_Pointer, -1, ctx)
-            API.EnzymeMergeTypeTree(unsafe_load(args, 2), allpointer)
-        end
-    else
-        if GPUCompiler.deserves_retbox(RT)
+        idx = 0
+        if !in(idx, parmsRemoved)
             merge!(rtt, TypeTree(API.DT_Pointer, ctx))
             only!(rtt, -1)
+            API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), rtt)
+            idx+=1
         end
-        API.EnzymeMergeTypeTree(ret, rtt)
+        if returnRoots
+            if !in(idx, parmsRemoved)
+                allpointer = TypeTree(API.DT_Pointer, -1, ctx)
+                API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), allpointer)
+            end
+        end
+    else
+        if !retRemoved
+            if GPUCompiler.deserves_retbox(RT)
+                merge!(rtt, TypeTree(API.DT_Pointer, ctx))
+                only!(rtt, -1)
+            end
+            API.EnzymeMergeTypeTree(ret, rtt)
+        end
     end
 
     return UInt8(false)
@@ -7768,33 +7786,52 @@ function fixup_metadata!(f::LLVM.Function)
     end
 end
 
+struct RemovedParam
+end
+
 # Modified from GPUCompiler classify_arguments
-function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret, has_returnroots)
+function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret, has_returnroots, parmsRemoved)
     codegen_types = parameters(codegen_ft)
 
     args = []
-    codegen_i = has_sret ? 2 : 1
+    codegen_i = 1
+    orig_i = 1
+    if has_sret
+        if !in(orig_i-1, parmsRemoved)
+            codegen_i += 1
+        end
+        orig_i += 1
+    end
     if has_returnroots
-        codegen_i += 1
+        if !in(orig_i-1, parmsRemoved)
+            codegen_i += 1
+        end
+        orig_i += 1
     end
     for (source_i, source_typ) in enumerate(source_sig.parameters)
         if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
-            push!(args, (cc=GPUCompiler.GHOST, typ=source_typ))
+            push!(args, (cc=GPUCompiler.GHOST, typ=source_typ, arg_i=source_i))
+            continue
+        end
+        if !in(orig_i-1, paramsRemoved)
+            push!(args, (cc=RemovedParam, typ=source_typ))
+            orig_i += 1
             continue
         end
         codegen_typ = codegen_types[codegen_i]
         if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
-            push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ,
+            push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
         elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
                !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
-            push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
+            push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
         else
-            push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ,
+            push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
         end
         codegen_i += 1
+        orig_i += 1
     end
 
     return args
@@ -7948,7 +7985,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
     end
 
-	args = classify_arguments(functy, entry_ft, sret, returnRoots)
+    # TODO removed implications
+    retRemoved, parmsRemoved = removed_ret_parms(orig)
+	args = classify_arguments(functy, entry_ft, sret, returnRoots, parmsRemoved)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST
     end
@@ -7960,11 +7999,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 	# 	push!(wrapper_types, value_type(parameters(entry_f)[1+sret]))
 	# end
     #
-    for (parm, arg) in zip(collect(parameters(entry_f))[1+sret+returnRoots:end], args)
+    for arg in args
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
         else
-            value_type(parm)
+            arg.codegen.typ
         end
         push!(wrapper_types, typ)
     end
@@ -7996,7 +8035,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 			if returnRoots
 				push!(nops, ops[1+sret])
 			end
-            for (parm, arg) in zip(ops[1+sret+returnRoots:end], args)
+            for arg in args
+                parm = ops[arg.codegen.i]
                 if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
                     push!(nops, load!(builder, convert(LLVMType, arg.typ; ctx), parm))
                 else
@@ -8031,8 +8071,12 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         wrapper_args = Vector{LLVM.Value}()
 
         if sret
-            sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
-            push!(wrapper_args, sretPtr)
+            if in(0, parmsRemoved)
+                sretPtr = nothing
+            else
+                sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
+                push!(wrapper_args, sretPtr)
+            end
         end
 		if returnRoots
             retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])))
@@ -8041,7 +8085,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 		end
 
         # perform argument conversions
-        for (parm, arg) in zip(collect(parameters(entry_f))[1+sret+returnRoots:end], args)
+        for arg in args
+            parm = parameters(entry_f)[arg.codegen.i]
             wrapparm = parameters(wrapper_f)[arg.codegen.i-sret-returnRoots]
             if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
                 # copy the argument value to a stack slot, and reference it.
@@ -8074,43 +8119,52 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
         # Box union return, from https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L3138
         if sret_union
-            def = BasicBlock(wrapper_f, "defaultBB"; ctx)
-            scase = extract_value!(builder, res, 1)
-            sw = switch!(builder, scase, def)
-            counter = 1
-            T_int8 = LLVM.Int8Type(ctx)
-            T_int64 = LLVM.Int64Type(ctx)
-            T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
-            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-            T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-            function inner(jlrettype)
-                BB = BasicBlock(wrapper_f, "box_union"; ctx)
-                position!(builder, BB)
+            if retRemoved
+                ret!(builder)
+            else
+                def = BasicBlock(wrapper_f, "defaultBB"; ctx)
+                scase = extract_value!(builder, res, 1)
+                sw = switch!(builder, scase, def)
+                counter = 1
+                T_int8 = LLVM.Int8Type(ctx)
+                T_int64 = LLVM.Int64Type(ctx)
+                T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+                T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+                T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+                function inner(jlrettype)
+                    BB = BasicBlock(wrapper_f, "box_union"; ctx)
+                    position!(builder, BB)
 
-                if GPUCompiler.isghosttype(jlrettype) || Core.Compiler.isconstType(jlrettype)
-                    fill_val = unsafe_to_llvm(jlrettype.instance, ctx)
-                    ret!(builder, fill_val)
-                else
-                    obj = emit_allocobj!(builder, jlrettype)
-                    llty = convert(LLVMType, jlrettype; ctx)
-                    ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
-                    store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
-                    # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(value_type(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
+                    if GPUCompiler.isghosttype(jlrettype) || Core.Compiler.isconstType(jlrettype)
+                        fill_val = unsafe_to_llvm(jlrettype.instance, ctx)
+                        ret!(builder, fill_val)
+                    else
+                        obj = emit_allocobj!(builder, jlrettype)
+                        if sretPtr === nothing
+                            llty = convert(LLVMType, jlrettype; ctx)
+                            ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
+                            store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
+                            # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(value_type(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
+                        end
+                        ret!(builder, obj)
+                    end
 
-                    ret!(builder, obj)
+                    LLVM.API.LLVMAddCase(sw, LLVM.ConstantInt(value_type(scase), counter), BB)
+                    counter+=1
+                    return
                 end
+                for_each_uniontype_small(inner, actualRetType)
 
-                LLVM.API.LLVMAddCase(sw, LLVM.ConstantInt(value_type(scase), counter), BB)
-                counter+=1
-                return
+                position!(builder, def)
+                fill_val = unsafe_to_llvm(nothing, ctx)
+                ret!(builder, fill_val)
             end
-            for_each_uniontype_small(inner, actualRetType)
-
-            position!(builder, def)
-            fill_val = unsafe_to_llvm(nothing, ctx)
-            ret!(builder, fill_val)
         elseif sret
-            ret!(builder, load!(builder, RT, sretPtr))
+            if sretPtr === nothing
+                ret!(builder)
+            else
+                ret!(builder, load!(builder, RT, sretPtr))
+            end
         elseif LLVM.return_type(entry_ft) == LLVM.VoidType(ctx)
             ret!(builder)
         else
@@ -8534,9 +8588,6 @@ end
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
             f = functions(mod)[fname]
-            if function_type(f) != ftyp
-                continue
-            end
             attributes = function_attributes(f)
             push!(attributes, StringAttribute("enzymejl_job", string(convert(UInt, pointer_from_objref(jobref))); ctx))
             push!(jlrules, fname)

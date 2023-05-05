@@ -249,9 +249,9 @@ function propagate_returned!(mod::LLVM.Module)
             continue
         end
         attrs = collect(function_attributes(fn))
-        if any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) 
-            continue
-        end
+        # if any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) 
+        #     continue
+        # end
         argn = nothing
         toremove = Int64[]
         for (i, arg) in enumerate(parameters(fn))
