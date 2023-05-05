@@ -8077,12 +8077,12 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
                 push!(wrapper_args, sretPtr)
             end
+            if returnRoots && !in(1, parmsRemoved)
+                retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])))
+                # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
+                push!(wrapper_args, retRootPtr)
+            end
         end
-		if returnRoots
-            retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])))
-            # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
-			push!(wrapper_args, retRootPtr)
-		end
 
         # perform argument conversions
         for arg in args
