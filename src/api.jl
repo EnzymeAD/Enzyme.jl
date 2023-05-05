@@ -51,7 +51,10 @@ end
   VT_Both = 3
 )
 
-EnzymeBitcodeReplacement(mod) = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef,), mod)
+function EnzymeBitcodeReplacement(mod, NotToReplace) 
+    res = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef, Ptr{Cstring}, Csize_t), mod, NotToReplace, length(NotToReplace))
+    return res 
+end
 
 struct EnzymeTypeTree end
 const CTypeTreeRef = Ptr{EnzymeTypeTree}
