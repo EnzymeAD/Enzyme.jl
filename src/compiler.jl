@@ -8418,7 +8418,8 @@ end
 
     primalf = meta.entry
     check_ir(job, mod)
-    if API.EnzymeBitcodeReplacement(mod) != 0
+    disableFallback = ["sdot_64_", "ddot_64_"]
+    if API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
             run!(pm, mod)
