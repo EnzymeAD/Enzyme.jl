@@ -8413,6 +8413,7 @@ end
             source_sig = Base.signature_type(func, sparam_vals)
             primal = llvmfn == primalf
             llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+            push!(function_attributes(llvmfn), StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
             k_name = LLVM.name(llvmfn)
             if primal
                 primalf = llvmfn
