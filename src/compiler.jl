@@ -3734,11 +3734,25 @@ function removed_ret_parms(orig::LLVM.CallInst)
     if !isa(F, LLVM.Function)
         return false, UInt64[]
     end
-            
-    retRemove = haskey(md, "enzyme_retremove")
+    return removed_ret_params(F)
+end
+
+function removed_ret_parms(F::LLVM.Function)
     parmsRemoved = UInt64[]
-    if haskey(md, "enzyme_parmremove")
-        str = md["enzyme_parmremove"]
+    parmrem = nothing
+    retRemove = false
+    for a in collect(function_attributes(F))
+        if isa(a, StringAttribute) 
+            if kind(a) == "enzyme_parmremove"
+                parmrem = a
+            end
+            if kind(a) == "enzyme_retremove"
+                retRemove = true
+            end
+        end
+    end
+    if parmrem !== nothing
+        str = value(parmrem)
         for v in eachsplit(str, ",")
             push!(parmsRemove, parse(UInt64, v))
         end
@@ -3780,6 +3794,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     for arg in jlargs
+        @assert arg.cc != RemovedParam
         if arg.cc == GPUCompiler.GHOST
             @assert GPUCompiler.isghosttype(arg.typ) || Core.Compiler.isconstType(arg.typ)
             if isKWCall && arg.arg_i == 2
@@ -7032,7 +7047,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
     for arg in jlargs
-        if arg.cc == GPUCompiler.GHOST
+        if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
             continue
         end
 
@@ -7079,14 +7094,14 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 
     if sret
         idx = 0
-        if !in(idx, parmsRemoved)
+        if !in(0, parmsRemoved)
             merge!(rtt, TypeTree(API.DT_Pointer, ctx))
             only!(rtt, -1)
             API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), rtt)
             idx+=1
         end
         if returnRoots
-            if !in(idx, parmsRemoved)
+            if !in(1, parmsRemoved)
                 allpointer = TypeTree(API.DT_Pointer, -1, ctx)
                 API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), allpointer)
             end
@@ -7813,7 +7828,7 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
             push!(args, (cc=GPUCompiler.GHOST, typ=source_typ, arg_i=source_i))
             continue
         end
-        if !in(orig_i-1, paramsRemoved)
+        if in(orig_i-1, parmsRemoved)
             push!(args, (cc=RemovedParam, typ=source_typ))
             orig_i += 1
             continue
@@ -7986,13 +8001,14 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
 
     # TODO removed implications
-    retRemoved, parmsRemoved = removed_ret_parms(orig)
-	args = classify_arguments(functy, entry_ft, sret, returnRoots, parmsRemoved)
+    retRemoved, parmsRemoved = removed_ret_parms(entry_f)
+	prargs = classify_arguments(functy, entry_ft, sret, returnRoots, parmsRemoved)
+    args = copy(prargs)
     filter!(args) do arg
-        arg.cc != GPUCompiler.GHOST
+        arg.cc != GPUCompiler.GHOST && arg.cc != RemovedParam
     end
 
-    @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end])
+    # @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end])
 
 
 	# if returnRoots
@@ -8070,10 +8086,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
         wrapper_args = Vector{LLVM.Value}()
 
+        sretPtr = nothing
         if sret
-            if in(0, parmsRemoved)
-                sretPtr = nothing
-            else
+            if !in(0, parmsRemoved)
                 sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
                 push!(wrapper_args, sretPtr)
             end
@@ -8140,7 +8155,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                         ret!(builder, fill_val)
                     else
                         obj = emit_allocobj!(builder, jlrettype)
-                        if sretPtr === nothing
+                        if sretPtr !== nothing
                             llty = convert(LLVMType, jlrettype; ctx)
                             ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
                             store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
@@ -8183,6 +8198,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         @safe_show mod
         @safe_show LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction)
         @safe_show wrapper_f
+        @safe_show parmsRemoved, retRemoved, prargs
         flush(stdout)
         throw(LLVM.LLVMException("broken function"))
     end
