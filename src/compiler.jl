@@ -3734,7 +3734,7 @@ function removed_ret_parms(orig::LLVM.CallInst)
     if !isa(F, LLVM.Function)
         return false, UInt64[]
     end
-    return removed_ret_params(F)
+    return removed_ret_parms(F)
 end
 
 function removed_ret_parms(F::LLVM.Function)
@@ -7041,7 +7041,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     	returnRoots = deserves_rooting(lRT)
     end
 
-    retRemoved, parmsRemoved = removed_ret_parms(orig)
+    retRemoved, parmsRemoved = removed_ret_parms(inst)
     jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots, parmsRemoved)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
