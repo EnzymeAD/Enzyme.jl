@@ -5388,6 +5388,7 @@ function get_binding_or_error_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.L
         if width == 1
             shadowres = normal
         else
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -5410,6 +5411,7 @@ function get_binding_or_error_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.AP
         if width == 1
             shadowres = normal
         else
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -5620,7 +5622,19 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     if val != C_NULL
         val = LLVM.Value(val)
         if isa(val, LLVM.Instruction)
-            bt = GPUCompiler.backtrace(val)
+            dbgval = val
+            while !haskey(metadata(dbgval), LLVM.MD_dbg)
+                dbgval = LLVM.API.LLVMGetNextInstruction(dbgval)
+                if dbgval == C_NULL
+                    dbgval = nothing
+                    break
+                else
+                    dbgval = LLVM.Instruction(dbgval)
+                end
+            end
+            if dbgval !== nothing
+                bt = GPUCompiler.backtrace(dbgval)
+            end
         end
         if isa(val, LLVM.ConstantExpr)
             for u in LLVM.uses(val)
@@ -5679,6 +5693,34 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
+        return
+    elseif errtype == API.ET_MixedActivityError
+        gutils = API.EnzymeGradientUtilsRef(data)
+        newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
+        while isa(newb, LLVM.PHIInst)
+            newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
+        end
+        b = IRBuilder(LLVM.context(val))
+        position!(b, newb)
+        function ac(io)
+            print(io, msg)
+            println(io)
+            ttval = val
+            if isa(ttval, LLVM.StoreInst)
+                ttval = operands(ttval)[1]
+            end
+	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, val))
+            st = API.EnzymeTypeTreeToString(tt)
+            print(io, "Type tree: ")
+            println(io, Base.unsafe_string(st))
+            API.EnzymeStringFree(st)
+            println(io, "Please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
+            if bt !== nothing
+                Base.show_backtrace(io, bt)
+            end
+        end
+        msg2 = sprint(ac)
+        emit_error(b, nothing, msg2)
         return
     end
     throw(AssertionError("Unknown errtype"))

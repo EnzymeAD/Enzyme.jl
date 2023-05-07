@@ -382,7 +382,8 @@ end
   ET_NoType = 3,
   ET_IllegalFirstPointer = 4,
   ET_InternalError = 5,
-  ET_TypeDepthExceeded = 6
+  ET_TypeDepthExceeded = 6,
+  ET_MixedActivityError = 7,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
