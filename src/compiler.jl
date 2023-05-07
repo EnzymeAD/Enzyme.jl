@@ -5615,7 +5615,7 @@ parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
 parent_scope(val::LLVM.Argument, depth=0) = parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth+1)
 
-function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid})
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef)
     msg = Base.unsafe_string(cstr)
     bt = nothing
     ir = nothing
@@ -5695,6 +5695,28 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         GPUCompiler.@safe_warn msg2
         return
     elseif errtype == API.ET_MixedActivityError
+        data2 = LLVM.Value(data2)
+        badval = nothing
+        # Ignore mismatched activity if phi/store of ghost
+        if isa(data2, ConstantExpr)
+            ce = data2
+            while isa(ce, ConstantExpr)
+                if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+                    ce = operands(ce)[1]
+                else
+                    break
+                end
+            end
+            if isa(ce, ConstantInt)
+                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                typ = Base.unsafe_pointer_to_objref(ptr)
+                if isghostty(Core.Typeof(typ))
+                    return
+                end
+                badval = typ
+            end
+        end
+
         gutils = API.EnzymeGradientUtilsRef(data)
         newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
         while isa(newb, LLVM.PHIInst)
@@ -5714,6 +5736,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             print(io, "Type tree: ")
             println(io, Base.unsafe_string(st))
             API.EnzymeStringFree(st)
+            if badval !== nothing
+                println(io, " value="*string(badval))
+            end
             println(io, "Please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
                 Base.show_backtrace(io, bt)
@@ -6333,7 +6358,7 @@ function __init__()
 else
     current_ptls_offset()
 end
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid})))
+    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef)))
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
     end
