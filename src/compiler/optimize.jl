@@ -273,13 +273,89 @@ end
 function post_attr!(mod::LLVM.Module)
 end
 
+function prop_global!(g, ctx)
+    newfns = LLVM.Function[]
+    changed = false
+        todo = Tuple{Vector{Cuint},LLVM.Value}[]
+        for u in LLVM.uses(g)
+            u = LLVM.user(u)
+            push!(todo, (Cuint[],u))
+        end
+        while length(todo) > 0
+            path, var = pop!(todo)
+            if isa(var, LLVM.LoadInst) 
+                B = IRBuilder(ctx)
+                position!(B, var)
+                res = LLVM.initializer(g)
+                for p in path
+                    res = extract_value!(B, res, p)
+                end
+                changed = true
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                            if isa(u, LLVM.CallInst)
+                                f2 = LLVM.called_value(u)
+                                if isa(f2, LLVM.Function)
+                                    push!(newfns, LLVM.name(f2))
+                                end
+                            end
+                end
+                replace_uses!(var, res)
+                unsafe_delete!(LLVM.parent(var), var)
+                continue
+            end
+            if isa(var, LLVM.AddrSpaceCastInst)
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                    push!(todo, (path, u))
+                end
+                continue
+            end
+            if isa(var, LLVM.ConstantExpr) && opcode(var) == LLVM.API.LLVMAddrSpaceCast
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                    push!(todo, (path, u))
+                end
+                continue
+            end
+            if isa(var, LLVM.GetElementPtrInst)
+                if all(isa(v, LLVM.ConstantInt) for v in operands(var)[2:end])
+                    if convert(Cuint, operands(var)[2]) == 0
+                        for u in LLVM.uses(var)
+                            u = LLVM.user(u)
+                            push!(todo, (vcat(path,collect((convert(Cuint, v) for v in operands(var)[3:end]))), u))
+                        end
+                    end
+                    continue
+                end
+            end
+        end
+    return changed, newfns
+end
+
 function propagate_returned!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
 
+    globs = LLVM.GlobalVariable[]
+    for g in globals(mod)
+        if linkage(g) == LLVM.API.LLVMInternalLinkage || linkage(g) == LLVM.API.LLVMPrivateLinkage
+            if !isconstant(g)
+                continue
+            end
+            push!(globs, g)
+        end
+    end
     todo = collect(functions(mod))
     while true
         next = Set{String}()
         changed = false
+        for g in globs
+            tc, tn = prop_global!(g, ctx)
+            changed |= tc
+            for f in tn
+                push!(next, LLVM.name(f))
+            end
+        end
         tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
         for fn in functions(mod)
             if isempty(blocks(fn))
@@ -353,7 +429,6 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         LLVM.replace_uses!(arg, val)
                         changed = true
-                        @show "changed_q", LLVM.name(fn), arg
                     end
                 end
                 # sese if there are no users of the value (excluding recursive/return)
@@ -414,7 +489,6 @@ function propagate_returned!(mod::LLVM.Module)
                     push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
                     LLVM.replace_uses!(un, ops[argn])
                     changed = true
-                    @show "changed_2", LLVM.name(fn), un
                 end
             end
             if !illegalUse
@@ -436,7 +510,6 @@ function propagate_returned!(mod::LLVM.Module)
                 for un in todo
                     API.EnzymeSetCalledFunction(un, nfn, toremove)
                 end
-                @show "changed", LLVM.name(nfn)
                 unsafe_delete!(mod, fn)
                 changed = true
             catch
@@ -449,7 +522,6 @@ function propagate_returned!(mod::LLVM.Module)
             todo = collect(functions(mod)[name] for name in next)
         end
     end
-    @show mod
 end
 function detect_writeonly!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
@@ -539,7 +611,8 @@ end
         mem_cpy_opt!(pm)
         always_inliner!(pm)
         alloc_opt!(pm)
-        global_opt!(pm)
+        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
+        gvn!(pm) # Extra
         instruction_combining!(pm)
         cfgsimplification!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
@@ -593,7 +666,8 @@ end
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
-        
+        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
+        gvn!(pm) # Exxtra
         run!(pm, mod)
     end
     
@@ -626,6 +700,13 @@ end
             position!(B, first(instructions(first(blocks(fn)))))
             call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
         end
+    end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        run!(pm, mod)
     end
     propagate_returned!(mod)
     pre_attr!(mod)
