@@ -347,11 +347,47 @@ function strictAliasing!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
-function runtimeActivity!(val)
+
+"""
+    runtimeActivity!(val::Bool)
+
+Enzyme runs an activity analysis which deduces which values, instructions, etc
+are necessary to be differentiated and therefore involved in the differentiation
+procedure. This runs at compile time. However, there may be implementation flaws
+in this analysis that means that Enzyme cannot deduce that an inactive (const)
+value is actually const. Alternatively, there may be some data which is conditionally
+active, depending on which runtime branch is taken. In these cases Enzyme conservatively
+presumes the value is active.
+
+However, in certain cases, an insufficiently aggressive activity analysis may result
+in derivative errors -- for example by mistakenly using the primal (const) argument
+and mistaking it for the duplicated shadow. As a result this may result in incorrect
+results, or accidental updates to the primal.
+
+This flag enables runntime activity which tells all load/stores to check at runtime
+whether the value they are updating is indeed active (in addition to the compile-time
+activity analysis). This will remedy these such errors, but at a performance penalty
+of performing such checks.
+
+It is on the Enzyme roadmap to add a PotentiallyDuplicated style activity, in addition
+to the current Const and Duplicated styles that will disable the need for this,
+which does  not require the check when a value is guaranteed active, but still supports
+runtime-based activity information.
+
+This function takes an argument to set the runtime activity value, true means it is on,
+and false means off. By default it is off.
+"""
+function runtimeActivity!(val::Bool)
     ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+"""
+    runtimeActivity()
+
+Gets the current value of the runtime activity. See [`runtimeActivity!`](@ref) for
+more information.
+"""
 function runtimeActivity()
     ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
     return EnzymeGetCLBool(ptr) != 0
@@ -382,7 +418,8 @@ end
   ET_NoType = 3,
   ET_IllegalFirstPointer = 4,
   ET_InternalError = 5,
-  ET_TypeDepthExceeded = 6
+  ET_TypeDepthExceeded = 6,
+  ET_MixedActivityError = 7,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)

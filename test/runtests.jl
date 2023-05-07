@@ -516,6 +516,10 @@ end
 
 	weights = [0.2]
 	dweights = [0.0]
+    # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
+    # doesn't use any of the const data values, but now that we error for activity confusion, we need to
+    # mark runtimeActivity to let this pass
+    Enzyme.API.runtimeActivity!(true)
 	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
@@ -535,6 +539,7 @@ end
     dweights = [0.0, 0.0]
 
     Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.API.runtimeActivity!(false)
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
 end
