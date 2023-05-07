@@ -274,7 +274,7 @@ function post_attr!(mod::LLVM.Module)
 end
 
 function prop_global!(g, ctx)
-    newfns = LLVM.Function[]
+    newfns = String[]
     changed = false
         todo = Tuple{Vector{Cuint},LLVM.Value}[]
         for u in LLVM.uses(g)
@@ -353,7 +353,7 @@ function propagate_returned!(mod::LLVM.Module)
             tc, tn = prop_global!(g, ctx)
             changed |= tc
             for f in tn
-                push!(next, LLVM.name(f))
+                push!(next, f)
             end
         end
         tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
