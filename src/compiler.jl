@@ -3959,10 +3959,8 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, reverse, isKWCall)
     return args, activity, (overwritten...,), actives, kwtup
 end
 
-function enzyme_custom_setup_ret(gutils, orig, mi, job)
+function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    interp = GPUCompiler.get_interpreter(job)
-    RealRt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
     mode = API.EnzymeGradientUtilsGetMode(gutils)
 
     needsShadowP = Ref{UInt8}(0)
@@ -4003,7 +4001,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, job)
             RT = BatchDuplicatedNoNeed{RealRt, Int(width)}
         end
     end
-    return RealRt, RT, needsPrimal, needsShadowP[] != 0
+    return RT, needsPrimal, needsShadowP[] != 0
 end
 
 function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
@@ -4020,7 +4018,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     # TODO: don't inject the code multiple times for multiple calls
 
     # 1) extract out the MI from attributes
-    mi, job = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(orig)
 
     kwfunc = nothing
 
@@ -4031,7 +4029,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#false, isKWCall)
-    RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
+    RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -4230,12 +4228,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     # TODO: don't inject the code multiple times for multiple calls
 
     # 1) extract out the MI from attributes
-    mi, job = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(orig)
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, #=reverse=#!forward, isKWCall)
-    RealRt, RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, job)
+    RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -7002,37 +7000,39 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
 end
 
 function enzyme_custom_extract_mi(orig::LLVM.Instruction)
+    enzyme_custom_extract_mi(LLVM.called_value(orig)::LLVM.Function)
+end
+
+function enzyme_custom_extract_mi(orig::LLVM.Function)
     mi = nothing
-    job = nothing
-    for fattr in collect(function_attributes(LLVM.called_value(orig)))
+    RT = nothing
+    for fattr in collect(function_attributes(orig))
         if isa(fattr, LLVM.StringAttribute)
             if kind(fattr) == "enzymejl_mi"
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
                 mi = Base.unsafe_pointer_to_objref(ptr)
             end
-            if kind(fattr) == "enzymejl_job"
+            if kind(fattr) == "enzymejl_rt"
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                job = Base.unsafe_pointer_to_objref(ptr)[]
+                RT = Base.unsafe_pointer_to_objref(ptr)
             end
         end
     end
     if mi === nothing
         GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig, LLVM.called_value(orig)
     end
-    return mi, job
+    return mi, RT
 end
 
 function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     inst = LLVM.Instruction(val)
     ctx = LLVM.context(inst)
 
-    mi, job = enzyme_custom_extract_mi(inst)
+    mi, RT = enzyme_custom_extract_mi(inst)
 
     ops = collect(operands(inst))
     called = ops[end]
 
-    interp = GPUCompiler.get_interpreter(job)
-    RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
 
     sret = is_sret(RT, ctx)
     returnRoots = false
@@ -7824,7 +7824,7 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
         orig_i += 1
     end
     for (source_i, source_typ) in enumerate(source_sig.parameters)
-        if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+        if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
             push!(args, (cc=GPUCompiler.GHOST, typ=source_typ, arg_i=source_i))
             continue
         end
@@ -8604,9 +8604,31 @@ end
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
             f = functions(mod)[fname]
-            attributes = function_attributes(f)
-            push!(attributes, StringAttribute("enzymejl_job", string(convert(UInt, pointer_from_objref(jobref))); ctx))
-            push!(jlrules, fname)
+            retRemoved, parmsRemoved = removed_ret_parms(f)
+            
+            ctx = LLVM.context(f)
+            mi, RT = enzyme_custom_extract_mi(f)
+
+            ops = collect(parameters(f))
+
+            sret = is_sret(RT, ctx)
+            returnRoots = false
+            if sret
+                lRT = eltype(value_type(ops[1]))
+                returnRoots = deserves_rooting(lRT)
+            end
+            expectLen = sret + returnRoots
+            for source_typ in mi.specTypes.parameters
+                if GPUCompiler.isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+                    continue
+                end
+                expectLen+=1
+            end
+            expectLen -= length(parmsRemoved)
+            # TODO fix the attributor inlining such that this can assert always true
+            if expectLen == length(ops)
+                push!(jlrules, fname)
+            end
         end
 
         GC.@preserve job jobref begin
