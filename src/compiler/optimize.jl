@@ -426,9 +426,9 @@ function propagate_returned!(mod::LLVM.Module)
                                     push!(next, LLVM.name(f2))
                                 end
                             end
+                            changed = true
                         end
                         LLVM.replace_uses!(arg, val)
-                        changed = true
                     end
                 end
                 # sese if there are no users of the value (excluding recursive/return)
@@ -486,9 +486,16 @@ function propagate_returned!(mod::LLVM.Module)
                     continue
                 end
                 if argn !== nothing
-                    push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
-                    LLVM.replace_uses!(un, ops[argn])
-                    changed = true
+                    hasUse = false
+                    for u in LLVM.uses(un)
+                        hasUse = true
+                        break
+                    end
+                    if hasUse
+                        changed = true
+                        push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                        LLVM.replace_uses!(un, ops[argn])
+                    end
                 end
             end
             if !illegalUse
