@@ -82,7 +82,8 @@ module FFI
             "ijl_box_float64", 
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
-            "memcmp","memchr"
+            "memcmp","memchr",
+            "jl_get_nth_field_checked", "ijl_get_nth_field_checked"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)

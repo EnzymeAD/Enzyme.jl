@@ -9,7 +9,7 @@ end
 
 Documentation for [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl), the Julia bindings for [Enzyme](https://github.com/EnzymeAD/enzyme).
 
-Enzyme performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
+Enzyme performs automatic differentiation (AD) of statically analyzable LLVM. It is highly-efficient and its ability to perform AD on optimized code allows Enzyme to meet or exceed the performance of state-of-the-art AD tools.
 
 Enzyme.jl can be installed in the usual way Julia packages are installed:
 
@@ -97,7 +97,7 @@ julia> x = [1.0, 3.0]
  1.0
  3.0
 
-julia> dx=[1.0, 1.0]
+julia> dx = [1.0, 1.0]
 2-element Vector{Float64}:
  1.0
  1.0
@@ -131,15 +131,15 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 
 ### Activity of temporary storage
 
-If you have pass any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. 
+If you pass in any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. 
 
 ```julia
 function f(x, tmp, n)
-   tmp[1] = 1
-   for i in 1:n
-	   tmp[1] *= x
-   end
-   tmp[1]
+    tmp[1] = 1
+    for i in 1:n
+        tmp[1] *= x
+    end
+    tmp[1]
 end
 
 # Incorrect [ returns (0.0,) ]
@@ -151,12 +151,12 @@ Enzyme.autodiff(f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Flo
 
 ### CUDA.jl support
 
-[CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only support on Julia v1.7.0 and onwards. On 1.6 attempting to differentiate CUDA kernel functions, will not use device overloads
-correctly and thus return fundamentally wrong results.
+[CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only supported on Julia v1.7.0 and onwards. On v1.6, attempting to differentiate CUDA kernel functions will not use device overloads
+correctly and thus returns fundamentally wrong results.
 
 ### Sparse Arrays
 
-At the momment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
+At the moment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
 
 ```julia
 using SparseArrays
@@ -170,9 +170,9 @@ da=sparse([0.0])
 
 # Correct: Prevent SparseMatrixCSC from dropping zeros
 # returns 1-element SparseVector{Float64, Int64} with 1 stored entry:
-#  [1]  =  1.0
-da=sparsevec([1],[0.0])
+#  [1]  =  0.0
+da=sparsevec([1], [0.0])
 
-Enzyme.autodiff(Reverse,f,Active,Duplicated(a,da))
+Enzyme.autodiff(Reverse, f, Active, Duplicated(a, da))
 @show da
 ```

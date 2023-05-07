@@ -44,6 +44,9 @@ function data0!(tt::TypeTree)
     API.EnzymeTypeTreeData0Eq(tt)
 end
 
+function canonicalize!(tt::TypeTree, size, dl)
+    API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
+end
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
@@ -55,11 +58,7 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
 end
 
 function typetree(::Type{T}, ctx, dl, seen=nothing) where T <: Integer
-    tt = TypeTree()
-    for i in 1:sizeof(T)
-        merge!(tt, TypeTree(API.DT_Integer, i-1, ctx))
-    end
-    return tt
+    return TypeTree(API.DT_Integer, -1, ctx)
 end
 
 function typetree(::Type{Float16}, ctx, dl, seen=nothing)
@@ -203,6 +202,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
 
         merge!(tt, subtree)
     end
+    canonicalize!(tt, sizeof(T), dl)
     return tt
 end
 
