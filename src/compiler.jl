@@ -4156,6 +4156,10 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, Ori
     ctx = LLVM.context(orig)
     B  = LLVM.IRBuilder(B)
 
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
+        return C_NULL
+    end
+
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
     shadowType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
