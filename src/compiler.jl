@@ -7042,6 +7042,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     end
 
     retRemoved, parmsRemoved = removed_ret_parms(inst)
+    @show retRemoved, parmsRemoved, inst, mi.specTypes, mi
     jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots, parmsRemoved)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
