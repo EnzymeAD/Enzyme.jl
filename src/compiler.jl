@@ -3753,7 +3753,7 @@ function removed_ret_parms(F::LLVM.Function)
     end
     if parmrem !== nothing
         str = value(parmrem)
-        for v in eachsplit(str, ",")
+        for v in split(str, ",")
             push!(parmsRemoved, parse(UInt64, v))
         end
     end
