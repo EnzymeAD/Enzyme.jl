@@ -424,8 +424,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
-            if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
-                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(dest, LLVM.Function) && ( in(name(dest), ("jl_f__apply_latest", "ijl_f__apply_latest", "jl_f__call_latest", "ijl_f__call_latest", "jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic") ) )
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, fn == "julia.call2" ? 1 : 2))
                 while isa(flib, LLVM.ConstantExpr)
                     flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
                 end
@@ -435,6 +435,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     tys = [typeof(flib)]
                     for op in collect(operands(inst))[4:end]
                         push!(tys, Any)
+                    end
+                    if isa(flib, Core.MethodInstance)
+                        tys = flib.specTypes.parameters
                     end
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                         ofn = LLVM.parent(LLVM.parent(inst))
@@ -488,8 +491,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         end
         dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
-        if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
-            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+        if isa(dest, LLVM.Function) && ( in(name(dest), ("jl_f__apply_latest", "ijl_f__apply_latest", "jl_f__call_latest", "ijl_f__call_latest", "jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic") ) )
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, LLVM.callconv(inst) == 38 ? 1 : 2))
             while isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
             end
@@ -499,6 +502,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 tys = [typeof(flib)]
                 for op in collect(operands(inst))[2:end]
                     push!(tys, Any)
+                end
+                if isa(flib, Core.MethodInstance)
+                    tys = flib.specTypes.parameters
                 end
                 if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                     ofn = LLVM.parent(LLVM.parent(inst))
