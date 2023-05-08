@@ -4834,6 +4834,9 @@ function arrayreshape_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         return 1
     end
     origops = LLVM.operands(orig)
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) != 0
+        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: reshape array has active return, but inactive input")
+    end
 
     B = LLVM.IRBuilder(B)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
