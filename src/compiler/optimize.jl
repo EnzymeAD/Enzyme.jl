@@ -622,6 +622,55 @@ function validate_return_roots!(mod)
                 end
             end
         end
+        if length(enzyme_srets) >= 1 && length(srets) == 0
+            @assert enzyme_srets[1] == 1
+            VT = LLVM.VoidType(ctx)
+            if length(enzyme_srets) == 1 && LLVM.return_type(LLVM.function_type(f)) == VT
+                # Upgrading to sret requires writeonly
+                if !any(kind(attr) == kind(EnumAttribute("writeonly"; ctx)) for attr in collect(parameter_attributes(f, 1)))
+                    @show f
+                    @show collect(parameter_attributes(f, 1))
+                    @assert false
+                end
+                
+                alty = nothing
+                bad = false
+                for u in LLVM.uses(f)
+                    u = LLVM.user(u)
+                    @assert isa(u, LLVM.CallInst)
+                    @assert LLVM.called_value(u) == f
+                    alop = operands(u)[1]
+                    @assert isa(alop, LLVM.AllocaInst)
+                    nty = API.EnzymeAllocaType(alop)
+                    if alty === nothing
+                        alty = nty
+                    else
+                        @assert alty == nty
+                    end
+                    attr = if LLVM.version().major >= 12
+                        TypeAttribute("sret", alty; ctx)
+                    else
+                        EnumAttribute("sret"; ctx)
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
+                    LLVM.API.LLVMRemoveCallSiteStringAttribute(u, LLVM.API.LLVMAttributeIndex(1), "enzyme_sret", length("enzyme_sret"))
+                end
+                @assert alty !== nothing
+                attr = if LLVM.version().major >= 12
+                    TypeAttribute("sret", alty; ctx)
+                else
+                    EnumAttribute("sret"; ctx)
+                end
+
+                push!(parameter_attributes(f, 1), attr)
+                delete!(parameter_attributes(f, 1), StringAttribute("enzyme_sret"; ctx))
+                srets = [(1, attr)]
+                enzyme_srets = Int[]
+            else
+                @assert false, "Unhandled now-returning sret replacement"
+            end
+        end
+        # @show mod
         for (i, attr) in srets
             @assert i == 1
         end
@@ -728,15 +777,20 @@ end
         if isempty(blocks(fn))
             continue
         end
-        # Ensure that interprocedural optimizations do not delete the use of returnRoots
-        if length(collect(parameters(fn))) >= 2 && any(kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) for attr in collect(parameter_attributes(fn, 2)))
-            for u in LLVM.uses(fn)
-                u = LLVM.user(u)
-                @assert isa(u, LLVM.CallInst)
-                B = IRBuilder(ctx)
-                nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
-                position!(B, nextInst)
-                cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+        # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
+        # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
+        # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
+        # to preserve this.
+        for idx in (2, 3, 4)
+            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) || kind(attr) == StringAttribute("enzymejl_returnRoots_v"; ctx)) for attr in collect(parameter_attributes(fn, idx)))
+                for u in LLVM.uses(fn)
+                    u = LLVM.user(u)
+                    @assert isa(u, LLVM.CallInst)
+                    B = IRBuilder(ctx)
+                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                    position!(B, nextInst)
+                    cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+                end
             end
         end
         attrs = collect(function_attributes(fn))
