@@ -1874,9 +1874,8 @@ function common_jl_getfield_fwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM
 
     origops = collect(operands(orig))[offset:end]
     width = API.EnzymeGradientUtilsGetWidth(gutils)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) != 0
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[2]) == 0
         B = LLVM.IRBuilder(B)
-
 
         shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, origops[2], B))
         if width == 1
@@ -1999,12 +1998,12 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
 end
 
 function common_jl_getfield_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
+    orig = LLVM.Instruction(OrigCI)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0
         return 1
     end
 
     B = LLVM.IRBuilder(B)
-    orig = LLVM.Instruction(OrigCI)
     ops = collect(operands(orig))[offset:end]
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -2176,12 +2175,12 @@ function jl_nthfield_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
     return 0
 end
 function jl_nthfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
+    orig = LLVM.Instruction(OrigCI)
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0
         return 1
     end
 
     B = LLVM.IRBuilder(B)
-    orig = LLVM.Instruction(OrigCI)
     ops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
 
@@ -3584,7 +3583,7 @@ function set_task_tid_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         end
     end
 
-    return nothing
+    return 0
 end
 
 function set_task_tid_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
@@ -4753,7 +4752,7 @@ function arraycopy_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
       arraycopy_common(#=fwd=#true, LLVM.IRBuilder(B), orig, origops[1], gutils, shadowres)
     end
 
-	return 1
+	return 0
 end
 
 function arraycopy_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
@@ -4837,7 +4836,7 @@ function boxfloat_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef,
         end
     end
     unsafe_store!(shadowR, shadowres.ref)
-    return nothing
+    return 0
 end
 
 function boxfloat_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
@@ -4867,7 +4866,7 @@ function boxfloat_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueR
         end
     end
     unsafe_store!(shadowR, shadowres.ref)
-    return 1
+    return 0
 end
 
 function boxfloat_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
