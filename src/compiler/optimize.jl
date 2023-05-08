@@ -240,6 +240,296 @@ function fix_decayaddr!(mod::LLVM.Module)
     return nothing
 end
 
+function pre_attr!(mod::LLVM.Module)
+    return nothing
+    ctx = LLVM.context(mod)
+
+    tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
+    for fn in collect(functions(mod))
+        if isempty(blocks(fn))
+            continue
+        end
+        if linkage(fn) != LLVM.API.LLVMInternalLinkage
+            continue
+        end
+   
+        fty = LLVM.FunctionType(fn)
+        nfn = LLVM.Function(mod, "enzyme_attr_prev_"*LLVM.name(enzymefn), fty)
+        LLVM.IRBuilder(ctx) do builder
+            entry = BasicBlock(nfn, "entry"; ctx)
+            position!(builder, entry)
+            cv = call!(fn, [LLVM.UndefValue(ty) for ty in parameters(fty)])
+            LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
+            if LLVM.return_type(fty) == LLVM.VoidType(ctx)
+                ret!(builder)
+            else
+                ret!(builder, cv)
+            end
+        end
+    end
+    return nothing
+end
+
+function post_attr!(mod::LLVM.Module)
+end
+
+function prop_global!(g, ctx)
+    newfns = String[]
+    changed = false
+        todo = Tuple{Vector{Cuint},LLVM.Value}[]
+        for u in LLVM.uses(g)
+            u = LLVM.user(u)
+            push!(todo, (Cuint[],u))
+        end
+        while length(todo) > 0
+            path, var = pop!(todo)
+            if isa(var, LLVM.LoadInst) 
+                B = IRBuilder(ctx)
+                position!(B, var)
+                res = LLVM.initializer(g)
+                for p in path
+                    res = extract_value!(B, res, p)
+                end
+                changed = true
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                            if isa(u, LLVM.CallInst)
+                                f2 = LLVM.called_value(u)
+                                if isa(f2, LLVM.Function)
+                                    push!(newfns, LLVM.name(f2))
+                                end
+                            end
+                end
+                replace_uses!(var, res)
+                unsafe_delete!(LLVM.parent(var), var)
+                continue
+            end
+            if isa(var, LLVM.AddrSpaceCastInst)
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                    push!(todo, (path, u))
+                end
+                continue
+            end
+            if isa(var, LLVM.ConstantExpr) && opcode(var) == LLVM.API.LLVMAddrSpaceCast
+                for u in LLVM.uses(var)
+                    u = LLVM.user(u)
+                    push!(todo, (path, u))
+                end
+                continue
+            end
+            if isa(var, LLVM.GetElementPtrInst)
+                if all(isa(v, LLVM.ConstantInt) for v in operands(var)[2:end])
+                    if convert(Cuint, operands(var)[2]) == 0
+                        for u in LLVM.uses(var)
+                            u = LLVM.user(u)
+                            push!(todo, (vcat(path,collect((convert(Cuint, v) for v in operands(var)[3:end]))), u))
+                        end
+                    end
+                    continue
+                end
+            end
+        end
+    return changed, newfns
+end
+
+function propagate_returned!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+
+    globs = LLVM.GlobalVariable[]
+    for g in globals(mod)
+        if linkage(g) == LLVM.API.LLVMInternalLinkage || linkage(g) == LLVM.API.LLVMPrivateLinkage
+            if !isconstant(g)
+                continue
+            end
+            push!(globs, g)
+        end
+    end
+    todo = collect(functions(mod))
+    while true
+        next = Set{String}()
+        changed = false
+        for g in globs
+            tc, tn = prop_global!(g, ctx)
+            changed |= tc
+            for f in tn
+                push!(next, f)
+            end
+        end
+        tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
+        for fn in functions(mod)
+            if isempty(blocks(fn))
+                continue
+            end
+            attrs = collect(function_attributes(fn))
+            prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal"; ctx)) for attr in attrs)
+            # if any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) 
+            #     continue
+            # end
+            argn = nothing
+            toremove = Int64[]
+            for (i, arg) in enumerate(parameters(fn))
+                if any(kind(attr) == kind(EnumAttribute("returned"; ctx)) for attr in collect(parameter_attributes(fn, i)))
+                    argn = i
+                end
+                # interprocedural const prop from callers of arg
+                if !prevent && linkage(fn) == LLVM.API.LLVMInternalLinkage
+                    val = nothing
+                    illegalUse = false
+                    for u in LLVM.uses(fn)
+                        un = LLVM.user(u)
+                        if !isa(un, LLVM.CallInst)
+                            illegalUse = true
+                            break
+                        end
+                        ops = collect(operands(un))[1:end-1]
+                        bad = false
+                        for op in ops
+                            if op == fn
+                                bad = true
+                                break
+                            end
+                        end
+                        if bad
+                            illegalUse = true
+                            break
+                        end
+                        if isa(ops[i], LLVM.UndefValue)
+                            continue
+                        end
+                        if ops[i] == arg
+                            continue
+                        end
+                        if isa(ops[i], LLVM.Constant)
+                            if val === nothing
+                                val = ops[i]
+                            else
+                                if val != ops[i]
+                                    illegalUse = true
+                                    break
+                                end
+                            end
+                            continue
+                        end
+                        illegalUse = true
+                        break
+                    end
+                    if !illegalUse
+                        if val === nothing
+                            val = LLVM.UndefValue(value_type(arg))
+                        end
+                        for u in LLVM.uses(arg)
+                            u = LLVM.user(u)
+                            if isa(u, LLVM.CallInst)
+                                f2 = LLVM.called_value(u)
+                                if isa(f2, LLVM.Function)
+                                    push!(next, LLVM.name(f2))
+                                end
+                            end
+                            changed = true
+                        end
+                        LLVM.replace_uses!(arg, val)
+                    end
+                end
+                # sese if there are no users of the value (excluding recursive/return)
+                baduse = false
+                for u in LLVM.uses(arg)
+                    u = LLVM.user(u)
+                    if argn == i && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
+                        continue
+                    end
+                    if !isa(u, LLVM.CallInst)
+                        baduse = true
+                        break
+                    end
+                    if LLVM.called_value(u) != fn
+                        baduse = true
+                        break
+                    end
+                    for (si, op) in enumerate(operands(u))
+                        if si == i
+                            continue
+                        end
+                        if op == arg
+                            baduse = true
+                            break
+                        end
+                    end
+                    if baduse
+                        break
+                    end
+                end
+                if !baduse
+                    push!(toremove, i-1)
+                end
+            end
+            if argn === nothing && length(toremove) == 0
+                continue
+            end
+            illegalUse = linkage(fn) != LLVM.API.LLVMInternalLinkage
+            for u in LLVM.uses(fn)
+                un = LLVM.user(u)
+                if !isa(un, LLVM.CallInst)
+                    illegalUse = true
+                    continue
+                end
+                ops = collect(operands(un))[1:end-1]
+                bad = false
+                for op in ops
+                    if op == fn
+                        bad = true
+                        break
+                    end
+                end
+                if bad
+                    illegalUse = true
+                    continue
+                end
+                if argn !== nothing
+                    hasUse = false
+                    for u in LLVM.uses(un)
+                        hasUse = true
+                        break
+                    end
+                    if hasUse
+                        changed = true
+                        push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                        LLVM.replace_uses!(un, ops[argn])
+                    end
+                end
+            end
+            if !illegalUse
+                push!(tofinalize, (fn, argn === nothing, toremove))
+            end
+        end
+        for (fn, keepret, toremove) in tofinalize
+            try
+                todo = LLVM.CallInst[]
+                for u in LLVM.uses(fn)
+                    un = LLVM.user(u)
+                    push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                end
+                nfn = LLVM.Function(API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove))
+                for u in LLVM.uses(fn)
+                    un = LLVM.user(u)
+                    push!(todo, un)
+                end
+                for un in todo
+                    API.EnzymeSetCalledFunction(un, nfn, toremove)
+                end
+                unsafe_delete!(mod, fn)
+                changed = true
+            catch
+               break
+            end
+        end
+        if !changed
+            break
+        else
+            todo = collect(functions(mod)[name] for name in next)
+        end
+    end
+end
 function detect_writeonly!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
     for f in functions(mod)
@@ -328,6 +618,8 @@ end
         mem_cpy_opt!(pm)
         always_inliner!(pm)
         alloc_opt!(pm)
+        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
+        gvn!(pm) # Extra
         instruction_combining!(pm)
         cfgsimplification!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
@@ -381,32 +673,70 @@ end
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
-        
+        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
+        gvn!(pm) # Exxtra
         run!(pm, mod)
     end
     
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     ctx = LLVM.context(mod)
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
-    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx)])
-   
+    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx), EnumAttribute("nofree"; ctx)])
+    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"; ctx), EnumAttribute("nofree"; ctx), EnumAttribute("argmemonly"; ctx), EnumAttribute("nocapture"; ctx)])
+  
     for fn in functions(mod)
         if isempty(blocks(fn))
             continue
         end
+        # Ensure that interprocedural optimizations do not delete the use of returnRoots
+        if length(collect(parameters(fn))) >= 2 && any(kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) for attr in collect(parameter_attributes(fn, 2)))
+            for u in LLVM.uses(fn)
+                u = LLVM.user(u)
+                @assert isa(u, LLVM.CallInst)
+                B = IRBuilder(ctx)
+                nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                position!(B, nextInst)
+                cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+            end
+        end
         attrs = collect(function_attributes(fn))
-        prevent = any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
+        prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal"; ctx)) for attr in attrs)
+        # && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
         if prevent
             B = IRBuilder(ctx)
             position!(B, first(instructions(first(blocks(fn)))))
             call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
         end
     end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        run!(pm, mod)
+    end
+    propagate_returned!(mod)
+    pre_attr!(mod)
     ModulePassManager() do pm
         API.EnzymeAddAttributorLegacyPass(pm)
         run!(pm, mod)
     end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        API.EnzymeAddAttributorLegacyPass(pm)
+        run!(pm, mod)
+    end
+    post_attr!(mod)
+    propagate_returned!(mod)
 
+    for u in LLVM.uses(rfunc)
+        u = LLVM.user(u)
+        unsafe_delete!(LLVM.parent(u), u)
+    end
+    unsafe_delete!(mod, rfunc)
     for fn in functions(mod)
         for b in blocks(fn)
             inst = first(LLVM.instructions(b))
@@ -418,6 +748,7 @@ end
             end
         end
     end
+    unsafe_delete!(mod, func)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
 end

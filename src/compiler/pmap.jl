@@ -117,16 +117,12 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     ctx = LLVM.context(orig)
 
     llvmfn = LLVM.called_value(orig)
-    mi = nothing
+    mi, _ = enzyme_custom_extract_mi(orig)
     adjointnm = nothing
     augfwdnm = nothing
     TapeType = nothing
     for fattr in collect(function_attributes(llvmfn))
         if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-            end
             if kind(fattr) == "enzymejl_tapetype"
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
                 TapeType = Base.unsafe_pointer_to_objref(ptr)
