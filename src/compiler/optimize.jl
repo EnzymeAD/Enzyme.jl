@@ -597,6 +597,46 @@ function detect_writeonly!(mod::LLVM.Module)
     return nothing
 end
 
+function validate_return_roots!(mod)
+    ctx = LLVM.context(mod)
+    for f in functions(mod)
+        srets = []
+        enzyme_srets = Int[]
+        rroots = Int[]
+        rroots_v = Int[]
+        for (i, a) in enumerate(parameters(f))
+            for attr in collect(parameter_attributes(f, i))
+                if isa(attr, StringAttribute)
+                    if kind(attr) == "enzymejl_returnRoots"
+                        push!(rroots, i)
+                    end
+                    if kind(attr) == "enzymejl_returnRoots_v"
+                        push!(rroots_v, i)
+                    end
+                    if kind(attr) == "enzyme_sret"
+                        push!(enzyme_srets, i)
+                    end
+                end
+                if kind(attr) == kind(EnumAttribute("sret"; ctx))
+                    push!(srets, (i, attr))
+                end
+            end
+        end
+        for (i, attr) in srets
+            @assert i == 1
+        end
+        for i in rroots
+            @assert length(srets) != 0
+            @assert i == 2
+        end
+        # illegal
+        for i in rroots_v
+            @assert false
+        end
+    end
+end
+
+
 function optimize!(mod::LLVM.Module, tm)
     addr13NoAlias(mod)
     # everying except unroll, slpvec, loop-vec
@@ -903,6 +943,7 @@ function post_optimze!(mod, tm, machine=true)
         run!(pm, mod)
     end
     if machine
+        validate_return_roots!(mod)
         LLVM.ModulePassManager() do pm
             addJuliaLegalizationPasses!(pm, true)
             addMachinePasses!(pm)
