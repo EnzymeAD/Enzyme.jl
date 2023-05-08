@@ -131,7 +131,7 @@ function typetree(::Type{<:Array{T}}, ctx, dl, seen=nothing) where T
         sizeofstruct += sizeof(Csize_t)
     end
 
-    for i in offset:sizeofstruct
+    for i in offset:(sizeofstruct-1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
