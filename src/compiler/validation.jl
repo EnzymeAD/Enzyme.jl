@@ -487,7 +487,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         push!(tys, guess_julia_type(op))
                     end
                     if isa(flib, Core.MethodInstance)
-                        @assert length(tys) == length(flib.specTypes.parameters)
+                        if !Base.isvarargtype(flib.specTypes.parameters[end])
+                            @assert length(tys) == length(flib.specTypes.parameters)
+                        end
                         tys = flib.specTypes.parameters
                     end
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
@@ -545,18 +547,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
             offset, start = generic_method_offsets[LLVM.name(dest)]
 
-            function base_obj(val)
-                while isa(val, LLVM.ConstantExpr)
-                    val = operands(val)[1]
-                end
-                if isa(val, ConstantInt)
-                    rep = reinterpret(Ptr{Cvoid}, convert(UInt, val))
-                    val = Base.unsafe_pointer_to_objref(rep)
-                end
-                return val
-            end
-
-
             flib = operands(inst)[offset]
             while isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
@@ -569,7 +559,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     push!(tys, guess_julia_type(op))
                 end
                 if isa(flib, Core.MethodInstance)
-                    @assert length(tys) == length(flib.specTypes.parameters)
+                    if !Base.isvarargtype(flib.specTypes.parameters[end])
+                        if length(tys) != length(flib.specTypes.parameters)
+                            @show tys, flib, inst, offset, start
+                        end
+                        @assert length(tys) == length(flib.specTypes.parameters)
+                    end
                     tys = flib.specTypes.parameters
                 end
                 if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
