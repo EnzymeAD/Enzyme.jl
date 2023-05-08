@@ -638,7 +638,6 @@ function validate_return_roots!(mod)
                 end
                 
                 alty = nothing
-                bad = false
                 for u in LLVM.uses(f)
                     u = LLVM.user(u)
                     @assert isa(u, LLVM.CallInst)
@@ -671,9 +670,36 @@ function validate_return_roots!(mod)
                 srets = [(1, attr)]
                 enzyme_srets = Int[]
             else
-                @show f
-                @show enzyme_srets, enzyme_srets_v, srets, rroots, rroots_v
-                @assert false
+           
+                enzyme_srets2 = Int[]
+                for idx in enzyme_srets
+                    alty = nothing
+                    bad = false
+                    for u in LLVM.uses(f)
+                        u = LLVM.user(u)
+                        @assert isa(u, LLVM.CallInst)
+                        @assert LLVM.called_value(u) == f
+                        alop = operands(u)[1]
+                        @assert isa(alop, LLVM.AllocaInst)
+                        nty = API.EnzymeAllocaType(alop)
+                        if any_jltypes(nty)
+                            bad = true
+                        end
+                        LLVM.API.LLVMRemoveCallSiteStringAttribute(u, LLVM.API.LLVMAttributeIndex(idx), "enzyme_sret", length("enzyme_sret"))
+                    end
+                    if !bad
+                        delete!(parameter_attributes(f, idx), StringAttribute("enzyme_sret"; ctx))
+                    else
+                        push!(enzyme_srets2, idx)
+                    end
+                end
+                enzyme_srets = enzyme_srets2
+
+                if length(enzyme_srets) != 0
+                    @show f
+                    @show enzyme_srets, enzyme_srets_v, srets, rroots, rroots_v
+                    @assert false
+                end
             end
         end
         @assert length(enzyme_srets_v) == 0
