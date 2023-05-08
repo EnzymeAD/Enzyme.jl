@@ -602,6 +602,7 @@ function validate_return_roots!(mod)
     for f in functions(mod)
         srets = []
         enzyme_srets = Int[]
+        enzyme_srets_v = Int[]
         rroots = Int[]
         rroots_v = Int[]
         for (i, a) in enumerate(parameters(f))
@@ -616,6 +617,9 @@ function validate_return_roots!(mod)
                     if kind(attr) == "enzyme_sret"
                         push!(enzyme_srets, i)
                     end
+                    if kind(attr) == "enzyme_sret_v"
+                        push!(enzyme_srets, i)
+                    end
                 end
                 if kind(attr) == kind(EnumAttribute("sret"; ctx))
                     push!(srets, (i, attr))
@@ -625,7 +629,7 @@ function validate_return_roots!(mod)
         if length(enzyme_srets) >= 1 && length(srets) == 0
             @assert enzyme_srets[1] == 1
             VT = LLVM.VoidType(ctx)
-            if length(enzyme_srets) == 1 && LLVM.return_type(LLVM.function_type(f)) == VT
+            if length(enzyme_srets) == 1 && LLVM.return_type(LLVM.function_type(f)) == VT && length(enzyme_srets_v) == 0
                 # Upgrading to sret requires writeonly
                 if !any(kind(attr) == kind(EnumAttribute("writeonly"; ctx)) for attr in collect(parameter_attributes(f, 1)))
                     @show f
@@ -667,9 +671,12 @@ function validate_return_roots!(mod)
                 srets = [(1, attr)]
                 enzyme_srets = Int[]
             else
-                @assert false, "Unhandled now-returning sret replacement"
+                @show f
+                @show enzyme_srets, enzyme_srets_v, srets, rroots, rroots_v
+                @assert false
             end
         end
+        @assert length(enzyme_srets_v) == 0
         # @show mod
         for (i, attr) in srets
             @assert i == 1
