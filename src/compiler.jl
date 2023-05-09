@@ -8104,7 +8104,7 @@ function is_sret_union(jlrettype)
 end
 
 # https://github.com/JuliaLang/julia/blob/0a696a3842750fcedca8832bc0aabe9096c7658f/src/codegen.cpp#L6812
-function get_return_info(jlrettype, ctx)
+function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Nothing, Type}, Bool}
     sret = nothing
     returnRoots = false
     rt = nothing
@@ -8119,7 +8119,7 @@ function get_return_info(jlrettype, ctx)
                nbytes = max(nbytes, sizeof(jlrettype))
             end
         end
-        if nbytes
+        if nbytes != 0
             rt = Tuple{Any, UInt8}
             # Pointer to?, Ptr{NTuple{UInt8, allunbox}
             sret = Ptr{jlrettype}
@@ -8135,7 +8135,6 @@ function get_return_info(jlrettype, ctx)
             if deserves_rooting(lRT)
                 returnRoots = true
             end
-            return true
         else
             rt = jlrettype
         end
