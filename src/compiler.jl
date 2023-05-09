@@ -7230,7 +7230,6 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         end
     end
 
-    stt = llRT === nothing ? "" : string( typetree(llRT, ctx, dl) )
     if llRT !== nothing && value_type(inst) != LLVM.VoidType(ctx)
         @assert !retRemoved
         API.EnzymeMergeTypeTree(ret, typetree(llRT, ctx, dl))
@@ -8119,7 +8118,7 @@ function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Noth
             end
         end
         if nbytes != 0
-            rt = Tuple{Any, UInt8}
+            rt = NamedTuple{(Symbol("1"), Symbol("2")),Tuple{Any,UInt8}}
             # Pointer to?, Ptr{NTuple{UInt8, allunbox}
             sret = Ptr{jlrettype}
         elseif allunbox
