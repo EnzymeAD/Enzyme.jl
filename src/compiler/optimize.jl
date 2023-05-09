@@ -249,7 +249,7 @@ function pre_attr!(mod::LLVM.Module)
         if isempty(blocks(fn))
             continue
         end
-        if linkage(fn) != LLVM.API.LLVMInternalLinkage
+        if linkage(fn) != LLVM.API.LLVMInternalLinkage && linkage(fn) != LLVM.API.LLVMPrivateLinkage
             continue
         end
    
@@ -373,7 +373,7 @@ function propagate_returned!(mod::LLVM.Module)
                     argn = i
                 end
                 # interprocedural const prop from callers of arg
-                if !prevent && linkage(fn) == LLVM.API.LLVMInternalLinkage
+                if !prevent && (linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
                     val = nothing
                     illegalUse = false
                     for u in LLVM.uses(fn)
@@ -466,7 +466,7 @@ function propagate_returned!(mod::LLVM.Module)
             if argn === nothing && length(toremove) == 0
                 continue
             end
-            illegalUse = linkage(fn) != LLVM.API.LLVMInternalLinkage
+            illegalUse = !(linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 if !isa(un, LLVM.CallInst)
@@ -597,6 +597,217 @@ function detect_writeonly!(mod::LLVM.Module)
     return nothing
 end
 
+function validate_return_roots!(mod)
+    ctx = LLVM.context(mod)
+    for f in functions(mod)
+        srets = []
+        enzyme_srets = Int[]
+        enzyme_srets_v = Int[]
+        rroots = Int[]
+        rroots_v = Int[]
+        for (i, a) in enumerate(parameters(f))
+            for attr in collect(parameter_attributes(f, i))
+                if isa(attr, StringAttribute)
+                    if kind(attr) == "enzymejl_returnRoots"
+                        push!(rroots, i)
+                    end
+                    if kind(attr) == "enzymejl_returnRoots_v"
+                        push!(rroots_v, i)
+                    end
+                    if kind(attr) == "enzyme_sret"
+                        push!(enzyme_srets, i)
+                    end
+                    if kind(attr) == "enzyme_sret_v"
+                        push!(enzyme_srets, i)
+                    end
+                end
+                if kind(attr) == kind(EnumAttribute("sret"; ctx))
+                    push!(srets, (i, attr))
+                end
+            end
+        end
+        if length(enzyme_srets) >= 1 && length(srets) == 0
+            @assert enzyme_srets[1] == 1
+            VT = LLVM.VoidType(ctx)
+            if length(enzyme_srets) == 1 && LLVM.return_type(LLVM.function_type(f)) == VT && length(enzyme_srets_v) == 0
+                # Upgrading to sret requires writeonly
+                if !any(kind(attr) == kind(EnumAttribute("writeonly"; ctx)) for attr in collect(parameter_attributes(f, 1)))
+                    @show f
+                    @show collect(parameter_attributes(f, 1))
+                    @assert false
+                end
+                
+                alty = nothing
+                for u in LLVM.uses(f)
+                    u = LLVM.user(u)
+                    @assert isa(u, LLVM.CallInst)
+                    @assert LLVM.called_value(u) == f
+                    alop = operands(u)[1]
+                    if !isa(alop, LLVM.AllocaInst)
+                        @show alop, u, f
+                    end
+                    @assert isa(alop, LLVM.AllocaInst)
+                    nty = API.EnzymeAllocaType(alop)
+                    if alty === nothing
+                        alty = nty
+                    else
+                        @assert alty == nty
+                    end
+                    attr = if LLVM.version().major >= 12
+                        TypeAttribute("sret", alty; ctx)
+                    else
+                        EnumAttribute("sret"; ctx)
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
+                    LLVM.API.LLVMRemoveCallSiteStringAttribute(u, LLVM.API.LLVMAttributeIndex(1), "enzyme_sret", length("enzyme_sret"))
+                end
+                @assert alty !== nothing
+                attr = if LLVM.version().major >= 12
+                    TypeAttribute("sret", alty; ctx)
+                else
+                    EnumAttribute("sret"; ctx)
+                end
+
+                push!(parameter_attributes(f, 1), attr)
+                delete!(parameter_attributes(f, 1), StringAttribute("enzyme_sret"; ctx))
+                srets = [(1, attr)]
+                enzyme_srets = Int[]
+            else
+           
+                enzyme_srets2 = Int[]
+                for idx in enzyme_srets
+                    alty = nothing
+                    bad = false
+                    for u in LLVM.uses(f)
+                        u = LLVM.user(u)
+                        @assert isa(u, LLVM.CallInst)
+                        @assert LLVM.called_value(u) == f
+                        alop = operands(u)[1]
+                        @assert isa(alop, LLVM.AllocaInst)
+                        nty = API.EnzymeAllocaType(alop)
+                        if any_jltypes(nty)
+                            bad = true
+                        end
+                        LLVM.API.LLVMRemoveCallSiteStringAttribute(u, LLVM.API.LLVMAttributeIndex(idx), "enzyme_sret", length("enzyme_sret"))
+                    end
+                    if !bad
+                        delete!(parameter_attributes(f, idx), StringAttribute("enzyme_sret"; ctx))
+                    else
+                        push!(enzyme_srets2, idx)
+                    end
+                end
+                enzyme_srets = enzyme_srets2
+
+                if length(enzyme_srets) != 0
+                    @show f
+                    @show enzyme_srets, enzyme_srets_v, srets, rroots, rroots_v
+                    @assert false
+                end
+            end
+        end
+        @assert length(enzyme_srets_v) == 0
+        for (i, attr) in srets
+            @assert i == 1
+        end
+        for i in rroots
+            @assert length(srets) != 0
+            @assert i == 2
+        end
+        # illegal
+        for i in rroots_v
+            @assert false
+        end
+    end
+end
+
+function removeDeadArgs!(mod::LLVM.Module)
+    # We need to run globalopt first. This is because remove dead args will otherwise
+    # take internal functions and replace their args with undef. Then on LLVM up to 
+    # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
+    # call code with undef to become unreachable, even when there exist other valid
+    # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
+    ModulePassManager() do pm
+        global_dce!(pm)
+        run!(pm, mod)
+    end
+    # Prevent dead-arg-elimination of functions which we may require args for in the derivative
+    ctx = LLVM.context(mod)
+    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
+    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx), EnumAttribute("nofree"; ctx)])
+    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"; ctx), EnumAttribute("nofree"; ctx), EnumAttribute("argmemonly"; ctx), EnumAttribute("nocapture"; ctx)])
+  
+    for fn in functions(mod)
+        if isempty(blocks(fn))
+            continue
+        end
+        # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
+        # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
+        # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
+        # to preserve this.
+        for idx in (2, 3, 4)
+            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) || kind(attr) == StringAttribute("enzymejl_returnRoots_v"; ctx)) for attr in collect(parameter_attributes(fn, idx)))
+                for u in LLVM.uses(fn)
+                    u = LLVM.user(u)
+                    @assert isa(u, LLVM.CallInst)
+                    B = IRBuilder(ctx)
+                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                    position!(B, nextInst)
+                    cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+                end
+            end
+        end
+        attrs = collect(function_attributes(fn))
+        prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal"; ctx)) for attr in attrs)
+        # && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
+        if prevent
+            B = IRBuilder(ctx)
+            position!(B, first(instructions(first(blocks(fn)))))
+            call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
+        end
+    end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        run!(pm, mod)
+    end
+    propagate_returned!(mod)
+    pre_attr!(mod)
+    ModulePassManager() do pm
+        API.EnzymeAddAttributorLegacyPass(pm)
+        run!(pm, mod)
+    end
+    propagate_returned!(mod)
+    ModulePassManager() do pm
+        instruction_combining!(pm)
+        alloc_opt!(pm)
+        scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        API.EnzymeAddAttributorLegacyPass(pm)
+        run!(pm, mod)
+    end
+    post_attr!(mod)
+    propagate_returned!(mod)
+
+    for u in LLVM.uses(rfunc)
+        u = LLVM.user(u)
+        unsafe_delete!(LLVM.parent(u), u)
+    end
+    unsafe_delete!(mod, rfunc)
+    for fn in functions(mod)
+        for b in blocks(fn)
+            inst = first(LLVM.instructions(b))
+            if isa(inst, LLVM.CallInst)
+                fn = LLVM.called_value(inst)
+                if fn == func
+                    unsafe_delete!(b, inst)
+                end
+            end
+        end
+    end
+    unsafe_delete!(mod, func)
+end
+
 function optimize!(mod::LLVM.Module, tm)
     addr13NoAlias(mod)
     # everying except unroll, slpvec, loop-vec
@@ -678,77 +889,7 @@ end
         run!(pm, mod)
     end
     
-    # Prevent dead-arg-elimination of functions which we may require args for in the derivative
-    ctx = LLVM.context(mod)
-    funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
-    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"; ctx), EnumAttribute("nofree"; ctx)])
-    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"; ctx), EnumAttribute("nofree"; ctx), EnumAttribute("argmemonly"; ctx), EnumAttribute("nocapture"; ctx)])
-  
-    for fn in functions(mod)
-        if isempty(blocks(fn))
-            continue
-        end
-        # Ensure that interprocedural optimizations do not delete the use of returnRoots
-        if length(collect(parameters(fn))) >= 2 && any(kind(attr) == kind(StringAttribute("enzymejl_returnRoots"; ctx)) for attr in collect(parameter_attributes(fn, 2)))
-            for u in LLVM.uses(fn)
-                u = LLVM.user(u)
-                @assert isa(u, LLVM.CallInst)
-                B = IRBuilder(ctx)
-                nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
-                position!(B, nextInst)
-                cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
-            end
-        end
-        attrs = collect(function_attributes(fn))
-        prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal"; ctx)) for attr in attrs)
-        # && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
-        if prevent
-            B = IRBuilder(ctx)
-            position!(B, first(instructions(first(blocks(fn)))))
-            call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
-        end
-    end
-    propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        alloc_opt!(pm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        run!(pm, mod)
-    end
-    propagate_returned!(mod)
-    pre_attr!(mod)
-    ModulePassManager() do pm
-        API.EnzymeAddAttributorLegacyPass(pm)
-        run!(pm, mod)
-    end
-    propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        alloc_opt!(pm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        API.EnzymeAddAttributorLegacyPass(pm)
-        run!(pm, mod)
-    end
-    post_attr!(mod)
-    propagate_returned!(mod)
-
-    for u in LLVM.uses(rfunc)
-        u = LLVM.user(u)
-        unsafe_delete!(LLVM.parent(u), u)
-    end
-    unsafe_delete!(mod, rfunc)
-    for fn in functions(mod)
-        for b in blocks(fn)
-            inst = first(LLVM.instructions(b))
-            if isa(inst, LLVM.CallInst)
-                fn = LLVM.called_value(inst)
-                if fn == func
-                    unsafe_delete!(b, inst)
-                end
-            end
-        end
-    end
-    unsafe_delete!(mod, func)
+    removeDeadArgs!(mod)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
 end
@@ -894,6 +1035,7 @@ end
 
 function post_optimze!(mod, tm, machine=true)
     addr13NoAlias(mod)
+    removeDeadArgs!(mod)
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
@@ -903,6 +1045,8 @@ function post_optimze!(mod, tm, machine=true)
         run!(pm, mod)
     end
     if machine
+        # TODO enable validate_return_roots
+        # validate_return_roots!(mod)
         LLVM.ModulePassManager() do pm
             addJuliaLegalizationPasses!(pm, true)
             addMachinePasses!(pm)
