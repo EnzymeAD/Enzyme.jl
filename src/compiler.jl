@@ -6941,26 +6941,6 @@ function annotate!(mod, mode)
         end
     end
 
-    blas_types = ("s", "d")
-    blas_readonly = ("dot", "asum", "nrm2", "amax")
-    blas_argmemonly = ("scal", "axpy", "copy", "swap", "gemv", "ger", "spmv", "spr", "gbmv", "sbmv", "trmv", "trsv", "tbmv", "tbsv", "gemm", "symm", "trmm", "trsm", "syrk", "syr2k")
-    blas_endings = ("_", "_64_")
-    blas_fncs_ro = [(x*y*z) for x in blas_types for y in blas_readonly for z in blas_endings]
-    blas_fncs_mo = [(x*y*z) for x in blas_types for y in blas_argmemonly for z in blas_endings]
-    for fname in blas_fncs_ro
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
-        end
-    end
-    for fname in blas_fncs_mo
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
-        end
-    end
-
     for fname in ("jl_f_getfield","ijl_f_getfield","jl_get_nth_field_checked","ijl_get_nth_field_checked")
         if haskey(fns, fname)
             fn = fns[fname]
@@ -8527,7 +8507,19 @@ end
 
     primalf = meta.entry
     check_ir(job, mod)
-    disableFallback = ["sdot_64_", "ddot_64_"]
+
+    disableFallback = String[]
+    blas_types = ("s", "d")
+    blas_readonly = ("dot",)
+    for ty in ("s", "d")
+        for func in ("dot",)
+            for prefix in ("", "cblas_")
+                for ending in ("", "_", "64_", "_64_")
+                    push!(disableFallback, prefix*ty*func*ending)
+                end
+            end
+        end
+    end
     if API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
