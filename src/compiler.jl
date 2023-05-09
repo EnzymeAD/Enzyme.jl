@@ -7216,8 +7216,6 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         end
     end
 
-    rtt = typetree(RT, ctx, dl)
-
     if sret !== nothing
         idx = 0
         if !in(0, parmsRemoved)
@@ -7232,9 +7230,10 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         end
     end
 
+    stt = llRT === nothing ? "" : string( typetree(llRT, ctx, dl) )
     if llRT !== nothing && value_type(inst) != LLVM.VoidType(ctx)
         @assert !retRemoved
-        API.EnzymeMergeTypeTree(ret, typetree(sret, ctx, dl))
+        API.EnzymeMergeTypeTree(ret, typetree(llRT, ctx, dl))
     end
 
     return UInt8(false)
@@ -8156,14 +8155,16 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     _, sret, returnRoots = get_return_info(actualRetType, ctx)
-    sret = sret !== nothing
     sret_union = is_sret_union(actualRetType)
 
     if sret_union
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
         RT = T_prjlvalue
+    elseif sret !== nothing
+        RT = convert(LLVMType, eltype(sret); ctx)
     end
+    sret = sret !== nothing
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
