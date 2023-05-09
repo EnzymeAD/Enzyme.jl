@@ -6862,6 +6862,10 @@ function annotate!(mod, mode)
     active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
 
+    for f in fns
+        API.EnzymeAttributeKnownFunctions(f.ref)
+    end
+
     for fname in inactivefns
         if haskey(fns, fname)
             fn = fns[fname]
