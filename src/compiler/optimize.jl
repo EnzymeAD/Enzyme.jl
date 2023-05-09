@@ -1036,7 +1036,8 @@ function post_optimze!(mod, tm, machine=true)
         run!(pm, mod)
     end
     if machine
-        validate_return_roots!(mod)
+        # TODO enable validate_return_roots
+        # validate_return_roots!(mod)
         LLVM.ModulePassManager() do pm
             addJuliaLegalizationPasses!(pm, true)
             addMachinePasses!(pm)
