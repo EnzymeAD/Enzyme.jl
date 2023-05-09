@@ -721,6 +721,15 @@ function validate_return_roots!(mod)
 end
 
 function removeDeadArgs!(mod::LLVM.Module)
+    # We need to run globalopt first. This is because remove dead args will otherwise
+    # take internal functions and replace their args with undef. Then on LLVM up to 
+    # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
+    # call code with undef to become unreachable, even when there exist other valid
+    # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
+    ModulePassManager() do pm
+        global_dce!(pm)
+        run!(pm, mod)
+    end
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     ctx = LLVM.context(mod)
     funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[], vararg=true)
