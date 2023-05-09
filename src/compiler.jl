@@ -7161,15 +7161,30 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 
     mi, RT = enzyme_custom_extract_mi(inst)
 
-    ops = collect(operands(inst))
-    called = ops[end]
+    ops = collect(operands(inst))[1:end-1]
+    called = LLVM.called_value(inst)
 
 
     llRT, sret, returnRoots =  get_return_info(RT, ctx)
     retRemoved, parmsRemoved = removed_ret_parms(inst)
+    
+    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
+
+
+    expectLen = (sret !== nothing) + (returnRoots !== nothing)
+    for source_typ in mi.specTypes.parameters
+        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+            continue
+        end
+        expectLen+=1
+    end
+    expectLen -= length(parmsRemoved)
+    
+    # TODO fix the attributor inlining such that this can assert always true
+    if expectLen == length(ops)
+
     jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, parmsRemoved)
 
-    dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
     for arg in jlargs
         if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
@@ -7227,6 +7242,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
                 API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(returnRoots, ctx, dl))
             end
         end
+    end
+    
     end
 
     if llRT !== nothing && value_type(inst) != LLVM.VoidType(ctx)
@@ -8132,7 +8149,7 @@ function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Noth
             tracked = CountTrackedPointers(lRT)
             @assert !tracked.derived
             if tracked.count != 0 && !tracked.all
-                returnRoots = Ptr{AnyArray(tracked.count)}
+                returnRoots = Ptr{AnyArray(Int64(tracked.count))}
             end
         else
             rt = jlrettype
@@ -8771,29 +8788,7 @@ end
         jlrules = String[]
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
-            f = functions(mod)[fname]
-            retRemoved, parmsRemoved = removed_ret_parms(f)
-            
-            ctx = LLVM.context(f)
-            mi, RT = enzyme_custom_extract_mi(f)
-
-            ops = collect(parameters(f))
-
-            _, sret, returnRoots = get_return_info(RT, ctx)
-            sret = sret !== nothing
-            returnRoots = returnRoots !== nothing
-            expectLen = sret + returnRoots
-            for source_typ in mi.specTypes.parameters
-                if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-                    continue
-                end
-                expectLen+=1
-            end
-            expectLen -= length(parmsRemoved)
-            # TODO fix the attributor inlining such that this can assert always true
-            if expectLen == length(ops)
-                push!(jlrules, fname)
-            end
+            push!(jlrules, fname)
         end
 
         GC.@preserve job jobref begin
