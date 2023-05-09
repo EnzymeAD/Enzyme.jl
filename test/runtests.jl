@@ -402,6 +402,21 @@ end
     @test autodiff(Forward, expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
+@testset "Reshape Activity" begin
+    function f(x, bias)
+        mout = x + @inbounds vec(bias)[1]
+       sin(mout)
+    end
+
+    x  = [2.0,]
+
+    bias = Float32[0.0;;;]
+    res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
+    
+    @test bias[1][1] ≈ 0.0
+    @test res[1][1] ≈ cos(x[1])
+end
+
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2
         a = Array{Float64, 1}(undef, 10)
