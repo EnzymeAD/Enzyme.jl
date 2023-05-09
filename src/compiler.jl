@@ -5918,7 +5918,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         end
         Tup = Tuple{tys...}
         if containsAny
-            return NamedTuple{ntuple(i->Symbol(i), Val(Int(nelems))), Tup}, false
+            return NamedTuple{ntuple(Core.Symbol, Val(Int(nelems))), Tup}, false
         else
             return Tup, false
         end
@@ -5938,7 +5938,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         len = Int(LLVM.API.LLVMGetArrayLength(Type))
         Tup = NTuple{len, T}
         if sub
-            return NamedTuple{ntuple(i->Symbol(i), Val(len)), Tup}, false
+            return NamedTuple{ntuple(Core.Symbol, Val(len)), Tup}, false
         else
             return Tup, false
         end
@@ -5949,7 +5949,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         len = Int(LLVM.API.LLVMGetVectorSize(Type))
         Tup = NTuple{len, T}
         if sub
-            return NamedTuple{ntuple(i->Symbol(i), Val(len)), Tup}, false
+            return NamedTuple{ntuple(Core.Symbol, Val(len)), Tup}, false
         else
             return Tup, false
         end
