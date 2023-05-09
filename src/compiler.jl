@@ -5904,48 +5904,58 @@ base_type(T::UnionAll) = base_type(T.body)
 base_type(T::DataType) = T
 
 # return result and if contains any
-function to_tape_type(Type::LLVM.LLVMType)::Tuple{DataType,Bool}
-    if isa(Type, LLVM.StructType)
+function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
+    tkind = LLVM.API.LLVMGetTypeKind(Type)
+    if tkind == LLVM.API.LLVMStructTypeKind
         tys = DataType[]
+        nelems = LLVM.API.LLVMCountStructElementTypes(Type)
         containsAny = false
-        for e in LLVM.elements(Type)
+        for i in 1:nelems
+            e = LLVM.API.LLVMStructGetTypeAtIndex(Type, i-1)
             T, sub = to_tape_type(e)
             containsAny |= sub
             push!(tys, T)
         end
         Tup = Tuple{tys...}
         if containsAny
-            return AnonymousStruct(Tup), false
+            return NamedTuple{ntuple(i->Symbol(i), Val(Int(nelems))), Tup}, false
         else
             return Tup, false
         end
     end
-    if isa(Type, LLVM.PointerType)
-        addrspace = LLVM.addrspace(Type)
+    if tkind == LLVM.API.LLVMPointerTypeKind
+        addrspace = LLVM.API.LLVMGetPointerAddressSpace(Type)
         if 10 <= addrspace <= 12
             return Any, true
         else
-            return Core.LLVMPtr{to_tape_type(eltype(Type)), Int(addrspace)}, false
+            e = LLVM.API.LLVMGetElementType(Type)
+            return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
         end
     end
-    if isa(Type, LLVM.ArrayType)
-        T, sub = to_tape_type(eltype(Type))
-        Tup = NTuple{Int(length(Type)), T}
+    if tkind == LLVM.API.LLVMArrayTypeKind
+        e = LLVM.API.LLVMGetElementType(Type)
+        T, sub = to_tape_type(e)
+        len = Int(LLVM.API.LLVMGetArrayLength(Type))
+        Tup = NTuple{len, T}
         if sub
-            Tup = AnonymousStruct(Tup)
+            return NamedTuple{ntuple(i->Symbol(i), Val(len)), Tup}, false
+        else
+            return Tup, false
         end
-        return Tup, false
     end
-    if isa(Type, LLVM.VectorType)
-        T, sub = to_tape_type(eltype(Type))
-        Tup = NTuple{Int(size(Type)), T}
+    if tkind == LLVM.API.LLVMVectorTypeKind
+        e = LLVM.API.LLVMGetElementType(Type)
+        T, sub = to_tape_type(e)
+        len = Int(LLVM.API.LLVMGetVectorSize(Type))
+        Tup = NTuple{len, T}
         if sub
-            Tup = AnonymousStruct(Tup)
+            return NamedTuple{ntuple(i->Symbol(i), Val(len)), Tup}, false
+        else
+            return Tup, false
         end
-        return Tup, false
     end
-    if isa(Type, LLVM.IntegerType)
-        N = width(Type)
+    if tkind == LLVM.API.LLVMIntegerTypeKind
+        N = LLVM.API.LLVMGetIntTypeWidth(Type)
         if N == 1
             return Bool,  false
         elseif N == 8
@@ -5962,23 +5972,23 @@ function to_tape_type(Type::LLVM.LLVMType)::Tuple{DataType,Bool}
             error("Can't construct tape type for integer of width $N")
         end
     end
-    if isa(Type, LLVM.LLVMHalf)
+    if tkind == LLVM.API.LLVMHalfTypeKind
         return Float16, false
     end
-    if isa(Type, LLVM.LLVMFloat)
+    if tkind == LLVM.API.LLVMFloatTypeKind
         return Float32, false
     end
-    if isa(Type, LLVM.LLVMDouble)
+    if tkind == LLVM.API.LLVMDoubleTypeKind
         return Float64, false
     end
-    if isa(Type, LLVM.LLVMFP128)
+    if tkind == LLVM.API.LLVMFP128TypeKind
         return Float128, false
     end
     error("Can't construct tape type for $Type")
 end
 
 function tape_type(LLVMType::LLVM.LLVMType)
-    TT, isAny = to_tape_type(LLVMType)
+    TT, isAny = to_tape_type(LLVMType.ref)
     if isAny
         return AnonymousStruct(Tuple{Any})
     end
