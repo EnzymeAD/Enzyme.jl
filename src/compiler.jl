@@ -7166,15 +7166,9 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     called = ops[end]
 
 
-    sret = is_sret(RT, ctx)
-    returnRoots = false
-    if sret
-        lRT = eltype(value_type(ops[1]))
-    	returnRoots = deserves_rooting(lRT)
-    end
-
+    llRT, sret, returnRoots =  get_return_info(RT, ctx)
     retRemoved, parmsRemoved = removed_ret_parms(inst)
-    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret, returnRoots, parmsRemoved)
+    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots, parmsRemoved)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
@@ -7224,12 +7218,10 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 
     rtt = typetree(RT, ctx, dl)
 
-    if sret
+    if sret !== nothing
         idx = 0
         if !in(0, parmsRemoved)
-            merge!(rtt, TypeTree(API.DT_Pointer, ctx))
-            only!(rtt, -1)
-            API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), rtt)
+            API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(sret, ctx, dl))
             idx+=1
         end
         if returnRoots
@@ -7238,14 +7230,11 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
                 API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), allpointer)
             end
         end
-    else
-        if !retRemoved
-            if GPUCompiler.deserves_retbox(RT)
-                merge!(rtt, TypeTree(API.DT_Pointer, ctx))
-                only!(rtt, -1)
-            end
-            API.EnzymeMergeTypeTree(ret, rtt)
-        end
+    end
+
+    if llRT !== nothing && value_type(inst) != LLVM.VoidType(ctx)
+        @assert !retRemoved
+        API.EnzymeMergeTypeTree(ret, typetree(sret, ctx, dl))
     end
 
     return UInt8(false)
@@ -8045,17 +8034,23 @@ function deserves_rooting(T)
 end
 
 # https://github.com/JuliaLang/julia/blob/64378db18b512677fc6d3b012e6d1f02077af191/src/cgutils.cpp#L823
-function for_each_uniontype_small(f, ty)
+# returns if all unboxed
+function for_each_uniontype_small(f, ty, counter=Ref(0))
+    if counter[] > 127
+        return false
+    end
     if ty isa Union
-        for_each_uniontype_small(f, ty.a)
-        for_each_uniontype_small(f, ty.b)
-        return
+        allunbox  = for_each_uniontype_small(f, ty.a, counter)
+        allunbox &= for_each_uniontype_small(f, ty.b, counter)
+        return allunbox
     end
     # https://github.com/JuliaLang/julia/blob/170d6439445c86e640214620dad3423d2bb42337/src/codegen.cpp#L1233
     if Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
+        counter[] += 1
         f(ty)
-        return
+        return true
     end
+    return false
 end
 
 # From https://github.com/JuliaLang/julia/blob/038d31463f0ef744c8308bdbe87339b9c3f0b890/src/cgutils.cpp#L3108
@@ -8106,6 +8101,50 @@ function is_sret_union(jlrettype)
         end
     end
     return false
+end
+
+# https://github.com/JuliaLang/julia/blob/0a696a3842750fcedca8832bc0aabe9096c7658f/src/codegen.cpp#L6812
+function get_return_info(jlrettype, ctx)
+    sret = nothing
+    returnRoots = nothing
+    rt = nothing
+    if RT === Union{}
+        rt = Nothing
+    elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
+        rt = Nothing
+    elseif jlrettype isa Union
+        nbytes = 0
+        allunbox = for_each_uniontype_small(jlrettype) do jlrettype
+            if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
+               nbytes = max(nbytes, sizeof(jlrettype))
+            end
+        end
+        if nbytes
+            rt = Tuple{Any, UInt8}
+            # Pointer to?, Ptr{NTuple{UInt8, allunbox}
+            sret = Ptr{jlrettype}
+        elseif allunbox
+            rt = UInt8
+        else
+            rt = Any
+        end
+    elseif !GPUCompiler.deserves_retbox(jlrettype)
+        lRT = convert(LLVMType, jlrettype ; ctx)
+        if !isa(lRT, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, lRT)
+            sret = Ptr{jlrettype}
+            if deserves_rooting(lRT)
+                returnRoots = true
+            end
+            return true
+        else
+            rt = jlrettype
+        end
+    else
+        # retbox
+        rt = Ptr{jlrettype}
+    end
+
+    return rt, sret, returnRoots
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
