@@ -6363,7 +6363,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 
             ETT = N == 1 ? TT : NTuple{N, TT}
             if sizeof(ETT) !=  N*convert(Int, AlignedSize)
-                GPUCompiler.@safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize)
+                GPUCompiler.@safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(ETT) TargetSize = N*convert(Int, AlignedSize) LLVMType
                 emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
 
                 return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
