@@ -8149,7 +8149,7 @@ function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Noth
             tracked = CountTrackedPointers(lRT)
             @assert !tracked.derived
             if tracked.count != 0 && !tracked.all
-                returnRoots = Ptr{AnyArray(Int64(tracked.count))}
+                returnRoots = Ptr{AnyArray(Int(tracked.count))}
             end
         else
             rt = jlrettype
