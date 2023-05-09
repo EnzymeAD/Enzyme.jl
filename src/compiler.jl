@@ -2906,6 +2906,7 @@ function prepare_llvm(mod, job, meta)
         RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
 
         _, _, returnRoots = get_return_info(RT, ctx)
+        returnRoots = returnRoots !== nothing
 
         attributes = function_attributes(llvmfn)
         push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
@@ -3780,6 +3781,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
 
     _, sret, returnRoots = get_return_info(RT, ctx)
     sret = sret !== nothing
+    returnRoots = returnRoots !== nothing
 
 	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots, parmsRemoved)
 
@@ -3948,7 +3950,6 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
         end
 
     end
-
     return args, activity, (overwritten...,), actives, kwtup
 end
 
@@ -4079,13 +4080,12 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[1], ctx)
-    sret = sret !== nothing
+    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2], ctx)
     if sret !== nothing
         sret = alloca!(alloctx, convert(LLVMType, eltype(sret); ctx))
         pushfirst!(args, sret)
-        if returnRoots
-            returnRoots = alloca!(alloctx, eltype(value_type(parameters(llvmf)[2])))
+        if returnRoots !== nothing
+            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots); ctx))
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
@@ -4422,13 +4422,12 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
         end
     end
 
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[1], ctx)
-    sret = sret !== nothing
+    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2], ctx)
     if sret !== nothing
         sret = alloca!(alloctx, convert(LLVMType, eltype(sret); ctx))
         pushfirst!(args, sret)
-        if returnRoots
-            returnRoots = alloca!(alloctx, eltype(value_type(parameters(llvmf)[2])))
+        if returnRoots !== nothing
+            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots); ctx))
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
@@ -7168,7 +7167,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 
     llRT, sret, returnRoots =  get_return_info(RT, ctx)
     retRemoved, parmsRemoved = removed_ret_parms(inst)
-    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots, parmsRemoved)
+    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, parmsRemoved)
 
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
@@ -7222,10 +7221,10 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
             API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(sret, ctx, dl))
             idx+=1
         end
-        if returnRoots
+        if returnRoots !== nothing
             if !in(1, parmsRemoved)
                 allpointer = TypeTree(API.DT_Pointer, -1, ctx)
-                API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), allpointer)
+                API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(returnRoots, ctx, dl))
             end
         end
     end
@@ -7924,7 +7923,7 @@ struct RemovedParam
 end
 
 # Modified from GPUCompiler classify_arguments
-function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret, has_returnroots, parmsRemoved)
+function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret::Bool, has_returnroots::Bool, parmsRemoved::Vector{UInt64})
     codegen_types = parameters(codegen_ft)
 
     args = []
@@ -8102,9 +8101,9 @@ function is_sret_union(jlrettype)
 end
 
 # https://github.com/JuliaLang/julia/blob/0a696a3842750fcedca8832bc0aabe9096c7658f/src/codegen.cpp#L6812
-function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Nothing, Type}, Bool}
+function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Nothing, Type}, Union{Nothing, Type}}
     sret = nothing
-    returnRoots = false
+    returnRoots = nothing
     rt = nothing
     if jlrettype === Union{}
         rt = Nothing
@@ -8130,8 +8129,10 @@ function get_return_info(jlrettype, ctx)::Tuple{Union{Nothing, Type}, Union{Noth
         lRT = convert(LLVMType, jlrettype ; ctx)
         if !isa(lRT, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, lRT)
             sret = Ptr{jlrettype}
-            if deserves_rooting(lRT)
-                returnRoots = true
+            tracked = CountTrackedPointers(lRT)
+            @assert !tracked.derived
+            if tracked.count != 0 && !tracked.all
+                returnRoots = Ptr{AnyArray(tracked.count)}
             end
         else
             rt = jlrettype
@@ -8164,6 +8165,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         RT = convert(LLVMType, eltype(sret); ctx)
     end
     sret = sret !== nothing
+    returnRoots = returnRoots !== nothing
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
@@ -8779,6 +8781,7 @@ end
 
             _, sret, returnRoots = get_return_info(RT, ctx)
             sret = sret !== nothing
+            returnRoots = returnRoots !== nothing
             expectLen = sret + returnRoots
             for source_typ in mi.specTypes.parameters
                 if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
