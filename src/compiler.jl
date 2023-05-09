@@ -5910,15 +5910,18 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         tys = DataType[]
         nelems = LLVM.API.LLVMCountStructElementTypes(Type)
         containsAny = false
+        syms = Symbol[]
         for i in 1:nelems
             e = LLVM.API.LLVMStructGetTypeAtIndex(Type, i-1)
             T, sub = to_tape_type(e)
             containsAny |= sub
             push!(tys, T)
+            push!(syms, Symbol(i))
         end
         Tup = Tuple{tys...}
         if containsAny
-            return NamedTuple{ntuple(Core.Symbol, Val(Int(nelems))), Tup}, false
+            res = (syms...,)
+            return NamedTuple{res, Tup}, false
         else
             return Tup, false
         end
