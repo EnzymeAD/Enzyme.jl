@@ -249,7 +249,7 @@ function pre_attr!(mod::LLVM.Module)
         if isempty(blocks(fn))
             continue
         end
-        if linkage(fn) != LLVM.API.LLVMInternalLinkage
+        if linkage(fn) != LLVM.API.LLVMInternalLinkage && linkage(fn) != LLVM.API.LLVMPrivateLinkage
             continue
         end
    
@@ -373,7 +373,7 @@ function propagate_returned!(mod::LLVM.Module)
                     argn = i
                 end
                 # interprocedural const prop from callers of arg
-                if !prevent && linkage(fn) == LLVM.API.LLVMInternalLinkage
+                if !prevent && (linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
                     val = nothing
                     illegalUse = false
                     for u in LLVM.uses(fn)
@@ -466,7 +466,7 @@ function propagate_returned!(mod::LLVM.Module)
             if argn === nothing && length(toremove) == 0
                 continue
             end
-            illegalUse = linkage(fn) != LLVM.API.LLVMInternalLinkage
+            illegalUse = !(linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 if !isa(un, LLVM.CallInst)
@@ -706,7 +706,6 @@ function validate_return_roots!(mod)
             end
         end
         @assert length(enzyme_srets_v) == 0
-        # @show mod
         for (i, attr) in srets
             @assert i == 1
         end
