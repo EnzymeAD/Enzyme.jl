@@ -111,7 +111,7 @@ end
     world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
     res = forward(Const(mul2), d)
-    @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
+    @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
