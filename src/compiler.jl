@@ -6005,6 +6005,9 @@ from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.Pointe
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
 from_tape_type(::Type{Any}, ctx) = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]; ctx), 10)
 function from_tape_type(::Type{NamedTuple{A,B}}, ctx) where {A,B}
+    from_tape_type(B, ctx)
+end
+function from_tape_type(::Type{B}, ctx) where {B<:Tuple}
     ar = LLVM.LLVMType[from_tape_type(b, ctx) for b in B.parameters]
     if length(B.parameters) >= 1 && all(ar[1] == b for b in ar)
         return LLVM.ArrayType(ar[1], length(B.parameters))
