@@ -6224,6 +6224,32 @@ function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     return T_prjlvalue.ref
 end
+function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef)::LLVM.API.LLVMValueRef
+    ty = LLVM.LLVMType(Ty)
+    if !any_jltypes(ty)
+        return UndefValue(ty).ref
+    end
+    if isa(ty, LLVM.PointerType)
+        val = unsafe_to_llvm(nothing, LLVM.context(ty))
+        if addrspace(ty) != 10
+            val = const_addrspacecast!(val, ty)
+        end
+        return val.ref
+    end
+    if isa(ty, LLVM.ArrayType)
+        st = LLVM.Constant(julia_undef_value_for_type(eltype(ty).ref))
+        return ConstantArray(ty, [st for i in 1:length(st)]).ref
+    end
+    if isa(ty, LLVM.StructType)
+        vals = Constant[]
+        for st in LLVM.elements(ty)
+            push!(vals, LLVM.Constant(julia_undef_value_for_type(st.ref)))
+        end
+        return ConstantStruct(ty, vals).ref
+    end
+    @safe_show "Unknown type to val", Ty
+    @assert false
+end
 
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8, ZI)
     B = LLVM.IRBuilder(B)
@@ -6546,6 +6572,11 @@ end
         API.EnzymeSetFixupReturn(@cfunction(
             fixup_return, LLVM.API.LLVMValueRef,
             (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+    end
+    try
+        API.EnzymeSetUndefinedValueForType(@cfunction(
+                                                julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,)))
+    catch
     end
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
