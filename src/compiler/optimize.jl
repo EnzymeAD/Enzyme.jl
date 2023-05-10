@@ -1036,6 +1036,16 @@ end
 function post_optimze!(mod, tm, machine=true)
     addr13NoAlias(mod)
     removeDeadArgs!(mod)
+    for f in collect(functions(mod))
+        API.EnzymeFixupJuliaCallingConvention(f)
+    end
+    out_error = Ref{Cstring}()
+    if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
+        @safe_show mod
+        @safe_show out_error[]
+        flush(stdout)
+        throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
+    end
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
