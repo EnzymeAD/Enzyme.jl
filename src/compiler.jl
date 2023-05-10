@@ -8594,7 +8594,6 @@ end
 
     foundTys = Dict{String, Tuple{LLVM.FunctionType, Core.MethodInstance}}()
 
-    jobref = Ref(job)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
@@ -8642,7 +8641,6 @@ end
             for a in attrs
                 push!(attributes, a)
             end
-            push!(attributes, StringAttribute("enzymejl_job", string(convert(UInt, pointer_from_objref(jobref))); ctx))
             push!(attributes, StringAttribute("enzyme_math", name; ctx))
             push!(attributes, EnumAttribute("noinline", 0; ctx))
             must_wrap |= llvmfn == primalf
@@ -8845,9 +8843,7 @@ end
             push!(jlrules, fname)
         end
 
-        GC.@preserve job jobref begin
-            adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
-        end
+        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
