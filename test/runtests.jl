@@ -111,7 +111,7 @@ end
     world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
     res = forward(Const(mul2), d)
-    @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
+    @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
@@ -402,6 +402,21 @@ end
     @test autodiff(Forward, expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
+@testset "Reshape Activity" begin
+    function f(x, bias)
+        mout = x + @inbounds vec(bias)[1]
+       sin(mout)
+    end
+
+    x  = [2.0,]
+
+    bias = Float32[0.0;;;]
+    res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
+    
+    @test bias[1][1] ≈ 0.0
+    @test res[1][1] ≈ cos(x[1])
+end
+
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2
         a = Array{Float64, 1}(undef, 10)
@@ -516,6 +531,10 @@ end
 
 	weights = [0.2]
 	dweights = [0.0]
+    # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
+    # doesn't use any of the const data values, but now that we error for activity confusion, we need to
+    # mark runtimeActivity to let this pass
+    Enzyme.API.runtimeActivity!(true)
 	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
@@ -535,6 +554,7 @@ end
     dweights = [0.0, 0.0]
 
     Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.API.runtimeActivity!(false)
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
 end
@@ -1382,45 +1402,96 @@ end
 end
 
 @testset "GetField" begin
-    # TODO
-    # mutable struct MyType
-    #    x::Float64
-    # end
+    mutable struct MyType
+       x::Float64
+    end
 
-    # function gf(v::MyType, fld)
-    #    x = getfield(v, fld)
-    #    x = x::Float64
-    #    2 * x
-    # end
+    getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 
-    # function gf2(v::MyType, fld, fld2)
-    #    x = getfield(v, fld)
-    #    y = getfield(v, fld2)
-    #    x + y
-    # end
+    function gf(v::MyType, fld::Symbol)
+       x = getfield(v, fld)
+       x = x::Float64
+       2 * x
+    end
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    function gf(v::MyType, fld::Integer)
+       x = getfield_idx(v, fld)
+       x = x::Float64
+       2 * x
+    end
 
-    # Enzyme.autodiff(gf, Active, Duplicated(x, dx), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
+    function gf2(v::MyType, fld::Integer, fld2::Integer)
+       x = getfield_idx(v, fld)
+       y = getfield_idx(v, fld2)
+       x + y
+    end
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    function gf2(v::MyType, fld::Symbol, fld2::Symbol)
+       x = getfield(v, fld)
+       y = getfield(v, fld2)
+       x + y
+    end
 
-    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    #
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
-    # dx2 = MyType(0.0)
+    mx = MyType(3.0)
+    dx = MyType(0.0)
 
-    # Enzyme.autodiff(gf, Active, BatchDuplicated(x, dx, dx2), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    # @test dx2.x ≈ 2.0
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(:x), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(0), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+    function forbatch(v, fld::Symbol, out)
+        x = getfield(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+    function forbatch(v, fld::Integer, out)
+        x = getfield_idx(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(:x), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(0), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
 
     mutable struct MyType2
        x::Float64

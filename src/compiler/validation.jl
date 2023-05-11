@@ -82,7 +82,8 @@ module FFI
             "ijl_box_float64", 
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
-            "memcmp","memchr"
+            "memcmp","memchr",
+            "jl_get_nth_field_checked", "ijl_get_nth_field_checked"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -192,6 +193,53 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
 end
 
 const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
+
+# List of methods to location of arg which is the mi/function, then start of args
+const generic_method_offsets = Dict{String, Tuple{Int,Int}}(("jl_f__apply_latest" => (2,3), "ijl_f__apply_latest" => (2,3), "jl_f__call_latest" => (2,3), "ijl_f__call_latest" => (2,3), "jl_f_invoke" => (2,3), "jl_invoke" => (1,3), "jl_apply_generic" => (1,2), "ijl_f_invoke" => (2,3), "ijl_invoke" => (1,3), "ijl_apply_generic" => (1,2)))
+            
+function guess_julia_type(val::LLVM.Value, typeof=true)
+    while true
+        if isa(val, LLVM.ConstantExpr)
+            if opcode(val) == LLVM.API.LLVMAddrSpaceCast
+                val = operands(val)[1]
+                continue
+            end
+            if opcode(val) == LLVM.API.LLVMIntToPtr
+                val = operands(val)[1]
+                continue
+            end
+        end
+        if isa(val, LLVM.BitCastInst) || isa(val, LLVM.AddrSpaceCastInst) || isa(val, LLVM.PtrToIntInst)
+            val = operands(val)[1]
+            continue
+        end
+        if isa(val, ConstantInt)
+            rep = reinterpret(Ptr{Cvoid}, convert(UInt, val))
+            val = Base.unsafe_pointer_to_objref(rep)
+            if typeof
+                return Core.Typeof(val)
+            else
+                return val
+            end
+        end
+        if isa(val, LLVM.CallInst) && typeof
+            fn = LLVM.called_value(val)
+            if isa(fn, LLVM.Function) && LLVM.name(fn) == "julia.gc_alloc_obj"
+                res = guess_julia_type(operands(val)[3], false)
+                if res !== nothing
+                    return res
+                end
+            end
+            break
+        end
+        break
+    end
+    if typeof
+        return Any
+    else
+        return nothing
+    end
+end
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
@@ -423,8 +471,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
-            if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
-                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+
+            if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
+                offset, start = generic_method_offsets[LLVM.name(dest)]
+                # Add 1 to account for function being first arg
+                flib = operands(inst)[offset+1]
                 while isa(flib, LLVM.ConstantExpr)
                     flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
                 end
@@ -432,8 +483,14 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                     flib = Base.unsafe_pointer_to_objref(rep)
                     tys = [typeof(flib)]
-                    for op in collect(operands(inst))[4:end]
-                        push!(tys, Any)
+                    for op in collect(operands(inst))[start+1:end-1]
+                        push!(tys, guess_julia_type(op))
+                    end
+                    if isa(flib, Core.MethodInstance)
+                        if !Base.isvarargtype(flib.specTypes.parameters[end])
+                            @assert length(tys) == length(flib.specTypes.parameters)
+                        end
+                        tys = flib.specTypes.parameters
                     end
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                         ofn = LLVM.parent(LLVM.parent(inst))
@@ -487,8 +544,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
         end
         dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(dest, 0))
-        if isa(dest, LLVM.Function) && ( in(name(dest), ["jl_f_invoke", "jl_invoke", "jl_apply_generic", "ijl_f_invoke", "ijl_invoke", "ijl_apply_generic"]) )
-            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+        if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
+            offset, start = generic_method_offsets[LLVM.name(dest)]
+
+            flib = operands(inst)[offset]
             while isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
             end
@@ -496,8 +555,17 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                 flib = Base.unsafe_pointer_to_objref(rep)
                 tys = [typeof(flib)]
-                for op in collect(operands(inst))[2:end]
-                    push!(tys, Any)
+                for op in collect(operands(inst))[start:end-1]
+                    push!(tys, guess_julia_type(op))
+                end
+                if isa(flib, Core.MethodInstance)
+                    if !Base.isvarargtype(flib.specTypes.parameters[end])
+                        if length(tys) != length(flib.specTypes.parameters)
+                            @show tys, flib, inst, offset, start
+                        end
+                        @assert length(tys) == length(flib.specTypes.parameters)
+                    end
+                    tys = flib.specTypes.parameters
                 end
                 if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                     ofn = LLVM.parent(LLVM.parent(inst))
