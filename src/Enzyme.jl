@@ -188,7 +188,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             res = forward(f, args′...)
             tape = res[1]
             if ReturnPrimal
-                return (adjoint(args′..., tape)[1], res[2])
+                return (adjoint(f, args′..., tape)[1], res[2])
             else
                 return adjoint(f, args′..., tape)
             end
