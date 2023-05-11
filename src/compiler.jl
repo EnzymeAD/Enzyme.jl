@@ -6224,6 +6224,39 @@ function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     return T_prjlvalue.ref
 end
+function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8)::LLVM.API.LLVMValueRef
+    ty = LLVM.LLVMType(Ty)
+    if !any_jltypes(ty)
+        if forceZero != 0
+            return LLVM.null(ty).ref
+        else
+            return UndefValue(ty).ref
+        end
+    end
+    if isa(ty, LLVM.PointerType)
+        val = unsafe_to_llvm(nothing, LLVM.context(ty))
+        if !is_opaque(ty)
+            val = const_pointercast(val, LLVM.PointerType(eltype(ty), 10))
+        end
+        if addrspace(ty) != 10
+            val = const_addrspacecast(val, ty)
+        end
+        return val.ref
+    end
+    if isa(ty, LLVM.ArrayType)
+        st = LLVM.Constant(julia_undef_value_for_type(eltype(ty).ref, forceZero))
+        return ConstantArray(ty, [st for i in 1:length(st)]).ref
+    end
+    if isa(ty, LLVM.StructType)
+        vals = LLVM.Constant[]
+        for st in LLVM.elements(ty)
+            push!(vals, LLVM.Value(julia_undef_value_for_type(st.ref, forceZero)))
+        end
+        return ConstantStruct(ty, vals).ref
+    end
+    @safe_show "Unknown type to val", Ty
+    @assert false
+end
 
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8, ZI)
     B = LLVM.IRBuilder(B)
@@ -6456,11 +6489,11 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         mallocF, fty = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(Count)]))
 
         obj = call!(B, fty, mallocF, [Size])
-        if ZI != C_NULL
-            unsafe_store!(ZI, LLVM.memset!(B, obj,  LLVM.ConstantInt(T_int8, 0),
-                                                  Size,
-                                                 #=align=#0 ).ref)
-        end
+        # if ZI != C_NULL
+        #     unsafe_store!(ZI, LLVM.memset!(B, obj,  LLVM.ConstantInt(T_int8, 0),
+        #                                           Size,
+        #                                          #=align=#0 ).ref)
+        # end
         AS = 0
     end
 
@@ -6547,6 +6580,8 @@ end
             fixup_return, LLVM.API.LLVMValueRef,
             (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
     end
+    API.EnzymeSetUndefinedValueForType(@cfunction(
+                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8)))
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
