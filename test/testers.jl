@@ -41,9 +41,10 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
         return FiniteDifferences.jvp(fdm, f2, sigargs...)
     elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
         sig_arg_vals = xs[.!ignores]
-        return map(ẋs[.!ignores]...) do sig_args_dvals...
+        ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             FiniteDifferences.jvp(fdm, f2, zip(sig_arg_vals, sig_args_dvals)...)
         end
+        return NamedTuple{ntuple(Symbol, length(ret_dvals))}(ret_dvals)
     else
         throw(ArgumentError("Unsupported return type: $rettype"))
     end
