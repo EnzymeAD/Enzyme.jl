@@ -76,20 +76,18 @@ function _wrap_function(f, xs, ignores)
     return fnew
 end
 
-# TODO: handle more cases
 rand_tangent(x) = rand_tangent(Random.default_rng(), x)
-function rand_tangent(rng, x::AbstractArray)
-    ẋ = deepcopy(x)  # preserve output type
-    ẋ .= rand_tangent.(rng, x)
-    return ẋ
+# base case: recursively call rand_tangent. Only actually generate random tangents for
+# floating point numbers. all other fields are preserved exactly.
+function rand_tangent(rng, x::T) where {T}
+    fields = fieldnames(T)
+    isempty(fields) && return x
+    return typeof(x)((rand_tangent(rng, getfield(x, k)) for k in fields)...)
 end
+rand_tangent(rng, x::Array) = map(xi -> rand_tangent(rng, xi), x)
 # make numbers prettier sometimes when errors are printed.
 rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
-function rand_tangent(rng, x::Complex)
-    return complex(rand_tangent(rng, real(x)), rand_tangent(rng, imag(x)))
 end
-rand_tangent(rng, x::Tuple) = map(xi -> rand_tangent(rng, xi), x)
-rand_tangent(rng, x::NamedTuple) = map(xi -> rand_tangent(rng, xi), x)
 
 function test_approx(x::Tuple, y::Tuple; kwargs...)
     return all(zip(x, y)) do (xi, yi)
