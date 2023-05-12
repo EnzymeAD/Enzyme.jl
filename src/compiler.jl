@@ -8579,7 +8579,7 @@ end
     primalf = meta.entry
     check_ir(job, mod)
 
-    disableFallback = String[]
+    disableFallback = String["saxpy_64_", "daxpy_64"]
     # Tablegen BLAS does not support runtime activity yet
     if !API.runtimeActivity()
         blas_types = ("s", "d")
