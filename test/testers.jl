@@ -1,4 +1,5 @@
 using Enzyme
+using EnzymeCore: Annotation
 using FiniteDifferences
 using Random
 using Test
@@ -96,16 +97,22 @@ end
 test_approx(x, y; kwargs...) = isapprox(x, y; kwargs...)
 
 function auto_forward_activity(arg::Tuple)
-    primal, T = arg
-    T <: Const && return T(primal)
-    T <: Duplicated && return T(primal, rand_tangent(primal))
-    if T <: BatchDuplicated
-        tangents = ntuple(_ -> rand_tangent(primal), 2)
-        return T(primal, tangents)
+    if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation
+        return _build_activity(arg...)
     end
+    return Const(arg)
+end
+auto_forward_activity(activity::Annotation) = activity
+auto_forward_activity(activity) = Const(activity)
+
+_build_activity(primal, ::Type{<:Const}) = Const(primal)
+_build_activity(primal, ::Type{<:Duplicated}) = Duplicated(primal, rand_tangent(primal))
+function _build_activity(primal, ::Type{<:BatchDuplicated})
+    return BatchDuplicated(primal, ntuple(_ -> rand_tangent(primal), 2))
+end
+function _build_activity(primal, T::Type{<:Annotation})
     throw(ArgumentError("Unsupported activity type: $T"))
 end
-auto_forward_activity(activity) = activity
 
 """
     test_forward(f, return_activity, args...; kwargs...)
