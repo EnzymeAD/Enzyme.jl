@@ -191,6 +191,8 @@ end
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    
+    @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
 end
