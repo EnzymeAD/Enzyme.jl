@@ -133,14 +133,33 @@ function _build_activity(primal, T::Type{<:Annotation})
 end
 
 """
-    test_forward(f, return_activity, args...; kwargs...)
+    test_forward(f, Activity, args...; kwargs...)
+
+Test `Enzyme.autodiff` of `f` in `Forward`-mode against finite differences.
+
+# Arguments
+
+- `Activity`: the activity of the return value of `f`
+- `args`: Each entry is either an argument to `f`, an activity type accepted by `autodiff`,
+    or a tuple of the form `(arg, Activity)`, where `Activity` is the activity type of
+    `arg`. If the activity type specified requires a tangent, a random tangent will be
+    automatically generated.
+
+# Keywords
+
+- `fdm=FiniteDifferences.central_fdm(5, 1)`: The finite differences method to use.
+- `fkwargs`: Keyword arguments to pass to `f`.
+- `rtol`: Relative tolerance for `isapprox`.
+- `atol`: Absolute tolerance for `isapprox`.
+- `testset_name`: Name to use for a testset in which all tests are evaluated.
 
 # Examples
 
 ```julia
-x = randn(5)
-for Tret in (Const, Duplicated), Tx in (Const, Duplicated)
-    test_forward(Const(prod), Tret, (x, Tx))
+x = randn()
+y = randn()  # will be Const
+for Tret in (Const, Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
+    test_forward(*, Tret, (x, Tx), y)
 end
 ```
 """
@@ -159,11 +178,15 @@ function test_forward(
         testset_name = "test_forward: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
     end
     @testset "$testset_name" begin
+        # format arguments for autodiff and FiniteDifferences
         activities = map(auto_forward_activity, (f, args...))
         primals = map(x -> x.val, activities)
+        # call primal, avoid mutating original arguments
         y = call_on_copy(primals...)
         # TODO: handle batch activities
+        # call finitedifferences, avoid mutating original arguments
         dy_fdm = _make_jvp_call(fdm, call_on_copy, ret_activity, y, activities)
+        # call autodiff, allow mutating original arguments
         y_and_dy_ad = autodiff(
             Forward, first(activities), ret_activity, Base.tail(activities)...; fkwargs...
         )
@@ -176,6 +199,7 @@ function test_forward(
             @test length(y_and_dy_ad) == 1
             dy_ad = y_and_dy_ad[1]
         elseif ret_activity <: Const
+            # check Const activity returns an empty tuple
             @test isempty(y_and_dy_ad)
             dy_ad = ()
         else
