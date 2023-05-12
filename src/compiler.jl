@@ -4606,6 +4606,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         return 1
     end
 
+
     origops = LLVM.operands(orig)
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
@@ -5853,7 +5854,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(cur, LLVM.UndefValue)
                 continue
             end
-            illegal = false
+            illegal = true
             break
         end
 
