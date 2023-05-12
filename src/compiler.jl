@@ -4549,7 +4549,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
                 size = sizeof(Ty)
                 align = 0
                 premask = C_NULL
-                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, C_NULL, TT, size, v,           ext, B, align, premask)
+                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, orig, C_NULL, TT, size, v,           ext, B, align, premask)
             else
                 @assert value_type(ext) == shadowVType
                 API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
@@ -8586,7 +8586,8 @@ end
         blas_readonly = ("dot",)
         for ty in ("s", "d")
             for func in ("dot",)
-                for prefix in ("", "cblas_")
+                for prefix in ("cblas_")
+                #for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end
