@@ -169,16 +169,34 @@ function test_forward(
         )
         if ret_activity <: Union{Duplicated,BatchDuplicated}
             y_ad, dy_ad = y_and_dy_ad
-            @test test_approx(y_ad, y; atol, rtol)
+            # check primal agrees with primal function
+            test_approx(y_ad, y; atol, rtol)
+        elseif ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
+            # check primal is not returned
+            @test length(y_and_dy_ad) == 1
+            dy_ad = y_and_dy_ad[1]
         elseif ret_activity <: Const
             @test isempty(y_and_dy_ad)
             dy_ad = ()
         else
-            dy_ad = only(y_and_dy_ad)
+            throw(ArgumentError("Unsupported return activity type: $ret_activity"))
         end
-        for (dy_ad_i, dy_fdm_i) in zip(dy_ad, dy_fdm)
-            if dy_fdm_i === nothing
-                @test iszero(dy_ad_i)
+        if y isa Tuple
+            # check Enzyme and FiniteDifferences return the same number of derivatives
+            @test length(dy_ad) == length(dy_fdm)
+            # check all returned derivatives against FiniteDifferences
+            for (dy_ad_i, dy_fdm_i) in zip(dy_ad, dy_fdm)
+                if dy_fdm_i === nothing
+                    # if all arguments have Const activity, returned derivatives should be 0
+                    test_approx(dy_ad_i, zero_tangent(dy_ad_i); atol, rtol)
+                else
+                    test_approx(dy_ad_i, dy_fdm_i; atol, rtol)
+                end
+            end
+        else
+            if dy_fdm === nothing
+                # if argument has Const activity, returned derivatives should be 0
+                test_approx(dy_ad, zero_tangent(dy_ad); atol, rtol)
             else
                 test_approx(dy_ad, dy_fdm; atol, rtol)
             end
