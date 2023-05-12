@@ -8586,7 +8586,8 @@ end
         blas_readonly = ("dot",)
         for ty in ("s", "d")
             for func in ("dot",)
-                for prefix in ("", "cblas_")
+                for prefix in ("cblas_")
+                #for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end
