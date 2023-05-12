@@ -89,17 +89,17 @@ rand_tangent(rng, x::Array) = map(xi -> rand_tangent(rng, xi), x)
 rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
 end
 
-function test_approx(x::Tuple, y::Tuple; kwargs...)
-    return all(zip(x, y)) do (xi, yi)
-        test_approx(xi, yi; kwargs...)
+function test_approx(x::Number, y::Number; kwargs...)
+    @test isapprox(x, y; kwargs...)
+end
+function test_approx(x::AbstractArray{<:Number}, y::AbstractArray{<:Number}; kwargs...)
+    @test isapprox(x, y; kwargs...)
+end
+function test_approx(x, y; kwargs...)
+    for k in fieldnames(typeof(x))
+        test_approx(getfield(x, k), getfield(y, k); kwargs...)
     end
 end
-function test_approx(x::NamedTuple, y::NamedTuple; kwargs...)
-    return all(zip(x, y)) do (xi, yi)
-        test_approx(xi, yi; kwargs...)
-    end
-end
-test_approx(x, y; kwargs...) = isapprox(x, y; kwargs...)
 
 function auto_forward_activity(arg::Tuple)
     if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation
@@ -167,7 +167,7 @@ function test_forward(
             if dy_fdm_i === nothing
                 @test iszero(dy_ad_i)
             else
-                @test test_approx(dy_ad_i, dy_fdm_i; atol, rtol)
+                test_approx(dy_ad, dy_fdm; atol, rtol)
             end
         end
     end
