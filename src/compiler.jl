@@ -5810,23 +5810,54 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         data2 = LLVM.Value(data2)
         badval = nothing
         # Ignore mismatched activity if phi/store of ghost
-        if isa(data2, ConstantExpr)
-            ce = data2
-            while isa(ce, ConstantExpr)
-                if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-                    ce = operands(ce)[1]
-                else
+        todo = LLVM.Value[data2]
+        seen = Set{LLVM.Value}()
+        illegal = false
+        while length(todo) != 0
+            cur = pop!(todo)
+            if cur in seen
+                continue
+            end
+            push!(seen, cur)
+            if isa(cur, LLVM.PHIInst)
+                for v in LLVM.incoming(cur)
+                    push!(todo, cur)
+                end
+                continue
+            end
+
+            if isa(cur, ConstantExpr)
+                ce = cur
+                while isa(ce, ConstantExpr)
+                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+                        ce = operands(ce)[1]
+                    else
+                        break
+                    end
+                end
+                if isa(ce, ConstantInt)
+                    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                    typ = Base.unsafe_pointer_to_objref(ptr)
+                    if isghostty(Core.Typeof(typ))
+                        continue
+                    end
+                    badval = typ
+                    illegal = false
                     break
                 end
             end
-            if isa(ce, ConstantInt)
-                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-                typ = Base.unsafe_pointer_to_objref(ptr)
-                if isghostty(Core.Typeof(typ))
-                    return
-                end
-                badval = typ
+            if isa(cur, LLVM.PointerNull)
+                continue
             end
+            if isa(cur, LLVM.UndefValue)
+                continue
+            end
+            illegal = false
+            break
+        end
+
+        if !illegal
+            return
         end
 
         gutils = API.EnzymeGradientUtilsRef(data)
