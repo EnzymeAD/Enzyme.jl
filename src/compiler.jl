@@ -3962,6 +3962,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
     needsPrimal = needsPrimalP[] != 0
+    origNeedsPrimal = needsPrimal
 
     ctx = LLVM.context(orig)
     _, sret, _ = get_return_info(RealRt, ctx)
@@ -3995,7 +3996,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
             RT = BatchDuplicatedNoNeed{RealRt, Int(width)}
         end
     end
-    return RT, needsPrimal, needsShadowP[] != 0
+    return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
 function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
@@ -4026,7 +4027,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
-    RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
+    RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -4202,7 +4203,7 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     end
 
     # Delete the primal code
-    if needsPrimal && get_return_info(RealRt, ctx)[2] === nothing
+    if origNeedsPrimal
         unsafe_store!(normalR, normalV)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
@@ -4232,7 +4233,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
-    RT, needsPrimal, needsShadow = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
+    RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -4563,7 +4564,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
         end
 
         # Delete the primal code
-        if needsPrimal && get_return_info(RealRt, ctx)[2] === nothing
+        if origNeedsPrimal
             unsafe_store!(normalR, normalV)
         else
             LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
@@ -5810,23 +5811,54 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         data2 = LLVM.Value(data2)
         badval = nothing
         # Ignore mismatched activity if phi/store of ghost
-        if isa(data2, ConstantExpr)
-            ce = data2
-            while isa(ce, ConstantExpr)
-                if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-                    ce = operands(ce)[1]
-                else
+        todo = LLVM.Value[data2]
+        seen = Set{LLVM.Value}()
+        illegal = false
+        while length(todo) != 0
+            cur = pop!(todo)
+            if cur in seen
+                continue
+            end
+            push!(seen, cur)
+            if isa(cur, LLVM.PHIInst)
+                for v in LLVM.incoming(cur)
+                    push!(todo, cur)
+                end
+                continue
+            end
+
+            if isa(cur, ConstantExpr)
+                ce = cur
+                while isa(ce, ConstantExpr)
+                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+                        ce = operands(ce)[1]
+                    else
+                        break
+                    end
+                end
+                if isa(ce, ConstantInt)
+                    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                    typ = Base.unsafe_pointer_to_objref(ptr)
+                    if isghostty(Core.Typeof(typ))
+                        continue
+                    end
+                    badval = typ
+                    illegal = false
                     break
                 end
             end
-            if isa(ce, ConstantInt)
-                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-                typ = Base.unsafe_pointer_to_objref(ptr)
-                if isghostty(Core.Typeof(typ))
-                    return
-                end
-                badval = typ
+            if isa(cur, LLVM.PointerNull)
+                continue
             end
+            if isa(cur, LLVM.UndefValue)
+                continue
+            end
+            illegal = false
+            break
+        end
+
+        if !illegal
+            return
         end
 
         gutils = API.EnzymeGradientUtilsRef(data)
@@ -6224,6 +6256,39 @@ function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     return T_prjlvalue.ref
 end
+function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8)::LLVM.API.LLVMValueRef
+    ty = LLVM.LLVMType(Ty)
+    if !any_jltypes(ty)
+        if forceZero != 0
+            return LLVM.null(ty).ref
+        else
+            return UndefValue(ty).ref
+        end
+    end
+    if isa(ty, LLVM.PointerType)
+        val = unsafe_to_llvm(nothing, LLVM.context(ty))
+        if !is_opaque(ty)
+            val = const_pointercast(val, LLVM.PointerType(eltype(ty), 10))
+        end
+        if addrspace(ty) != 10
+            val = const_addrspacecast(val, ty)
+        end
+        return val.ref
+    end
+    if isa(ty, LLVM.ArrayType)
+        st = LLVM.Constant(julia_undef_value_for_type(eltype(ty).ref, forceZero))
+        return ConstantArray(ty, [st for i in 1:length(st)]).ref
+    end
+    if isa(ty, LLVM.StructType)
+        vals = LLVM.Constant[]
+        for st in LLVM.elements(ty)
+            push!(vals, LLVM.Value(julia_undef_value_for_type(st.ref, forceZero)))
+        end
+        return ConstantStruct(ty, vals).ref
+    end
+    @safe_show "Unknown type to val", Ty
+    @assert false
+end
 
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8, ZI)
     B = LLVM.IRBuilder(B)
@@ -6456,11 +6521,11 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         mallocF, fty = get_function!(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(Count)]))
 
         obj = call!(B, fty, mallocF, [Size])
-        if ZI != C_NULL
-            unsafe_store!(ZI, LLVM.memset!(B, obj,  LLVM.ConstantInt(T_int8, 0),
-                                                  Size,
-                                                 #=align=#0 ).ref)
-        end
+        # if ZI != C_NULL
+        #     unsafe_store!(ZI, LLVM.memset!(B, obj,  LLVM.ConstantInt(T_int8, 0),
+        #                                           Size,
+        #                                          #=align=#0 ).ref)
+        # end
         AS = 0
     end
 
@@ -6547,6 +6612,8 @@ end
             fixup_return, LLVM.API.LLVMValueRef,
             (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
     end
+    API.EnzymeSetUndefinedValueForType(@cfunction(
+                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8)))
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
         @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
@@ -6862,6 +6929,10 @@ function annotate!(mod, mode)
     active = LLVM.StringAttribute("enzyme_active", ""; ctx)
     fns = functions(mod)
 
+    for f in fns
+        API.EnzymeAttributeKnownFunctions(f.ref)
+    end
+
     for fname in inactivefns
         if haskey(fns, fname)
             fn = fns[fname]
@@ -6938,26 +7009,6 @@ function annotate!(mod, mode)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"; ctx))
-        end
-    end
-
-    blas_types = ("s", "d")
-    blas_readonly = ("dot", "asum", "nrm2", "amax")
-    blas_argmemonly = ("scal", "axpy", "copy", "swap", "gemv", "ger", "spmv", "spr", "gbmv", "sbmv", "trmv", "trsv", "tbmv", "tbsv", "gemm", "symm", "trmm", "trsm", "syrk", "syr2k")
-    blas_endings = ("_", "_64_")
-    blas_fncs_ro = [(x*y*z) for x in blas_types for y in blas_readonly for z in blas_endings]
-    blas_fncs_mo = [(x*y*z) for x in blas_types for y in blas_argmemonly for z in blas_endings]
-    for fname in blas_fncs_ro
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0; ctx))
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
-        end
-    end
-    for fname in blas_fncs_mo
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0; ctx))
         end
     end
 
@@ -8527,7 +8578,22 @@ end
 
     primalf = meta.entry
     check_ir(job, mod)
-    disableFallback = ["sdot_64_", "ddot_64_"]
+
+    disableFallback = String[]
+    # Tablegen BLAS does not support runtime activity yet
+    if !API.runtimeActivity()
+        blas_types = ("s", "d")
+        blas_readonly = ("dot",)
+        for ty in ("s", "d")
+            for func in ("dot",)
+                for prefix in ("", "cblas_")
+                    for ending in ("", "_", "64_", "_64_")
+                        push!(disableFallback, prefix*ty*func*ending)
+                    end
+                end
+            end
+        end
+    end
     if API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
