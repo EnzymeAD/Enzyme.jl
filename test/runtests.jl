@@ -61,6 +61,8 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
+include("blas/scal.jl")
+
 include("abi.jl")
 include("typetree.jl")
 
