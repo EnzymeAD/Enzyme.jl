@@ -26,17 +26,24 @@ Call `FiniteDifferences.jvp`, with the option to ignore certain `xs`.
 # Returns
 - `Ω̇`: Derivative of output w.r.t. `t` estimated by finite differencing.
 """
-function _make_jvp_call(fdm, f, dret, y, xs, ẋs, ignores)
-    dret <: Const && return ()
+function _make_jvp_call(fdm, f, rettype, y, activities)
+    xs = map(x -> x.val, activities)
+    ẋs = map(a -> a isa Const ? nothing : a.dval, activities)
+    ignores = map(a -> a isa Const, activities)
     f2 = _wrap_function(f, xs, ignores)
     ignores = collect(ignores)
     if all(ignores)
         y isa Tuple && return map(_ -> nothing, y)
         return (nothing,)
     end
-    sigargs = zip(xs[.!ignores], ẋs[.!ignores])
-    return FiniteDifferences.jvp(fdm, f2, sigargs...)
+    if rettype <: Union{Duplicated,DuplicatedNoNeed}
+        sigargs = zip(xs[.!ignores], ẋs[.!ignores])
+        return FiniteDifferences.jvp(fdm, f2, sigargs...)
+    else
+        throw(ArgumentError("Unsupported return type: $rettype"))
+    end
 end
+_make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 """
     _wrap_function(f, xs, ignores)
@@ -143,13 +150,9 @@ function test_forward(
     @testset "$testset_name" begin
         activities = map(auto_forward_activity, (f, args...))
         primals = map(x -> x.val, activities)
-        tangents = map(a -> a isa Const ? nothing : a.dval, activities)
-        ignores = map(a -> a isa Const, activities)
         y = call_on_copy(primals...)
         # TODO: handle batch activities
-        dy_fdm = _make_jvp_call(
-            fdm, call_on_copy, ret_activity, y, primals, tangents, ignores
-        )
+        dy_fdm = _make_jvp_call(fdm, call_on_copy, ret_activity, y, activities)
         y_and_dy_ad = autodiff(
             Forward, first(activities), ret_activity, Base.tail(activities)...; fkwargs...
         )
