@@ -8666,6 +8666,7 @@ end
     method_table = Core.Compiler.method_table(interp)
 
     actualRetType = nothing
+    lowerConvention = true
     customDerivativeNames = String[]
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
@@ -8791,6 +8792,7 @@ end
             k_name = LLVM.name(llvmfn)
             if primal
                 primalf = llvmfn
+                lowerConvention = false
             end
             handleCustom("jl_pmap", [], false)
             continue
@@ -8820,7 +8822,12 @@ end
 
         if name == :__fd_sincos_1 || name == :sincospi
           source_sig = Base.signature_type(func, sparam_vals)
+          cur = llvmfn == primalf
           llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+          if cur
+              primalf = llvmfn
+              lowerConvention = false
+          end
           k_name = LLVM.name(llvmfn)
         end
 
@@ -8867,7 +8874,7 @@ end
     end
 
     source_sig = job.source.specTypes
-    primalf, returnRoots = lower_convention(source_sig, mod, primalf, actualRetType)
+    primalf, returnRoots = lowerConvention ? lower_convention(source_sig, mod, primalf, actualRetType) : (primalf, false)
     push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world); ctx))
 
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
