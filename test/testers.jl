@@ -34,7 +34,7 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
     ignores = collect(ignores)
     if all(ignores)
         y isa Tuple && return map(_ -> nothing, y)
-        return (nothing,)
+        return nothing
     end
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
         sigargs = zip(xs[.!ignores], ẋs[.!ignores])
