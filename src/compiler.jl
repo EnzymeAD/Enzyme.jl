@@ -274,9 +274,86 @@ end
     end
 end
 
-@inline active_reg(::Type{Complex{T}}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T} = false
+@enum ActivityState begin
+    AnyState = 0
+    ActiveState = 1
+    DupState = 2
+    MixedState = 3
+end
+
+@inline function Base.:|(a1::ActivityState, a2::ActivityState)
+    return ActivityState(Int(a1) | Int(a2))
+end
+
+@inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Integer} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Function} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:DataType} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Module} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractString} = AnyState
+# here we explicity make ref considered dup rather than active
+@inline function active_reg_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}}}, seen) where T
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+
+@inline function active_reg_inner(::Type{T}, seen) where T
+    if T isa UnionAll || T isa Union || T == Union{}
+        return AnyState
+    end
+    if T ∈ seen
+        return MixedState
+    end
+    push!(seen, T)
+
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+
+    ty = AnyState
+    for f in 1:fieldcount(T)
+        subT    = fieldtype(T, f)
+
+        if subT isa UnionAll || subT isa Union || subT == Union{} || subT <: Integer
+            continue
+        end
+
+        # Allocated inline so adjust first path
+        if allocatedinline(subT)
+            ty |= active_reg_inner(subT, seen)
+        else
+            sub = active_reg_inner(subT, seen)
+            if sub == AnyState
+                continue
+            end
+            ty |= DupState
+        end
+    end
+    return ty
+end
+
+@inline @generated function active_reg(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    @assert state != MixedState 
+    return state == ActiveState
+end
+
+@inline @generated function active_reg_nothrow(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    return state == ActiveState
+end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
@@ -1928,14 +2005,18 @@ end
 getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
+@inline function make_zero(::Type{RT}) where RT
+    return RT(0)
+end
+
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
     res = getfield(dptr, symname)
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -1951,9 +2032,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0

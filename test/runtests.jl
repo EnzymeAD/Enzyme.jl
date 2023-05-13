@@ -85,6 +85,8 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
+    @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
     world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
