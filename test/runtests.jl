@@ -698,7 +698,10 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
+    # TODO get rid of runtime activity
+    Enzyme.API.runtimeActivity!(true)
     @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
+    Enzyme.API.runtimeActivity!(false)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets

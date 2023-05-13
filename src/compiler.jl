@@ -5883,6 +5883,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             return
         end
 
+        if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
+            mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
+            if mi !== nothing && isghostty(rt)
+                return
+            end
+        end
+
         gutils = API.EnzymeGradientUtilsRef(data)
         newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
         while isa(newb, LLVM.PHIInst)
@@ -5905,7 +5912,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if badval !== nothing
                 println(io, " value="*string(badval))
             end
-            println(io, "Please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
+            println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
                 Base.show_backtrace(io, bt)
             end
@@ -7261,7 +7268,7 @@ function enzyme_custom_extract_mi(orig::LLVM.Instruction)
     enzyme_custom_extract_mi(LLVM.called_value(orig)::LLVM.Function)
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Function)
+function enzyme_custom_extract_mi(orig::LLVM.Function, error=true)
     mi = nothing
     RT = nothing
     for fattr in collect(function_attributes(orig))
@@ -7276,8 +7283,8 @@ function enzyme_custom_extract_mi(orig::LLVM.Function)
             end
         end
     end
-    if mi === nothing
-        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig, LLVM.called_value(orig)
+    if error && mi === nothing
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig
     end
     return mi, RT
 end
@@ -8504,6 +8511,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
 
     fixup_metadata!(entry_f)
+    
+    mi, rt = enzyme_custom_extract_mi(entry_f)
+    attributes = function_attributes(wrapper_f)
+    push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
+    push!(attributes, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt))); ctx))
 
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
         @safe_show mod
@@ -8892,6 +8904,9 @@ end
         end
         attributes = function_attributes(wrapper_f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world); ctx))
+        mi, rt = enzyme_custom_extract_mi(primalf)
+        push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
+        push!(attributes, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt))); ctx))
         primalf = wrapper_f
     end
 
