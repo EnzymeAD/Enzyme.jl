@@ -292,7 +292,8 @@ end
 @inline active_reg_inner(::Type{T}, seen) where {T<:DataType} = AnyState
 @inline active_reg_inner(::Type{T}, seen) where {T<:Module} = AnyState
 @inline active_reg_inner(::Type{T}, seen) where {T<:AbstractString} = AnyState
-@inline function active_reg_inner(::Type{Ptr{T}}, seen) where {T}
+# here we explicity make ref considered dup rather than active
+@inline function active_reg_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}}}, seen) where T
     state = active_reg_inner(T, seen)
     if state == AnyState
         return AnyState
