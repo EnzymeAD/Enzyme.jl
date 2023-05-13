@@ -4549,7 +4549,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
                 size = sizeof(Ty)
                 align = 0
                 premask = C_NULL
-                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, C_NULL, TT, size, v,           ext, B, align, premask)
+                API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, orig, C_NULL, TT, size, v,           ext, B, align, premask)
             else
                 @assert value_type(ext) == shadowVType
                 API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
@@ -4605,6 +4605,7 @@ function arraycopy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
     if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0
         return 1
     end
+
 
     origops = LLVM.operands(orig)
 
@@ -5853,7 +5854,24 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(cur, LLVM.UndefValue)
                 continue
             end
-            illegal = false
+            if isa(cur, LLVM.ConstantAggregateZero)
+                continue
+            end
+            if isa(cur, LLVM.ConstantAggregate)
+                continue
+            end
+            if isa(cur, LLVM.ConstantDataSequential)
+                for v in collect(cur)
+                    push!(todo, v)
+                end
+                continue
+            end
+            if isa(cur, LLVM.ConstantInt)
+                if width(value_type(cur)) <= 8
+                    continue
+                end
+            end
+            illegal = true
             break
         end
 
@@ -8586,7 +8604,8 @@ end
         blas_readonly = ("dot",)
         for ty in ("s", "d")
             for func in ("dot",)
-                for prefix in ("", "cblas_")
+                for prefix in ("cblas_")
+                #for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end
@@ -8665,6 +8684,7 @@ end
     method_table = Core.Compiler.method_table(interp)
 
     actualRetType = nothing
+    lowerConvention = true
     customDerivativeNames = String[]
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
@@ -8790,6 +8810,7 @@ end
             k_name = LLVM.name(llvmfn)
             if primal
                 primalf = llvmfn
+                lowerConvention = false
             end
             handleCustom("jl_pmap", [], false)
             continue
@@ -8819,7 +8840,12 @@ end
 
         if name == :__fd_sincos_1 || name == :sincospi
           source_sig = Base.signature_type(func, sparam_vals)
+          cur = llvmfn == primalf
           llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+          if cur
+              primalf = llvmfn
+              lowerConvention = false
+          end
           k_name = LLVM.name(llvmfn)
         end
 
@@ -8866,7 +8892,7 @@ end
     end
 
     source_sig = job.source.specTypes
-    primalf, returnRoots = lower_convention(source_sig, mod, primalf, actualRetType)
+    primalf, returnRoots = lowerConvention ? lower_convention(source_sig, mod, primalf, actualRetType) : (primalf, false)
     push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world); ctx))
 
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
