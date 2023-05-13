@@ -5854,6 +5854,23 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(cur, LLVM.UndefValue)
                 continue
             end
+            if isa(cur, LLVM.ConstantAggregateZero)
+                continue
+            end
+            if isa(cur, LLVM.ConstantAggregate)
+                continue
+            end
+            if isa(cur, LLVM.ConstantDataSequential)
+                for v in collect(cur)
+                    push!(todo, v)
+                end
+                continue
+            end
+            if isa(cur, LLVM.ConstantInt)
+                if width(value_type(cur)) <= 8
+                    continue
+                end
+            end
             illegal = true
             break
         end
