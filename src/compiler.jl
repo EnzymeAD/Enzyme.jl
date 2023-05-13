@@ -274,9 +274,85 @@ end
     end
 end
 
-@inline active_reg(::Type{Complex{T}}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T} = false
+@enum ActivityState begin
+    AnyState = 0
+    ActiveState = 1
+    DupState = 2
+    MixedState = 3
+end
+
+@inline function Base.:|(a1::ActivityState, a2::ActivityState)
+    return ActivityState(Int(a1) | Int(a2))
+end
+
+@inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Integer} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Function} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:DataType} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Module} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractString} = AnyState
+@inline function active_reg_inner(::Type{Ptr{T}}, seen) where {T}
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+
+@inline function active_reg_inner(::Type{T}, seen) where T
+    if T isa UnionAll || T isa Union || T == Union{}
+        return AnyState
+    end
+    if T ∈ seen
+        return MixedState
+    end
+    push!(seen, T)
+
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+
+    ty = AnyState
+    for f in 1:fieldcount(T)
+        subT    = fieldtype(T, f)
+
+        if subT isa UnionAll || subT isa Union || subT == Union{} || subT <: Integer
+            continue
+        end
+
+        # Allocated inline so adjust first path
+        if allocatedinline(subT)
+            ty |= active_reg_inner(subT, seen)
+        else
+            sub = active_reg_inner(subT, seen)
+            if sub == AnyState
+                continue
+            end
+            ty |= DupState
+        end
+    end
+    return ty
+end
+
+@inline @generated function active_reg(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    @assert state != MixedState 
+    return state == ActiveState
+end
+
+@inline @generated function active_reg_nothrow(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    return state == ActiveState
+end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
