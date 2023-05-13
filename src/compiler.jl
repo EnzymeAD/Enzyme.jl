@@ -2004,14 +2004,18 @@ end
 getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
+@inline function make_zero(::Type{RT}) where RT
+    return RT(0)
+end
+
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
     res = getfield(dptr, symname)
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -2027,9 +2031,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
