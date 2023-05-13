@@ -4207,6 +4207,9 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         unsafe_store!(normalR, normalV)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        if value_type(ni) != LLVM.VoidType(ctx)
+            LLVM.replace_uses!(ni, LLVM.UndefValue(value_type(ni)))
+        end
         unsafe_delete!(LLVM.parent(ni), ni)
     end
 
@@ -4567,7 +4570,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
         if origNeedsPrimal
             unsafe_store!(normalR, normalV)
         else
-            LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+            ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+            unsafe_delete!(LLVM.parent(ni), ni)
         end
     end
 
