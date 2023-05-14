@@ -354,6 +354,15 @@ function strictAliasing!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function fast_math!(val)
+    ptr = cglobal((:EnzymeFastMath, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function strong_zero!(val)
+    ptr = cglobal((:EnzymeStrongZero, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
 
 """
     runtimeActivity!(val::Bool)
@@ -439,6 +448,10 @@ end
 
 function EnzymeSetHandler(handler)
     ptr = cglobal((:CustomErrorHandler, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeSetSanitizeDerivatives(handler)
+    ptr = cglobal((:EnzymeSanitizeDerivatives, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
 function EnzymeSetRuntimeInactiveError(handler)

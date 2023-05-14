@@ -5814,6 +5814,65 @@ parent_scope(val::LLVM.Module, depth=0) = val
 parent_scope(val::LLVM.Value, depth=0) = parent_scope(LLVM.parent(val), depth+1)
 parent_scope(val::LLVM.Argument, depth=0) = parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth+1)
 
+const CheckNan = Ref(false) 
+function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef, mask::LLVM.API.LLVMValueRef)::LLVM.API.LLVMValueRef
+  orig = LLVM.Value(orig)
+  val = LLVM.Value(val)
+  B = LLVM.IRBuilder(B)
+  if CheckNan[]
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    ctx = LLVM.context(mod)
+    ty = LLVM.value_type(val)
+    vt = LLVM.VoidType(ctx)
+    FT = LLVM.FunctionType(vt, [ty, LLVM.PointerType(LLVM.Int8Type(ctx))])
+
+    stringv = "Enzyme: Found nan while computing derivative of "*string(orig)
+    if orig !== nothing && isa(orig, LLVM.Instruction)
+        bt = GPUCompiler.backtrace(orig)
+        function printBT(io)
+            print(io,"\nCaused by:")
+            Base.show_backtrace(io, bt)
+        end
+        stringv*=sprint(io->Base.show_backtrace(io, bt))
+    end
+
+    fn, _ = get_function!(mod, "julia.sanitize."*string(ty), FT)
+    if isempty(blocks(fn))
+        let builder = IRBuilder(ctx)
+            entry = BasicBlock(fn, "entry"; ctx)
+            good = BasicBlock(fn, "good"; ctx)
+            bad = BasicBlock(fn, "bad"; ctx)
+            position!(builder, entry)
+            inp, sval = collect(parameters(fn))
+            cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+
+            br!(builder, cmp, bad, good)
+
+            position!(builder, good)
+            ret!(builder)
+            # ret!(builder, inp)
+            
+            position!(builder, bad)
+    
+            funcT = LLVM.FunctionType(LLVM.VoidType(ctx), LLVMType[LLVM.PointerType(LLVM.Int8Type(ctx))])
+            ptr = @cfunction(throwerr, Union{}, (Cstring,))
+            ptr = convert(UInt, ptr)
+            ptr = LLVM.ConstantInt(ptr; ctx)
+            func = inttoptr!(builder, ptr, LLVM.PointerType(funcT))
+            call!(builder, funcT, func, LLVM.Value[sval])
+            unreachable!(builder)
+
+            dispose(builder)
+        end
+    end
+    # val = 
+    call!(B, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
+  end
+  return val.ref
+end
+
 function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef)
     msg = Base.unsafe_string(cstr)
     bt = nothing
@@ -6700,6 +6759,7 @@ else
     current_ptls_offset()
 end
     API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
     end
