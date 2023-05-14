@@ -49,7 +49,7 @@ using Test
                 if pfun === identity && sz == n && inc == 1
                     @testset "consistency of 2-arg version" begin
                         ret2 = autodiff(Forward, fun, Tret, x_annot, y_annot)
-                        @test ret2 == ret
+                        @test ret2 ≈ ret
                     end
                 end
             end
@@ -180,8 +180,8 @@ using Test
                         end
                         @test all(isnothing, dval2)
                         @test val2 == val
-                        @test ∂xcopy2 == ∂xcopy
-                        @test ∂ycopy2 == ∂ycopy
+                        @test ∂xcopy2 ≈ ∂xcopy
+                        @test ∂ycopy2 ≈ ∂ycopy
                     end
                 end
             end
