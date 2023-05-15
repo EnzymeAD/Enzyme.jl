@@ -123,6 +123,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
@@ -179,6 +180,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
