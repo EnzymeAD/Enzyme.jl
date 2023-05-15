@@ -845,7 +845,11 @@ end
         loop_rotate!(pm)
         lower_simdloop!(pm)
         licm!(pm)
-        loop_unswitch!(pm)
+        if LLVM.version() >= v"15"                      
+            simple_loop_unswitch_legacy!(pm)
+        else
+            loop_unswitch!(pm)
+        end
         instruction_combining!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
