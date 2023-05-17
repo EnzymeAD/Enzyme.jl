@@ -13,6 +13,7 @@ using Enzyme
 using Test
 using FiniteDifferences
 using ForwardDiff
+using Aqua
 using Statistics
 using LinearAlgebra
 
@@ -61,6 +62,8 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
+Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
+
 include("abi.jl")
 include("typetree.jl")
 
@@ -85,6 +88,8 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
+    @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
     world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
@@ -698,7 +703,10 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
+    # TODO get rid of runtime activity
+    Enzyme.API.runtimeActivity!(true)
     @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
+    Enzyme.API.runtimeActivity!(false)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets

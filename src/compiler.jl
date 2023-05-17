@@ -123,6 +123,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
@@ -179,6 +180,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
     "jl_gc_queue_root", "gpu_report_exception", "gpu_signal_exception",
@@ -274,9 +276,86 @@ end
     end
 end
 
-@inline active_reg(::Type{Complex{T}}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T<:AbstractFloat} = true
-@inline active_reg(::Type{T}) where {T} = false
+@enum ActivityState begin
+    AnyState = 0
+    ActiveState = 1
+    DupState = 2
+    MixedState = 3
+end
+
+@inline function Base.:|(a1::ActivityState, a2::ActivityState)
+    return ActivityState(Int(a1) | Int(a2))
+end
+
+@inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Integer} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Function} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:DataType} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:Module} = AnyState
+@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractString} = AnyState
+# here we explicity make ref considered dup rather than active
+@inline function active_reg_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}}}, seen) where T
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+    state = active_reg_inner(T, seen)
+    if state == AnyState
+        return AnyState
+    end
+    return DupState
+end
+
+@inline function active_reg_inner(::Type{T}, seen) where T
+    if T isa UnionAll || T isa Union || T == Union{}
+        return AnyState
+    end
+    if T ∈ seen
+        return MixedState
+    end
+    push!(seen, T)
+
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+
+    ty = AnyState
+    for f in 1:fieldcount(T)
+        subT    = fieldtype(T, f)
+
+        if subT isa UnionAll || subT isa Union || subT == Union{} || subT <: Integer
+            continue
+        end
+
+        # Allocated inline so adjust first path
+        if allocatedinline(subT)
+            ty |= active_reg_inner(subT, seen)
+        else
+            sub = active_reg_inner(subT, seen)
+            if sub == AnyState
+                continue
+            end
+            ty |= DupState
+        end
+    end
+    return ty
+end
+
+@inline @generated function active_reg(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    @assert state != MixedState 
+    return state == ActiveState
+end
+
+@inline @generated function active_reg_nothrow(::Type{T}) where {T}
+    seen = Set{DataType}()
+    state = active_reg_inner(T, seen)
+    return state == ActiveState
+end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
@@ -1928,14 +2007,18 @@ end
 getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
+@inline function make_zero(::Type{RT}) where RT
+    return RT(0)
+end
+
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
     res = getfield(dptr, symname)
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -1951,9 +2034,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(0)
+            return Ref{RT}(make_zero(RT))
         else
-            return ( (Ref{RT}(0) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -4207,6 +4290,9 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
         unsafe_store!(normalR, normalV)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        if value_type(ni) != LLVM.VoidType(ctx)
+            LLVM.replace_uses!(ni, LLVM.UndefValue(value_type(ni)))
+        end
         unsafe_delete!(LLVM.parent(ni), ni)
     end
 
@@ -4567,7 +4653,8 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
         if origNeedsPrimal
             unsafe_store!(normalR, normalV)
         else
-            LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+            ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+            unsafe_delete!(LLVM.parent(ni), ni)
         end
     end
 
@@ -5879,6 +5966,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             return
         end
 
+        if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
+            mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
+            if mi !== nothing && isghostty(rt)
+                return
+            end
+        end
+
         gutils = API.EnzymeGradientUtilsRef(data)
         newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
         while isa(newb, LLVM.PHIInst)
@@ -5901,7 +5995,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if badval !== nothing
                 println(io, " value="*string(badval))
             end
-            println(io, "Please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
+            println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
                 Base.show_backtrace(io, bt)
             end
@@ -7257,7 +7351,7 @@ function enzyme_custom_extract_mi(orig::LLVM.Instruction)
     enzyme_custom_extract_mi(LLVM.called_value(orig)::LLVM.Function)
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Function)
+function enzyme_custom_extract_mi(orig::LLVM.Function, error=true)
     mi = nothing
     RT = nothing
     for fattr in collect(function_attributes(orig))
@@ -7272,8 +7366,8 @@ function enzyme_custom_extract_mi(orig::LLVM.Function)
             end
         end
     end
-    if mi === nothing
-        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig, LLVM.called_value(orig)
+    if error && mi === nothing
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig
     end
     return mi, RT
 end
@@ -8500,6 +8594,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     linkage!(entry_f, LLVM.API.LLVMInternalLinkage)
 
     fixup_metadata!(entry_f)
+    
+    mi, rt = enzyme_custom_extract_mi(entry_f)
+    attributes = function_attributes(wrapper_f)
+    push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
+    push!(attributes, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt))); ctx))
 
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
         @safe_show mod
@@ -8888,6 +8987,9 @@ end
         end
         attributes = function_attributes(wrapper_f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world); ctx))
+        mi, rt = enzyme_custom_extract_mi(primalf)
+        push!(attributes, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi))); ctx))
+        push!(attributes, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt))); ctx))
         primalf = wrapper_f
     end
 

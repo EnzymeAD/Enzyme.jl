@@ -845,7 +845,11 @@ end
         loop_rotate!(pm)
         lower_simdloop!(pm)
         licm!(pm)
-        loop_unswitch!(pm)
+        if LLVM.version() >= v"15"                      
+            simple_loop_unswitch_legacy!(pm)
+        else
+            loop_unswitch!(pm)
+        end
         instruction_combining!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
@@ -1036,6 +1040,16 @@ end
 function post_optimze!(mod, tm, machine=true)
     addr13NoAlias(mod)
     removeDeadArgs!(mod)
+    for f in collect(functions(mod))
+        API.EnzymeFixupJuliaCallingConvention(f)
+    end
+    out_error = Ref{Cstring}()
+    if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
+        @safe_show mod
+        @safe_show out_error[]
+        flush(stdout)
+        throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
+    end
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
