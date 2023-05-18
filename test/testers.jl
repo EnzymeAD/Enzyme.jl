@@ -362,21 +362,28 @@ function EnzymeRules.forward(
     RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}},
     x::Union{Const,Duplicated,BatchDuplicated};
     a=4.0, # mismatched keyword
+    incorrect_primal=false,
+    incorrect_tangent=false,
+    incorrect_batched_tangent=false,
     kwargs...,
 )
-    RT <: Const && return func.val(x.val; a, kwargs...)
+    if RT <: Const
+        return func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
+    end
     dval = if x isa Duplicated
-        a * x.dval
+        incorrect_tangent ? (a + 2) * x.dval : a * x.dval
     elseif x isa BatchDuplicated
-        map(dx -> a * dx, x.dval)
+        map(x.dval) do dx
+            incorrect_batched_tangent ? (a - 2) * dx : a * dx
+        end
     else
-        zero(a) * x
+        (incorrect_tangent | incorrect_batched_tangent) ? 2 * x.val : zero(a) * x.val
     end
 
     if RT <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
         return dval
     else
-        val = func.val(x.val; a, kwargs...)
+        val = func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
         return RT(val, dval)
     end
 end
@@ -468,10 +475,66 @@ end
         end
     end
 
-    @testset "function with kwargs" begin
-        @test fails() do
-            test_forward(f_kwargs, Duplicated, ([1.0, 2.0], Duplicated))
+    @testset "kwargs correctly forwarded" begin
+        @testset for Tret in (Duplicated, BatchDuplicated),
+            Tx in (Const, Duplicated, BatchDuplicated)
+
+            all_or_no_batch(Tret, Tx) || continue
+
+            x = randn(3)
+            a = randn()
+
+            @test fails() do
+                test_forward(f_kwargs, Tret, (x, Tx))
+            end
+            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
         end
-        test_forward(f_kwargs, Duplicated, ([1.0, 2.0], Duplicated); fkwargs=(a=5,))
+    end
+
+    @testset "incorrect primal detected" begin
+        @testset for Tret in (Duplicated, BatchDuplicated),
+            Tx in (Const, Duplicated, BatchDuplicated)
+
+            all_or_no_batch(Tret, Tx) || continue
+
+            x = randn(3)
+            a = randn()
+
+            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+            fkwargs=(; a, incorrect_primal=true)
+            @test fails() do
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect tangent detected" begin
+        @testset for Tret in (Duplicated, DuplicatedNoNeed),
+            Tx in (Const, Duplicated)
+
+            x = randn(3)
+            a = randn()
+
+            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+            fkwargs=(; a, incorrect_tangent=true)
+            @test fails() do
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect batch tangent detected" begin
+        @testset for Tret in (BatchDuplicated, BatchDuplicatedNoNeed),
+            Tx in (Const, BatchDuplicated)
+
+            x = randn(3)
+            a = randn()
+
+            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+            fkwargs=(; a, incorrect_batched_tangent=true)
+            @test fails() do
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+            end
+        end
     end
 end
