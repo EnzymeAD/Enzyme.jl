@@ -174,7 +174,8 @@ function test_forward(
     atol::Real=1e-9,
     testset_name=nothing,
 )
-    call_on_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
+    call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
+    call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
         testset_name = "test_forward: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
     end
@@ -183,14 +184,12 @@ function test_forward(
         activities = map(auto_forward_activity, (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
-        y = call_on_copy(primals...)
+        y = call_with_copy(primals...)
         # TODO: handle batch activities
         # call finitedifferences, avoid mutating original arguments
-        dy_fdm = _make_jvp_call(fdm, call_on_copy, ret_activity, y, activities)
+        dy_fdm = _make_jvp_call(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
-        y_and_dy_ad = autodiff(
-            Forward, first(activities), ret_activity, Base.tail(activities)...; fkwargs...
-        )
+        y_and_dy_ad = autodiff(Forward, call_with_kwargs, ret_activity, activities...)
         if ret_activity <: Union{Duplicated,BatchDuplicated}
             y_ad, dy_ad = y_and_dy_ad
             # check primal agrees with primal function
