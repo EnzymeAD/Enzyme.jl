@@ -246,6 +246,7 @@ struct Foo{X,A}
     a::A
 end
 f_struct(x::Foo) = Foo(sinh.(x.a .* x.x), exp(x.a))
+f_multiarg(x::AbstractArray, a) = sin.(a .* x)
 function f_mut!(y, x, a)
     y .= x .* a
     return y
@@ -262,7 +263,6 @@ end
                 "namedtuple argument and return" => (NamedTuple, f_namedtuple),
                 "struct argument and return" => (Foo, f_struct),
             ]
-            Ts = (Float32, Float64) # TODO: test complex
             sz = (2, 3, 4)
             @testset "$name" for (name, (TT, fun)) in combinations
                 @testset for Tret in (
@@ -273,7 +273,7 @@ end
                         BatchDuplicatedNoNeed,
                     ),
                     Tx in (Const, Duplicated, BatchDuplicated),
-                    T in Ts
+                    T in (Float32, Float64) # TODO: test complex
 
                     # skip invalid combinations
                     all_or_no_batch(Tret, Tx) || continue
@@ -290,6 +290,28 @@ end
                     atol = rtol = sqrt(eps(real(T)))
                     test_forward(fun, Tret, (x, Tx); atol, rtol)
                 end
+            end
+        end
+
+        @testset "multi-argument function" begin
+            @testset for Tret in (
+                    Const,
+                    Duplicated,
+                    DuplicatedNoNeed,
+                    BatchDuplicated,
+                    BatchDuplicatedNoNeed,
+                ),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Ta in (Const, Duplicated, BatchDuplicated),
+                T in (Float32, Float64) # TODO: test complex
+
+                # skip invalid combinations
+                all_or_no_batch(Tret, Tx, Ta) || continue
+
+                x = randn(T, 3)
+                a = randn(T)
+                atol = rtol = sqrt(eps(real(T)))
+                test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
             end
         end
 
