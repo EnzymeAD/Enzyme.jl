@@ -355,6 +355,32 @@ function f_mut!(y, x, a)
     return y
 end
 
+f_kwargs(x; a=3.0, kwargs...) = a * x
+
+function EnzymeRules.forward(
+    func::Const{typeof(f_kwargs)},
+    RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}},
+    x::Union{Const,Duplicated,BatchDuplicated};
+    a=4.0, # mismatched keyword
+    kwargs...,
+)
+    RT <: Const && return func.val(x.val; a, kwargs...)
+    dval = if x isa Duplicated
+        a * x.dval
+    elseif x isa BatchDuplicated
+        map(dx -> a * dx, x.dval)
+    else
+        zero(a) * x
+    end
+
+    if RT <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
+        return dval
+    else
+        val = func.val(x.val; a, kwargs...)
+        return RT(val, dval)
+    end
+end
+
 @testset "test_forward" begin
     @testset "tests pass for functions with no rules" begin
         @testset "unary function tests" begin
@@ -440,5 +466,12 @@ end
             end
             Enzyme.API.runtimeActivity!(false)
         end
+    end
+
+    @testset "function with kwargs" begin
+        @test fails() do
+            test_forward(f_kwargs, Duplicated, ([1.0, 2.0], Duplicated))
+        end
+        test_forward(f_kwargs, Duplicated, ([1.0, 2.0], Duplicated); fkwargs=(a=5,))
     end
 end
