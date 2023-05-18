@@ -237,3 +237,83 @@ function all_or_no_batch(activities...)
     end
     return all_batch_or_const || no_batch
 end
+
+f_array(x) = sum(sin, x)
+f_tuple(x) = (sin(x[1]), cos(x[2]))
+f_namedtuple(x) = (s=sin(x.a), c=cos(x.b))
+struct Foo{X,A}
+    x::X
+    a::A
+end
+f_struct(x::Foo) = Foo(sinh.(x.a .* x.x), exp(x.a))
+function f_mut!(y, x, a)
+    y .= x .* a
+    return y
+end
+
+@testset "test_forward" begin
+    @testset "tests pass for functions with no rules" begin
+        @testset "unary function tests" begin
+            combinations = [
+                "vector arguments" => (Vector, f_array),
+                "matrix arguments" => (Matrix, f_array),
+                "multidimensional array arguments" => (Array{<:Any,3}, f_array),
+                "tuple argument and return" => (Tuple, f_tuple),
+                "namedtuple argument and return" => (NamedTuple, f_namedtuple),
+                "struct argument and return" => (Foo, f_struct),
+            ]
+            Ts = (Float32, Float64) # TODO: test complex
+            sz = (2, 3, 4)
+            @testset "$name" for (name, (TT, fun)) in combinations
+                @testset for Tret in (
+                        Const,
+                        Duplicated,
+                        DuplicatedNoNeed,
+                        BatchDuplicated,
+                        BatchDuplicatedNoNeed,
+                    ),
+                    Tx in (Const, Duplicated, BatchDuplicated),
+                    T in Ts
+
+                    # skip invalid combinations
+                    all_or_no_batch(Tret, Tx) || continue
+
+                    if TT <: Array
+                        x = randn(T, sz[1:ndims(TT)])
+                    elseif TT <: Tuple
+                        x = (randn(T), randn(T))
+                    elseif TT <: NamedTuple
+                        x = (a=randn(T), b=randn(T))
+                    else  # TT <: Foo
+                        x = Foo(randn(T, 5), randn(T))
+                    end
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_forward(fun, Tret, (x, Tx); atol, rtol)
+                end
+            end
+        end
+
+        @testset "mutating function" begin
+            Enzyme.API.runtimeActivity!(true)
+            sz = (2, 3)
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Ta in (Const, Duplicated, BatchDuplicated),
+                T in (Float64, Float32, Float64, ComplexF32, ComplexF64)
+
+                # if some are batch, all non-Const must be batch
+                all_or_no_batch(Tret, Tx, Ta) || continue
+                # since y is returned, it needs the same activity as the return type
+                Ty = Tret
+
+                x = randn(T, sz)
+                y = zeros(T, sz)
+                a = randn(T)
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+            end
+            Enzyme.API.runtimeActivity!(false)
+        end
+    end
+end
