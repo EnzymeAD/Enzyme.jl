@@ -32,14 +32,12 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
     ignores = map(a -> a isa Const, activities)
     f2 = _wrap_function(f, xs, ignores)
     ignores = collect(ignores)
-    if all(ignores)
-        y isa Tuple && return map(_ -> nothing, y)
-        return nothing
-    end
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
+        all(ignores) && return zero_tangent(y)
         sigargs = zip(xs[.!ignores], ẋs[.!ignores])
         return FiniteDifferences.jvp(fdm, f2, sigargs...)
     elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
+        all(ignores) && return (var"1"=zero_tangent(y),)
         sig_arg_vals = xs[.!ignores]
         ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             FiniteDifferences.jvp(fdm, f2, zip(sig_arg_vals, sig_args_dvals)...)
@@ -211,20 +209,10 @@ function test_forward(
             @test length(dy_ad) == length(dy_fdm)
             # check all returned derivatives against FiniteDifferences
             for (dy_ad_i, dy_fdm_i) in zip(dy_ad, dy_fdm)
-                if dy_fdm_i === nothing
-                    # if all arguments have Const activity, returned derivatives should be 0
-                    test_approx(dy_ad_i, zero_tangent(dy_ad_i); atol, rtol)
-                else
-                    test_approx(dy_ad_i, dy_fdm_i; atol, rtol)
-                end
+                test_approx(dy_ad_i, dy_fdm_i; atol, rtol)
             end
         else
-            if dy_fdm === nothing
-                # if argument has Const activity, returned derivatives should be 0
-                test_approx(dy_ad, zero_tangent(dy_ad); atol, rtol)
-            else
-                test_approx(dy_ad, dy_fdm; atol, rtol)
-            end
+            test_approx(dy_ad, dy_fdm; atol, rtol)
         end
     end
 end
