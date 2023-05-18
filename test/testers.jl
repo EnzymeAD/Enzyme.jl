@@ -88,7 +88,8 @@ function rand_tangent(rng, x::T) where {T}
     isempty(fields) && return x
     return typeof(x)((rand_tangent(rng, getfield(x, k)) for k in fields)...)
 end
-rand_tangent(rng, x::Array) = map(xi -> rand_tangent(rng, xi), x)
+# special-case containers that can't be constructed from type and field
+rand_tangent(rng, x::Union{Array,Tuple,NamedTuple}) = map(xi -> rand_tangent(rng, xi), x)
 # make numbers prettier sometimes when errors are printed.
 rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
 
@@ -97,7 +98,8 @@ function zero_tangent(x::T) where {T}
     isempty(fields) && return x
     return typeof(x)((zero_tangent(getfield(x, k)) for k in fields)...)
 end
-zero_tangent(x::Array) = map(zero_tangent, x)
+# special-case containers that can't be constructed from type and field
+zero_tangent(x::Union{Array,Tuple,NamedTuple}) = map(zero_tangent, x)
 # make numbers prettier sometimes when errors are printed.
 zero_tangent(::T) where {T<:AbstractFloat} = zero(T)
 
