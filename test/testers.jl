@@ -359,7 +359,9 @@ f_kwargs(x; a=3.0, kwargs...) = a * x
 
 function EnzymeRules.forward(
     func::Const{typeof(f_kwargs)},
-    RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}},
+    RT::Type{
+        <:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}
+    },
     x::Union{Const,Duplicated,BatchDuplicated};
     a=4.0, # mismatched keyword
     incorrect_primal=false,
@@ -501,7 +503,7 @@ end
             a = randn()
 
             test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs=(; a, incorrect_primal=true)
+            fkwargs = (; a, incorrect_primal=true)
             @test fails() do
                 test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
             end
@@ -509,14 +511,12 @@ end
     end
 
     @testset "incorrect tangent detected" begin
-        @testset for Tret in (Duplicated, DuplicatedNoNeed),
-            Tx in (Const, Duplicated)
-
+        @testset for Tret in (Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
             x = randn(3)
             a = randn()
 
             test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs=(; a, incorrect_tangent=true)
+            fkwargs = (; a, incorrect_tangent=true)
             @test fails() do
                 test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
             end
@@ -531,7 +531,7 @@ end
             a = randn()
 
             test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs=(; a, incorrect_batched_tangent=true)
+            fkwargs = (; a, incorrect_batched_tangent=true)
             @test fails() do
                 test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
             end
