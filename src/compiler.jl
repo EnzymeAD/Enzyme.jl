@@ -6342,6 +6342,9 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
         p = bitcast!(B, p, T_prjlvalue)
+        if !isa(p, LLVM.Instruction)
+            @show SI, p, v, operands(SI)
+        end
         @assert isa(p, LLVM.Instruction)
         push!(added, p.ref)
 
