@@ -109,6 +109,8 @@ function is_primitive_func(@nospecialize(TT))
        ft === typeof(Base.asin) ||
        ft === typeof(Base.acos) ||
        ft === typeof(Base.atan) ||
+       ft === typeof(Base.sinpi) ||
+       ft === typeof(Base.cospi) ||
        ft === typeof(Base.sinh) || ft === typeof(Base.FastMath.sinh_fast) ||
        ft === typeof(Base.cosh) || ft === typeof(Base.FastMath.cosh_fast) ||
        ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
