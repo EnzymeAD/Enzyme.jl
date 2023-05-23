@@ -58,6 +58,8 @@ const known_ops = Dict(
     Base.sinc => (:sincn, 1),
     Base.sincos => (:__fd_sincos_1, 1),
     Base.sincospi => (:sincospi, 1),
+    Base.sinpi => (:sinpi, 1),
+    Base.cospi => (:cospi, 1),
     Base.:^ => (:pow, 2),
     Base.rem => (:fmod, 2),
     Base.cos => (:cos, 1),
@@ -94,6 +96,8 @@ const known_ops = Dict(
     Base.sinc => (:sincn, 1),
     Base.sincos => (:__fd_sincos_1, 1),
     Base.sincospi => (:sincospi, 1),
+    Base.sinpi => (:sinpi, 1),
+    Base.cospi => (:cospi, 1),
     Base.:^ => (:pow, 2),
     Base.rem => (:fmod, 2),
     Base.cos => (:cos, 1),
@@ -6341,9 +6345,11 @@ function julia_post_cache_store(SI::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuild
         ctx = LLVM.context(v)
         T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
         T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
-        p = bitcast!(B, p, T_prjlvalue)
-        @assert isa(p, LLVM.Instruction)
-        push!(added, p.ref)
+        pn = bitcast!(B, p, T_prjlvalue)
+        if isa(pn, LLVM.Instruction) && p != pn
+            push!(added, pn.ref)
+        end
+        p = pn
 
         vals = get_julia_inner_types(B, p, v, added=added)
         r = emit_writebarrier!(B, vals)
