@@ -7,6 +7,7 @@ using LLVM
 using CEnum
 
 const EnzymeLogicRef = Ptr{Cvoid}
+const EnzymeTraceInterfaceRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
 const EnzymeAugmentedReturnPtr = Ptr{Cvoid}
 const EnzymeTypeAnalyzerRef = Ptr{Cvoid}
@@ -105,6 +106,11 @@ end
   DEM_ReverseModeCombined = 3
 )
 
+@cenum(CProbProgMode,
+    DEM_Trace = 0,
+    DEM_Condition = 1
+)
+
 # Create the derivative function itself.
 #  \p todiff is the function to differentiate
 #  \p retType is the activity info of the return
@@ -132,6 +138,18 @@ function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
         dretUsed, mode, width, freeMemory, additionalArg, forceAnonymousTape, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd)
+end
+
+function EnzymeCreateTraceInterface(fns::Vararg{T,13}) where {T}
+    ccall((:EnzymeCreateTraceInterface), EnzymeTraceInterfaceRef,
+            (LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef)
+            fns...)
+end
+
+function EnzymeCreateTrace(logic, totrace, mode, autodiff, interface)
+    ccall((:EnzymeCreateTrace, libEnzyme), LLVMValueRef, 
+        (EnzymeLogicRef, LLVMValueRef, CProbProgMode,
+         UInt8, EnzymeTraceInterfaceRef), logic, totrace, mode, autodiff, interface)
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 
