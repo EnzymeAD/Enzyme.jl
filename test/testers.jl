@@ -356,7 +356,7 @@ end
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ta in (Const, Duplicated, BatchDuplicated),
-                T in (Float64, Float32, Float64, ComplexF32, ComplexF64)
+                T in (Float32, Float64, ComplexF32, ComplexF64)
 
                 # if some are batch, all non-Const must be batch
                 all_or_no_batch(Tret, Tx, Ta) || continue
