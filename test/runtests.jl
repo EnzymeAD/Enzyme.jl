@@ -1919,10 +1919,15 @@ end
 using Random
 
 @testset "Random" begin
-	f_rand(x) = x*rand()
-	f_randn(x, N) = x*sum(randn(N))
-    autodiff(Reverse, f_rand, Active, Active(1.0))
-    autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))
+    f_rand(x) = x*rand()
+    f_randn(x, N) = x*sum(randn(N))
+    @test 0 <= autodiff(Reverse, f_rand, Active, Active(1.0))[1][1] < 1
+    @test !iszero(autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))[1][1])
+    @test iszero(autodiff(Reverse, x -> rand(), Active, Active(1.0))[1][1])
+    @test iszero(autodiff(Reverse, (x, N) -> sum(randn(N)), Active, Active(1.0), Const(64))[1][1])
+    @test autodiff(Reverse, x -> x * sum(randcycle(5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(randperm( 5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(shuffle(1:5)), Active, Active(1.0))[1][1] == 15
 end
 
 @testset "Reshape" begin
