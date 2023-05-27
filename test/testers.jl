@@ -17,12 +17,9 @@ Call `FiniteDifferences.jvp`, with the option to ignore certain `xs`.
 # Arguments
 - `fdm::FiniteDifferenceMethod`: How to numerically differentiate `f`.
 - `f`: The function to differentiate.
-- `dret`: Return activity type
+- `rettype`: Return activity type
 - `y`: The primal output `y=f(xs...)` or at least something of the right type
-- `xs`: Inputs to `f`, such that `y = f(xs...)`.
-- `ẋs`: The directional derivatives of `xs` w.r.t. some real number `t`.
-- `ignores`: Collection of `Bool`s, the same length as `xs` and `ẋs`.
-   If `ignores[i] === true`, then `ẋs[i]` is ignored for derivative estimation.
+- `activities`: activities that would be passed to `Enzyme.forward`
 
 # Returns
 - `Ω̇`: Derivative of output w.r.t. `t` estimated by finite differencing.
