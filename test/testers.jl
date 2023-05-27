@@ -101,7 +101,6 @@ function zero_tangent(x::T) where {T}
 end
 # special-case containers that can't be constructed from type and field
 zero_tangent(x::Union{Array,Tuple,NamedTuple}) = map(zero_tangent, x)
-# make numbers prettier sometimes when errors are printed.
 zero_tangent(::T) where {T<:AbstractFloat} = zero(T)
 
 function test_approx(x::Number, y::Number; kwargs...)
