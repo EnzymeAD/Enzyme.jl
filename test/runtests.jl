@@ -333,6 +333,31 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
+
+    function f(m)
+        s = 0.0
+        for (i, col) in enumerate(eachcol(m))
+            s += i * sum(col)
+        end
+        return s
+    end
+
+    m = Float64[1 2 3; 4 5 6; 7 8 9]
+    dm = zero(m)
+    autodiff(Reverse, f, Active, Duplicated(m, dm))
+    @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+    function g(m)
+        s = 0.0
+        for (i, col) in enumerate(eachrow(m))
+            s += i * sum(col)
+        end
+        return s
+    end
+
+    dm = zero(m)
+    autodiff(Reverse, g, Active, Duplicated(m, dm))
+    @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
 end
 
 @testset "Advanced array tests" begin
