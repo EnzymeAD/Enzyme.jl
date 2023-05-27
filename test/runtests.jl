@@ -2173,6 +2173,15 @@ end
     end
 end
 
+@testset "Statistics" begin
+    f(x) = var([x, 2.0, 3.0])
+    @test autodiff(Reverse, f, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+    g(x) = std([x, 2.0, 3.0])
+    @test autodiff(Reverse, g, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, g, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+end
+
 # Always run last since otherwise on 1.6 device functions cause breakage.
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
