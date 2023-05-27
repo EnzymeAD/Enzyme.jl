@@ -2164,6 +2164,15 @@ end
     @test ad_eta[1] ≈ 0.0
 end
 
+@testset "Type preservation" begin
+    # Float16 fails due to #870
+    for T in (Float64, Float32, #=Float16=#)
+        res = autodiff(Reverse, x -> x * 2.0, Active, Active(T(1.0)))[1][1]
+        @test res isa T
+        @test res == 2
+    end
+end
+
 # Always run last since otherwise on 1.6 device functions cause breakage.
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
