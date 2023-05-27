@@ -308,7 +308,7 @@ end
                         BatchDuplicatedNoNeed,
                     ),
                     Tx in (Const, Duplicated, BatchDuplicated),
-                    T in (Float32, Float64) # TODO: test complex
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
 
                     # skip invalid combinations
                     all_or_no_batch(Tret, Tx) || continue
@@ -338,7 +338,7 @@ end
                 ),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ta in (Const, Duplicated, BatchDuplicated),
-                T in (Float32, Float64) # TODO: test complex
+                T in (Float32, Float64, ComplexF32, ComplexF64)
 
                 # skip invalid combinations
                 all_or_no_batch(Tret, Tx, Ta) || continue
