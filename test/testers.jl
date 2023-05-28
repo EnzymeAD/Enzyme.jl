@@ -115,16 +115,17 @@ function test_approx(x, y; kwargs...)
     end
 end
 
-function auto_forward_activity(arg::Tuple)
+function auto_activity(arg::Tuple)
     if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation
         return _build_activity(arg...)
     end
     return Const(arg)
 end
-auto_forward_activity(activity::Annotation) = activity
-auto_forward_activity(activity) = Const(activity)
+auto_activity(activity::Annotation) = activity
+auto_activity(activity) = Const(activity)
 
 _build_activity(primal, ::Type{<:Const}) = Const(primal)
+_build_activity(primal, ::Type{<:Active}) = Active(primal)
 _build_activity(primal, ::Type{<:Duplicated}) = Duplicated(primal, rand_tangent(primal))
 function _build_activity(primal, ::Type{<:BatchDuplicated})
     return BatchDuplicated(primal, ntuple(_ -> rand_tangent(primal), 2))
@@ -181,7 +182,7 @@ function test_forward(
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
-        activities = map(auto_forward_activity, (f, args...))
+        activities = map(auto_activity, (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
