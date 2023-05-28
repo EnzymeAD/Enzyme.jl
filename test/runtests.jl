@@ -2177,12 +2177,21 @@ end
 end
 
 @testset "Statistics" begin
-    f(x) = var([x, 2.0, 3.0])
-    @test autodiff(Reverse, f, Active, Active(0.0))[1][1] ≈ -5/3
-    @test autodiff(Forward, f, Duplicated(0.0, 1.0))[1]   ≈ -5/3
-    g(x) = std([x, 2.0, 3.0])
-    @test autodiff(Reverse, g, Active, Active(0.0))[1][1] ≈ -0.54554472559
-    @test autodiff(Forward, g, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+    f1(x) = var([x, 2.0, 3.0])
+    @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f1, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f2(x) = varm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f2, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f2, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f3(x) = std([x, 2.0, 3.0])
+    @test autodiff(Reverse, f3, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f3, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f4(x) = stdm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f4, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
 end
 
 # Always run last since otherwise on 1.6 device functions cause breakage.
