@@ -2192,6 +2192,31 @@ end
     f4(x) = stdm([x, 2.0, 3.0], 5/3)
     @test autodiff(Reverse, f4, Active, Active(0.0))[1][1] ≈ -0.54554472559
     @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f5(x) = cor([2.0, x, 1.0], [1.0, 2.0, 3.0])
+    @test autodiff(Reverse, f5, Active, Active(4.0))[1][1] ≈ 0.11690244120
+    @test autodiff(Forward, f5, Duplicated(4.0, 1.0))[1]   ≈ 0.11690244120
+
+    f6(x) = cov([2.0, x, 1.0])
+    @test autodiff(Reverse, f6, Active, Active(4.0))[1][1] ≈ 5/3
+    @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
+
+    f7(x) = median([2.0, 1.0, x])
+    @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
+    @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
+
+    f8(x) = middle([2.0, x, 1.0])
+    # Reverse mode fails due to #876
+    #@test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
+    @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1]   == 0.5
+    #@test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
+    @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
+
+    f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
 end
 
 # Always run last since otherwise on 1.6 device functions cause breakage.
