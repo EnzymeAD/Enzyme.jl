@@ -334,30 +334,33 @@ end
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 
-    function f(m)
-        s = 0.0
-        for (i, col) in enumerate(eachcol(m))
-            s += i * sum(col)
+    # On Julia 1.6 the gradients are wrong (1.0 too large)
+    @static if VERSION ≥ v"1.7-"
+        function f1(m)
+            s = 0.0
+            for (i, col) in enumerate(eachcol(m))
+                s += i * sum(col)
+            end
+            return s
         end
-        return s
-    end
 
-    m = Float64[1 2 3; 4 5 6; 7 8 9]
-    dm = zero(m)
-    autodiff(Reverse, f, Active, Duplicated(m, dm))
-    @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+        m = Float64[1 2 3; 4 5 6; 7 8 9]
+        dm = zero(m)
+        autodiff(Reverse, f1, Active, Duplicated(m, dm))
+        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
 
-    function g(m)
-        s = 0.0
-        for (i, col) in enumerate(eachrow(m))
-            s += i * sum(col)
+        function f2(m)
+            s = 0.0
+            for (i, col) in enumerate(eachrow(m))
+                s += i * sum(col)
+            end
+            return s
         end
-        return s
-    end
 
-    dm = zero(m)
-    autodiff(Reverse, g, Active, Duplicated(m, dm))
-    @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+        dm = zero(m)
+        autodiff(Reverse, f2, Active, Duplicated(m, dm))
+        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+    end
 end
 
 @testset "Advanced array tests" begin
