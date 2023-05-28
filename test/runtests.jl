@@ -267,6 +267,24 @@ end
     f3(x) = x * sum(unique([x, 2.0, 2.0, 3.0]))
     @test autodiff(Reverse, f3, Active, Active(1.0))[1][1] == 7
     @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1]   == 7
+
+    for rf in (reduce, foldl, foldr)
+        f4(x) = rf(*, [1.0, x, x, 3.0])
+        @test autodiff(Reverse, f4, Active, Active(2.0))[1][1] == 12
+        @test autodiff(Forward, f4, Duplicated(2.0, 1.0))[1]   == 12
+    end
+
+    f5(x) = sum(accumulate(+, [1.0, x, x, 3.0]))
+    @test autodiff(Reverse, f5, Active, Active(2.0))[1][1] == 5
+    @test autodiff(Forward, f5, Duplicated(2.0, 1.0))[1]   == 5
+
+    f6(x) = x |> inv |> abs
+    @test autodiff(Reverse, f6, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f6, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f7(x) = (inv ∘ abs)(x)
+    @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1]   == 1/4
 end
 
 @testset "Taylor series tests" begin
