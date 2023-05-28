@@ -6964,7 +6964,7 @@ function __init__()
         @cfunction(jl_array_ptr_copy_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg"),
+        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2"),
         @cfunction(jl_unhandled_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_unhandled_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_unhandled_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
