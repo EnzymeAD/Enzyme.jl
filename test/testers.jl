@@ -48,6 +48,25 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
 end
 _make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
+function _make_j′vp_call(fdm, f, ȳ, activities)
+    xs = map(x -> x.val, activities)
+    ignores = map(a -> a isa Const, activities)
+    f2 = _wrap_reverse_function(f, xs, ignores)
+    all(ignores) && return map(zero_tangent, xs)
+    ignores = collect(ignores)
+    x̄s = map(collect(activities)) do a
+        a isa Union{Const,Active} && return zero_tangent(a.val)
+        return a.dval
+    end
+    sigargs = xs[.!ignores]
+    s̄igargs = x̄s[.!ignores]
+    sigarginds = eachindex(x̄s)[.!ignores]
+    fd = FiniteDifferences.j′vp(fdm, f2, (ȳ, s̄igargs...), sigargs...)
+    @assert length(fd) == length(sigarginds)
+    x̄s[sigarginds] = collect(fd)
+    return (x̄s...,)
+end
+
 """
     _wrap_forward_function(f, xs, ignores)
 
@@ -75,6 +94,30 @@ function _wrap_forward_function(f, xs, ignores)
         @assert j == length(sigargs) + 1
         @assert length(callargs) == length(xs)
         return f(callargs...)
+    end
+    return fnew
+end
+
+function _wrap_reverse_function(f, xs, ignores)
+    function fnew(sigargs...)
+        callargs = Any[]
+        retargs = Any[]
+        j = 1
+
+        for (i, (x, ignore)) in enumerate(zip(xs, ignores))
+            if ignore
+                push!(callargs, deepcopy(x))
+            else
+                arg = deepcopy(sigargs[j])
+                push!(callargs, arg)
+                push!(retargs, arg)
+                j += 1
+            end
+        end
+        @assert j == length(sigargs) + 1
+        @assert length(callargs) == length(xs)
+        @assert length(retargs) == count(!, ignores)
+        return (deepcopy(f)(callargs...), retargs...)
     end
     return fnew
 end
@@ -215,6 +258,60 @@ function test_forward(
             end
         else
             test_approx(dy_ad, dy_fdm; atol, rtol)
+        end
+    end
+end
+
+function test_reverse(
+    f,
+    ret_activity,
+    args...;
+    fdm=FiniteDifferences.central_fdm(5, 1),
+    fkwargs::NamedTuple=NamedTuple(),
+    rtol::Real=1e-9,
+    atol::Real=1e-9,
+    testset_name=nothing,
+)
+    call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
+    call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
+    if testset_name === nothing
+        testset_name = "test_reverse: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
+    end
+    @testset "$testset_name" begin
+        # format arguments for autodiff and FiniteDifferences
+        activities = map(auto_activity, (f, args...))
+        primals = map(x -> x.val, activities)
+        # call primal, avoid mutating original arguments
+        y = call_with_copy(primals...)
+        # generate fixed tangents for inputs and outputs
+        ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+        # call finitedifferences, avoid mutating original arguments
+        dx_fdm = _make_j′vp_call(fdm, call_with_kwargs, ȳ, activities)
+        # call autodiff, allow mutating original arguments
+        c_act = Const(call_with_kwargs)
+        forward, reverse = autodiff_thunk(
+            ReverseSplitWithPrimal, typeof(c_act), ret_activity, map(typeof, activities)...
+        )
+        tape, y_ad, shadow_result = forward(c_act, activities...)
+        if ret_activity <: Const
+            dx_ad = only(reverse(c_act, activities..., tape))
+        else
+            dx_ad = only(reverse(c_act, activities..., ȳ, tape))
+        end
+        # check primal agrees with primal function
+        test_approx(y_ad, y; atol, rtol)
+        @test length(dx_ad) == length(dx_fdm) == length(activities)
+        # check all returned derivatives against FiniteDifferences
+        for (act_i, dx_ad_i, dx_fdm_i) in zip(activities, dx_ad, dx_fdm)
+            if act_i isa Active
+                test_approx(dx_ad_i, dx_fdm_i; atol, rtol)
+                continue
+            end
+            # if not Active, returned derivative must be nothing
+            @test dx_ad_i === nothing
+            act_i isa Const && continue
+            # if not Active or Const, derivative stored in Duplicated
+            test_approx(act_i.dval, dx_fdm_i; atol, rtol)
         end
     end
 end
