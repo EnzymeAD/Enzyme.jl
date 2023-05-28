@@ -1,3 +1,4 @@
+using ConstructionBase
 using Enzyme
 using EnzymeCore: Annotation
 using FiniteDifferences
@@ -81,20 +82,22 @@ end
 rand_tangent(x) = rand_tangent(Random.default_rng(), x)
 # base case: recursively call rand_tangent. Only actually generate random tangents for
 # floating point numbers. all other fields are preserved exactly.
-function rand_tangent(rng, x::T) where {T}
-    fields = fieldnames(T)
+function rand_tangent(rng, x)
+    fields = ConstructionBase.getfields(x)
     isempty(fields) && return x
-    return typeof(x)((rand_tangent(rng, getfield(x, k)) for k in fields)...)
+    rand_fields = map(Base.Fix1(rand_tangent, rng), fields)
+    return ConstructionBase.constructorof(typeof(x))(rand_fields...)
 end
 # special-case containers that can't be constructed from type and field
 rand_tangent(rng, x::Union{Array,Tuple,NamedTuple}) = map(xi -> rand_tangent(rng, xi), x)
 # make numbers prettier sometimes when errors are printed.
 rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
 
-function zero_tangent(x::T) where {T}
-    fields = fieldnames(T)
+function zero_tangent(x)
+    fields = ConstructionBase.getfields(x)
     isempty(fields) && return x
-    return typeof(x)((zero_tangent(getfield(x, k)) for k in fields)...)
+    zero_fields = map(zero_tangent, fields)
+    return ConstructionBase.constructorof(typeof(x))(zero_fields...)
 end
 # special-case containers that can't be constructed from type and field
 zero_tangent(x::Union{Array,Tuple,NamedTuple}) = map(zero_tangent, x)
