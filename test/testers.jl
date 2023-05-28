@@ -335,8 +335,8 @@ function all_or_no_batch(activities...)
     return all_batch_or_const || no_batch
 end
 
-f_array(x) = sum(sin, x)
-f_tuple(x) = (sin(x[1]), cos(x[2]))
+f_array(x) = sum(exp, x)
+f_tuple(x) = (exp(x[1]), exp(x[2]))
 f_namedtuple(x) = (s=sin(x.a), c=cos(x.b))
 struct Foo{X,A}
     x::X
