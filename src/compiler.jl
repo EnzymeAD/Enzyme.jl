@@ -5930,7 +5930,23 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     end
 
     if errtype == API.ET_NoDerivative
-        throw(NoDerivativeException(msg, ir, bt))
+        exc = NoDerivativeException(msg, ir, bt)
+        if data != C_NULL
+            gutils = API.EnzymeGradientUtilsRef(data)
+            newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
+            while isa(newb, LLVM.PHIInst)
+                newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
+            end
+            b = IRBuilder(LLVM.context(val))
+            position!(b, newb)
+            function eac(io)
+                Base.showerror(io, exc)
+            end
+            msg2 = sprint(eac)
+            emit_error(b, nothing, msg2)
+            return
+        end
+        throw(exc)
     elseif errtype == API.ET_NoShadow
         data = API.EnzymeGradientUtilsRef(data)
         ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
@@ -6948,7 +6964,7 @@ function __init__()
         @cfunction(jl_array_ptr_copy_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        ("jl_uv_associate_julia_struct","uv_async_init"),
+        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc"),
         @cfunction(jl_unhandled_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_unhandled_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_unhandled_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
