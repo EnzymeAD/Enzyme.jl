@@ -29,7 +29,7 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
     xs = map(x -> x.val, activities)
     ẋs = map(a -> a isa Const ? nothing : a.dval, activities)
     ignores = map(a -> a isa Const, activities)
-    f2 = _wrap_function(f, xs, ignores)
+    f2 = _wrap_forward_function(f, xs, ignores)
     ignores = collect(ignores)
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
         all(ignores) && return zero_tangent(y)
@@ -49,7 +49,7 @@ end
 _make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 """
-    _wrap_function(f, xs, ignores)
+    _wrap_forward_function(f, xs, ignores)
 
 Return a new version of `f`, `fnew`, that ignores some of the arguments `xs`.
 
@@ -59,7 +59,7 @@ Return a new version of `f`, `fnew`, that ignores some of the arguments `xs`.
 - `ignores`: Collection of `Bool`s, the same length as `xs`.
   If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
 """
-function _wrap_function(f, xs, ignores)
+function _wrap_forward_function(f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]
         j = 1
