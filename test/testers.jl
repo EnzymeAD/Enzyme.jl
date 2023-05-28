@@ -293,10 +293,10 @@ function test_reverse(
             ReverseSplitWithPrimal, typeof(c_act), ret_activity, map(typeof, activities)...
         )
         tape, y_ad, shadow_result = forward(c_act, activities...)
-        if ret_activity <: Const
-            dx_ad = only(reverse(c_act, activities..., tape))
-        else
+        if ret_activity <: Active
             dx_ad = only(reverse(c_act, activities..., ȳ, tape))
+        else
+            dx_ad = only(reverse(c_act, activities..., tape))
         end
         # check primal agrees with primal function
         test_approx(y_ad, y; atol, rtol)
