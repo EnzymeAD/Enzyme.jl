@@ -532,3 +532,26 @@ end
         end
     end
 end
+
+@testset "test_reverse" begin
+    @testset "tests pass for functions with no rules" begin
+        @testset "unary function tests" begin
+            combinations = [
+                "vector arguments" => (Vector, f_array),
+                "matrix arguments" => (Matrix, f_array),
+                "multidimensional array arguments" => (Array{<:Any,3}, f_array),
+            ]
+            sz = (2, 3, 4)
+            @testset "$name" for (name, (TT, fun)) in combinations
+                @testset for Tret in (Active, Const),
+                    Tx in (Const, Duplicated),
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                    x = randn(T, sz[1:ndims(TT)])
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_reverse(fun, Tret, (x, Tx); atol, rtol)
+                end
+            end
+        end
+    end
+end
