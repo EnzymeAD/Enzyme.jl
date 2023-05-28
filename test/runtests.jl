@@ -255,6 +255,20 @@ end
     test_scalar(g, 3.0)
 end
 
+@testset "Base functions" begin
+    f1(x) = prod(ntuple(i -> i * x, 3))
+    @test autodiff(Reverse, f1, Active, Active(2.0))[1][1] == 72
+    @test autodiff(Forward, f1, Duplicated(2.0, 1.0))[1]   == 72
+
+    f2(x) = x * something(nothing, 2)
+    @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] == 2
+    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1]   == 2
+
+    f3(x) = x * sum(unique([x, 2.0, 2.0, 3.0]))
+    @test autodiff(Reverse, f3, Active, Active(1.0))[1][1] == 7
+    @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1]   == 7
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
