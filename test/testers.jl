@@ -229,7 +229,6 @@ function test_forward(
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
-        # TODO: handle batch activities
         # call finitedifferences, avoid mutating original arguments
         dy_fdm = _make_jvp_call(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
