@@ -217,6 +217,8 @@ end
 
 Test `Enzyme.autodiff` of `f` in `Forward`-mode against finite differences.
 
+`f` has the constraints of the same argument passed to `Enzyme.autodiff`.
+
 # Arguments
 
 - `Activity`: the activity of the return value of `f`
@@ -301,7 +303,8 @@ end
 
 Test `Enzyme.autodiff` of `f` in `Reverse`-mode against finite differences.
 
-`f` has all constraints of `Enzyme.autodiff_thunk`, with several additional constraints:
+`f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with several
+additional constraints:
 - If it mutates one of its arguments, it must not also return that argument.
 - If the return value is a struct, then all floating point numbers contained in the struct
     or its fields must be in arrays.
