@@ -265,7 +265,6 @@ function test_forward(
     end
 end
 
-
 """
     test_reverse(f, Activity, args...; kwargs...)
 
