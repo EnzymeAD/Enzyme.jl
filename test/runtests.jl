@@ -285,6 +285,18 @@ end
     f7(x) = (inv ∘ abs)(x)
     @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1/4
     @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f8(x) = x * count(i -> i > 1, [0.5, x, 1.5])
+    @test autodiff(Reverse, f8, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1]   == 2
+
+    function f9(x)
+        y = []
+        foreach(i -> push!(y, i^2), [1.0, x, x])
+        return sum(y)
+    end
+    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
 end
 
 @testset "Taylor series tests" begin
