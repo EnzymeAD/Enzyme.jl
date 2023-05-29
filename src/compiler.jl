@@ -3457,7 +3457,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
     return 0
 end
@@ -3514,7 +3514,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
@@ -4295,9 +4295,9 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
         if value_type(ni) != LLVM.VoidType(ctx)
-            LLVM.replace_uses!(ni, LLVM.UndefValue(value_type(ni)))
+            API.EnzymeGradientUtilsReplaceAWithB(gutils, ni, LLVM.UndefValue(value_type(ni)))
         end
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     return 0
@@ -4542,6 +4542,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
+    ncall = res
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
 
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn"; ctx)), collect(function_attributes(llvmf))))
@@ -4658,7 +4659,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
             unsafe_store!(normalR, normalV)
         else
             ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-            unsafe_delete!(LLVM.parent(ni), ni)
+            API.EnzymeGradientUtilsErase(gutils, ni)
         end
     end
 
@@ -5288,7 +5289,7 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         placeHolder = GCToks[origPres]
         LLVM.replace_uses!(placeHolder, token)
         delete!(GCToks, origPres)
-        unsafe_delete!(LLVM.parent(placeHolder), placeHolder)
+        API.EnzymeGradientUtilsErase(gutils, placeHolder)
     else
         GCToks[origPres] = token
     end
@@ -5659,7 +5660,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
     return 0
 end
