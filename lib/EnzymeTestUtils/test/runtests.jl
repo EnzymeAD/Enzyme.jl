@@ -110,7 +110,7 @@ end
                     "multidimensional array arguments" => (Array{<:Any,3}, f_array),
                     "tuple argument and return" => (Tuple, f_tuple),
                     "namedtuple argument and return" => (NamedTuple, f_namedtuple),
-                    # "struct argument and return" => (TestStruct, f_struct),
+                    "struct argument and return" => (TestStruct, f_struct),
                 ]
                 sz = (2, 3, 4)
                 @testset "$name" for (name, (TT, fun)) in combinations
