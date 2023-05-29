@@ -669,5 +669,20 @@ end
             end
             Enzyme.API.runtimeActivity!(false)
         end
+
+        @testset "mutated callable" begin
+            n = 3
+            @testset for Tret in (Const, Active),
+                Tc in (Const, Duplicated),
+                Ty in (Const, Duplicated),
+                T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                c = MutatedCallable(randn(T, n))
+                y = randn(T, n)
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+            end
+        end
     end
 end
