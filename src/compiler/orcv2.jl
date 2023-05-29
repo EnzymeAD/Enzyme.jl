@@ -17,13 +17,13 @@ struct CompilerInstance
 end
 
 function LLVM.dispose(ci::CompilerInstance)
-    dispose(ci.jit)
-    if ci.lctm !== nothing
-        dispose(ci.lctm)
-    end
     if ci.ism !== nothing
         dispose(ci.ism)
     end
+    if ci.lctm !== nothing
+        dispose(ci.lctm)
+    end
+    dispose(ci.jit)
     return nothing
 end
 
