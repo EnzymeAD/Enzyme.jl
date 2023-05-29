@@ -1,6 +1,7 @@
 using ConstructionBase
 using Enzyme
 using EnzymeCore: Annotation
+using EnzymeCore.EnzymeRules: EnzymeRules
 using FiniteDifferences
 using MetaTesting
 using Random
