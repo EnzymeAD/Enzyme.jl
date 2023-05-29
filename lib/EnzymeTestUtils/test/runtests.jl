@@ -1,5 +1,5 @@
-using EnzymeCore
 using EnzymeCore.EnzymeRules: EnzymeRules
+using Enzyme
 using EnzymeTestUtils
 using MetaTesting
 using Test
