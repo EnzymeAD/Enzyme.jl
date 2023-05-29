@@ -517,19 +517,49 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
-@testset "test_forward" begin
-    @testset "tests pass for functions with no rules" begin
-        @testset "unary function tests" begin
-            combinations = [
-                "vector arguments" => (Vector, f_array),
-                "matrix arguments" => (Matrix, f_array),
-                "multidimensional array arguments" => (Array{<:Any,3}, f_array),
-                "tuple argument and return" => (Tuple, f_tuple),
-                "namedtuple argument and return" => (NamedTuple, f_namedtuple),
-                # "struct argument and return" => (Foo, f_struct),
-            ]
-            sz = (2, 3, 4)
-            @testset "$name" for (name, (TT, fun)) in combinations
+@testset "EnzymeRules testing functions" begin
+    @testset "test_forward" begin
+        @testset "tests pass for functions with no rules" begin
+            @testset "unary function tests" begin
+                combinations = [
+                    "vector arguments" => (Vector, f_array),
+                    "matrix arguments" => (Matrix, f_array),
+                    "multidimensional array arguments" => (Array{<:Any,3}, f_array),
+                    "tuple argument and return" => (Tuple, f_tuple),
+                    "namedtuple argument and return" => (NamedTuple, f_namedtuple),
+                    # "struct argument and return" => (Foo, f_struct),
+                ]
+                sz = (2, 3, 4)
+                @testset "$name" for (name, (TT, fun)) in combinations
+                    @testset for Tret in (
+                            Const,
+                            Duplicated,
+                            DuplicatedNoNeed,
+                            BatchDuplicated,
+                            BatchDuplicatedNoNeed,
+                        ),
+                        Tx in (Const, Duplicated, BatchDuplicated),
+                        T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                        # skip invalid combinations
+                        all_or_no_batch(Tret, Tx) || continue
+
+                        if TT <: Array
+                            x = randn(T, sz[1:ndims(TT)])
+                        elseif TT <: Tuple
+                            x = (randn(T), randn(T))
+                        elseif TT <: NamedTuple
+                            x = (a=randn(T), b=randn(T))
+                        else  # TT <: Foo
+                            x = Foo(randn(T, 5), randn(T))
+                        end
+                        atol = rtol = sqrt(eps(real(T)))
+                        test_forward(fun, Tret, (x, Tx); atol, rtol)
+                    end
+                end
+            end
+
+            @testset "multi-argument function" begin
                 @testset for Tret in (
                         Const,
                         Duplicated,
@@ -538,276 +568,248 @@ end
                         BatchDuplicatedNoNeed,
                     ),
                     Tx in (Const, Duplicated, BatchDuplicated),
+                    Ta in (Const, Duplicated, BatchDuplicated),
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
                     # skip invalid combinations
-                    all_or_no_batch(Tret, Tx) || continue
+                    all_or_no_batch(Tret, Tx, Ta) || continue
 
-                    if TT <: Array
-                        x = randn(T, sz[1:ndims(TT)])
-                    elseif TT <: Tuple
-                        x = (randn(T), randn(T))
-                    elseif TT <: NamedTuple
-                        x = (a=randn(T), b=randn(T))
-                    else  # TT <: Foo
-                        x = Foo(randn(T, 5), randn(T))
-                    end
+                    x = randn(T, 3)
+                    a = randn(T)
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward(fun, Tret, (x, Tx); atol, rtol)
+                    test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
                 end
             end
-        end
 
-        @testset "multi-argument function" begin
-            @testset for Tret in (
-                    Const,
-                    Duplicated,
-                    DuplicatedNoNeed,
-                    BatchDuplicated,
-                    BatchDuplicatedNoNeed,
-                ),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                Ta in (Const, Duplicated, BatchDuplicated),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
-
-                # skip invalid combinations
-                all_or_no_batch(Tret, Tx, Ta) || continue
-
-                x = randn(T, 3)
-                a = randn(T)
-                atol = rtol = sqrt(eps(real(T)))
-                test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
-            end
-        end
-
-        @testset "mutating function" begin
-            Enzyme.API.runtimeActivity!(true)
-            sz = (2, 3)
-            @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                Ta in (Const, Duplicated, BatchDuplicated),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
-
-                # if some are batch, all non-Const must be batch
-                all_or_no_batch(Tret, Tx, Ta) || continue
-                # since y is returned, it needs the same activity as the return type
-                Ty = Tret
-
-                x = randn(T, sz)
-                y = zeros(T, sz)
-                a = randn(T)
-
-                atol = rtol = sqrt(eps(real(T)))
-                test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
-            end
-            Enzyme.API.runtimeActivity!(false)
-        end
-
-        @testset "mutated callable" begin
-            n = 3
-            @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                Tc in (Const, Duplicated, BatchDuplicated),
-                Ty in (Const, Duplicated, BatchDuplicated),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
-
-                # if some are batch, all non-Const must be batch
-                all_or_no_batch(Tret, Tc, Ty) || continue
-
-                c = MutatedCallable(randn(T, n))
-                y = randn(T, n)
-
-                atol = rtol = sqrt(eps(real(T)))
-                test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
-            end
-        end
-    end
-
-    @testset "kwargs correctly forwarded" begin
-        @testset for Tret in (Duplicated, BatchDuplicated),
-            Tx in (Const, Duplicated, BatchDuplicated)
-
-            all_or_no_batch(Tret, Tx) || continue
-
-            x = randn(3)
-            a = randn()
-
-            @test fails() do
-                test_forward(f_kwargs, Tret, (x, Tx))
-            end
-            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-        end
-    end
-
-    @testset "incorrect primal detected" begin
-        @testset for Tret in (Duplicated, BatchDuplicated),
-            Tx in (Const, Duplicated, BatchDuplicated)
-
-            all_or_no_batch(Tret, Tx) || continue
-
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_primal=true)
-            @test fails() do
-                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
-            end
-        end
-    end
-
-    @testset "incorrect tangent detected" begin
-        @testset for Tret in (Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_tangent=true)
-            @test fails() do
-                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
-            end
-        end
-    end
-
-    @testset "incorrect batch tangent detected" begin
-        @testset for Tret in (BatchDuplicated, BatchDuplicatedNoNeed),
-            Tx in (Const, BatchDuplicated)
-
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_batched_tangent=true)
-            @test fails() do
-                test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
-            end
-        end
-    end
-end
-
-@testset "test_reverse" begin
-    @testset "tests pass for functions with no rules" begin
-        @testset "unary function tests" begin
-            combinations = [
-                "vector arguments" => (Vector, f_array),
-                "matrix arguments" => (Matrix, f_array),
-                "multidimensional array arguments" => (Array{<:Any,3}, f_array),
-            ]
-            sz = (2, 3, 4)
-            @testset "$name" for (name, (TT, fun)) in combinations
-                @testset for Tret in (Active, Const),
-                    Tx in (Const, Duplicated),
+            @testset "mutating function" begin
+                Enzyme.API.runtimeActivity!(true)
+                sz = (2, 3)
+                @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                    Tx in (Const, Duplicated, BatchDuplicated),
+                    Ta in (Const, Duplicated, BatchDuplicated),
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
-                    x = randn(T, sz[1:ndims(TT)])
+                    # if some are batch, all non-Const must be batch
+                    all_or_no_batch(Tret, Tx, Ta) || continue
+                    # since y is returned, it needs the same activity as the return type
+                    Ty = Tret
+
+                    x = randn(T, sz)
+                    y = zeros(T, sz)
+                    a = randn(T)
+
                     atol = rtol = sqrt(eps(real(T)))
-                    test_reverse(fun, Tret, (x, Tx); atol, rtol)
+                    test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                end
+                Enzyme.API.runtimeActivity!(false)
+            end
+
+            @testset "mutated callable" begin
+                n = 3
+                @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                    Tc in (Const, Duplicated, BatchDuplicated),
+                    Ty in (Const, Duplicated, BatchDuplicated),
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                    # if some are batch, all non-Const must be batch
+                    all_or_no_batch(Tret, Tc, Ty) || continue
+
+                    c = MutatedCallable(randn(T, n))
+                    y = randn(T, n)
+
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
                 end
             end
         end
 
-        @testset "multi-argument function" begin
-            @testset for Tret in (Const, Duplicated),
-                Tx in (Const, Duplicated),
-                Ta in (Const, Active),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
+        @testset "kwargs correctly forwarded" begin
+            @testset for Tret in (Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
 
-                x = randn(T, 3)
-                a = randn(T)
-                atol = rtol = sqrt(eps(real(T)))
-                test_reverse(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                all_or_no_batch(Tret, Tx) || continue
+
+                x = randn(3)
+                a = randn()
+
+                @test fails() do
+                    test_forward(f_kwargs, Tret, (x, Tx))
+                end
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
             end
         end
 
-        @testset "mutating function" begin
-            sz = (2, 3)
-            Enzyme.API.runtimeActivity!(true)
-            @testset for Ty in (Const, Duplicated),
-                Tx in (Const, Duplicated),
-                Ta in (Const, Active),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
+        @testset "incorrect primal detected" begin
+            @testset for Tret in (Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
 
-                # return value is nothing
-                Tret = Const
+                all_or_no_batch(Tret, Tx) || continue
 
-                x = randn(T, sz)
-                y = zeros(T, sz)
-                a = randn(T)
+                x = randn(3)
+                a = randn()
 
-                atol = rtol = sqrt(eps(real(T)))
-                test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
-            end
-            Enzyme.API.runtimeActivity!(false)
-        end
-
-        @testset "mutated callable" begin
-            n = 3
-            @testset for Tret in (Const, Active),
-                Tc in (Const, Duplicated),
-                Ty in (Const, Duplicated),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
-
-                c = MutatedCallable(randn(T, n))
-                y = randn(T, n)
-
-                atol = rtol = sqrt(eps(real(T)))
-                test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_primal=true)
+                @test fails() do
+                    test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+                end
             end
         end
-    end
 
-    @testset "kwargs correctly forwarded" begin
-        @testset for Tx in (Const, Duplicated)
-            x = randn(3)
-            a = randn()
+        @testset "incorrect tangent detected" begin
+            @testset for Tret in (Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
+                x = randn(3)
+                a = randn()
 
-            @test fails() do
-                test_reverse(f_kwargs, Duplicated, (x, Tx))
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_tangent=true)
+                @test fails() do
+                    test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+                end
             end
-            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
         end
-    end
 
-    @testset "incorrect primal detected" begin
-        @testset for Tx in (Const, Duplicated)
-            x = randn(3)
-            a = randn()
+        @testset "incorrect batch tangent detected" begin
+            @testset for Tret in (BatchDuplicated, BatchDuplicatedNoNeed),
+                Tx in (Const, BatchDuplicated)
 
-            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_primal=true)
-            @test fails() do
-                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+                x = randn(3)
+                a = randn()
+
+                test_forward(f_kwargs, Tret, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_batched_tangent=true)
+                @test fails() do
+                    test_forward(f_kwargs, Tret, (x, Tx); fkwargs)
+                end
             end
         end
     end
 
-    @testset "incorrect tangent detected" begin
-        @testset for Tx in (Duplicated,)
-            x = randn(3)
-            a = randn()
+    @testset "test_reverse" begin
+        @testset "tests pass for functions with no rules" begin
+            @testset "unary function tests" begin
+                combinations = [
+                    "vector arguments" => (Vector, f_array),
+                    "matrix arguments" => (Matrix, f_array),
+                    "multidimensional array arguments" => (Array{<:Any,3}, f_array),
+                ]
+                sz = (2, 3, 4)
+                @testset "$name" for (name, (TT, fun)) in combinations
+                    @testset for Tret in (Active, Const),
+                        Tx in (Const, Duplicated),
+                        T in (Float32, Float64, ComplexF32, ComplexF64)
 
-            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_tangent=true)
-            @test fails() do
-                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+                        x = randn(T, sz[1:ndims(TT)])
+                        atol = rtol = sqrt(eps(real(T)))
+                        test_reverse(fun, Tret, (x, Tx); atol, rtol)
+                    end
+                end
+            end
+
+            @testset "multi-argument function" begin
+                @testset for Tret in (Const, Duplicated),
+                    Tx in (Const, Duplicated),
+                    Ta in (Const, Active),
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                    x = randn(T, 3)
+                    a = randn(T)
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_reverse(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                end
+            end
+
+            @testset "mutating function" begin
+                sz = (2, 3)
+                Enzyme.API.runtimeActivity!(true)
+                @testset for Ty in (Const, Duplicated),
+                    Tx in (Const, Duplicated),
+                    Ta in (Const, Active),
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                    # return value is nothing
+                    Tret = Const
+
+                    x = randn(T, sz)
+                    y = zeros(T, sz)
+                    a = randn(T)
+
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                end
+                Enzyme.API.runtimeActivity!(false)
+            end
+
+            @testset "mutated callable" begin
+                n = 3
+                @testset for Tret in (Const, Active),
+                    Tc in (Const, Duplicated),
+                    Ty in (Const, Duplicated),
+                    T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                    c = MutatedCallable(randn(T, n))
+                    y = randn(T, n)
+
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                end
             end
         end
-    end
 
-    @testset "incorrect tape detected" begin
-        @testset for Tx in (Duplicated,)
-            x = randn(3)
-            a = randn()
+        @testset "kwargs correctly forwarded" begin
+            @testset for Tx in (Const, Duplicated)
+                x = randn(3)
+                a = randn()
 
-            function f_kwargs_overwrite(x; kwargs...)
-                y = f_kwargs(x; kwargs...)
-                x[1] = 0.0
-                return y
+                @test fails() do
+                    test_reverse(f_kwargs, Duplicated, (x, Tx))
+                end
+                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
             end
+        end
 
-            test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs=(; a))
-            fkwargs = (; a, incorrect_tape=true)
-            @test fails() do
-                test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs)
+        @testset "incorrect primal detected" begin
+            @testset for Tx in (Const, Duplicated)
+                x = randn(3)
+                a = randn()
+
+                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_primal=true)
+                @test fails() do
+                    test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+                end
+            end
+        end
+
+        @testset "incorrect tangent detected" begin
+            @testset for Tx in (Duplicated,)
+                x = randn(3)
+                a = randn()
+
+                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_tangent=true)
+                @test fails() do
+                    test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+                end
+            end
+        end
+
+        @testset "incorrect tape detected" begin
+            @testset for Tx in (Duplicated,)
+                x = randn(3)
+                a = randn()
+
+                function f_kwargs_overwrite(x; kwargs...)
+                    y = f_kwargs(x; kwargs...)
+                    x[1] = 0.0
+                    return y
+                end
+
+                test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_tape=true)
+                @test fails() do
+                    test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs)
+                end
             end
         end
     end
