@@ -261,6 +261,57 @@ function test_forward(
     end
 end
 
+
+"""
+    test_reverse(f, Activity, args...; kwargs...)
+
+Test `Enzyme.autodiff` of `f` in `Reverse`-mode against finite differences.
+
+# Arguments
+
+- `Activity`: the activity of the return value of `f`. Currently only activities of `Const`
+    and `Active` are supported.
+- `args`: Each entry is either an argument to `f`, an activity type accepted by `autodiff`,
+    or a tuple of the form `(arg, Activity)`, where `Activity` is the activity type of
+    `arg`. If the activity type specified requires a shadow, one will be automatically
+    generated.
+
+# Keywords
+
+- `fdm=FiniteDifferences.central_fdm(5, 1)`: The finite differences method to use.
+- `fkwargs`: Keyword arguments to pass to `f`.
+- `rtol`: Relative tolerance for `isapprox`.
+- `atol`: Absolute tolerance for `isapprox`.
+- `testset_name`: Name to use for a testset in which all tests are evaluated.
+
+# Examples
+
+Testing a function that returns a scalar:
+
+```julia
+x = randn()
+y = randn()  # will be Const
+for Tret in (Const, Active), Tx in (Const, Active)
+    test_reverse(*, Tret, (x, Tx), y)
+end
+```
+
+To testing a function that returns an array, we store the return value in one of the
+arguments and return `nothing`:
+
+```julia
+x = randn(3)
+y = randn()  # will be Const
+z = zeros(3)  # storage for the output
+f(x, y) = x * y
+for Tx in (Const, Duplicated), Tz in (Const, Duplicated)
+    test_reverse(Const, (z, Tz), (x, Tx), y) do z, x, y
+        copyto!(z, f(x, y))
+        return nothing
+    end
+end
+```
+"""
 function test_reverse(
     f,
     ret_activity,
@@ -277,12 +328,17 @@ function test_reverse(
         testset_name = "test_reverse: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
     end
     @testset "$testset_name" begin
+        ret_activity <: Union{Const,Active} || throw(
+            ArgumentError(
+                "`test_reverse` requires return activity of `Const` or `Active`. Received $ret_activity",
+            ),
+        )
         # format arguments for autodiff and FiniteDifferences
         activities = map(auto_activity, (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
-        # generate fixed tangents for inputs and outputs
+        # generate tangent for output
         ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
         # call finitedifferences, avoid mutating original arguments
         dx_fdm = _make_j′vp_call(fdm, call_with_kwargs, ȳ, activities)
