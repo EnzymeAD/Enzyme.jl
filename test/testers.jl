@@ -301,9 +301,10 @@ end
 
 Test `Enzyme.autodiff` of `f` in `Reverse`-mode against finite differences.
 
-`f` has the same constraints as `Enzyme.autodiff_thunk`. If it mutates one of its arguments,
-it must not also return that argument. If the return value is a struct, then all floating
-point numbers contained in the struct or its fields must be in arrays.
+`f` has all constraints of `Enzyme.autodiff_thunk`, with several additional constraints:
+- If it mutates one of its arguments, it must not also return that argument.
+- If the return value is a struct, then all floating point numbers contained in the struct
+    or its fields must be in arrays.
 
 # Arguments
 
