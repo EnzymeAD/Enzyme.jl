@@ -723,4 +723,61 @@ end
             end
         end
     end
+
+    @testset "kwargs correctly forwarded" begin
+        @testset for Tx in (Const, Duplicated)
+            x = randn(3)
+            a = randn()
+
+            @test fails() do
+                test_reverse(f_kwargs, Duplicated, (x, Tx))
+            end
+            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
+        end
+    end
+
+    @testset "incorrect primal detected" begin
+        @testset for Tx in (Const, Duplicated)
+            x = randn(3)
+            a = randn()
+
+            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
+            fkwargs = (; a, incorrect_primal=true)
+            @test fails() do
+                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect tangent detected" begin
+        @testset for Tx in (Duplicated,)
+            x = randn(3)
+            a = randn()
+
+            test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs=(; a))
+            fkwargs = (; a, incorrect_tangent=true)
+            @test fails() do
+                test_reverse(f_kwargs, Duplicated, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect tape detected" begin
+        @testset for Tx in (Duplicated,)
+            x = randn(3)
+            a = randn()
+
+            function f_kwargs_overwrite(x; kwargs...)
+                y = f_kwargs(x; kwargs...)
+                x[1] = 0.0
+                return y
+            end
+
+            test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs=(; a))
+            fkwargs = (; a, incorrect_tape=true)
+            @test fails() do
+                test_reverse(f_kwargs_overwrite, Duplicated, (x, Tx); fkwargs)
+            end
+        end
+    end
 end
