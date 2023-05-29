@@ -100,7 +100,7 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
-@testset "EnzymeRules testing functions" begin
+@testset "testing functions" begin
     @testset "test_forward" begin
         @testset "tests pass for functions with no rules" begin
             @testset "unary function tests" begin
