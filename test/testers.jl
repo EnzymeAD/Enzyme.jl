@@ -406,6 +406,15 @@ end
 
 f_kwargs(x; a=3.0, kwargs...) = a * x
 
+struct MutatedCallable{T}
+    x::T
+end
+function (c::MutatedCallable)(y)
+    s = c.x'y
+    c.x ./= s
+    return s
+end
+
 function EnzymeRules.forward(
     func::Const{typeof(f_kwargs)},
     RT::Type{
@@ -523,6 +532,24 @@ end
                 test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
             end
             Enzyme.API.runtimeActivity!(false)
+        end
+
+        @testset "mutated callable" begin
+            n = 3
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tc in (Const, Duplicated, BatchDuplicated),
+                Ty in (Const, Duplicated, BatchDuplicated),
+                T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                # if some are batch, all non-Const must be batch
+                all_or_no_batch(Tret, Tc, Ty) || continue
+
+                c = MutatedCallable(randn(T, n))
+                y = randn(T, n)
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
+            end
         end
     end
 
