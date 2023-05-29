@@ -3457,7 +3457,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
     return 0
 end
@@ -3514,7 +3514,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
@@ -4295,9 +4295,9 @@ function enzyme_custom_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
         if value_type(ni) != LLVM.VoidType(ctx)
-            LLVM.replace_uses!(ni, LLVM.UndefValue(value_type(ni)))
+            API.EnzymeGradientUtilsReplaceAWithB(gutils, ni, LLVM.UndefValue(value_type(ni)))
         end
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     return 0
@@ -4542,6 +4542,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
+    ncall = res
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
 
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn"; ctx)), collect(function_attributes(llvmf))))
@@ -4658,7 +4659,7 @@ function enzyme_custom_common_rev(forward::Bool, B::LLVM.API.LLVMBuilderRef, ori
             unsafe_store!(normalR, normalV)
         else
             ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-            unsafe_delete!(LLVM.parent(ni), ni)
+            API.EnzymeGradientUtilsErase(gutils, ni)
         end
     end
 
@@ -5288,7 +5289,7 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         placeHolder = GCToks[origPres]
         LLVM.replace_uses!(placeHolder, token)
         delete!(GCToks, origPres)
-        unsafe_delete!(LLVM.parent(placeHolder), placeHolder)
+        API.EnzymeGradientUtilsErase(gutils, placeHolder)
     else
         GCToks[origPres] = token
     end
@@ -5517,10 +5518,10 @@ end
 
 function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
     orig = LLVM.Instruction(OrigCI)
+    origops = collect(operands(orig))
     if API.EnzymeGradientUtilsIsConstantValue(gutils, origops[1]) != 0
         return 1
     end
-    origops = collect(operands(orig))
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
 
@@ -5531,7 +5532,7 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                           shadowin
                           LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                           ]
-        LLVM.call!(B, LLVM.function_type(orig), LLVM.called_value(orig), args)
+        LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx in 1:width
@@ -5539,14 +5540,14 @@ function jl_array_sizehint_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                               extract_value!(B, shadowin, idx-1)
                               LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, origops[2]))
                               ]
-            LLVM.call!(B, LLVM.function_type(orig), LLVM.called_value(orig), args)
+            LLVM.call!(B, called_type(orig), LLVM.called_value(orig), args)
         end
     end
     return 0
 end
 
 function jl_array_sizehint_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    jl_array_sizehint_fwd(B, OrigCI, gutils, normalR, shadowR, tapeR)
+    jl_array_sizehint_fwd(B, OrigCI, gutils, normalR, shadowR)
 end
 
 function jl_array_sizehint_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
@@ -5659,7 +5660,7 @@ function finalizer_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
         unsafe_store!(normalR, C_NULL)
     else
         ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
-        unsafe_delete!(LLVM.parent(ni), ni)
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
     return 0
 end
