@@ -423,11 +423,11 @@ end
 f_array(x) = sum(exp, x)
 f_tuple(x) = (-3 * x[1], 2 * x[2])
 f_namedtuple(x) = (s=sin(x.a), c=cos(x.b))
-struct Foo{X,A}
+struct TestStruct{X,A}
     x::X
     a::A
 end
-f_struct(x::Foo) = Foo(sinh.(x.a .* x.x), exp(x.a))
+f_struct(x::TestStruct) = TestStruct(sinh.(x.a .* x.x), exp(x.a))
 f_multiarg(x::AbstractArray, a) = sin.(a .* x)
 function f_mut!(y, x, a)
     y .= x .* a
@@ -527,7 +527,7 @@ end
                     "multidimensional array arguments" => (Array{<:Any,3}, f_array),
                     "tuple argument and return" => (Tuple, f_tuple),
                     "namedtuple argument and return" => (NamedTuple, f_namedtuple),
-                    # "struct argument and return" => (Foo, f_struct),
+                    # "struct argument and return" => (TestStruct, f_struct),
                 ]
                 sz = (2, 3, 4)
                 @testset "$name" for (name, (TT, fun)) in combinations
@@ -550,8 +550,8 @@ end
                             x = (randn(T), randn(T))
                         elseif TT <: NamedTuple
                             x = (a=randn(T), b=randn(T))
-                        else  # TT <: Foo
-                            x = Foo(randn(T, 5), randn(T))
+                        else  # TT <: TestStruct
+                            x = TestStruct(randn(T, 5), randn(T))
                         end
                         atol = rtol = sqrt(eps(real(T)))
                         test_forward(fun, Tret, (x, Tx); atol, rtol)
