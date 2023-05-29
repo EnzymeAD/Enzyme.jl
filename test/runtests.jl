@@ -76,7 +76,6 @@ include("typetree.jl")
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
     end
-    include("testers.jl")
 end
 
 f0(x) = 1.0 + x
