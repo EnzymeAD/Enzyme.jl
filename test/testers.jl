@@ -275,8 +275,7 @@ point numbers contained in the struct or its fields must be in arrays.
 
 # Arguments
 
-- `Activity`: the activity of the return value of `f`. Currently only activities of `Const`
-    and `Active` are supported.
+- `Activity`: the activity of the return value of `f`.
 - `args`: Each entry is either an argument to `f`, an activity type accepted by `autodiff`,
     or a tuple of the form `(arg, Activity)`, where `Activity` is the activity type of
     `arg`. If the activity type specified requires a shadow, one will be automatically
