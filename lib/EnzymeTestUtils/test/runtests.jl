@@ -125,7 +125,7 @@ end
                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
                         # skip invalid combinations
-                        all_or_no_batch(Tret, Tx) || continue
+                        are_activities_compatible(Tret, Tx) || continue
 
                         if TT <: Array
                             x = randn(T, sz[1:ndims(TT)])
@@ -155,7 +155,7 @@ end
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
                     # skip invalid combinations
-                    all_or_no_batch(Tret, Tx, Ta) || continue
+                    are_activities_compatible(Tret, Tx, Ta) || continue
 
                     x = randn(T, 3)
                     a = randn(T)
@@ -173,7 +173,7 @@ end
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
                     # if some are batch, all non-Const must be batch
-                    all_or_no_batch(Tret, Tx, Ta) || continue
+                    are_activities_compatible(Tret, Tx, Ta) || continue
                     # since y is returned, it needs the same activity as the return type
                     Ty = Tret
 
@@ -195,7 +195,7 @@ end
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
                     # if some are batch, all non-Const must be batch
-                    all_or_no_batch(Tret, Tc, Ty) || continue
+                    are_activities_compatible(Tret, Tc, Ty) || continue
 
                     c = MutatedCallable(randn(T, n))
                     y = randn(T, n)
@@ -210,7 +210,7 @@ end
             @testset for Tret in (Duplicated, BatchDuplicated),
                 Tx in (Const, Duplicated, BatchDuplicated)
 
-                all_or_no_batch(Tret, Tx) || continue
+                are_activities_compatible(Tret, Tx) || continue
 
                 x = randn(3)
                 a = randn()
@@ -226,7 +226,7 @@ end
             @testset for Tret in (Duplicated, BatchDuplicated),
                 Tx in (Const, Duplicated, BatchDuplicated)
 
-                all_or_no_batch(Tret, Tx) || continue
+                are_activities_compatible(Tret, Tx) || continue
 
                 x = randn(3)
                 a = randn()

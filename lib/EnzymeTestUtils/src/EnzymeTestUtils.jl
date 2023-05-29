@@ -7,7 +7,7 @@ using FiniteDifferences
 using Random
 using Test
 
-export test_forward, test_reverse, all_or_no_batch
+export test_forward, test_reverse, are_activities_compatible
 
 include("test_approx.jl")
 include("valid_activities.jl")
