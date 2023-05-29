@@ -1,10 +1,10 @@
 module EnzymeTestUtils
 
-using ConstructionBase
+using ConstructionBase: ConstructionBase
 using Enzyme
 using EnzymeCore: Annotation
-using FiniteDifferences
-using Random
+using FiniteDifferences: FiniteDifferences
+using Random: Random
 using Test
 
 export test_forward, test_reverse, are_activities_compatible
