@@ -403,7 +403,7 @@ function f_mut!(y, x, a)
     return y
 end
 
-f_kwargs(x; a=3.0, kwargs...) = a * x
+f_kwargs(x; a=3.0, kwargs...) = a .* x .^ 2
 
 struct MutatedCallable{T}
     x::T
@@ -430,10 +430,10 @@ function EnzymeRules.forward(
         return func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
     end
     dval = if x isa Duplicated
-        incorrect_tangent ? (a + 2) * x.dval : a * x.dval
+        2 * (incorrect_tangent ? (a + 2) : a) .* x.val .* x.dval
     elseif x isa BatchDuplicated
         map(x.dval) do dx
-            incorrect_batched_tangent ? (a - 2) * dx : a * dx
+            2 * (incorrect_batched_tangent ? (a - 2) : a) .* x.val .* dx
         end
     else
         (incorrect_tangent | incorrect_batched_tangent) ? 2 * x.val : zero(a) * x.val
@@ -445,6 +445,45 @@ function EnzymeRules.forward(
         val = func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
         return RT(val, dval)
     end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.ConfigWidth{1},
+    func::Const{typeof(f_kwargs)},
+    RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
+    x::Union{Const,Duplicated};
+    a=4.0, # mismatched keyword
+    incorrect_primal=false,
+    incorrect_tape=false,
+    kwargs...,
+)
+    xtape = incorrect_tape ? x.val * 3 : copy(x.val)
+    if EnzymeRules.needs_primal(config) || EnzymeRules.needs_shadow(config)
+        val = func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
+    else
+        val = nothing
+    end
+    primal = EnzymeRules.needs_primal(config) ? val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? zero(val) : nothing
+    tape = (xtape, shadow)
+    return EnzymeRules.AugmentedReturn(primal, shadow, tape)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.ConfigWidth{1},
+    func::Const{typeof(f_kwargs)},
+    dret::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
+    tape,
+    x::Union{Const,Duplicated};
+    a=4.0, # mismatched keyword
+    incorrect_tangent=false,
+    kwargs...,
+)
+    xval, dval = tape
+    if !(x isa Const) && (dval !== nothing)
+        x.dval .+= 2 .* (incorrect_tangent ? (a + 2) : a) .* dval .* xval
+    end
+    return (nothing,)
 end
 
 @testset "test_forward" begin
