@@ -296,7 +296,8 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     if normal !== nothing
         unsafe_store!(normalR, C_NULL)
     else
-        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
