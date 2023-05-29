@@ -12,19 +12,20 @@ using Test
 # Copyright (c) 2020 JuliaDiff
 
 """
-    _make_jvp_call(fdm, f, dret, y, xs, ẋs, ignores)
+    _make_jvp_call(fdm, f, rettype, y, activities)
 
-Call `FiniteDifferences.jvp`, with the option to ignore certain `xs`.
+Call `FiniteDifferences.jvp` on `f` with the arguments `xs` determined by `activities`.
 
 # Arguments
 - `fdm::FiniteDifferenceMethod`: How to numerically differentiate `f`.
 - `f`: The function to differentiate.
 - `rettype`: Return activity type
-- `y`: The primal output `y=f(xs...)` or at least something of the right type
-- `activities`: activities that would be passed to `Enzyme.forward`
+- `y`: The primal output `y=f(xs...)` or at least something of the right type.
+- `activities`: activities that would be passed to `Enzyme.autodiff`
 
 # Returns
-- `Ω̇`: Derivative of output w.r.t. `t` estimated by finite differencing.
+- `ẏ`: Derivative of output w.r.t. `t` estimated by finite differencing. If `rettype` is a
+    batch return type, then `ẏ` is a `NamedTuple` of derivatives.
 """
 function _make_jvp_call(fdm, f, rettype, y, activities)
     xs = map(x -> x.val, activities)
@@ -49,6 +50,21 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
 end
 _make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
+
+"""
+    _make_j′vp_call(fdm, f, ȳ, activities)
+
+Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `activities`.
+
+# Arguments
+- `fdm::FiniteDifferenceMethod`: How to numerically differentiate `f`.
+- `f`: The function to differentiate.
+- `ȳ`: The cotangent of the primal output `y=f(xs...)`.
+- `activities`: activities that would be passed to `Enzyme.autodiff`
+
+# Returns
+- `x̄s`: Derivatives of output `s` w.r.t. `xs` estimated by finite differencing.
+"""
 function _make_j′vp_call(fdm, f, ȳ, activities)
     xs = map(x -> x.val, activities)
     ignores = map(a -> a isa Const, activities)
@@ -99,6 +115,20 @@ function _wrap_forward_function(f, xs, ignores)
     return fnew
 end
 
+"""
+    _wrap_reverse_function(f, xs, ignores)
+
+Return a new version of `f`, `fnew`, that ignores some of the arguments `xs` and returns
+also non-ignored arguments.
+
+All arguments are copied before being passed to `f`, so that `fnew` is non-mutating.
+
+# Arguments
+- `f`: The function to be wrapped.
+- `xs`: Inputs to `f`, such that `y = f(xs...)`.
+- `ignores`: Collection of `Bool`s, the same length as `xs`.
+  If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
+"""
 function _wrap_reverse_function(f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]
