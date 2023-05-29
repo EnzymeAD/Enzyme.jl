@@ -2,7 +2,7 @@
 # https://github.com/JuliaDiff/ChainRulesTestUtils.jl/blob/f76f3fc7be221e07ba9be28ef33a22238ef13661/src/finite_difference_calls.jl
 # Copyright (c) 2020 JuliaDiff
 
-"""
+#=
     _make_jvp_call(fdm, f, rettype, y, activities)
 
 Call `FiniteDifferences.jvp` on `f` with the arguments `xs` determined by `activities`.
@@ -17,7 +17,7 @@ Call `FiniteDifferences.jvp` on `f` with the arguments `xs` determined by `activ
 # Returns
 - `ẏ`: Derivative of output w.r.t. `t` estimated by finite differencing. If `rettype` is a
     batch return type, then `ẏ` is a `NamedTuple` of derivatives.
-"""
+=#
 function _make_jvp_call(fdm, f, rettype, y, activities)
     xs = map(x -> x.val, activities)
     ẋs = map(a -> a isa Const ? nothing : a.dval, activities)
@@ -42,7 +42,7 @@ end
 _make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 
-"""
+#=
     _make_j′vp_call(fdm, f, ȳ, activities)
 
 Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `activities`.
@@ -55,7 +55,7 @@ Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `ac
 
 # Returns
 - `x̄s`: Derivatives of output `s` w.r.t. `xs` estimated by finite differencing.
-"""
+=#
 function _make_j′vp_call(fdm, f, ȳ, activities)
     xs = map(x -> x.val, activities)
     ignores = map(a -> a isa Const, activities)
@@ -75,7 +75,7 @@ function _make_j′vp_call(fdm, f, ȳ, activities)
     return (x̄s...,)
 end
 
-"""
+#=
     _wrap_forward_function(f, xs, ignores)
 
 Return a new version of `f`, `fnew`, that ignores some of the arguments `xs`.
@@ -85,7 +85,7 @@ Return a new version of `f`, `fnew`, that ignores some of the arguments `xs`.
 - `xs`: Inputs to `f`, such that `y = f(xs...)`.
 - `ignores`: Collection of `Bool`s, the same length as `xs`.
   If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
-"""
+=#
 function _wrap_forward_function(f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]
@@ -106,7 +106,7 @@ function _wrap_forward_function(f, xs, ignores)
     return fnew
 end
 
-"""
+#=
     _wrap_reverse_function(f, xs, ignores)
 
 Return a new version of `f`, `fnew`, that ignores some of the arguments `xs` and returns
@@ -119,7 +119,7 @@ All arguments are copied before being passed to `f`, so that `fnew` is non-mutat
 - `xs`: Inputs to `f`, such that `y = f(xs...)`.
 - `ignores`: Collection of `Bool`s, the same length as `xs`.
   If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
-"""
+=#
 function _wrap_reverse_function(f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]

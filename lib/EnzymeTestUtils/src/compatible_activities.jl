@@ -7,7 +7,7 @@ function are_activities_compatible(Tret, activities...)
     return _all_or_no_batch(Tret, activities...)
 end
 
-"""
+#=
     _all_or_no_batch(activities...) -> Bool
 
 Returns `true` if `activities` are compatible in terms of batched activities.
@@ -15,7 +15,7 @@ Returns `true` if `activities` are compatible in terms of batched activities.
 When a test set loops over many activities, some of which may be `BatchedDuplicated` or
 `BatchedDuplicatedNoNeed`, this is useful for skipping those combinations that are
 incompatible and will raise errors.
-"""
+=#
 function _all_or_no_batch(activities...)
     no_batch = !any(activities) do T
         T <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
