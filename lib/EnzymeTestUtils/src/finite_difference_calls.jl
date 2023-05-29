@@ -41,7 +41,6 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
 end
 _make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
 
-
 #=
     _make_j′vp_call(fdm, f, ȳ, activities)
 
