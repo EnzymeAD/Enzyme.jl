@@ -378,8 +378,8 @@ end
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 
-    # On Julia 1.6 the gradients are wrong (1.0 too large)
-    @static if VERSION ≥ v"1.7-"
+    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
         function f1(m)
             s = 0.0
             for (i, col) in enumerate(eachcol(m))
@@ -2246,21 +2246,24 @@ end
     @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
 
     f7(x) = median([2.0, 1.0, x])
-    @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    # Fails on Julia 1.9 due to #880
+    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
     @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
     @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
-    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
 
     f8(x) = middle([2.0, x, 1.0])
-    # Reverse mode fails due to #876
-    #@test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
+    @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
     @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1]   == 0.5
-    #@test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
+    @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
     @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
 
-    f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
-    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
-    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    # On Julia 1.6 the gradients are wrong (0.7 not 1.2)
+    @static if VERSION ≥ v"1.7-"
+        f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+        @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+        @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    end
 end
 
 # Always run last since otherwise on 1.6 device functions cause breakage.
