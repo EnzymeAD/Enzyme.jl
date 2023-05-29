@@ -608,5 +608,29 @@ end
                 end
             end
         end
+
+        @testset "multi-arg mutating function" begin
+            sz = (2, 3)
+            Enzyme.API.runtimeActivity!(true)
+            @testset for Ty in (Const, Duplicated),
+                Tx in (Const, Duplicated),
+                Ta in (Const, Active),
+                T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                # return value is nothing
+                Tret = Const
+
+                x = randn(T, sz)
+                y = zeros(T, sz)
+                a = randn(T)
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_reverse(Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol) do y, a, x
+                    f_mut!(y, a, x)
+                    return nothing
+                end
+            end
+            Enzyme.API.runtimeActivity!(false)
+        end
     end
 end
