@@ -122,29 +122,31 @@ function _wrap_reverse_function(f, xs, ignores)
     return fnew
 end
 
-rand_tangent(x) = rand_tangent(Random.default_rng(), x)
-# base case: recursively call rand_tangent. Only actually generate random tangents for
-# floating point numbers. all other fields are preserved exactly.
-function rand_tangent(rng, x)
-    fields = ConstructionBase.getfields(x)
-    isempty(fields) && return x
-    rand_fields = map(Base.Fix1(rand_tangent, rng), fields)
-    return ConstructionBase.constructorof(typeof(x))(rand_fields...)
+# recursively apply f to all fields of x for which f is implemented; all other fields are
+# left unchanged
+function map_fields_recursive(f, x::T...) where {T}
+    fields = map(ConstructionBase.getfields, x)
+    all(isempty, fields) && return first(x)
+    new_fields = map(x -> map_fields_recursive(f, x...), fields...)
+    return ConstructionBase.constructorof(T)(new_fields...)
 end
-# special-case containers that can't be constructed from type and field
-rand_tangent(rng, x::Union{Array,Tuple,NamedTuple}) = map(xi -> rand_tangent(rng, xi), x)
+function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple}}
+    map(x...) do xi...
+        map_fields_recursive(f, xi...)
+    end
+end
+map_fields_recursive(f, x::T...) where {T<:AbstractFloat} = f(x...)
+map_fields_recursive(f, x::Array{<:Number}...) = f(x...)
+
+rand_tangent(x) = rand_tangent(Random.default_rng(), x)
+rand_tangent(rng, x) = map_fields_recursive(Base.Fix1(rand_tangent, rng), x)
 # make numbers prettier sometimes when errors are printed.
 rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
+rand_tangent(rng, x::T) where {T<:Array{<:Number}} = rand_tangent.(rng, x)
 
-function zero_tangent(x)
-    fields = ConstructionBase.getfields(x)
-    isempty(fields) && return x
-    zero_fields = map(zero_tangent, fields)
-    return ConstructionBase.constructorof(typeof(x))(zero_fields...)
-end
-# special-case containers that can't be constructed from type and field
-zero_tangent(x::Union{Array,Tuple,NamedTuple}) = map(zero_tangent, x)
+zero_tangent(x) = map_fields_recursive(zero_tangent, x)
 zero_tangent(::T) where {T<:AbstractFloat} = zero(T)
+zero_tangent(x::T) where {T<:Array{<:Number}} = zero_tangent.(x)
 
 function test_approx(x::Number, y::Number; kwargs...)
     @test isapprox(x, y; kwargs...)
@@ -267,6 +269,10 @@ end
 
 Test `Enzyme.autodiff` of `f` in `Reverse`-mode against finite differences.
 
+`f` has the same constraints as `Enzyme.autodiff_thunk`. If it mutates one of its arguments,
+it must not also return that argument. If the return value is a struct, then all floating
+point numbers contained in the struct or its fields must be in arrays.
+
 # Arguments
 
 - `Activity`: the activity of the return value of `f`. Currently only activities of `Const`
@@ -296,19 +302,13 @@ for Tret in (Const, Active), Tx in (Const, Active)
 end
 ```
 
-To testing a function that returns an array, we store the return value in one of the
-arguments and return `nothing`:
+Testing a function that returns an array:
 
 ```julia
 x = randn(3)
 y = randn()  # will be Const
-z = zeros(3)  # storage for the output
-f(x, y) = x * y
-for Tx in (Const, Duplicated), Tz in (Const, Duplicated)
-    test_reverse(Const, (z, Tz), (x, Tx), y) do z, x, y
-        copyto!(z, f(x, y))
-        return nothing
-    end
+for Tret in (Const, Duplicated), Tx in (Const, Duplicated)
+    test_reverse(*, Tret, (x, Tx), y)
 end
 ```
 """
@@ -328,11 +328,6 @@ function test_reverse(
         testset_name = "test_reverse: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
     end
     @testset "$testset_name" begin
-        ret_activity <: Union{Const,Active} || throw(
-            ArgumentError(
-                "`test_reverse` requires return activity of `Const` or `Active`. Received $ret_activity",
-            ),
-        )
         # format arguments for autodiff and FiniteDifferences
         activities = map(auto_activity, (f, args...))
         primals = map(x -> x.val, activities)
@@ -351,6 +346,10 @@ function test_reverse(
         if ret_activity <: Active
             dx_ad = only(reverse(c_act, activities..., ȳ, tape))
         else
+            # if there's a shadow result, then we need to set it to our random adjoint
+            if !(shadow_result === nothing)
+                map_fields_recursive(copyto!, shadow_result, ȳ)
+            end
             dx_ad = only(reverse(c_act, activities..., tape))
         end
         # check primal agrees with primal function
