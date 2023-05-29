@@ -127,7 +127,9 @@ end
 function map_fields_recursive(f, x::T...) where {T}
     fields = map(ConstructionBase.getfields, x)
     all(isempty, fields) && return first(x)
-    new_fields = map(x -> map_fields_recursive(f, x...), fields...)
+    new_fields = map(fields...) do xi...
+        map_fields_recursive(f, xi...)
+    end
     return ConstructionBase.constructorof(T)(new_fields...)
 end
 function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple}}
