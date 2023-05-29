@@ -1,3 +1,5 @@
+module EnzymeTestUtils
+
 using ConstructionBase
 using Enzyme
 using EnzymeCore: Annotation
@@ -818,3 +820,5 @@ end
         end
     end
 end
+
+end  # module
