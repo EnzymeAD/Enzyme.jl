@@ -18,10 +18,10 @@ jobs:
           - '1.6'
           - '1.7'
           - '1.8'
-          - '~1.9.0-0'
+          - '1.9'
           - 'nightly'
         os:
-          - ubuntu-latest
+          - ubuntu-20.04
           - macOS-latest
           - windows-latest
         arch:
@@ -34,39 +34,41 @@ jobs:
             arch: x64
             libEnzyme: local
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             arch: x86
             libEnzyme: packaged
             version: '1.6'
             assertions: false
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             arch: x86
             libEnzyme: packaged
             version: '1.7'
             assertions: false
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             arch: x86
             libEnzyme: packaged
             version: '1.8'
             assertions: false
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             arch: x86
             libEnzyme: packaged
-            version: '~1.9.0-0'
+            version: '1.9'
             assertions: false
-          # special test with LLVM assertions enabled
-          # TODO: enable this across all versions
-          #       (needs LLVM.jl fixes, and julia-actions/setup-julia support)
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.7'
-          #   assertions: true
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.8'
-          #   assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.9'
+            assertions: true
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
