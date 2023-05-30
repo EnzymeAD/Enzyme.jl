@@ -167,6 +167,7 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
+        shell: julia --color=yes {0}
         run: |
           using Pkg
           Pkg.test("EnzymeTestUtils"; coverage=true)
