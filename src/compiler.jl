@@ -6229,18 +6229,34 @@ const Tracked = 10
 if VERSION >= v"1.9.1"
     current_task_offset() = -(unsafe_load(cglobal(:jl_task_gcstack_offset, Cint)) ÷ sizeof(Ptr{Cvoid}))
 elseif VERSION >= v"1.9.0"
-    current_task_offset() = -13
+    if Sys.WORD_SIZE == 64
+        current_task_offset() = -13
+    else
+        current_task_offset() = -18
+    end
 else
-    current_task_offset() = -12 #1.8/1.7
+    if Sys.WORD_SIZE == 64
+        current_task_offset() = -12 #1.8/1.7
+    else
+        current_task_offset() = -17 #1.8/1.7
+    end
 end
 
 # See get_current_ptls_from_task (used from 1.7+)
 if VERSION >= v"1.9.1"
     current_ptls_offset() = unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
 elseif VERSION >= v"1.9.0"
-    current_ptls_offset() = 15
+    if Sys.WORD_SIZE == 64
+        current_ptls_offset() = 15
+    else
+        current_ptls_offset() = 20
+    end
 else
-    current_ptls_offset() = 14 # 1.8/1.7
+    if Sys.WORD_SIZE == 64
+        current_ptls_offset() = 14 # 1.8/1.7
+    else
+        current_ptls_offset() = 19
+    end
 end
 
 function get_julia_inner_types(B, p, startvals...; added=[])
