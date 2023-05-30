@@ -123,6 +123,60 @@ jobs:
       - uses: codecov/codecov-action@v1
         with:
           file: lcov.info
+  enzymetestutils:
+    name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.7'
+          - '1'
+          - 'nightly'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+        libEnzyme: [packaged]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: actions/cache@v1
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ env.cache-name }}-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-
+      - name: setup EnzymeTestUtils
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+          Pkg.develop(path="lib/EnzymeCore")
+          Pkg.develop(path=".")
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+          JULIA_PROJECT: "lib/EnzymeTestUtils"
+      - name: Run the tests
+        run: |
+          using Pkg
+          Pkg.test("EnzymeTestUtils"; coverage=true)
+        env:
+          JULIA_PROJECT: "lib/EnzymeTestUtils"
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: lib/EnzymeTestUtils/src
+      - uses: codecov/codecov-action@v2
+        with:
+          files: lcov.info
   docs:
     name: Documentation
     runs-on: ubuntu-latest
