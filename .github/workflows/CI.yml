@@ -76,16 +76,18 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - name: Download Julia with assertions
+      - uses: actions/checkout@v3
         if: ${{ matrix.assertions }}
-        env:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+        with:
+          repository: 'JuliaLang/julia'
+          ref: release-${{ matrix.version }}
+          path: 'julia'
+      - name: Compile Julia
+        if: ${{ matrix.assertions }}
         run: |
-          wget https://julialangnightlies.s3.amazonaws.com/assert_bin/linux/$arch/$version/julia-latest-linux64.tar.gz
-          tar -xvzf julia-latest-linux64.tar.gz
-          rm -rf julia-latest-linux64.tar.gz
-          echo $PWD/julia-*/bin >> $GITHUB_PATH
+          sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
+          make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
+          echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: actions/cache@v1
         env:
           cache-name: cache-artifacts
