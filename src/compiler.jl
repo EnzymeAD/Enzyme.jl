@@ -6051,7 +6051,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(ttval, LLVM.StoreInst)
                 ttval = operands(ttval)[1]
             end
-	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, val))
+	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
             st = API.EnzymeTypeTreeToString(tt)
             print(io, "Type tree: ")
             println(io, Base.unsafe_string(st))
