@@ -6035,6 +6035,7 @@ any_jltypes(::LLVM.VoidType) = false
 @inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
 @inline any_jltypes(::Type{Any}) = true
 @inline any_jltypes(::Type{NamedTuple{A,B}}) where {A,B} = any(any_jltypes(b) for b in B.parameters)
+@inline any_jltypes(::Type{T}) where {T<:Tuple} = any(any_jltypes(b) for b in T.parameters)
 
 nfields(Type::LLVM.StructType) = length(LLVM.elements(Type))
 nfields(Type::LLVM.VectorType) = size(Type)
