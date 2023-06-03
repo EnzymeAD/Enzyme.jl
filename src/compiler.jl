@@ -8502,6 +8502,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
+    hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline"; ctx)), collect(function_attributes(entry_f))))
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
+    end
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
     push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
 
@@ -8683,6 +8687,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
+    end
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("alwaysinline"; ctx)))
+        push!(function_attributes(wrapper_f), EnumAttribute("noinline"; ctx))
     end
     ModulePassManager() do pm
         # Kill the temporary staging function
