@@ -7710,6 +7710,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     ctx = LLVM.context(mod)
 
     push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0; ctx))
+    hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline"; ctx)), collect(function_attributes(enzymefn))))
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(enzymefn, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
+    end
     T_void = convert(LLVMType, Nothing; ctx)
     ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -8426,7 +8430,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
     hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline"; ctx)), collect(function_attributes(entry_f))))
     if hasNoInline
-        LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(entry_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
     end
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
     push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
