@@ -1,6 +1,7 @@
 using Test
 using EnzymeTestUtils
 using EnzymeTestUtils: rand_tangent, zero_tangent
+using Enzyme
 using Quaternions
 
 struct TestStruct2{X,A}
@@ -68,5 +69,32 @@ end
         @test y.x.a.a === zero(ComplexF32)
         @test y.a isa Vector{Float64}
         @test y.a == zero(x.a)
+    end
+
+    @testset "auto_activity" begin
+        @test EnzymeTestUtils.auto_activity((1.0, Const)) === Const(1.0)
+        @test EnzymeTestUtils.auto_activity((1.0, Active)) === Active(1.0)
+        x = EnzymeTestUtils.auto_activity((1.2, Duplicated))
+        @test x.val == 1.2
+        @test x.dval !== 1.2
+        x = EnzymeTestUtils.auto_activity((1.5, BatchDuplicated))
+        @test x.val == 1.5
+        @test length(x.dval) == 2
+        @test x.dval[1] !== 1.5
+
+        x = TestStruct2(TestStruct2(:foo, TestStruct2(1, 3.0f0 + 1im)), [4.0, 5.0])
+        dx = EnzymeTestUtils.auto_activity((x, Const))
+        @test dx isa Const
+        @test dx.val === x
+        dx = EnzymeTestUtils.auto_activity((x, Active))
+        @test dx isa Active
+        @test dx.val === x
+        dx = EnzymeTestUtils.auto_activity((x, Duplicated))
+        @test dx isa Duplicated
+        @test dx.val === x
+        dx = EnzymeTestUtils.auto_activity((x, BatchDuplicated))
+        @test dx isa BatchDuplicated
+        @test dx.val === x
+        @test length(dx.dval) == 2
     end
 end
