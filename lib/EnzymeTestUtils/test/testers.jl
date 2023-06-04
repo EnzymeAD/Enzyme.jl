@@ -6,10 +6,6 @@ using Test
 f_array(x) = sum(exp, x)
 f_tuple(x) = (-3 * x[1], 2 * x[2])
 f_namedtuple(x) = (s=sin(x.a), c=cos(x.b))
-struct TestStruct{X,A}
-    x::X
-    a::A
-end
 f_struct(x::TestStruct) = TestStruct(sinh.(x.a .* x.x), exp(x.a))
 f_multiarg(x::AbstractArray, a) = sin.(a .* x)
 function f_mut!(y, x, a)

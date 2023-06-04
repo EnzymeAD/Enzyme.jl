@@ -3,11 +3,6 @@ using EnzymeTestUtils
 using EnzymeTestUtils: test_approx
 using MetaTesting
 
-struct TestStruct{A,B}
-    a::A
-    b::B
-end
-
 function make_struct(a, b, c, d, e, f)
     x = TestStruct(a, :x)
     return TestStruct([b, x], (; c=c, x=x, y=[d, e], z="foo", f=f))

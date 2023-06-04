@@ -4,11 +4,6 @@ using EnzymeTestUtils: rand_tangent, zero_tangent
 using Enzyme
 using Quaternions
 
-struct TestStruct2{X,A}
-    x::X
-    a::A
-end
-
 @testset "tangent generation" begin
     @testset "map_fields_recursive" begin
         x = (x=3.0, y=(a=4, b=:foo, c=[5.2]), z=:bar)
@@ -37,7 +32,7 @@ end
             @test rand_tangent(y) != y
             @test rand_tangent(y) isa typeof(y)
         end
-        x = TestStruct2(TestStruct2(:foo, TestStruct2(1, 3.0f0 + 1im)), [4.0, 5.0])
+        x = TestStruct(TestStruct(:foo, TestStruct(1, 3.0f0 + 1im)), [4.0, 5.0])
         y = rand_tangent(x)
         @test y.x.x == :foo
         @test y.x.a.x == 1
@@ -62,7 +57,7 @@ end
             @test zero_tangent(y) == zero(y)
             @test zero_tangent(y) isa typeof(y)
         end
-        x = TestStruct2(TestStruct2(:foo, TestStruct2(1, 3.0f0 + 1im)), [4.0, 5.0])
+        x = TestStruct(TestStruct(:foo, TestStruct(1, 3.0f0 + 1im)), [4.0, 5.0])
         y = zero_tangent(x)
         @test y.x.x == :foo
         @test y.x.a.x == 1
@@ -82,7 +77,7 @@ end
         @test length(x.dval) == 2
         @test x.dval[1] !== 1.5
 
-        x = TestStruct2(TestStruct2(:foo, TestStruct2(1, 3.0f0 + 1im)), [4.0, 5.0])
+        x = TestStruct(TestStruct(:foo, TestStruct(1, 3.0f0 + 1im)), [4.0, 5.0])
         dx = EnzymeTestUtils.auto_activity((x, Const))
         @test dx isa Const
         @test dx.val === x
