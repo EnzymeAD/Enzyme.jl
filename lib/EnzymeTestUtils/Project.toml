@@ -17,9 +17,11 @@ Enzyme = "0.11"
 EnzymeCore = "0.3"
 FiniteDifferences = "0.12.12"
 MetaTesting = "0.1"
+Quaternions = "0.7"
 
 [extras]
 MetaTesting = "9e32d19f-1e4f-477a-8631-b16c78aa0f56"
+Quaternions = "94ee1d12-ae83-5a48-8b1c-48b8ff168ae0"
 
 [targets]
-test = ["MetaTesting"]
+test = ["MetaTesting", "Quaternions"]
