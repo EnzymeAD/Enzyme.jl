@@ -143,13 +143,27 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
+const AlreadyWarned = Dict{Symbol,Bool}()
+const AlreadyWarnedLock = Threads.SpinLock()
+
+function recursive_type_warning(@nospecialize(T))
+    haskey(AlreadyWarned, Symbol(T)) && return nothing
+    lock(AlreadyWarnedLock) do
+        haskey(AlreadyWarned, Symbol(T)) && return nothing
+        GPUCompiler.@safe_warn "Recursive type" T
+        AlreadyWarned[Symbol(T)] = true
+        return nothing
+    end
+    return nothing
+end
+
 function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
 
     if seen !== nothing && T ∈ seen
-        GPUCompiler.@safe_warn "Recursive type" T
+        recursive_type_warning(T)
         return TypeTree()
     end
     if seen === nothing
