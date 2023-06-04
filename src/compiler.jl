@@ -9219,12 +9219,23 @@ end
     argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
 
     if !RawCall
+        nargs = length(argtypes)
+        nprovided = length(argexprs)
         if rettype <: Active
-            @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
+            nexpected = nargs + is_adjoint + needs_tape
         elseif rettype <: Const
-            @assert length(argtypes)              + needs_tape == length(argexprs)
+            nexpected = nargs              + needs_tape
         else
-            @assert length(argtypes)              + needs_tape == length(argexprs)
+            nexpected = nargs              + needs_tape
+        end
+        if nexpected != nprovided
+            error("""
+            Number of arguments of call are mismatched.
+            Expected: $nexpected ($nargs + is_adjoint $is_adjoint + tape $needs_tape)
+            Provided: $nprovided
+            RT: $rettype
+            CC: $CC
+            """)
         end
     end
 
