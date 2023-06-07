@@ -6,8 +6,8 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, Bat
                API, TypeTree, typetree, only!, shift!, data0!, merge!,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
-
-import EnzymeCore: EnzymeRules
+import EnzymeCore
+import EnzymeCore: EnzymeRules, guaranteed_inactive
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -46,7 +46,7 @@ function called_type(inst::LLVM.CallBase)
     end
 end
 
-unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
+unsafe_to_pointer(@nospecialize(ptr)) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
 
 # Julia function to LLVM stem and arity
 @static if VERSION < v"1.8.0"
@@ -1440,7 +1440,7 @@ function emit_gc_preserve_end(B::LLVM.IRBuilder, token)
     return
 end
 
-function unsafe_to_llvm(val, ctx)
+function unsafe_to_llvm(@nospecialize(val), ctx::LLVM.Context)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -2896,17 +2896,25 @@ function invoke_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
 end
 
 
-struct EnzymeRuntimeException <: Base.Exception
-    msg::Cstring
+struct EnzymeRuntimeException{T} <: Base.Exception
+    msg::T
 end
 
-function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+function Base.showerror(io::IO, ece::EnzymeRuntimeException{Cstring})
     print(io, "Enzyme execution failed.\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
+function Base.showerror(io::IO, ece::EnzymeRuntimeException{String})
+    print(io, "Enzyme execution failed.\n")
+    msg = ece.msg
+    print(io, msg, '\n')
+end
 
 function throwerr(cstr::Cstring)
+    throw(EnzymeRuntimeException(cstr))
+end
+function throwerr(cstr::String)
     throw(EnzymeRuntimeException(cstr))
 end
 
@@ -5880,7 +5888,14 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
   return val.ref
 end
 
-function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef)
+function error_if_not_constant_from_type(v::T, message::String) where T
+    if EnzymeCore.guaranteed_inactive(v)
+        return
+    end
+    throwerr(message."\nValue: ".string(v))
+end
+
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef)::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
     bt = nothing
     ir = nothing
@@ -5958,7 +5973,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
-        return
+        return C_NULL
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
@@ -6027,23 +6042,22 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
 
         if !illegal
-            return
+            return C_NULL
         end
 
         if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
             mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
             if mi !== nothing && isghostty(rt)
-                return
+                return C_NULL
             end
         end
 
         gutils = API.EnzymeGradientUtilsRef(data)
-        newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
-        while isa(newb, LLVM.PHIInst)
-            newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
-        end
-        b = IRBuilder(LLVM.context(val))
-        position!(b, newb)
+        b = IRBuilder(B)
+        ctx = LLVM.context(b)
+        T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+
         function ac(io)
             print(io, msg)
             println(io)
@@ -6065,8 +6079,45 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
         end
         msg2 = sprint(ac)
+        
+        # return, select, and phi are fine as ways to create the active value. However, we should not do the auto upgrade for a store
+        # This is because there could be several stores of a constant value, all of which would have a _different_ shadow generated
+        # which can lead to incorrect results. Moreover, these stored values might be used in multiple internal subtypes.
+        #
+        #  Let us consider why a value may be marked constant, but has an actual active use:
+        #  1) A user marked it as constant, which can only occur on arguments (or value derived therefrom)
+        #     - returning the upgraded one is fine by definition, if the only const->active upgrade, since then it is only one
+        #       active use. Never mind this is still not fine since a constant arg could be passed to multiple subfunctions
+        #     - if it was also used in a phi/store this is not okay since now there could be several distinct shadows produced
+        #  2) it is deduced inactive from analysis, which means there is no possible transfer of active info, and therefore is
+        #       always legal to const->active multiple times, since there is definitionally going to be no such transfer.
+        #       If this case occurs, it is a bug for this return to ever be changed (e.g. if not an integer)
+        #  3) a load/use of a julia global
+        #       care must be taken to ensure we use the same shadow global
+        if llvmtype(data2) == T_prjlvalue
+            # if (LLVM.API.LLVMIsAReturnInst(val) != C_NULL)
+            #     vals = LLVM.Value[unsafe_to_llvm(EnzymeCore.zero, ctx), LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, data2))]
+            #     cal = emit_apply_generic!(b, vals)
+            #     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, val)
+            #     return cal.ref
+            # end
+
+            # otherwise, only conditionally error if it is a non-guaranteed constant type
+            cstr = globalstring_ptr!(b, msg2)
+            mod = LLVM.parent(LLVM.parent(position(b)))
+            strF, fty = get_function!(mod, "jl_cstr_to_string", LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(LLVM.IntType(8; ctx))]))
+            jstr = call!(b, fty, strF, [cstr])
+
+            vals = LLVM.Value[unsafe_to_llvm(error_if_not_constant_from_type, ctx), LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, data2)),
+                              jstr]
+                              # globalstring_ptr!(b, msg2)]
+            cal = emit_apply_generic!(b, vals)
+            API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, val)
+            return C_NULL
+        end
+
         emit_error(b, nothing, msg2)
-        return
+        return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
 end
@@ -6690,7 +6741,7 @@ function emit_inacterror(B, V, orig)
 end
 
 function __init__()
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetHandler(@cfunction(julia_error, LLVM.API.LLVMValueRef, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))

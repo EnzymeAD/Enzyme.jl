@@ -4,7 +4,7 @@ using Adapt
 
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, zero, zero_internal, guaranteed_inactive
 
 function batch_size end
 
@@ -148,5 +148,39 @@ function autodiff_thunk end
 function autodiff_deferred_thunk end
 
 include("rules.jl")
+
+function zero(x::T) where T
+  zero_internal(x, IdDict())
+end
+
+function zero_internal end
+
+function guaranteed_inactive end
+@inline guaranteed_inactive(::Type{T}) where T = false
+@inline guaranteed_inactive(::Type{T}) where T<:Integer = true
+@inline guaranteed_inactive(::Type{String}) = true
+@inline guaranteed_inactive(::Type{Symbol}) = true
+@inline guaranteed_inactive(::Type{T}) where T<:Array = guaranteed_inactive(eltype(T))
+
+@inline zero_internal(x::T, stackdict) where T<:Integer = x
+@inline zero_internal(x::T, stactdict) where T<:AbstractFloat = T(0)
+@inline zero_internal(x::String, stactdict) = x
+@inline zero_internal(x::Symbol, stactdict) = x
+
+@inline function zero_internal(x::T, stactdict) where T<:Array
+    if haskey(stackdict, x)
+        return stackdict[x]::typeof(x)
+    end
+    if guaranteed_inactive(eltype(T))
+        return x
+    end
+    res = similar(x)
+    stactdict[x] = res
+    for idx = eachindex(res)
+        @inbounds res[idx] = zero_internal(x, stactdict)
+    end
+    return res
+end
+
 
 end # module EnzymeCore
