@@ -5880,7 +5880,7 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
   return val.ref
 end
 
-function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef)
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef)::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
     bt = nothing
     ir = nothing
@@ -5958,7 +5958,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
-        return
+        return C_NULL
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
@@ -6027,13 +6027,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
 
         if !illegal
-            return
+            return C_NULL
         end
 
         if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
             mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
             if mi !== nothing && isghostty(rt)
-                return
+                return C_NULL
             end
         end
 
@@ -6042,8 +6042,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         while isa(newb, LLVM.PHIInst)
             newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
         end
-        b = IRBuilder(LLVM.context(val))
-        position!(b, newb)
+        b = IRBuilder(B)
         function ac(io)
             print(io, msg)
             println(io)
@@ -6066,7 +6065,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(ac)
         emit_error(b, nothing, msg2)
-        return
+        return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
 end
@@ -6690,7 +6689,7 @@ function emit_inacterror(B, V, orig)
 end
 
 function __init__()
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetHandler(@cfunction(julia_error, LLVM.API.LLVMValueRef, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
