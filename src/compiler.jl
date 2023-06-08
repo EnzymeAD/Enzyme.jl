@@ -5889,7 +5889,7 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
 end
 
 function error_if_not_constant_from_type(v::T, message::String) where T
-    if EnzymeCore.guaranteed_inactive(v)
+    if EnzymeCore.guaranteed_inactive(Core.Typeof(v))
         return
     end
     throwerr(message."\nValue: ".string(v))
