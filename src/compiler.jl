@@ -127,6 +127,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "julia.safepoint",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
@@ -184,6 +185,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "julia.safepoint",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
