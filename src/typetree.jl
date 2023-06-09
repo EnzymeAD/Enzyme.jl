@@ -149,7 +149,6 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     end
 
     if seen !== nothing && T ∈ seen
-        GPUCompiler.@safe_warn "Recursive type" T
         return TypeTree()
     end
     if seen === nothing
