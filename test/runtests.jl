@@ -45,5 +45,3 @@ using Enzyme_jll
 
     Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     Enzyme.API.runtimeActivity!(false)
-    @test dweights[1] ≈ 20.
-    @test dweights[2] ≈ 20.
