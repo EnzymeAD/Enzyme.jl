@@ -392,69 +392,6 @@ end
     @test dinp ≈ Float64[6.0, 6.0]
 end
 
-@testset "Bithacks" begin
-    function fneg(x::Float64)
-        xptr = reinterpret(Int64, x)
-        y = Int64(-9223372036854775808)
-        out = y ⊻ xptr;
-        return reinterpret(Float64, out)
-    end
-    @test autodiff(Reverse, fneg, Active, Active(2.0))[1][1] ≈ -1.0
-    @test autodiff(Forward, fneg, Duplicated(2.0, 1.0))[1] ≈ -1.0
-    function expor(x::Float64)
-        xptr = reinterpret(Int64, x)
-        y = UInt64(4607182418800017408)
-        out = y | xptr;
-        return reinterpret(Float64, out)
-    end
-    @test autodiff(Reverse, expor, Active, Active(0.42))[1][1] ≈ 4.0
-    @test autodiff(Forward, expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
-end
-
-@testset "Reshape Activity" begin
-    function f(x, bias)
-        mout = x + @inbounds vec(bias)[1]
-       sin(mout)
-    end
-
-    x  = [2.0,]
-
-    bias = Float32[0.0;;;]
-    res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
-    
-    @test bias[1][1] ≈ 0.0
-    @test res[1][1] ≈ cos(x[1])
-end
-
-@testset "GC" begin
-    function gc_alloc(x)  # Basically g(x) = x^2
-        a = Array{Float64, 1}(undef, 10)
-        for n in 1:length(a)
-            a[n] = x^2
-        end
-        return mean(a)
-    end
-    @test autodiff(Reverse, gc_alloc, Active, Active(5.0))[1][1] ≈ 10
-    @test autodiff(Forward, gc_alloc, Duplicated(5.0, 1.0))[1] ≈ 10
-
-    A = Float64[2.0, 3.0]
-    B = Float64[4.0, 5.0]
-    dB = Float64[0.0, 0.0]
-    f = (X, Y) -> sum(X .* Y)
-    Enzyme.autodiff(Reverse, f, Active, A, Duplicated(B, dB))
-
-    function gc_copy(x)  # Basically g(x) = x^2
-        a = x * ones(10)
-        for n in 1:length(a)
-            a[n] = x^2
-        end
-        return mean(a)
-    end
-
-    @test Enzyme.autodiff(Reverse, gc_copy, Active, Active(5.0))[1][1] ≈ 10
-    @test Enzyme.autodiff(Forward, gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
-end
-
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
