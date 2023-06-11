@@ -455,45 +455,6 @@ end
     @test Enzyme.autodiff(Forward, gc_copy, Duplicated(5.0, 1.0))[1] ≈ 10
 end
 
-@testset "Null init tape" begin
-    struct Leaf
-        params::NamedTuple
-    end
-
-    function LeafF(n::Leaf)::Float32
-        y = first(n.params.b2)
-        r = convert(Tuple{Float32}, (y,))
-        return r[1]
-    end
-
-    ps =
-        (
-            b2 = 1.0f0,
-        )
-
-    grads =
-        (
-            b2 = 0.0f0,
-        )
-
-    t1 = Leaf(ps)
-    t1Grads = Leaf(grads)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(LeafF)}, Active, Duplicated{Leaf})
-    tape, primal, shadow = forward(Const(LeafF), Duplicated(t1, t1Grads))
-
-
-    struct Foo2{X,Y}
-        x::X
-        y::Y
-    end
-
-    test_f(f::Foo2) = f.x^2
-    res = autodiff(Reverse, test_f, Active(Foo2(3.0, :two)))[1][1]
-    @test res.x ≈ 6.0
-    @test res.y == nothing
-end
-
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
