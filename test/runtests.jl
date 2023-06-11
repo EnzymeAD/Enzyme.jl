@@ -22,7 +22,6 @@ import Enzyme: API
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
-@testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
             return Base._InitialValue()
@@ -94,4 +93,3 @@ using Enzyme_jll
     Enzyme.API.runtimeActivity!(false)
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
-end
