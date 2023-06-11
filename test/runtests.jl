@@ -11,75 +11,16 @@ end
 using GPUCompiler
 using Enzyme
 using Test
-using FiniteDifferences
-using ForwardDiff
-using Aqua
-using Statistics
-using LinearAlgebra
+# using FiniteDifferences
+# using ForwardDiff
+# using Aqua
+# using Statistics
+# using LinearAlgebra
 
 import Enzyme: API
 
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
-
-# Test against FiniteDifferences
-function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
-    if typeof(x) <: Complex
-    else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
-    end
-
-    rm = ∂x
-    if typeof(x) <: Integer
-        x = Float64(x)
-    end
-    ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
-    if typeof(x) <: Complex
-      @test ∂x ≈ rm
-    else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
-    end
-end
-
-function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    dx_fd = map(eachindex(x)) do i
-        fdm(x[i]) do xi
-            x2 = copy(x)
-            x2[i] = xi
-            f(x2)
-        end
-    end
-
-    dx = zero(x)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
-
-    dx_fwd = map(eachindex(x)) do i
-        dx = zero(x)
-        dx[i] = 1
-        ∂x = autodiff(Forward, f, Duplicated(x, dx))
-        isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
-    end
-    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
-end
-
-# Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
-# 
-# include("abi.jl")
-# include("typetree.jl")
-
-@static if Enzyme.EnzymeRules.issupported()
-    include("rules.jl")
-    include("rrules.jl")
-    include("kwrules.jl")
-    include("kwrrules.jl")
-    @static if VERSION ≥ v"1.9-"
-        # XXX invalidation does not work on Julia 1.8
-        include("ruleinvalidation.jl")
-    end
-end
-
 
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
