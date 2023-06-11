@@ -71,6 +71,23 @@ using Enzyme_jll
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
     Enzyme.API.runtimeActivity!(true)
-	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
-    @test dweights[1] ≈ 1.
 
+    function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
+        sum(
+            sum(
+                weight
+                for (weight, mean) in zip(weights, weights)
+            )
+            for x in data
+        )
+    end
+
+    data = ones(Float64, 20)
+
+    weights = [0.2, 0.8]
+    dweights = [0.0, 0.0]
+
+    Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.API.runtimeActivity!(false)
+    @test dweights[1] ≈ 20.
+    @test dweights[2] ≈ 20.
