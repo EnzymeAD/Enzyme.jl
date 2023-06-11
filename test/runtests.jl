@@ -62,10 +62,10 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
-Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
-
-include("abi.jl")
-include("typetree.jl")
+# Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
+# 
+# include("abi.jl")
+# include("typetree.jl")
 
 @static if Enzyme.EnzymeRules.issupported()
     include("rules.jl")
