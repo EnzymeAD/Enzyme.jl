@@ -17,6 +17,8 @@ using Aqua
 using Statistics
 using LinearAlgebra
 
+import Enzyme: API
+
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
