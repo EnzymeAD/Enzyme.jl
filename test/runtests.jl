@@ -8,9 +8,7 @@ if isfile(preferences_file) && !isfile(test_preferences_file)
 end
 end
 
-using GPUCompiler
 using Enzyme
-using Test
 # using FiniteDifferences
 # using ForwardDiff
 # using Aqua
@@ -22,48 +20,6 @@ import Enzyme: API
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
-    @noinline function unionret(itr, cond)
-        if cond
-            return Base._InitialValue()
-        else
-            return itr[1]
-        end
-    end
-
-    function fwdunion(data::Vector{Float64})::Real
-        unionret(data, false)
-    end
-
-    data = ones(Float64, 500)
-    ddata = zeros(Float64, 500)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(fwdunion)}, Active, Duplicated{Vector{Float64}})
-    tape, primal, shadow = forward(Const(fwdunion), Duplicated(data, ddata))
-
-	function firstimpl(itr)
-		v = firstfold(itr)
-		@assert !(v isa Base._InitialValue)
-		return v
-	end
-
-	function firstfold(itr)
-		op, itr = Base._xfadjoint(Base.BottomRF(Base.add_sum), Base.Generator(Base.identity, itr))
-		y = iterate(itr)
-		init = Base._InitialValue()
-		y === nothing && return init
-		v = op(init, y[1])
-		return v
-	end
-
-	function smallrf(weights::Vector{Float64}, data::Vector{Float64})::Float64
-		itr1 = (weight for (weight, mean) in zip(weights, weights))
-
-		itr2 = (firstimpl(itr1) for x in data)
-
-		firstimpl(itr2)
-	end
-
-	data = ones(Float64, 1)
 
 	weights = [0.2]
 	dweights = [0.0]
