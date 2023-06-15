@@ -127,6 +127,8 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_module_parent", "jl_module_parent",
+    "julia.safepoint",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
@@ -184,6 +186,8 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_module_parent", "jl_module_parent",
+    "julia.safepoint",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
@@ -5880,7 +5884,7 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
   return val.ref
 end
 
-function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef)
+function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.ErrorType, data::Ptr{Cvoid}, data2::LLVM.API.LLVMValueRef, B::LLVM.API.LLVMBuilderRef)::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
     bt = nothing
     ir = nothing
@@ -5958,7 +5962,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
-        return
+        return C_NULL
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
@@ -6027,13 +6031,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
 
         if !illegal
-            return
+            return C_NULL
         end
 
         if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
             mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
             if mi !== nothing && isghostty(rt)
-                return
+                return C_NULL
             end
         end
 
@@ -6042,8 +6046,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         while isa(newb, LLVM.PHIInst)
             newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
         end
-        b = IRBuilder(LLVM.context(val))
-        position!(b, newb)
+        b = IRBuilder(B)
         function ac(io)
             print(io, msg)
             println(io)
@@ -6051,7 +6054,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(ttval, LLVM.StoreInst)
                 ttval = operands(ttval)[1]
             end
-	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, val))
+	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
             st = API.EnzymeTypeTreeToString(tt)
             print(io, "Type tree: ")
             println(io, Base.unsafe_string(st))
@@ -6066,7 +6069,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         msg2 = sprint(ac)
         emit_error(b, nothing, msg2)
-        return
+        return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
 end
@@ -6225,111 +6228,38 @@ function from_tape_type(::Type{B}, ctx) where {B<:Tuple}
 end
 const Tracked = 10
 
-
-const task_offset=Ref{Int}(0)
-function current_task_offset()
-    if task_offset[] == 0
-        f = Core.Typeof(Base.current_task)
-        world = Base.get_world_counter()
-        ctx = JuliaContext()
-        target = Enzyme.Compiler.DefaultCompilerTarget()
-        params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.CDerivativeMode(0))
-        funcspec = GPUCompiler.methodinstance(f, Tuple{}, world)
-        job = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
-
-        otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
-        
-        fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
-        bb = only(blocks(fn))
-
-        todel = LLVM.Instruction[]
-        for i in instructions(bb)
-            if isa(i, LLVM.CallInst) && isa(value_type(i), LLVM.VoidType)
-                push!(todel, i)
-            elseif isa(i, LLVM.FenceInst)
-                push!(todel, i)
-            end
-        end
-        for i in todel
-            unsafe_delete!(bb, i)
-        end
-
-        LLVM.ModulePassManager() do pm
-            dce!(pm)
-            run!(pm, otherMod)
-        end
-
-        gep = only((i for i in instructions(bb) if isa(i, LLVM.GetElementPtrInst)))
-        op = only(operands(gep)[2:end])
-        off = convert(Int, op)
-        task_offset[] = off
+# See get_current_task_from_pgcstack (used from 1.7+)
+if VERSION >= v"1.9.1"
+    current_task_offset() = -(unsafe_load(cglobal(:jl_task_gcstack_offset, Cint)) ÷ sizeof(Ptr{Cvoid}))
+elseif VERSION >= v"1.9.0"
+    if Sys.WORD_SIZE == 64
+        current_task_offset() = -13
+    else
+        current_task_offset() = -18
     end
-    return task_offset[]
-end
-
-@static if VERSION < v"1.7.0"
 else
-const ptls_offset=Ref{Int}(0)
-function current_ptls_offset()
-    if ptls_offset[] == 0
-        @static if VERSION < v"1.8.0"
-            f = Core.Typeof(Base.Ref)
-            world = Base.get_world_counter()
-            ctx = JuliaContext()
-            target = Enzyme.Compiler.DefaultCompilerTarget()
-            params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.CDerivativeMode(0))
-            funcspec = GPUCompiler.methodinstance(f, Tuple{Float64}, world)
-            job = CompilerJob(funcspec, CompilerConfig(target, params; kernel=false), world)
-            otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, ctx)
-
-            fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
-            bb = only(blocks(fn))
-            gep = only((i for i in instructions(bb) if LLVM.name(i) == "ptls_field"))
-            op = only(operands(gep)[2:end])
-            off = convert(Int, op)
-            ptls_offset[] = off
-        else 
-            task_off = current_task_offset()
-            mod = """
-            declare {}*** @julia.get_pgcstack()
-            declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*)
-
-            define void @gc_alloc_lowering() {
-            top:
-                %pgc = call {}*** @julia.get_pgcstack()
-                %t = bitcast {}*** %pgc to {}**
-                %current_task = getelementptr inbounds {}*, {}** %t, i64 $task_off
-                %v = call noalias {} addrspace(10)* @julia.gc_alloc_obj({}** %current_task, i64 8, {} addrspace(10)* undef)
-                ret void
-            }
-            """
-
-            ctx = LLVM.Context()
-            otherMod = parse(LLVM.Module, mod; ctx)
-
-            LLVM.ModulePassManager() do pm
-                LLVM.Interop.late_lower_gc_frame!(pm)
-                run!(pm, otherMod)
-            end
-            fn = only((f for f in functions(otherMod) if !isempty(LLVM.blocks(f))))
-            bb = only(blocks(fn))
-            off = 0
-            for i in instructions(bb)
-                if LLVM.name(i) == "ptls_field"
-                    op = only(operands(i)[2:end])
-                    off_n = convert(Int, op)
-                    if off != 0
-                        @assert off == off_n
-                    end
-                    off = off_n
-                end
-            end
-            @assert off != 0
-            ptls_offset[] = off
-        end
+    if Sys.WORD_SIZE == 64
+        current_task_offset() = -12 #1.8/1.7
+    else
+        current_task_offset() = -17 #1.8/1.7
     end
-    return ptls_offset[]
 end
+
+# See get_current_ptls_from_task (used from 1.7+)
+if VERSION >= v"1.9.1"
+    current_ptls_offset() = unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
+elseif VERSION >= v"1.9.0"
+    if Sys.WORD_SIZE == 64
+        current_ptls_offset() = 15
+    else
+        current_ptls_offset() = 20
+    end
+else
+    if Sys.WORD_SIZE == 64
+        current_ptls_offset() = 14 # 1.8/1.7
+    else
+        current_ptls_offset() = 19
+    end
 end
 
 function get_julia_inner_types(B, p, startvals...; added=[])
@@ -6763,12 +6693,7 @@ function emit_inacterror(B, V, orig)
 end
 
 function __init__()
-    current_task_offset()
-@static if VERSION < v"1.7.0"
-else
-    current_ptls_offset()
-end
-    API.EnzymeSetHandler(@cfunction(julia_error, Cvoid, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetHandler(@cfunction(julia_error, LLVM.API.LLVMValueRef, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
     if API.EnzymeHasCustomInactiveSupport()
       API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
@@ -7788,6 +7713,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     ctx = LLVM.context(mod)
 
     push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0; ctx))
+    hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline"; ctx)), collect(function_attributes(enzymefn))))
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(enzymefn, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
+    end
     T_void = convert(LLVMType, Nothing; ctx)
     ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
     T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
@@ -8502,6 +8431,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice"; ctx)), collect(function_attributes(entry_f))))
+    hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline"; ctx)), collect(function_attributes(entry_f))))
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(entry_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("noinline"; ctx)))
+    end
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
     push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
 
@@ -8683,6 +8616,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice"; ctx)))
+    end
+    if hasNoInline
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("alwaysinline"; ctx)))
+        push!(function_attributes(wrapper_f), EnumAttribute("noinline"; ctx))
     end
     ModulePassManager() do pm
         # Kill the temporary staging function
