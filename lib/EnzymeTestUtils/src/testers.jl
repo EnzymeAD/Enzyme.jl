@@ -44,7 +44,7 @@ function test_forward(
     call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
     call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
-        testset_name = "test_forward: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
+        testset_name = "test_forward: $f with return activity $ret_activity on $(_string_activity(args))"
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
@@ -57,29 +57,43 @@ function test_forward(
         # call autodiff, allow mutating original arguments
         y_and_dy_ad = autodiff(Forward, call_with_kwargs, ret_activity, activities...)
         if ret_activity <: Union{Duplicated,BatchDuplicated}
+            @test_msg "For return type $ret_activity the return value and derivative must be returned" length(
+                y_and_dy_ad
+            ) == 2
             y_ad, dy_ad = y_and_dy_ad
-            # check primal agrees with primal function
-            test_approx(y_ad, y; atol, rtol)
+            test_approx(
+                y_ad, y, "The return value of the rule and function must agree"; atol, rtol
+            )
         elseif ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
-            # check primal is not returned
-            @test length(y_and_dy_ad) == 1
+            @test_msg "For return type $ret_activity only the derivative should be returned" length(
+                y_and_dy_ad
+            ) == 1
             dy_ad = y_and_dy_ad[1]
         elseif ret_activity <: Const
-            # check Const activity returns an empty tuple
-            @test isempty(y_and_dy_ad)
+            @test_msg "For return type $ret_activity an empty tuple must be returned" isempty(
+                y_and_dy_ad
+            )
             dy_ad = ()
         else
             throw(ArgumentError("Unsupported return activity type: $ret_activity"))
         end
         if y isa Tuple
-            # check Enzyme and FiniteDifferences return the same number of derivatives
-            @test length(dy_ad) == length(dy_fdm)
+            @assert length(dy_ad) == length(dy_fdm)
             # check all returned derivatives against FiniteDifferences
-            for (dy_ad_i, dy_fdm_i) in zip(dy_ad, dy_fdm)
-                test_approx(dy_ad_i, dy_fdm_i; atol, rtol)
+            for (i, (dy_ad_i, dy_fdm_i)) in enumerate(zip(dy_ad, dy_fdm))
+                target_str = i == 1 ? "callable" : "argument $(i - 1)"
+                test_approx(
+                    dy_ad_i,
+                    dy_fdm_i,
+                    "derivative for $target_str should agree with finite differences";
+                    atol,
+                    rtol,
+                )
             end
         else
-            test_approx(dy_ad, dy_fdm; atol, rtol)
+            test_approx(
+                dy_ad, dy_fdm, "derivative should agree with finite differences"; atol, rtol
+            )
         end
     end
 end
@@ -146,7 +160,7 @@ function test_reverse(
     call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
     call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
-        testset_name = "test_reverse: $(f isa Const ? f.val : f) with return activity $ret_activity on $(args)"
+        testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
@@ -173,20 +187,43 @@ function test_reverse(
             end
             dx_ad = only(reverse(c_act, activities..., tape))
         end
-        # check primal agrees with primal function
-        test_approx(y_ad, y; atol, rtol)
+        test_approx(
+            y_ad, y, "The return value of the rule and function must agree"; atol, rtol
+        )
         @test length(dx_ad) == length(dx_fdm) == length(activities)
         # check all returned derivatives against FiniteDifferences
-        for (act_i, dx_ad_i, dx_fdm_i) in zip(activities, dx_ad, dx_fdm)
+        for (i, (act_i, dx_ad_i, dx_fdm_i)) in enumerate(zip(activities, dx_ad, dx_fdm))
             if act_i isa Active
-                test_approx(dx_ad_i, dx_fdm_i; atol, rtol)
-                continue
+                test_approx(
+                    dx_ad_i,
+                    dx_fdm_i,
+                    if i == 1
+                        "derivative for active callable"
+                    else
+                        "derivative for active argument $(i - 1)"
+                    end;
+                    atol,
+                    rtol,
+                )
+            else
+                @test_msg "returned derivative for non-Active argument $(i-1) must be `nothing`" dx_ad_i ===
+                    nothing
+                target_str = if i == 1
+                    "shadow derivative for callable"
+                else
+                    "shadow derivative for argument $(i - 1)"
+                end
+                if act_i isa Duplicated
+                    msg_deriv = "$target_str should agree with finite differences"
+                    test_approx(act_i.dval, dx_fdm_i, msg_deriv; atol, rtol)
+                elseif act_i isa BatchDuplicated
+                    @assert length(act_i.dval) == length(dx_fdm_i)
+                    for (j, (act_i_j, dx_fdm_i_j)) in enumerate(axt_i.dval, dx_fdm_i)
+                        msg_deriv = "$target_str for batch index $j should agree with finite differences"
+                        test_approx(act_i_j, dx_fdm_i_j, msg_deriv; atol, rtol)
+                    end
+                end
             end
-            # if not Active, returned derivative must be nothing
-            @test dx_ad_i === nothing
-            act_i isa Const && continue
-            # if not Active or Const, derivative stored in Duplicated
-            test_approx(act_i.dval, dx_fdm_i; atol, rtol)
         end
     end
 end
