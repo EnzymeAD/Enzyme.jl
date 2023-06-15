@@ -57,21 +57,24 @@ function test_forward(
         # call autodiff, allow mutating original arguments
         y_and_dy_ad = autodiff(Forward, call_with_kwargs, ret_activity, activities...)
         if ret_activity <: Union{Duplicated,BatchDuplicated}
-            @test_msg "For return type $ret_activity the return value and derivative must be returned" length(
-                y_and_dy_ad
-            ) == 2
+            @test_msg(
+                "For return type $ret_activity the return value and derivative must be returned",
+                length(y_and_dy_ad) == 2,
+            )
             y_ad, dy_ad = y_and_dy_ad
             test_approx(
                 y_ad, y, "The return value of the rule and function must agree"; atol, rtol
             )
         elseif ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
-            @test_msg "For return type $ret_activity only the derivative should be returned" length(
-                y_and_dy_ad
-            ) == 1
+            @test_msg(
+                "For return type $ret_activity only the derivative should be returned",
+                length(y_and_dy_ad) == 1,
+            )
             dy_ad = y_and_dy_ad[1]
         elseif ret_activity <: Const
-            @test_msg "For return type $ret_activity an empty tuple must be returned" isempty(
-                y_and_dy_ad
+            @test_msg(
+                "For return type $ret_activity an empty tuple must be returned",
+                isempty(y_and_dy_ad),
             )
             dy_ad = ()
         else
@@ -193,21 +196,24 @@ function test_reverse(
         @test length(dx_ad) == length(dx_fdm) == length(activities)
         # check all returned derivatives against FiniteDifferences
         for (i, (act_i, dx_ad_i, dx_fdm_i)) in enumerate(zip(activities, dx_ad, dx_fdm))
+            target_str = if i == 1
+                "active derivative for callable"
+            else
+                "active derivative for argument $(i - 1)"
+            end
             if act_i isa Active
                 test_approx(
                     dx_ad_i,
                     dx_fdm_i,
-                    if i == 1
-                        "derivative for active callable"
-                    else
-                        "derivative for active argument $(i - 1)"
-                    end;
+                    "$target_str should agree with finite differences";
                     atol,
                     rtol,
                 )
             else
-                @test_msg "returned derivative for non-Active argument $(i-1) must be `nothing`" dx_ad_i ===
-                    nothing
+                @test_msg(
+                    "returned derivative for argument $(i-1) with activity $act_i must be `nothing`",
+                    dx_ad_i === nothing,
+                )
                 target_str = if i == 1
                     "shadow derivative for callable"
                 else
