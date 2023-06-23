@@ -1010,6 +1010,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         # LLVM's devirtualization heuristics, which would result in the entire
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
         barrier_noop!(pm)
+        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         lower_exc_handlers!(pm)
         # BUDE.jl demonstrates a bug here TODO
         gc_invariant_verifier!(pm, false)
