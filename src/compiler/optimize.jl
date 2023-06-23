@@ -1006,6 +1006,7 @@ end
 
 function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
     if lower_intrinsics
+        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
         # LLVM's devirtualization heuristics, which would result in the entire
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
