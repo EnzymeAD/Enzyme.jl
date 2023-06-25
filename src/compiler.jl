@@ -292,7 +292,7 @@ end
 end
 
 @inline function Base.:|(a1::ActivityState, a2::ActivityState)
-    return ActivityState(Int(a1) | Int(a2))
+    ActivityState(Int(a1) | Int(a2))
 end
 
 @inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
@@ -322,10 +322,10 @@ end
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
     end
-    if T ∈ seen
-        return MixedState
+    if T ∈ keys(seen)
+        return seen[T]
     end
-    push!(seen, T)
+    seen[T] = MixedState
 
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
@@ -349,18 +349,20 @@ end
             ty |= DupState
         end
     end
+    seen[T] = ty
     return ty
 end
 
 @inline @generated function active_reg(::Type{T}) where {T}
-    seen = Set{DataType}()
+    seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
-    @assert state != MixedState 
+    str = string(T)*" has mixed internal activity types"
+    @assert state != MixedState str
     return state == ActiveState
 end
 
 @inline @generated function active_reg_nothrow(::Type{T}) where {T}
-    seen = Set{DataType}()
+    seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
     return state == ActiveState
 end
@@ -9267,7 +9269,11 @@ end
     types = DataType[]
 
     if eltype(rettype) === Union{}
-        error("return type is Union{}, giving up.")
+        error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+    end
+    if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
+        rrt = eltype(rettype)
+        error("Return type `$rrt` not marked Const, but is ghost or const type.")
     end
 
     sret_types  = []  # Julia types of all returned variables
@@ -9660,7 +9666,11 @@ end
     rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
     if rrt == Union{}
-        error("Return type inferred to be Union{}. Giving up.")
+        error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+    end
+    
+    if !(A <: Const) && (isghostty(rrt) || Core.Compiler.isconstType(rrt) || rrt === DataType)
+        error("Return type `$rrt` not marked Const, but is ghost or const type.")
     end
 
     if A isa UnionAll

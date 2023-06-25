@@ -89,6 +89,7 @@ end
 
 @testset "Internal tests" begin
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
     world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
@@ -1047,6 +1048,11 @@ end
     end
 
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
+end
+
+@testset "Mismatched return" begin
+    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
