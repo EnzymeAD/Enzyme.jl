@@ -33,12 +33,13 @@ IntList() = IntList(Ptr{Int64}(0),0)
 )
 
 function EnzymeConcreteTypeIsFloat(cc::CConcreteType, ctx)
+  activate(ctx)
   if cc == DT_Half
-    return LLVM.HalfType(ctx)
+    return LLVM.HalfType()
   elseif cc == DT_Float
-    return LLVM.FloatType(ctx)
+    return LLVM.FloatType()
   elseif cc == DT_Double
-    return LLVM.DoubleType(ctx)
+    return LLVM.DoubleType()
   else
     return nothing
   end
