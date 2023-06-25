@@ -2634,7 +2634,7 @@ function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         end
     end
 
-    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling converntion not implemented in forward for "*string(orig))
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
 
     return 0
 end
@@ -2675,7 +2675,7 @@ function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         end
     end
 
-    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling converntion not implemented in aug_forward for "*string(orig))
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
 
     return 0
 end
@@ -2724,7 +2724,7 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         end
     end
 
-    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling converntion not implemented in reverse for "*string(orig))
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in reverse for "*string(orig))
 
     return nothing
 end
