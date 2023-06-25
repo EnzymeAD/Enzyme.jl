@@ -127,7 +127,8 @@ end
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    T_size_t = convert(LLVM.LLVMType, Int; ctx=LLVM.context(mod))
+    activate(LLVM.context(mod))
+    T_size_t = convert(LLVM.LLVMType, Int)
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
@@ -151,7 +152,8 @@ function check_ir!(job, errors, mod::LLVM.Module)
         f = functions(mod)["malloc"]
         name!(f, "")
         ctx = context(mod)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        activate(ctx)
+        ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
         prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
 
@@ -257,13 +259,14 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
+            activate(ctx)
 
-            b = IRBuilder(ctx)
+            b = IRBuilder()
             position!(b, inst)
 
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
             if mfn == C_NULL
-                ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+                ptr8 = LLVM.PointerType(LLVM.IntType(8))
                 mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
             end
             mfn2 = LLVM.Function(mfn)
@@ -274,6 +277,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
+            activate(ctx)
 
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
             if isa(flib, LLVM.ConstantExpr)
@@ -282,7 +286,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, LLVM.GlobalVariable)
                 flib = LLVM.initializer(flib)
             end
-            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8; ctx)
+            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8)
                 flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
@@ -293,7 +297,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
@@ -310,6 +314,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
+            activate(ctx)
 
             ops = collect(operands(inst))[1:end-1]
             @assert length(ops) == 2
@@ -338,7 +343,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 
@@ -395,7 +400,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder(ctx)
+                                b = IRBuilder()
                                 position!(b, ld)
                                 replace_uses!(ld, LLVM.pointercast!(b, replaceWith, value_type(inst)))
                             end
@@ -403,7 +408,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = IRBuilder(ctx)
+                b = IRBuilder()
 
                 position!(b, inst)
                 replace_uses!(inst, LLVM.pointercast!(b, replaceWith, value_type(inst)))
@@ -415,7 +420,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 else
                     res = ccall(:ijl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
                 end
-                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int); ctx), reinterpret(UInt, res))
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int)), reinterpret(UInt, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
@@ -423,7 +428,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder(ctx)
+                                b = IRBuilder()
                                 position!(b, ld)
                                 for u in LLVM.uses(ld)
                                     u = LLVM.user(u)
@@ -437,7 +442,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = IRBuilder(ctx)
+                b = IRBuilder()
                 position!(b, inst)
                 replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
                             for u in LLVM.uses(inst)
@@ -496,9 +501,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         ofn = LLVM.parent(LLVM.parent(inst))
                         mod = LLVM.parent(ofn)
                         ctx = context(mod)
-                        inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                        activate(ctx)
+                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                        nofree = LLVM.StringAttribute("nofree", ""; ctx)
+                        nofree = LLVM.StringAttribute("nofree", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                     end
                 end
@@ -571,9 +577,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     ctx = context(mod)
-                    inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                    activate(ctx)
+                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                    nofree = LLVM.StringAttribute("nofree", ""; ctx)
+                    nofree = LLVM.StringAttribute("nofree", "")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                 end
             end

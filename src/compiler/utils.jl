@@ -20,7 +20,10 @@ function get_function!(builderF, mod::LLVM.Module, name)
 end
 
 
-T_ppjlvalue(ctx) = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[]; ctx)))
+function T_ppjlvalue(ctx)
+    activate(ctx)
+    LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
+end
 
 if VERSION < v"1.7.0-DEV.1205"
 
@@ -49,7 +52,8 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if ptls === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
+        activate(context(LLVM.parent(func)))
+        B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
@@ -94,7 +98,8 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
+        activate(context(LLVM.parent(func)))
+        B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))

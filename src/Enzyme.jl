@@ -178,7 +178,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f.val), tt).min_world
     
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
@@ -315,7 +315,7 @@ f(x) = x*x
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
     
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f.val), tt)
 
     thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal)
@@ -337,7 +337,7 @@ code, as well as high-order differentiation.
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f.val), tt)
     
     if A isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
@@ -397,7 +397,7 @@ code, as well as high-order differentiation.
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f.val), tt)
     
     if RT isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
@@ -442,7 +442,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
 @inline function autodiff_deferred(mode::M, f::FA, args...) where {FA<:Annotation, M<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f.val), tt)
     rt    = Core.Compiler.return_type(f.val, tt)
     if rt === Union{}
         error("return type is Union{}, giving up.")
@@ -514,7 +514,7 @@ result, ∂v, ∂A
 
     tt    = Tuple{map(eltype, args)...}
         
-    world = GPUCompiler.codegen_world_age(eltype(FA), tt)
+    world = GPUCompiler.tls_world_age() #(eltype(FA), tt)
     
     @assert ReturnShadow
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false))
@@ -578,7 +578,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 
     tt    = Tuple{map(eltype, args)...}
         
-    world = GPUCompiler.codegen_world_age(eltype(FA), tt)
+    world = GPUCompiler.tls_world_age() #(eltype(FA), tt)
     
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false))
 end
@@ -648,7 +648,7 @@ result, ∂v, ∂A
     TT = Tuple{args...}
    
     primal_tt = Tuple{map(eltype, args)...}
-    world = GPUCompiler.codegen_world_age(eltype(FA), primal_tt)
+    world = GPUCompiler.tls_world_age() #(eltype(FA), primal_tt)
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
     nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
@@ -933,7 +933,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
@@ -972,7 +972,7 @@ end
 @inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val}
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
+    world = GPUCompiler.tls_world_age() #(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
