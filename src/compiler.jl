@@ -129,6 +129,10 @@ end
 const nofreefns = Set{String}((
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
+    "ijl_set_task_tid", "jl_set_task_tid",
+    "ijl_get_task_tid", "jl_get_task_tid",
+    "julia.get_pgcstack_or_new",
+    "ijl_global_event_loop", "jl_global_event_loop",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
@@ -188,6 +192,10 @@ const nofreefns = Set{String}((
 const inactivefns = Set{String}((
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
+    "ijl_set_task_tid", "jl_set_task_tid",
+    "ijl_get_task_tid", "jl_get_task_tid",
+    "julia.get_pgcstack_or_new",
+    "ijl_global_event_loop", "jl_global_event_loop",
     "ijl_gf_invoke_lookup", "jl_gf_invoke_lookup",
     "ijl_f_typeassert", "jl_f_typeassert",
     "ijl_type_unionall", "jl_type_unionall",
@@ -2626,7 +2634,7 @@ function jlcall_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         end
     end
 
-    @assert false "jl_call calling convention not implemented yet", orig
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
 
     return 0
 end
@@ -2667,7 +2675,7 @@ function jlcall_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef
         end
     end
 
-    @assert false "jl_call calling convention not implemented yet", orig
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
 
     return 0
 end
@@ -2716,7 +2724,7 @@ function jlcall_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, g
         end
     end
 
-    @assert false "jl_call calling convention not implemented yet", orig
+    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: jl_call calling convention not implemented in reverse for "*string(orig))
 
     return nothing
 end
@@ -5922,7 +5930,23 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     end
 
     if errtype == API.ET_NoDerivative
-        throw(NoDerivativeException(msg, ir, bt))
+        exc = NoDerivativeException(msg, ir, bt)
+        if data != C_NULL
+            gutils = API.EnzymeGradientUtilsRef(data)
+            newb = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
+            while isa(newb, LLVM.PHIInst)
+                newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
+            end
+            b = IRBuilder(LLVM.context(val))
+            position!(b, newb)
+            function eac(io)
+                Base.showerror(io, exc)
+            end
+            msg2 = sprint(eac)
+            emit_error(b, nothing, msg2)
+            return
+        end
+        throw(exc)
     elseif errtype == API.ET_NoShadow
         data = API.EnzymeGradientUtilsRef(data)
         ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
@@ -6940,7 +6964,7 @@ function __init__()
         @cfunction(jl_array_ptr_copy_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
     )
     register_handler!(
-        (),
+        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2"),
         @cfunction(jl_unhandled_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(jl_unhandled_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(jl_unhandled_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
