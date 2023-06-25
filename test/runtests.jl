@@ -1051,8 +1051,8 @@ end
 end
 
 @testset "Mismatched return" begin
-    @test_throws ErrorException autodiff(Reverse, _->mssing, Active, Active(2.1))
-    @test_throws ErrorException autodiff_deferred(Reverse, _->mssing, Active, Active(2.1))
+    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
