@@ -5185,9 +5185,17 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
-    for op in ops
-        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        push!(to_preserve, val)
+    for op in ops 
+        needsShadowP = Ref{UInt8}(0)
+        needsPrimalP = Ref{UInt8}(0)
+
+        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
+        needsPrimal = needsPrimalP[] != 0
+
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+            push!(to_preserve, val)
+        end
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
@@ -5220,8 +5228,16 @@ function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
     for op in ops
-        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        push!(to_preserve, val)
+        needsShadowP = Ref{UInt8}(0)
+        needsPrimalP = Ref{UInt8}(0)
+
+        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
+        needsPrimal = needsPrimalP[] != 0
+
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+            push!(to_preserve, val)
+        end
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
