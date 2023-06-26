@@ -8728,8 +8728,8 @@ end
     check_ir(job, mod)
 
     disableFallback = String[]
-    # Tablegen BLAS does not support runtime activity yet
-    if !API.runtimeActivity()
+    # Tablegen BLAS does not support runtime activity, nor forward mode yet
+    if !API.runtimeActivity() && mode != API.DEM_ForwardMode
         blas_types = ("s", "d")
         blas_readonly = ("dot",)
         for ty in ("s", "d")
