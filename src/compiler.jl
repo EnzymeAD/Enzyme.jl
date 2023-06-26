@@ -1223,7 +1223,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             dupClosure = false
         end
 
-        world = GPUCompiler.codegen_world_age(FT, tt)
+        world = codegen_world_age(FT, tt)
 
         forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
 
@@ -1284,7 +1284,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             dupClosure = false
         end
 
-        world = GPUCompiler.codegen_world_age(FT, Tuple{$(ElTypes...)})
+        world = codegen_world_age(FT, Tuple{$(ElTypes...)})
 
         forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
@@ -1391,7 +1391,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
             dupClosure = false
         end
-        world = GPUCompiler.codegen_world_age(FT, tt)
+        world = codegen_world_age(FT, tt)
 
         forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true))
