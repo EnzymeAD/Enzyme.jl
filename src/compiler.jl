@@ -5960,7 +5960,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             msg2 = sprint(eac)
             emit_error(b, nothing, msg2)
-            return
+            return C_NULL
         end
         throw(exc)
     elseif errtype == API.ET_NoShadow
