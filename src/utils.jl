@@ -14,6 +14,8 @@ else
 end
 
 #Excerpt from https://github.com/JuliaGPU/GPUCompiler.jl/blob/v0.19.4/src/jlgen.jl
+# !!! warning "codegen_world_age below is fundamentally unsound."
+#     It was removed from GPUCompiler since it can produce incorrect results. 
 
 using Core: MethodInstance
 # Julia compiler integration
