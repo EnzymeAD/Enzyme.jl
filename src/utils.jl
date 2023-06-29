@@ -19,6 +19,8 @@ end
 
 using Core: MethodInstance
 using GPUCompiler: tls_world_age, MethodError, methodinstance
+using Core.Compiler: retrieve_code_info, CodeInfo, SSAValue, ReturnNode
+using Base: _methods_by_ftype
 
 # Julia compiler integration
 
