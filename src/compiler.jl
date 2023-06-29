@@ -5193,9 +5193,17 @@ function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
-    for op in ops
-        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        push!(to_preserve, val)
+    for op in ops 
+        needsShadowP = Ref{UInt8}(0)
+        needsPrimalP = Ref{UInt8}(0)
+
+        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
+        needsPrimal = needsPrimalP[] != 0
+
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+            push!(to_preserve, val)
+        end
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
@@ -5228,8 +5236,16 @@ function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LL
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     B = LLVM.IRBuilder(B)
     for op in ops
-        val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-        push!(to_preserve, val)
+        needsShadowP = Ref{UInt8}(0)
+        needsPrimalP = Ref{UInt8}(0)
+
+        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
+        needsPrimal = needsPrimalP[] != 0
+
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
+            push!(to_preserve, val)
+        end
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
@@ -5944,7 +5960,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             msg2 = sprint(eac)
             emit_error(b, nothing, msg2)
-            return
+            return C_NULL
         end
         throw(exc)
     elseif errtype == API.ET_NoShadow
@@ -8728,8 +8744,8 @@ end
     check_ir(job, mod)
 
     disableFallback = String[]
-    # Tablegen BLAS does not support runtime activity yet
-    if !API.runtimeActivity()
+    # Tablegen BLAS does not support runtime activity, nor forward mode yet
+    if !API.runtimeActivity() && mode != API.DEM_ForwardMode
         blas_types = ("s", "d")
         blas_readonly = ("dot",)
         for ty in ("s", "d")
