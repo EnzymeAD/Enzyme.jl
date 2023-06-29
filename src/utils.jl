@@ -18,6 +18,8 @@ end
 #     It was removed from GPUCompiler since it can produce incorrect results. 
 
 using Core: MethodInstance
+using GPUCompiler: tls_world_age, MethodError
+
 # Julia compiler integration
 
 
@@ -32,7 +34,6 @@ using Core: MethodInstance
 # can be used to drive cached compilation. it is unlikely that you should use this function
 # directly, instead use `cached_compilation` which handles invalidation for you.
 
-tls_world_age() = ccall(:jl_get_tls_world_age, UInt, ())
 
 if VERSION >= v"1.10.0-DEV.873"
 
@@ -205,8 +206,6 @@ end
 
 ## looking up method instances
 
-export methodinstance
-
 using Core.Compiler: retrieve_code_info, CodeInfo, MethodInstance, SSAValue, SlotNumber, ReturnNode
 using Base: _methods_by_ftype
 
@@ -225,9 +224,6 @@ function unsafe_function_from_type(ft::Type)
         #       which works because MethodError doesn't actually use the function
         Ref{ft}()[]
     end
-end
-function MethodError(ft::Type, tt::Type, world::Integer=typemax(UInt))
-    Base.MethodError(unsafe_function_from_type(ft), tt, world)
 end
 
 """
