@@ -3,7 +3,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
-        world = GPUCompiler.codegen_world_age(Core.Typeof(func), tt)
+        world = codegen_world_age(Core.Typeof(func), tt)
     end
     
     primal = fspec(Core.Typeof(func), types, world)
