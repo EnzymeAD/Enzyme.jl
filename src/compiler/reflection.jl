@@ -22,9 +22,10 @@ end
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  optimize::Bool=true, second_stage::Bool=true, ctx=nothing, kwargs...)
 
+    context!(ctx) do
     job = get_job(func, A, types; kwargs...)
     # Codegen the primal function and all its dependency in one module
-    mod, meta = Compiler.codegen(:llvm, job; optimize, ctx #= validate=false =#)
+    mod, meta = Compiler.codegen(:llvm, job; optimize #= validate=false =#)
 
     if second_stage
         post_optimze!(mod, JIT.get_tm())
@@ -33,6 +34,7 @@ function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     llvmf = meta.adjointf
 
     return llvmf, mod
+    end
 end
 
 # For VERSION >= v"1.9.0-DEV.516"
@@ -47,7 +49,7 @@ function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospec
     JuliaContext() do ctx
         entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, ctx)
         @static if VERSION >= v"1.9.0-DEV.516"
-            ts_mod = ThreadSafeModule(ir; ctx)
+            ts_mod = ThreadSafeModule(ir)
             if VERSION >= v"1.9.0-DEV.672"
                 GC.@preserve ts_mod entry_fn begin
                     value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))

@@ -116,7 +116,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
-    llvmfn = LLVM.called_value(orig)
+    llvmfn = LLVM.called_operand(orig)
     mi, _ = enzyme_custom_extract_mi(orig)
     adjointnm = nothing
     augfwdnm = nothing
@@ -174,12 +174,12 @@ end
         cmod, adjointnm, augfwdnm, _, TapeType = _thunk(ejob, jctx)
         LLVM.link!(mod, cmod)
         attributes = function_attributes(llvmfn)
-        push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm; ctx))
-        push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
+        push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
+        push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
         attributes = function_attributes(llvmfn)
-        push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType))); ctx))
+        push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"))
+        push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"))
+        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType)))))
     end
 
         if mode == API.DEM_ReverseModePrimal
@@ -202,8 +202,8 @@ end
 
     # 5) Call the function
     
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    T_int64 = LLVM.Int64Type()
+    T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
@@ -213,9 +213,9 @@ end
     
     # function
     run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
-    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0); ctx))))
+    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0)))))
  
-    EB = LLVM.IRBuilder(ctx)
+    EB = LLVM.IRBuilder()
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
 

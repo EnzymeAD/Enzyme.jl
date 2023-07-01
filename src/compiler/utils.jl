@@ -20,7 +20,11 @@ function get_function!(builderF, mod::LLVM.Module, name)
 end
 
 
-T_ppjlvalue(ctx) = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[]; ctx)))
+function T_ppjlvalue(ctx)
+    context!(ctx) do 
+        LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
+    end
+end
 
 if VERSION < v"1.7.0-DEV.1205"
 
@@ -39,7 +43,7 @@ function get_ptls(func)
     ptls_func = declare_ptls!(LLVM.parent(func))
 
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == ptls_func
+        if I isa LLVM.CallInst && called_operand(I) == ptls_func
             return I
         end
     end
@@ -84,7 +88,7 @@ function get_pgcstack(func)
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
 
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == pgcstack_func
+        if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
             return I
         end
     end
@@ -94,14 +98,16 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
-        entry_bb = first(blocks(func))
-        if !isempty(instructions(entry_bb))
-            position!(B, first(instructions(entry_bb)))
-        else
-            position!(B, entry_bb)
+        context!(context(LLVM.parent(func))) do
+            B = IRBuilder()
+            entry_bb = first(blocks(func))
+            if !isempty(instructions(entry_bb))
+                position!(B, first(instructions(entry_bb)))
+            else
+                position!(B, entry_bb)
+            end
+            emit_pgcstack(B)
         end
-        emit_pgcstack(B)
 	else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
