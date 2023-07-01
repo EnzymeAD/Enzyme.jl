@@ -3046,7 +3046,7 @@ end
 
     # TODO
     parent_job = nothing
-    ts_context!(ctx) do
+    context!(ctx) do
     otherMod, meta = GPUCompiler.codegen(:llvm, job; optimize=false, cleanup=false, validate=false, parent_job=parent_job)
     prepare_llvm(otherMod, job, meta)
 
@@ -9681,7 +9681,7 @@ function _thunk(job, ctx=nothing, postopt=true)
         ctx = JuliaContext()
     end
 
-    ts_context!(ctx) do
+    context!(ctx) do
         mod, meta = codegen(:llvm, job; optimize=false)
 
         adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
