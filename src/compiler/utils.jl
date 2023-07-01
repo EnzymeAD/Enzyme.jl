@@ -52,15 +52,18 @@ end
 
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
-    if ptls === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
-        entry_bb = first(blocks(func))
-        if !isempty(instructions(entry_bb))
-            position!(B, first(instructions(entry_bb)))
-        else
-            position!(B, entry_bb)
+    if isnothing(ptls)
+        ctx = context(LLVM.parent(func))
+        context!(ctx) do
+            B = IRBuilder()
+            entry_bb = first(blocks(func))
+            if !isempty(instructions(entry_bb))
+                position!(B, first(instructions(entry_bb)))
+            else
+                position!(B, entry_bb)
+            end
+            emit_ptls!(B)
         end
-        emit_ptls!(B)
 	else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
