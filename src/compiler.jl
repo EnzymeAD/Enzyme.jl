@@ -8770,14 +8770,20 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     ctx = nothing
     c = nothing
-    if LLVM._has_ts_context()
-        ctx = ts_context()
-        c = context(ctx)
-    elseif LLVM._has_context()
+
+    @static if VERSION < v"1.9-"
         ctx = context()
         c = ctx
+    else
+        if LLVM._has_ts_context()
+            ctx = ts_context()
+            c = context(ctx)
+        elseif LLVM._has_context()
+            ctx = context()
+            c = ctx
+        end    
     end
-        
+
     mod, meta = context!(c) do
         mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, toplevel=toplevel, cleanup=false, validate=false, parent_job=parent_job) #, ctx=c)
         prepare_llvm(mod, primal_job, meta)
