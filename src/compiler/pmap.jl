@@ -183,10 +183,10 @@ end
     end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 

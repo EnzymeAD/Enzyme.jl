@@ -401,26 +401,26 @@ end
 # User facing interface
 abstract type AbstractThunk{FA, RT, TT, Width} end
 
-struct CombinedAdjointThunk{FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
-    adjoint::Ptr{Cvoid}
+struct CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
+    adjoint::PT
 end
 
-struct ForwardModeThunk{FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
-    adjoint::Ptr{Cvoid}
+struct ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
+    adjoint::PT
 end
 
-struct AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType} <: AbstractThunk{FA, RT, TT, Width}
-    primal::Ptr{Cvoid}
+struct AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType} <: AbstractThunk{FA, RT, TT, Width}
+    primal::PT
 end
 
-struct AdjointThunk{FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT, Width}
-    adjoint::Ptr{Cvoid}
+struct AdjointThunk{PT, FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT, Width}
+    adjoint::PT
 end
 
 @inline return_type(::AbstractThunk{FA, RT}) where {FA, RT} = RT
-@inline return_type(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = RT
-@inline get_tape_type(::Type{AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
-@inline get_tape_type(::Type{AdjointThunk{FA, RT, TT, Width, TapeType}}) where {FA, RT, TT, Width, TapeType} = TapeType
+@inline return_type(::Type{AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = RT
+@inline get_tape_type(::Type{AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
+@inline get_tape_type(::Type{AdjointThunk{PT, FA, RT, TT, Width, TapeType}}) where {PT, FA, RT, TT, Width, TapeType} = TapeType
 
 using .JIT
 
@@ -3233,7 +3233,7 @@ end
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"; ctx))
             permit_inlining!(functions(mod)[fwdmodenm])
         end
-        thunkTy = ForwardModeThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(false)}
+        thunkTy = ForwardModeThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(false)}
         subfunc = functions(mod)[fwdmodenm]
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
@@ -3295,10 +3295,10 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
     else
@@ -9207,20 +9207,20 @@ struct Thunk
     TapeType::Type
 end
 
-@inline (thunk::CombinedAdjointThunk{FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {FA, Width, RT, TT, ReturnPrimal} =
+@inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk, Width, ReturnPrimal, TT, RT, fn, Cvoid, args...)
 
-@inline (thunk::ForwardModeThunk{FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {FA, Width, RT, TT, ReturnPrimal} =
+@inline (thunk::ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk, Width, ReturnPrimal, TT, RT, fn, Cvoid, args...)
 
-@inline (thunk::AdjointThunk{FA, RT, TT, Width, TapeT})(fn::FA, args...) where {FA, Width, RT, TT, TapeT} =
+@inline (thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
 enzyme_call(Val(false), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
-@inline raw_enzyme_call(thunk::AdjointThunk{FA, RT, TT, Width, TapeT}, fn::FA, args...) where {FA, Width, RT, TT, TapeT} =
+@inline raw_enzyme_call(thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
 enzyme_call(Val(true), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 
-@inline (thunk::AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeT})(fn::FA, args...) where {FA, Width, RT, TT, ReturnPrimal, TapeT} =
+@inline (thunk::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} =
 enzyme_call(Val(false), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, fn, TapeT, args...)
-@inline raw_enzyme_call(thunk::AugmentedForwardThunk{FA, RT, TT, Width, ReturnPrimal, TapeT}, fn::FA, args...) where {FA, Width, RT, TT, ReturnPrimal, TapeT} =
+@inline raw_enzyme_call(thunk::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} =
 enzyme_call(Val(true), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, fn, TapeT, args...)
 
 
@@ -9700,20 +9700,20 @@ end
     thunk = cached_compilation(job)::Thunk
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = thunk.TapeType
-        AugT = AugmentedForwardThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-        AdjT = AdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
+        AugT = AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
+        AdjT = AdjointThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
         return quote
             augmented = $AugT($(thunk.primal))
             adjoint  = $AdjT($(thunk.adjoint))
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
-        CAdjT = CombinedAdjointThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+        CAdjT = CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
             $CAdjT($(thunk.adjoint))
         end
     elseif Mode == API.DEM_ForwardMode
-        FMT = ForwardModeThunk{FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+        FMT = ForwardModeThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
             $FMT($(thunk.adjoint))
         end
