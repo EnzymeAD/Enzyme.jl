@@ -7927,9 +7927,6 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         if tape != C_NULL
             tape = LLVM.LLVMType(tape)
             jltape = convert(LLVM.LLVMType, tape_type(tape); ctx, allow_boxed=true)
-            if !isa(jltape, LLVM.ArrayType)
-                @assert tape == jltape
-            end
             push!(T_wrapperargs, jltape)
         else
             needs_tape = false
@@ -8017,15 +8014,66 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
 
         if needs_tape
-            tparm = params[i]
-            if tape != jltape
-                ntape = LLVM.UndefValue(tape)
-                @assert length(jltape) == length(elements(tape))
-                for i in 1:length(jltape)
-                    ntape = insert_value!(builder, ntape, extract_value!(builder, tparm, i-1), i-1)
+
+            function rectype(val::LLVM.Value, idxs::Vector{Int})
+                ty = LLVM.value_type(val)
+                for i in idxs
+                    if isa(ty, LLVM.ArrayType)
+                        ty = eltype(ty)
+                    else
+                        @assert isa(ty, LLVM.StructType)
+                        ty = elements(ty)[i]
+                    end
                 end
-                tparm = ntape
+                return ty
             end
+            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, idxs::Vector{Int}=[])
+                ctype = rectype(val, idxs)
+
+                if ctype == tape
+                    if length(idxs) == 0
+                        return val
+                    end
+                    return API.insert_value!(builder, prev, 
+                                API.extract_value!(builder, val, idxs), idxs)
+                end
+
+                if isa(ctype, LLVM.ArrayType)
+                    @assert length(ctype) == length(elements(tape))
+                    for (i, ty) in enumerate(elements(tape))
+                        n = copy(idxs)
+                        push!(n, i-1)
+                        prev = typefix(val, ty, prev, n)
+                    end
+                    return prev
+                end
+                if isa(ctype, LLVM.StructType)
+                    @assert length(elements(ctype)) == length(elements(tape))
+                    for (i, ty) in enumerate(elements(tape))
+                        n = copy(idxs)
+                        push!(n, i-1)
+                        prev = typefix(val, ty, prev, n)
+                    end
+                    return prev
+                end
+
+                if isa(tape, LLVM.IntegerType) && width(tape) == 1 && width(ctype) != width(tape)
+                    if length(idxs) != 0
+                        val = extract_value!(builder, val, idxs)
+                    end
+                    val = trunc!(builder, val, tape)
+                    return if length(idxs) != 0
+                        insert_value!(builder, prev, val, idxs)
+                    else
+                        val
+                    end
+                end
+                @assert false
+            end
+
+            # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
+            # and that Bool -> i8, not i1
+            tparm = typefix(params[i], tape, LLVM.UndefValue(tape), Int[])
             push!(realparms, tparm)
             i += 1
         end
