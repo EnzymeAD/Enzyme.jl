@@ -8075,6 +8075,18 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                         val
                     end
                 end
+                if isa(tape, LLVM.PointerType) && isa(ctype, LLVM.PointerType) && LLVM.addrspace(tape) == LLVM.addrspace(ctype)
+                    if length(idxs) != 0
+                        val = API.e_extract_value!(builder, val, idxs)
+                    end
+                    val = pointercast!(builder, val, tape)
+                    return if length(idxs) != 0
+                        API.e_insert_value!(builder, prev, val, idxs)
+                    else
+                        val
+                    end
+                end
+                @show ctype, tape, val, prev
                 @assert false
             end
 
