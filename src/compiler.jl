@@ -1056,15 +1056,11 @@ end
 function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
-    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)))
+    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
-        if length(res) > 1
-            return res[1]
-        else
-            return nothing
-        end
+        return res[1]
     end
 
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
@@ -1074,7 +1070,7 @@ function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any,
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
-    forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween))
+    forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
@@ -1225,7 +1221,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
 
-        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true))
+        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
@@ -1288,7 +1284,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true))
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
         internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
@@ -1394,7 +1390,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         world = codegen_world_age(FT, tt)
 
         forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true))
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
         end
