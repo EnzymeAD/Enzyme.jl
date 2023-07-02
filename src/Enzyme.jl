@@ -718,7 +718,7 @@ end
 @inline function onehot(x::NTuple{N, T}, start=1, endl=N) where {T, N}
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
-        ntuple(N) do idx
+        ntuple(Val(N)) do idx
             Base.@_inline_meta
             return (i + start - 1 == idx) ? 1.0 : 0.0
         end
