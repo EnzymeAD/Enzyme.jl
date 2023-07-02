@@ -704,7 +704,18 @@ end
     nothing
 end
 
-@inline function onehot(x, start=1, endl=length(x))
+@inline function onehot(x)
+    N = length(x)
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        res = similar(x)
+        for idx in 1:N
+            @inbounds res[idx] = (i == idx) ? 1.0 : 0.0
+        end
+        return res
+    end
+end
+@inline function onehot(x, start, endl)
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
         res = similar(x)
@@ -715,7 +726,16 @@ end
     end
 end
 
-@inline function onehot(x::NTuple{N, T}, start=1, endl=N) where {T, N}
+@inline function onehot(x::NTuple{N, T}) where {T, N}
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        ntuple(Val(N)) do idx
+            Base.@_inline_meta
+            return (i == idx) ? 1.0 : 0.0
+        end
+    end
+end
+@inline function onehot(x::NTuple{N, T}, start, endl) where {T, N}
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
         ntuple(Val(N)) do idx
