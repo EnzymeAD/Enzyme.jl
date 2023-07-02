@@ -1,3 +1,28 @@
+unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
+export unsafe_to_pointer
+
+const Tracked = 10
+export Tracked
+
+function unsafe_to_llvm(val, ctx)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    fill_val = unsafe_to_pointer(val)
+    fill_val = LLVM.ConstantInt(convert(UInt, fill_val); ctx)
+    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+end
+export unsafe_to_llvm
+
+function makeInstanceOf(@nospecialize(T), ctx)
+    @assert Core.Compiler.isconstType(T)
+    @assert T <: Type
+    return unsafe_to_llvm(T.parameters[1], ctx)
+end
+
+export makeInstanceOf
+
 function hasfieldcount(@nospecialize(dt))
     try
         fieldcount(dt)
