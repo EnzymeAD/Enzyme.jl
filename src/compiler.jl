@@ -7821,7 +7821,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             @safe_show actualRetType, rettype
             @assert allocatedinline(actualRetType)
         end
-        push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, actualRetType; ctx))))
+        dretTy = LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, actualRetType; ctx)))
+        push!(T_wrapperargs, dretTy)
     end
 
     data    = Array{Int64}(undef, 3)
@@ -7924,7 +7925,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             tape = utape
         end
         if tape != C_NULL
-            push!(T_wrapperargs, LLVM.LLVMType(tape))
+            tape = LLVM.LLVMType(tape)
+            jltape = convert(LLVM.LLVMType, tape_type(tape); ctx, allow_boxed=true)
+            if !isa(jltape, LLVM.ArrayType)
+                @assert tape == jltape
+            end
+            push!(T_wrapperargs, jltape)
         else
             needs_tape = false
         end
@@ -8011,7 +8017,16 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
 
         if needs_tape
-            push!(realparms, params[i])
+            tparm = params[i]
+            if tape != jltape
+                ntape = LLVM.UndefValue(tape)
+                @assert length(jltape) == length(elements(tape))
+                for i in 1:length(jltape)
+                    ntape = insert_value!(builder, ntape, extract_value!(builder, tparm, i-1), i-1)
+                end
+                tparm = ntape
+            end
+            push!(realparms, tparm)
             i += 1
         end
 
@@ -9403,15 +9418,18 @@ end
         jlRT = Any
     end
 
+    ctx = LLVM.Context()
+
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
         # TODO handle batch width
         @assert allocatedinline(jlRT)
-        if width == 1
-            push!(types, jlRT)
+        j_drT = if width == 1
+            jlRT
         else
-            push!(types, NTuple{width, jlRT})
+            NTuple{width, jlRT}
         end
+        push!(types, j_drT)
         push!(ccexprs, argexprs[i])
         i+=1
     end
@@ -9424,7 +9442,6 @@ end
         i+=1
     end
 
-    ctx = LLVM.Context()
 
     if is_adjoint
         NT = Tuple{ActiveRetTypes...}
