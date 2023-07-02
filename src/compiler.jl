@@ -8022,20 +8022,20 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                         ty = eltype(ty)
                     else
                         @assert isa(ty, LLVM.StructType)
-                        ty = elements(ty)[i]
+                        ty = elements(ty)[i+1]
                     end
                 end
                 return ty
             end
-            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, idxs::Vector{Int}=[])
+            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, idxs::Vector{Int}=[])::LLVM.Value
                 ctype = rectype(val, idxs)
 
                 if ctype == tape
                     if length(idxs) == 0
                         return val
                     end
-                    return API.insert_value!(builder, prev, 
-                                API.extract_value!(builder, val, idxs), idxs)
+                    return API.e_insert_value!(builder, prev, 
+                                API.e_extract_value!(builder, val, idxs), idxs)
                 end
 
                 if isa(ctype, LLVM.ArrayType)
@@ -8057,13 +8057,13 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     return prev
                 end
 
-                if isa(tape, LLVM.IntegerType) && width(tape) == 1 && width(ctype) != width(tape)
+                if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
                     if length(idxs) != 0
-                        val = extract_value!(builder, val, idxs)
+                        val = API.e_extract_value!(builder, val, idxs)
                     end
                     val = trunc!(builder, val, tape)
                     return if length(idxs) != 0
-                        insert_value!(builder, prev, val, idxs)
+                        API.e_insert_value!(builder, prev, val, idxs)
                     else
                         val
                     end
