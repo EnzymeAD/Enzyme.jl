@@ -124,7 +124,7 @@ struct FFIABI <: ABI end
 Inline ABI. Inject the differntiated function directly to the calling context.
 """
 struct InlineABI <: ABI end
-const DefaultABI = FFIABI
+const DefaultABI = InlineABI
 
 """
     abstract type Mode

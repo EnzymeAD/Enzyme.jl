@@ -6131,6 +6131,7 @@ any_jltypes(::LLVM.VoidType) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
 @inline any_jltypes(::Type{T}) where {T<:Integer} = false
 @inline any_jltypes(::Type{Complex{T}}) where T = any_jltypes(T)
+@inline any_jltypes(::Type{Tuple{}}) = false
 @inline any_jltypes(::Type{NTuple{Size, T}}) where {Size, T} = any_jltypes(T)
 @inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
 @inline any_jltypes(::Type{Any}) = true
@@ -7781,6 +7782,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         source_typ = eltype(T)
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
             @assert T <: Const
+            if is_adjoint && i != 1
+                push!(ActiveRetTypes, Nothing)
+            end
             continue
         end
 
@@ -7867,6 +7871,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             push!(sret_types, actualRetType)
         else
             @assert !returnPrimal
+            push!(sret_types, Nothing)
         end
         # shadow return
         if existed[3] != 0
@@ -7880,6 +7885,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             end
         else
             @assert rettype <: Const || rettype <: Active
+            push!(sret_types, Nothing)
         end
     end
     if Mode == API.DEM_ReverseModeCombined
@@ -7909,7 +7915,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
     end
 
-    combinedReturn = AnonymousStruct(Tuple{sret_types...})
+    combinedReturn = Tuple{sret_types...}
+    if any_jltypes(combinedReturn)
+        combinedReturn = AnonymousStruct(combinedReturn)
+    end
 
     uses_sret = is_sret(combinedReturn, ctx)
 
@@ -9460,8 +9469,10 @@ end
 
     T_void = convert(LLVMType, Nothing; ctx)
 
-
-    combinedReturn = AnonymousStruct(Tuple{sret_types...})
+    combinedReturn = Tuple{sret_types...}
+    if any_jltypes(combinedReturn)
+        combinedReturn = AnonymousStruct(combinedReturn)
+    end
     uses_sret = is_sret(combinedReturn, ctx)
     jltype = convert(LLVM.LLVMType, combinedReturn; ctx)
 
@@ -9558,7 +9569,7 @@ end
 
     @assert length(types) == length(ccexprs)
     true_RT = Tuple{sret_types...}
-    if any_jltypes(jltype)
+    if any_jltypes(true_RT)
         true_RT = AnonymousStruct(true_RT)
     end
 
@@ -9638,7 +9649,7 @@ function _thunk(job, ctx=nothing, postopt=true)
     augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
 
     # Run post optimization pipeline
-    if postopt
+    if postopt && !(job.config.params.ABI <: InlineABI)
         post_optimze!(mod, JIT.get_tm())
     end
     return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
@@ -9721,7 +9732,7 @@ end
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = compile_result.TapeType
         AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-        AdjT = AdjointThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
+        AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
         return quote
             augmented = $AugT($(compile_result.primal))
             adjoint  = $AdjT($(compile_result.adjoint))
