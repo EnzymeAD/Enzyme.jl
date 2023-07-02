@@ -2,7 +2,8 @@ unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)),
 export unsafe_to_pointer
 
 const Tracked = 10
-export Tracked
+const Derived = 11
+export Tracked, Derived
 
 function unsafe_to_llvm(val, ctx)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
