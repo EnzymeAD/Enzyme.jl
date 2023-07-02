@@ -7,7 +7,7 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, Bat
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
-import EnzymeCore: EnzymeRules
+import EnzymeCore: EnzymeRules, ABI, FFIABI, InlineABI, DefaultABI
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -3218,7 +3218,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI)
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             jctx = ctx
@@ -3272,7 +3272,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI)
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
             jctx = ctx
 @static if VERSION < v"1.9-"
@@ -7017,6 +7017,8 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     # Whether to (in aug fwd) += by one
     shadowInit::Bool
     expectedTapeType::Type
+    # Whether to use the pointer ABI, default true
+    ABI::Type{<:ABI}
 end
 
 struct UnknownTapeType end
@@ -9196,14 +9198,10 @@ end
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled, TapeType)
 end
 
-##
-# Thunk
-##
-
 # Compiler result
-struct Thunk
-    adjoint::Ptr{Cvoid}
-    primal::Ptr{Cvoid}
+struct CompileResult{AT, PT}
+    adjoint::AT
+    primal::PT
     TapeType::Type
 end
 
@@ -9244,8 +9242,8 @@ function add_one_in_place(x)
     return nothing
 end
 
-@generated function enzyme_call(::Val{RawCall}, fptr::Ptr{Cvoid}, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
-        rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, FA, T, RT, TapeType, N, CC, width, returnPrimal}
+@generated function enzyme_call(::Val{RawCall}, fptr::PT, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
+        rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, PT, FA, T, RT, TapeType, N, CC, width, returnPrimal}
 
     F = eltype(FA)
     is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
@@ -9479,8 +9477,9 @@ end
     	returnRoots = deserves_rooting(jltype)
     end
 
-    pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}; ctx))
-
+    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        pushfirst!(llvmtys, convert(LLVMType, PT; ctx))
+    end
 
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -9498,8 +9497,11 @@ end
 		entry = BasicBlock(llvm_f, "entry"; ctx)
 		position!(builder, entry)
 		callparams = collect(LLVM.Value, parameters(llvm_f))
-        lfn = callparams[1]
-        deleteat!(callparams, 1)
+
+        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+            lfn = callparams[1]
+            deleteat!(callparams, 1)
+        end
 
         if returnRoots
 	        tracked = CountTrackedPointers(jltype)
@@ -9520,10 +9522,23 @@ end
                 @assert value_type(tape) == llty
             end
         end
-        FT = LLVM.FunctionType(returnRoots ? T_void : T_ret, [value_type(x) for x in callparams])
-		lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
-        r = call!(builder, FT, lfn, callparams)
 
+        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+            FT = LLVM.FunctionType(returnRoots ? T_void : T_ret, [value_type(x) for x in callparams])
+    		lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
+        else
+            val_inner(::Type{Val{V}}) where V = V
+            submod, subname = val_inner(PT)
+            # TODO, consider optimization
+            # However, julia will optimize after this, so no need
+            submod = parse(LLVM.Module, String(submod); ctx)
+            LLVM.link!(mod, submod)
+            lfn = functions(mod)[String(subname)]
+            FT = LLVM.function_type(lfn)
+        end
+
+        r = call!(builder, FT, lfn, callparams)
+        
         if returnRoots
             attr = if LLVM.version().major >= 12
                 TypeAttribute("sret", jltype; ctx)
@@ -9546,19 +9561,24 @@ end
 	fn = LLVM.name(llvm_f)
 
     @assert length(types) == length(ccexprs)
+    true_RT = Tuple{sret_types...}
     if any_jltypes(jltype)
+        true_RT = AnonymousStruct(true_RT)
+    end
+
+    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
         return quote
             Base.@_inline_meta
-            Base.llvmcall(($ir, $fn), $(AnonymousStruct(Tuple{sret_types...})),
-                    Tuple{Ptr{Cvoid}, $(types...)},
+            Base.llvmcall(($ir, $fn), $true_RT,
+                    Tuple{$PT, $(types...)},
                     fptr, $(ccexprs...))
         end
     else
         return quote
             Base.@_inline_meta
-                Base.llvmcall(($ir, $fn), $(Tuple{sret_types...}),
-                    Tuple{Ptr{Cvoid}, $(types...)},
-                    fptr, $(ccexprs...))
+            Base.llvmcall(($ir, $fn), $true_RT,
+                    Tuple{$(types...)},
+                    $(ccexprs...))
         end
     end
 end
@@ -9568,6 +9588,10 @@ end
 ##
 
 function _link(job, (mod, adjoint_name, primal_name, ctx, TapeType))
+    if job.config.params.ABI <: InlineABI
+        return CompileResult(Val((Symbol(mod), Symbol(adjoint_name))), Val((Symbol(mod), Symbol(primal_name))), TapeType)
+    end
+
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
     if VERSION >= v"1.9.0-DEV.115"
@@ -9591,7 +9615,7 @@ function _link(job, (mod, adjoint_name, primal_name, ctx, TapeType))
         end
     end
 
-    return Thunk(adjoint_ptr, primal_ptr, TapeType)
+    return CompileResult(adjoint_ptr, primal_ptr, TapeType)
 end
 
 # actual compilation
@@ -9624,10 +9648,10 @@ function _thunk(job, ctx=nothing, postopt=true)
     return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
 end
 
-const cache = Dict{UInt, Thunk}()
+const cache = Dict{UInt, CompileResult}()
 
 const cache_lock = ReentrantLock()
-@inline function cached_compilation(@nospecialize(job::CompilerJob))
+@inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
@@ -9652,11 +9676,11 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicated}) = Duplicated
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
-@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false), ::Val{ShadowInit}=Val(false)) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World}
+@generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
@@ -9697,25 +9721,25 @@ end
     # invalidations of the primal, which is managed by GPUCompiler.
 
 
-    thunk = cached_compilation(job)::Thunk
+    compile_result = cached_compilation(job)
     if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-        TapeType = thunk.TapeType
-        AugT = AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
+        TapeType = compile_result.TapeType
+        AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
         AdjT = AdjointThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
         return quote
-            augmented = $AugT($(thunk.primal))
-            adjoint  = $AdjT($(thunk.adjoint))
+            augmented = $AugT($(compile_result.primal))
+            adjoint  = $AdjT($(compile_result.adjoint))
             (augmented, adjoint)
         end
     elseif Mode == API.DEM_ReverseModeCombined
-        CAdjT = CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+        CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
-            $CAdjT($(thunk.adjoint))
+            $CAdjT($(compile_result.adjoint))
         end
     elseif Mode == API.DEM_ForwardMode
-        FMT = ForwardModeThunk{Ptr{Cvoid}, FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+        FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
         return quote
-            $FMT($(thunk.adjoint))
+            $FMT($(compile_result.adjoint))
         end
     else
         @assert false
@@ -9728,7 +9752,7 @@ import GPUCompiler: deferred_codegen_jobs
         ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     mi = fspec(eltype(FA), tt, World)
     target = EnzymeTarget()
-    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType)
+    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
     job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
     adjoint_addr, primal_addr = get_trampoline(job)
