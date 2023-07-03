@@ -32,7 +32,7 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Unknown = 6
 )
 
-function EnzymeConcreteTypeIsFloat(cc::CConcreteType, ctx)
+function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
   if cc == DT_Half
     return LLVM.HalfType()
   elseif cc == DT_Float

@@ -4831,7 +4831,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     @assert ct != API.DT_Unknown
     ctx = LLVM.context(orig)
     context!(ctx) do
-    secretty = API.EnzymeConcreteTypeIsFloat(ct, ctx)
+    secretty = API.EnzymeConcreteTypeIsFloat(ct)
 
     off = sizeof(Cstring)
     if true # STORE_ARRAY_LEN

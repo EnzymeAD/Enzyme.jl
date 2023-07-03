@@ -20,15 +20,12 @@ function get_function!(builderF, mod::LLVM.Module, name)
 end
 
 
-function T_ppjlvalue(ctx)
-    context!(ctx) do 
-        LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
-    end
-end
+T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
+
 
 if VERSION < v"1.7.0-DEV.1205"
 
-declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
 
 function emit_ptls!(B)
     curent_bb = position(B)
@@ -76,7 +73,11 @@ end
 
 else
 
-declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+function declare_pgcstack!(mod) 
+    context!(context(mod)) do
+        get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
+    end
+end
 
 function emit_pgcstack(B)
     curent_bb = position(B)
