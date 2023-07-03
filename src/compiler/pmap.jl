@@ -162,7 +162,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         funcOverwritten = true
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
+                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType, FFIABI)
         ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
             
         jctx = ctx
@@ -183,10 +183,10 @@ end
     end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 

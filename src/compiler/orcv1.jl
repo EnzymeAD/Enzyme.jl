@@ -78,7 +78,7 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
 
     cc_adjoint, cc_primal = ccs
     try
-        thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))::Compiler.Thunk
+        thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))
         cc_adjoint.addr = thunk.adjoint
         if cc_primal !== nothing
             cc_primal.addr  = thunk.primal

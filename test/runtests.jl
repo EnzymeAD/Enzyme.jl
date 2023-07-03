@@ -92,10 +92,10 @@ end
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
     world = codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -104,7 +104,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -115,7 +115,7 @@ end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -124,7 +124,7 @@ end
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0

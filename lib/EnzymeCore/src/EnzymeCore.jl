@@ -5,6 +5,7 @@ using Adapt
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export DefaultABI, FFIABI
 
 function batch_size end
 
@@ -102,25 +103,41 @@ batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
+
+"""
+    abstract type ABI
+
+Abstract type for what ABI  will be used.
+"""
+abstract type ABI end
+
+"""
+    struct FFIABI <: ABI
+
+Foreign function call ABI. JIT the differentiated function, then inttoptr call the address.
+"""
+struct FFIABI <: ABI end
+const DefaultABI = FFIABI
+
 """
     abstract type Mode
 
 Abstract type for what differentiation mode will be used.
 """
-abstract type Mode end
+abstract type Mode{ABI} end
 
 """
-    struct ReverseMode{ReturnPrimal} <: Mode
+    struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI}
 
 Reverse mode differentiation.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
 """
-struct ReverseMode{ReturnPrimal} <: Mode end
-const Reverse = ReverseMode{false}()
-const ReverseWithPrimal = ReverseMode{true}()
+struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI} end
+const Reverse = ReverseMode{false,DefaultABI}()
+const ReverseWithPrimal = ReverseMode{true,DefaultABI}()
 
 """
-    struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween} <: Mode
+    struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}
 
 Reverse mode differentiation.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
@@ -128,19 +145,19 @@ Reverse mode differentiation.
 - `Width`: Batch Size (0 if to be automatically derived)
 - `ModifiedBetween`: Tuple of each argument's modified between state (true if to be automatically derived).
 """
-struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween} <: Mode end
-const ReverseSplitNoPrimal = ReverseModeSplit{false, true, 0, true}()
-const ReverseSplitWithPrimal = ReverseModeSplit{true, true, 0, true}()
-@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, MBO}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,Width,MB,MBO} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB}()
-@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, WidthO, MB}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,Width,MB,WidthO} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB}()
+struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI} end
+const ReverseSplitNoPrimal = ReverseModeSplit{false, true, 0, true,DefaultABI}()
+const ReverseSplitWithPrimal = ReverseModeSplit{true, true, 0, true,DefaultABI}()
+@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, MBO, ABI}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,Width,MB,MBO,ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI}()
+@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, WidthO, MB, ABI}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,Width,MB,WidthO,ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI}()
 """
     struct Forward <: Mode
 
 Forward mode differentiation
 """
-struct ForwardMode <: Mode
+struct ForwardMode{ABI} <: Mode{ABI}
 end
-const Forward = ForwardMode()
+const Forward = ForwardMode{DefaultABI}()
 
 function autodiff end
 function autodiff_deferred end
