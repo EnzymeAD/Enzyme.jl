@@ -1,13 +1,16 @@
 module Enzyme
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
-export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth
+import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
+export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
 
-import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI
 
-import EnzymeCore: batch_size
-export batch_size
+import EnzymeCore: BatchDuplicatedFunc
+export BatchDuplicatedFunc
+
+import EnzymeCore: batch_size, get_func 
+export batch_size, get_func
 
 import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
 export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
@@ -88,6 +91,10 @@ end
 end
 
 @inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::Type{BatchDuplicated{T, N}}, args...) where {T,N} =
@@ -122,10 +129,10 @@ Limitations:
 
 `args` may be numbers, arrays, structs of numbers, structs of arrays and so
 on. Enzyme will only differentiate in respect to arguments that are wrapped
-in an [`Active`](@ref) (for immutable arguments like primitive types and
-structs thereof) or [`Duplicated`](@ref) (for mutable arguments like arrays,
-`Ref`s and structs thereof). Non-annotated arguments will automatically be
-treated as [`Const`](@ref).
+in an [`Active`](@ref) (for arguments whose derivative result must be returned
+rather than mutated in place, such as primitive types and structs thereof)
+or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
+thereof). Non-annotated arguments will automatically be treated as [`Const`](@ref).
 
 `Activity` is the Activity of the return value, it may be `Const` or `Active`.
 
@@ -167,7 +174,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
+@inline function autodiff(::ReverseMode{ReturnPrimal, RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RABI<:ABI}
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -178,25 +185,25 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = codegen_world_age(Core.Typeof(f.val), tt)
     
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f.val, tt)
         if !allocatedinline(rt) || rt isa Union
-            forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true))
+            forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args′...)
             tape = res[1]
             if ReturnPrimal
-                return (adjoint(args′..., tape)[1], res[2])
+                return (adjoint(f, args′..., tape)[1], res[2])
             else
                 return adjoint(f, args′..., tape)
             end
         end
-    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
+    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed || A <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     if A <: Active
         tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         rt = Core.Compiler.return_type(f.val, tt)
@@ -238,7 +245,8 @@ on. Enzyme will only differentiate in respect to arguments that are wrapped
 in a [`Duplicated`](@ref) or similar argument. Non-annotated arguments will
 automatically be treated as [`Const`](@ref). Unlike reverse mode in
 [`autodiff`](@ref), [`Active`](@ref) arguments are not allowed here, since
-all 
+all derivative results of immutable objects will be returned and should
+instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 
 `Activity` is the Activity of the return value, it may be:
 * `Const` if the return is not to be differentiated with respect to
@@ -246,6 +254,10 @@ all
   both the original value and the derivative return are desired
 * `DuplicatedNoNeed`, if the return is being differentiated with respect to
   and only the derivative return is desired.
+* `BatchDuplicated`, like `Duplicated`, but computing multiple derivatives
+  at once. All batch sizes must be the same for all arguments.
+* `BatchDuplicatedNoNeed`, like `DuplicatedNoNeed`, but computing multiple
+  derivatives at one. All batch sizes must be the same for all arguments.
 
 Example returning both original return and derivative:
 
@@ -277,7 +289,7 @@ f(x) = x*x
 (6.28,)
 ```
 """
-@inline function autodiff(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
+@inline function autodiff(::ForwardMode{RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI}
     args′  = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -310,10 +322,10 @@ f(x) = x*x
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
     
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = codegen_world_age(Core.Typeof(f.val), tt)
 
     thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal)
+                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
     thunk(f, args′...)
 end
 
@@ -332,7 +344,7 @@ code, as well as high-order differentiation.
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
         
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = codegen_world_age(Core.Typeof(f.val), tt)
     
     if A isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
@@ -350,7 +362,7 @@ code, as well as high-order differentiation.
     
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
     @assert primal_ptr === nothing
-    thunk = Compiler.CombinedAdjointThunk{FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
+    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -392,7 +404,7 @@ code, as well as high-order differentiation.
     end
     tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
     
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = codegen_world_age(Core.Typeof(f.val), tt)
     
     if RT isa UnionAll
         rt = Core.Compiler.return_type(f.val, tt)
@@ -416,7 +428,7 @@ code, as well as high-order differentiation.
     
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
-    thunk = Compiler.ForwardModeThunk{FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
     thunk(f, args′...)
 end
 
@@ -437,7 +449,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
 @inline function autodiff_deferred(mode::M, f::FA, args...) where {FA<:Annotation, M<:Mode}
     args′ = annotate(args...)
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f.val), tt)
+    world = codegen_world_age(Core.Typeof(f.val), tt)
     rt    = Core.Compiler.return_type(f.val, tt)
     if rt === Union{}
         error("return type is Union{}, giving up.")
@@ -489,7 +501,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...; parent_job=Val(nothing)) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI}
     # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
@@ -509,10 +521,73 @@ result, ∂v, ∂A
 
     tt    = Tuple{map(eltype, args)...}
         
-    world = GPUCompiler.codegen_world_age(eltype(FA), tt)
+    world = codegen_world_age(eltype(FA), tt)
     
     @assert ReturnShadow
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), parent_job)
+    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+end
+
+"""
+    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes...)
+
+Provide the thunk forward mode function for annotated function type
+ftype when called with args of type `argtypes`.
+
+`Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
+(or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and`BatchDuplicatedNoNeed`).
+
+The forward function will return the primal (if requested) and the shadow
+(or nothing if not a `Duplicated` variant).
+
+Example returning both original return and derivative:
+
+```jldoctest
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
+res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+
+# output
+
+(9.8596, 6.28)
+```
+
+Example returning just the derivative:
+
+```jldoctest
+a = 4.2
+b = [2.2, 3.3]; ∂f_∂b = zero(b)
+c = 55; d = 9
+
+f(x) = x*x
+forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated{Float64})
+∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+
+# output
+
+(6.28,)
+```
+"""
+@inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, RABI<:ABI}
+    # args′  = annotate(args...)
+    width = same_or_one(A, args...)
+    if width == 0
+        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+
+    tt    = Tuple{map(eltype, args)...}
+        
+    world = codegen_world_age(eltype(FA), tt)
+    
+    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
 end
 
 """
@@ -558,7 +633,8 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT}
+@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    @assert RABI == FFIABI
     # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
@@ -580,17 +656,17 @@ result, ∂v, ∂A
     TT = Tuple{args...}
    
     primal_tt = Tuple{map(eltype, args)...}
-    world = GPUCompiler.codegen_world_age(eltype(FA), primal_tt)
+    world = codegen_world_age(eltype(FA), primal_tt)
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal))
+    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     TapeType = Compiler.get_tape_type(typeof(nondef[1]))
     A2 = Compiler.return_type(typeof(nondef[1]))
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    AugT = Compiler.AugmentedForwardThunk{FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
+    AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
     @assert AugT == typeof(nondef[1])
-    AdjT = Compiler.AdjointThunk{FA, A2, TT, Val{width}, TapeType}
+    AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
     @assert AdjT == typeof(nondef[2])
     AugT(primal_ptr), AdjT(adjoint_ptr)
 end
@@ -618,16 +694,35 @@ end
 end
 
 @inline function markType(data::Ptr{Float32})
+@static if sizeof(Int) == sizeof(Int64)
     Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, data)
+else
+    Base.llvmcall(("declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_float(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float32}}, data)
+end
     nothing
 end
 
 @inline function markType(data::Ptr{Float64})
+@static if sizeof(Int) == sizeof(Int64)
     Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, data)
+else
+    Base.llvmcall(("declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_double(i8* %p) ret void }", "c"), Cvoid, Tuple{Ptr{Float64}}, data)
+end
     nothing
 end
 
-@inline function onehot(x, start=1, endl=length(x))
+@inline function onehot(x)
+    N = length(x)
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        res = similar(x)
+        for idx in 1:N
+            @inbounds res[idx] = (i == idx) ? 1.0 : 0.0
+        end
+        return res
+    end
+end
+@inline function onehot(x, start, endl)
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
         res = similar(x)
@@ -638,10 +733,22 @@ end
     end
 end
 
-@inline function onehot(x::NTuple{N, T}, start=1, endl=N) where {T, N}
+@inline function onehot(::Type{NTuple{N, T}}) where {T, N}
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        ntuple(Val(N)) do idx
+            Base.@_inline_meta
+            return (i == idx) ? 1.0 : 0.0
+        end
+    end
+end
+@inline function onehot(x::NTuple{N, T}) where {T, N}
+    onehot(NTuple{N, T})
+end
+@inline function onehot(x::NTuple{N, T}, start, endl) where {T, N}
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
-        ntuple(N) do idx
+        ntuple(Val(N)) do idx
             Base.@_inline_meta
             return (i + start - 1 == idx) ? 1.0 : 0.0
         end
@@ -848,7 +955,8 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
  0.0  1.0
 ```
 """
-@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RABI}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, ReturnPrimal, RABI<:ABI}
+    @assert !ReturnPrimal
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -857,12 +965,12 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
+    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
     World = Val(nothing)
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween)
+    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -870,7 +978,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween)
+        primal2, adjoint2 = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     end
 
     tmp = ntuple(num) do i
@@ -893,14 +1001,15 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
-@inline function jacobian(::ReverseMode, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RABI}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,ReturnPrimal,RABI<:ABI}
+    @assert !ReturnPrimal
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
-    world = GPUCompiler.codegen_world_age(Core.Typeof(f), tt)
+    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween)
+    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)

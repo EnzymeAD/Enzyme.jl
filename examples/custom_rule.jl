@@ -130,7 +130,7 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNee
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
     if RT <: Const
-        return nothing
+        return sum(y.val)
     elseif RT <: DuplicatedNoNeed
         return dret 
     else
@@ -202,9 +202,9 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
     ## accumulate dret into x's shadow. don't assign!
     x.dval .+= 2 .* xval .* dret.val 
     ## also accumulate any derivative in y's shadow into x's shadow. 
-    y.dval .+= 2 .* xval .* y.dval 
+    x.dval .+= 2 .* xval .* y.dval
     y.dval .= 0
-    return ()
+    return (nothing, nothing)
 end
 
 # Let's make a few observations about our reverse rule:

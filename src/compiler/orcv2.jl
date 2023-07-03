@@ -5,7 +5,8 @@ import LLVM:TargetMachine
 
 import GPUCompiler
 import ..Compiler
-import ..Compiler: API
+import ..Compiler: API, cpu_name, cpu_features
+
 
 export get_trampoline
 
@@ -16,13 +17,13 @@ struct CompilerInstance
 end
 
 function LLVM.dispose(ci::CompilerInstance)
-    dispose(ci.jit)
-    if ci.lctm !== nothing
-        dispose(ci.lctm)
-    end
     if ci.ism !== nothing
         dispose(ci.ism)
     end
+    if ci.lctm !== nothing
+        dispose(ci.lctm)
+    end
+    dispose(ci.jit)
     return nothing
 end
 
@@ -59,17 +60,25 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tempTM = LLVM.JITTargetMachine(;optlevel=optlevel)
+    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    tempTM = LLVM.JITTargetMachine(;optlevel)
+    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
 
-    if haskey(ENV, "ENABLE_GDBLISTENER")
+    gdb = haskey(ENV, "ENABLE_GDBLISTENER")
+    perf = haskey(ENV, "ENABLE_JITPROFILING")
+    if gdb || perf
         ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
             oll = ObjectLinkingLayer(es)
-            register!(oll, GDBRegistrationListener())
+            if gdb
+                register!(oll, GDBRegistrationListener())
+            end
+            if perf
+                register!(oll, IntelJITEventListener())
+                register!(oll, PerfJITEventListener())
+            end
             return oll
         end
 

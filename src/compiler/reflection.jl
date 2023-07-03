@@ -1,9 +1,9 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int64=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, kwargs...)
+        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, ABI=DefaultABI, kwargs...)
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
-        world = GPUCompiler.codegen_world_age(Core.Typeof(func), tt)
+        world = codegen_world_age(Core.Typeof(func), tt)
     end
     
     primal = fspec(Core.Typeof(func), types, world)
@@ -15,7 +15,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType, ABI)
     return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 

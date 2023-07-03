@@ -5,7 +5,7 @@ import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob
 import ..Compiler
-import ..Compiler: API
+import ..Compiler: API, cpu_name, cpu_features
 
 export get_trampoline
 
@@ -25,7 +25,7 @@ function __init__()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tm[] = LLVM.JITTargetMachine(optlevel=optlevel)
+    tm[] = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tm[], true)
 
     jit[] = OrcJIT(tm[]) # takes ownership of tm
@@ -78,7 +78,7 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
 
     cc_adjoint, cc_primal = ccs
     try
-        thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))::Compiler.Thunk
+        thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))
         cc_adjoint.addr = thunk.adjoint
         if cc_primal !== nothing
             cc_primal.addr  = thunk.primal

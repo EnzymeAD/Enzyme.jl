@@ -51,7 +51,10 @@ end
   VT_Both = 3
 )
 
-EnzymeBitcodeReplacement(mod) = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef,), mod)
+function EnzymeBitcodeReplacement(mod, NotToReplace) 
+    res = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef, Ptr{Cstring}, Csize_t), mod, NotToReplace, length(NotToReplace))
+    return res 
+end
 
 struct EnzymeTypeTree end
 const CTypeTreeRef = Ptr{EnzymeTypeTree}
@@ -70,6 +73,7 @@ function EnzymeCheckedMergeTypeTree(dst, src)
 end
 EnzymeTypeTreeOnlyEq(dst, x) = ccall((:EnzymeTypeTreeOnlyEq, libEnzyme), Cvoid, (CTypeTreeRef, Int64), dst, x)
 EnzymeTypeTreeLookupEq(dst, x, dl) = ccall((:EnzymeTypeTreeLookupEq, libEnzyme), Cvoid, (CTypeTreeRef, Int64, Cstring), dst, x, dl)
+EnzymeTypeTreeCanonicalizeInPlace(dst, x, dl) = ccall((:EnzymeTypeTreeCanonicalizeInPlace, libEnzyme), Cvoid, (CTypeTreeRef, Int64, Cstring), dst, x, dl)
 EnzymeTypeTreeData0Eq(dst) = ccall((:EnzymeTypeTreeData0Eq, libEnzyme), Cvoid, (CTypeTreeRef,), dst)
 EnzymeTypeTreeInner0(dst) = ccall((:EnzymeTypeTreeInner0, libEnzyme), CConcreteType, (CTypeTreeRef,), dst)
 EnzymeTypeTreeShiftIndiciesEq(dst, dl, offset, maxSize, addOffset) =
@@ -117,15 +121,16 @@ end
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, dretUsed, mode, width, additionalArg, typeInfo,
+                                       returnValue, dretUsed, mode, width, additionalArg, 
+                                       forceAnonymousTape, typeInfo,
                                        uncacheable_args, augmented, atomicAdd)
     freeMemory = true
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, UInt8, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, UInt8, LLVMTypeRef, UInt8, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8),
         logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, width, freeMemory, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, width, freeMemory, additionalArg, forceAnonymousTape, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd)
 end
 
@@ -199,8 +204,12 @@ const CustomReversePass = Ptr{Cvoid}
 EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomAugmentedForwardPass, CustomReversePass), name, fwdhandle, revhandle)
 EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall((:EnzymeRegisterFwdCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass), name, fwdhandle)
 
+EnzymeSetCalledFunction(ci::LLVM.CallInst, fn::LLVM.Function, toremove) = ccall((:EnzymeSetCalledFunction, libEnzyme), Cvoid, (LLVMValueRef, LLVMValueRef, Ptr{Int64}, Int64), ci, fn, toremove, length(toremove))
+EnzymeCloneFunctionWithoutReturnOrArgs(fn::LLVM.Function, keepret, args) = ccall((:EnzymeCloneFunctionWithoutReturnOrArgs, libEnzyme), LLVMValueRef, (LLVMValueRef,UInt8,Ptr{Int64}, Int64), fn, keepret, args, length(args))
 EnzymeGetShadowType(width, T) = ccall((:EnzymeGetShadowType, libEnzyme), LLVMTypeRef, (UInt64,LLVMTypeRef), width, T)
 
+EnzymeGradientUtilsReplaceAWithB(gutils, a, b) = ccall((:EnzymeGradientUtilsReplaceAWithB, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef, LLVMValueRef), gutils, a, b)
+EnzymeGradientUtilsErase(gutils, a) = ccall((:EnzymeGradientUtilsErase, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef), gutils, a)
 EnzymeGradientUtilsGetMode(gutils) = ccall((:EnzymeGradientUtilsGetMode, libEnzyme), CDerivativeMode, (EnzymeGradientUtilsRef,), gutils)
 EnzymeGradientUtilsGetWidth(gutils) = ccall((:EnzymeGradientUtilsGetWidth, libEnzyme), UInt64, (EnzymeGradientUtilsRef,), gutils)
 EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall((:EnzymeGradientUtilsNewFromOriginal, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
@@ -209,6 +218,10 @@ EnzymeGradientUtilsLookup(gutils, val, B) = ccall((:EnzymeGradientUtilsLookup, l
 EnzymeGradientUtilsInvertPointer(gutils, val, B) = ccall((:EnzymeGradientUtilsInvertPointer, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
 EnzymeGradientUtilsDiffe(gutils, val, B) = ccall((:EnzymeGradientUtilsDiffe, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
 EnzymeGradientUtilsAddToDiffe(gutils, val, diffe, B, T) = ccall((:EnzymeGradientUtilsAddToDiffe, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMTypeRef), gutils, val, diffe, B, T)
+function EnzymeGradientUtilsAddToInvertedPointerDiffeTT(gutils, orig, origVal, vd, size, origptr, prediff, B, align, premask) 
+    ccall((:EnzymeGradientUtilsAddToInvertedPointerDiffeTT, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef, CTypeTreeRef, Cuint, LLVMValueRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, Cuint, LLVMValueRef), gutils, orig, origVal, vd, size, origptr, prediff, B, align, premask)
+end
+
 EnzymeGradientUtilsSetDiffe(gutils, val, diffe, B) = ccall((:EnzymeGradientUtilsSetDiffe, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, diffe, B)
 EnzymeGradientUtilsIsConstantValue(gutils, val) = ccall((:EnzymeGradientUtilsIsConstantValue, libEnzyme), UInt8, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
 EnzymeGradientUtilsIsConstantInstruction(gutils, val) = ccall((:EnzymeGradientUtilsIsConstantInstruction, libEnzyme), UInt8, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
@@ -343,11 +356,56 @@ function strictAliasing!(val)
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
-function runtimeActivity!(val)
+function fast_math!(val)
+    ptr = cglobal((:EnzymeFastMath, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function strong_zero!(val)
+    ptr = cglobal((:EnzymeStrongZero, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+"""
+    runtimeActivity!(val::Bool)
+
+Enzyme runs an activity analysis which deduces which values, instructions, etc
+are necessary to be differentiated and therefore involved in the differentiation
+procedure. This runs at compile time. However, there may be implementation flaws
+in this analysis that means that Enzyme cannot deduce that an inactive (const)
+value is actually const. Alternatively, there may be some data which is conditionally
+active, depending on which runtime branch is taken. In these cases Enzyme conservatively
+presumes the value is active.
+
+However, in certain cases, an insufficiently aggressive activity analysis may result
+in derivative errors -- for example by mistakenly using the primal (const) argument
+and mistaking it for the duplicated shadow. As a result this may result in incorrect
+results, or accidental updates to the primal.
+
+This flag enables runntime activity which tells all load/stores to check at runtime
+whether the value they are updating is indeed active (in addition to the compile-time
+activity analysis). This will remedy these such errors, but at a performance penalty
+of performing such checks.
+
+It is on the Enzyme roadmap to add a PotentiallyDuplicated style activity, in addition
+to the current Const and Duplicated styles that will disable the need for this,
+which does  not require the check when a value is guaranteed active, but still supports
+runtime-based activity information.
+
+This function takes an argument to set the runtime activity value, true means it is on,
+and false means off. By default it is off.
+"""
+function runtimeActivity!(val::Bool)
     ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+"""
+    runtimeActivity()
+
+Gets the current value of the runtime activity. See [`runtimeActivity!`](@ref) for
+more information.
+"""
 function runtimeActivity()
     ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
     return EnzymeGetCLBool(ptr) != 0
@@ -378,7 +436,8 @@ end
   ET_NoType = 3,
   ET_IllegalFirstPointer = 4,
   ET_InternalError = 5,
-  ET_TypeDepthExceeded = 6
+  ET_TypeDepthExceeded = 6,
+  ET_MixedActivityError = 7,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
@@ -391,6 +450,10 @@ end
 
 function EnzymeSetHandler(handler)
     ptr = cglobal((:CustomErrorHandler, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeSetSanitizeDerivatives(handler)
+    ptr = cglobal((:EnzymeSanitizeDerivatives, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
 function EnzymeSetRuntimeInactiveError(handler)
@@ -410,7 +473,10 @@ function EnzymeSetPostCacheStore(handler)
     ptr = cglobal((:EnzymePostCacheStore, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
-
+function EnzymeSetUndefinedValueForType(handler)
+    ptr = cglobal((:EnzymeUndefinedValueForType, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
 function EnzymeSetDefaultTapeType(handler)
     ptr = cglobal((:EnzymeDefaultTapeType, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
@@ -453,6 +519,10 @@ function moveBefore(i1, i2, BR)
     ccall((:EnzymeMoveBefore, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef), i1, i2, BR)
 end
 
+function EnzymeCloneFunctionDISubprogramInto(i1, i2)
+    ccall((:EnzymeCloneFunctionDISubprogramInto, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef), i1, i2)
+end
+
 function EnzymeCopyMetadata(i1, i2)
     ccall((:EnzymeCopyMetadata, libEnzyme),Cvoid,(LLVM.API.LLVMValueRef,LLVM.API.LLVMValueRef), i1, i2)
 end
@@ -476,5 +546,23 @@ end
 function EnzymeReplaceFunctionImplementation(mod)
     ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
+
+EnzymeAllocaType(al) = LLVM.LLVMType(ccall((:EnzymeAllocaType, libEnzyme), LLVM.API.LLVMTypeRef, (LLVM.API.LLVMValueRef,), al))
+
+EnzymeAttributeKnownFunctions(f) = ccall((:EnzymeAttributeKnownFunctions, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
+
+EnzymeAnonymousAliasScopeDomain(str, ctx) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScopeDomain, libEnzyme), LLVM.API.LLVMMetadataRef, (Cstring,LLVMContextRef), str, ctx))
+EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScope, libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,Cstring), dom.ref, str))
+EnzymeFixupJuliaCallingConvention(f) = ccall((:EnzymeFixupJuliaCallingConvention, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
+
+e_extract_value!(builder, AggVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildExtractValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, Index, length(Index), Name))
+  end
+
+e_insert_value!(builder, AggVal, EltVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildInsertValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, EltVal, Index, length(Index), Name))
+  end
 
 end

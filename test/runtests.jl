@@ -13,6 +13,7 @@ using Enzyme
 using Test
 using FiniteDifferences
 using ForwardDiff
+using Aqua
 using Statistics
 using LinearAlgebra
 
@@ -39,6 +40,30 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
     end
 end
 
+function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
+    dx_fd = map(eachindex(x)) do i
+        fdm(x[i]) do xi
+            x2 = copy(x)
+            x2[i] = xi
+            f(x2)
+        end
+    end
+
+    dx = zero(x)
+    autodiff(Reverse, f, Active, Duplicated(x, dx))
+    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
+
+    dx_fwd = map(eachindex(x)) do i
+        dx = zero(x)
+        dx[i] = 1
+        ∂x = autodiff(Forward, f, Duplicated(x, dx))
+        isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
+    end
+    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
+end
+
+Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
+
 include("abi.jl")
 include("typetree.jl")
 
@@ -63,11 +88,14 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
-    world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
+    @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
+    world = codegen_world_age(typeof(f0), Tuple{Float64})
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -76,7 +104,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -86,17 +114,17 @@ end
     end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
-    world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
+    world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(mul2), d)
-    @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Float64, Float64}}
+    @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    world = GPUCompiler.codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -129,6 +157,9 @@ end
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
 
+make3() = (1.0, 2.0, 3.0)
+
+
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
@@ -137,6 +168,14 @@ end
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    tup = autodiff(Forward, f2, BatchDuplicatedFunc{Float64, 3, typeof(make3)}(1.0))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
     @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
@@ -169,6 +208,8 @@ end
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    
+    @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
 end
@@ -380,6 +421,21 @@ end
     @test autodiff(Forward, expor, Duplicated(0.42, 1.0))[1] ≈ 4.0
 end
 
+@testset "Reshape Activity" begin
+    function f(x, bias)
+        mout = x + @inbounds vec(bias)[1]
+       sin(mout)
+    end
+
+    x  = [2.0,]
+
+    bias = Float32[0.0;;;]
+    res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
+    
+    @test bias[1][1] ≈ 0.0
+    @test res[1][1] ≈ cos(x[1])
+end
+
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2
         a = Array{Float64, 1}(undef, 10)
@@ -494,6 +550,10 @@ end
 
 	weights = [0.2]
 	dweights = [0.0]
+    # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
+    # doesn't use any of the const data values, but now that we error for activity confusion, we need to
+    # mark runtimeActivity to let this pass
+    Enzyme.API.runtimeActivity!(true)
 	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
@@ -513,6 +573,7 @@ end
     dweights = [0.0, 0.0]
 
     Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.API.runtimeActivity!(false)
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
 end
@@ -654,7 +715,10 @@ function dxdt_pred(x)
 end
 
 @testset "AbstractType calling convention" begin
+    # TODO get rid of runtime activity
+    Enzyme.API.runtimeActivity!(true)
     @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
+    Enzyme.API.runtimeActivity!(false)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
@@ -672,24 +736,24 @@ end
 @testset "DiffTest" begin
     include("DiffTests.jl")
 
-    n = rand()
-    x, y = rand(5, 5), rand(26)
-    A, B = rand(5, 5), rand(5, 5)
+    n = 1 + rand()
+    x, y = 1 .+ rand(5, 5), 1 .+ rand(5)
+    A, B = 1 .+ rand(5, 5), 1 .+ rand(5, 5)
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
         test_scalar(f, n)
     end
 
+    @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, y; rtol=1e-6, atol=1e-6)
+    end
+
+    @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
+        test_matrix_to_number(f, x; rtol=1e-6, atol=1e-6)
+    end
+
     # TODO(vchuravy/wsmoses): Enable these tests
-    # for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
-    #     @test isa(f(y), Number)
-    # end
-
-    # for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
-    #     @test isa(f(x), Number)
-    # end
-
     # for f in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS
     #     @test isa(f(A, B, x), Number)
     # end
@@ -786,7 +850,7 @@ end
 @testset "No speculation" begin
 	mutable struct SpecFoo
 
-		iters::Int64
+		iters::Int
 		a::Float64
 		b::Vector{Float64}
 
@@ -997,6 +1061,11 @@ end
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
 end
 
+@testset "Mismatched return" begin
+    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
+end
+
 @testset "GCPreserve" begin
     function f(x, y)
         GC.@preserve x y begin
@@ -1177,7 +1246,7 @@ typeunknownvec = Float64[]
 
     struct AGriddedInterpolation{K<:Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
         knots::K
-        v::Int64
+        v::Int
     end
 
     function AGriddedInterpolation(A::AbstractArray{Float64, 1})
@@ -1257,6 +1326,13 @@ end
 	@test dF ≈ [3.0, 2.0]
 
     @test 31.0 ≈ autodiff(Forward, copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
+
+    function sh(x)
+        Base.sizehint!(x, length(x))
+        nothing
+    end
+
+    autodiff(Reverse, sh, Duplicated([1.0], [0.0]))
 end
 
 @testset "No inference" begin
@@ -1360,45 +1436,96 @@ end
 end
 
 @testset "GetField" begin
-    # TODO
-    # mutable struct MyType
-    #    x::Float64
-    # end
+    mutable struct MyType
+       x::Float64
+    end
 
-    # function gf(v::MyType, fld)
-    #    x = getfield(v, fld)
-    #    x = x::Float64
-    #    2 * x
-    # end
+    getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 
-    # function gf2(v::MyType, fld, fld2)
-    #    x = getfield(v, fld)
-    #    y = getfield(v, fld2)
-    #    x + y
-    # end
+    function gf(v::MyType, fld::Symbol)
+       x = getfield(v, fld)
+       x = x::Float64
+       2 * x
+    end
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    function gf(v::MyType, fld::Integer)
+       x = getfield_idx(v, fld)
+       x = x::Float64
+       2 * x
+    end
 
-    # Enzyme.autodiff(gf, Active, Duplicated(x, dx), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
+    function gf2(v::MyType, fld::Integer, fld2::Integer)
+       x = getfield_idx(v, fld)
+       y = getfield_idx(v, fld2)
+       x + y
+    end
 
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
+    function gf2(v::MyType, fld::Symbol, fld2::Symbol)
+       x = getfield(v, fld)
+       y = getfield(v, fld2)
+       x + y
+    end
 
-    # Enzyme.autodiff(gf2, Active, Duplicated(x, dx), Const(:x), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    #
-    # x = MyType(3.0)
-    # dx = MyType(0.0)
-    # dx2 = MyType(0.0)
+    mx = MyType(3.0)
+    dx = MyType(0.0)
 
-    # Enzyme.autodiff(gf, Active, BatchDuplicated(x, dx, dx2), Const(:x))
-    # @test x.x ≈ 3.0
-    # @test dx.x ≈ 2.0
-    # @test dx2.x ≈ 2.0
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf, Active, Duplicated(mx, dx), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(:x), Const(:x))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, gf2, Active, Duplicated(mx, dx), Const(0), Const(0))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+
+    function forbatch(v, fld::Symbol, out)
+        x = getfield(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+    function forbatch(v, fld::Integer, out)
+        x = getfield_idx(v, fld)
+        x = x::Float64
+        out[] = 2 * x
+        nothing
+    end
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(:x), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
+
+    mx = MyType(3.0)
+    dx = MyType(0.0)
+    dx2 = MyType(0.0)
+
+    Enzyme.autodiff(Reverse, forbatch, Const, BatchDuplicated(mx, (dx, dx2)), Const(0), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.14))))
+    @test mx.x ≈ 3.0
+    @test dx.x ≈ 2.0
+    @test dx2.x ≈ 6.28
 
     mutable struct MyType2
        x::Float64
@@ -1447,8 +1574,11 @@ end
 
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond,x)*x
-    @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0))
-
+    if sizeof(Int) == sizeof(Int64)
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0))
+    else
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0f0))
+    end
     # TODO: Add test for NoShadowException
 end
 

@@ -1,10 +1,13 @@
-function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
     orig = LLVM.Instruction(OrigCI)
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
+        return 1
+    end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
     B = LLVM.IRBuilder(B)
     emit_error("fast pfor not implemented");
-    return nothing
+    return 0
 end
 
 function runtime_pmap_augfwd(count, ::Type{ThunkTy}, ::Val{AnyJL}, forward, args...) where {ThunkTy, AnyJL}
@@ -114,18 +117,14 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     ctx = LLVM.context(orig)
 
     llvmfn = LLVM.called_value(orig)
-    mi = nothing
+    mi, _ = enzyme_custom_extract_mi(orig)
     adjointnm = nothing
     augfwdnm = nothing
     TapeType = nothing
     for fattr in collect(function_attributes(llvmfn))
         if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-            end
             if kind(fattr) == "enzymejl_tapetype"
-                ptr = reinterpret(Ptr{Cvoid}, parse(Int, LLVM.value(fattr)))
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
                 TapeType = Base.unsafe_pointer_to_objref(ptr)
             end
             if kind(fattr) == "enzymejl_augforward"
@@ -163,7 +162,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         funcOverwritten = true
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
+                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType, FFIABI)
         ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
             
         jctx = ctx
@@ -180,14 +179,14 @@ end
         attributes = function_attributes(llvmfn)
         push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
         push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(Int, unsafe_to_pointer(TapeType))); ctx))
+        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType))); ctx))
     end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
 
@@ -282,8 +281,11 @@ end
     return res
 end
 
-function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::Cvoid
+function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
     orig = LLVM.Instruction(OrigCI)
+    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
+        return 1
+    end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
@@ -294,12 +296,13 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     if normal !== nothing
         unsafe_store!(normalR, C_NULL)
     else
-        LLVM.API.LLVMInstructionEraseFromParent(LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig)))
+        ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
 
-    return nothing
+    return 0
 end
 
 function pmap_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid

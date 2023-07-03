@@ -18,10 +18,10 @@ jobs:
           - '1.6'
           - '1.7'
           - '1.8'
-          - '~1.9.0-0'
+          - '1.9'
           - 'nightly'
         os:
-          - ubuntu-latest
+          - ubuntu-20.04
           - macOS-latest
           - windows-latest
         arch:
@@ -33,20 +33,42 @@ jobs:
           - os: windows-latest
             arch: x64
             libEnzyme: local
-        # include:
-          # special test with LLVM assertions enabled
-          # TODO: enable this across all versions
-          #       (needs LLVM.jl fixes, and julia-actions/setup-julia support)
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.7'
-          #   assertions: true
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.8'
-          #   assertions: true
+        include:
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.6'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.9'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.9'
+            assertions: true
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
@@ -54,16 +76,18 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - name: Download Julia with assertions
+      - uses: actions/checkout@v3
         if: ${{ matrix.assertions }}
-        env:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+        with:
+          repository: 'JuliaLang/julia'
+          ref: release-${{ matrix.version }}
+          path: 'julia'
+      - name: Compile Julia
+        if: ${{ matrix.assertions }}
         run: |
-          wget https://julialangnightlies.s3.amazonaws.com/assert_bin/linux/$arch/$version/julia-latest-linux64.tar.gz
-          tar -xvzf julia-latest-linux64.tar.gz
-          rm -rf julia-latest-linux64.tar.gz
-          echo $PWD/julia-*/bin >> $GITHUB_PATH
+          sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
+          make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
+          echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: actions/cache@v1
         env:
           cache-name: cache-artifacts
