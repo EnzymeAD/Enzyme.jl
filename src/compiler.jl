@@ -7880,67 +7880,79 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
                 return ty
             end
-            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, idxs::Vector{Cuint}=[])::LLVM.Value
-                ctype = rectype(val, idxs)
-
+            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, lidxs::Vector{Cuint}, ridxs::Vector{Cuint})::LLVM.Value
+                ctype = rectype(val, lidxs)
                 if ctype == tape
-                    if length(idxs) == 0
-                        return val
+                    if length(lidxs) != 0
+                        val = API.e_extract_value!(builder, val, lidxs)
                     end
-                    return API.e_insert_value!(builder, prev, 
-                                API.e_extract_value!(builder, val, idxs), idxs)
+                    if length(ridxs) == 0
+                        return val
+                    else
+                        return API.e_insert_value!(builder, prev, val, ridxs)
+                    end
                 end
 
                 if isa(tape, LLVM.StructType)
                     if isa(ctype, LLVM.ArrayType)
                         @assert length(ctype) == length(elements(tape))
                         for (i, ty) in enumerate(elements(tape))
-                            n = copy(idxs)
-                            push!(n, i-1)
-                            prev = typefix(val, ty, prev, n)
+                            ln = copy(lidxs)
+                            push!(ln, i-1)
+                            rn = copy(ridxs)
+                            push!(rn, i-1)
+                            prev = typefix(val, ty, prev, ln, rn)
                         end
                         return prev
                     end
                     if isa(ctype, LLVM.StructType)
                         @assert length(elements(ctype)) == length(elements(tape))
                         for (i, ty) in enumerate(elements(tape))
-                            n = copy(idxs)
-                            push!(n, i-1)
-                            prev = typefix(val, ty, prev, n)
+                            ln = copy(lidxs)
+                            push!(ln, i-1)
+                            rn = copy(ridxs)
+                            push!(rn, i-1)
+                            prev = typefix(val, ty, prev, ln, rn)
                         end
                         return prev
                     end
                 end
 
                 if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
-                    if length(idxs) != 0
-                        val = API.e_extract_value!(builder, val, idxs)
+                    if length(lidxs) != 0
+                        val = API.e_extract_value!(builder, val, lidxs)
                     end
                     val = trunc!(builder, val, tape)
-                    return if length(idxs) != 0
-                        API.e_insert_value!(builder, prev, val, idxs)
+                    return if length(ridxs) != 0
+                        API.e_insert_value!(builder, prev, val, ridxs)
                     else
                         val
                     end
                 end
                 if isa(tape, LLVM.PointerType) && isa(ctype, LLVM.PointerType) && LLVM.addrspace(tape) == LLVM.addrspace(ctype)
-                    if length(idxs) != 0
-                        val = API.e_extract_value!(builder, val, idxs)
+                    if length(lidxs) != 0
+                        val = API.e_extract_value!(builder, val, lidxs)
                     end
                     val = pointercast!(builder, val, tape)
-                    return if length(idxs) != 0
-                        API.e_insert_value!(builder, prev, val, idxs)
+                    return if length(ridxs) != 0
+                        API.e_insert_value!(builder, prev, val, ridxs)
                     else
                         val
                     end
                 end
-                @show ctype, tape, val, prev
+                if isa(ctype, LLVM.ArrayType) && length(ctype) == 1 && eltype(ctype) == tape
+                    lhs_n = copy(lidxs)
+                    push!(lhs_n, 0)
+                    return typefix(val, tape, prev, lhs_n, ridxs)
+                end
+                @show ctype, tape, val, prev, idxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); ctx, allow_boxed=true)
                 @assert false
             end
 
             # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
             # and that Bool -> i8, not i1
-            tparm = typefix(params[i], tape, LLVM.UndefValue(tape), Cuint[])
+            tparm = params[i]
+            tparm = typefix(tparm, tape, LLVM.UndefValue(tape), Cuint[], Cuint[])
             push!(realparms, tparm)
             i += 1
         end
