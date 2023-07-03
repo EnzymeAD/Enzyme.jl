@@ -9418,13 +9418,13 @@ end
         if !returnPrimal && CC <: AugmentedForwardThunk
             push!(sret_types, Nothing)
         end
-        if rettype <: Const
-        elseif rettype <: Duplicated || rettype <: DuplicatedNoNeed
+        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
             push!(sret_types, jlRT)
         elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
             push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
         elseif CC <: AugmentedForwardThunk
             push!(sret_types, Nothing)
+        elseif rettype <: Const
         else
             @show rettype, CC
             @assert false
