@@ -7,7 +7,7 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, Bat
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
-import EnzymeCore: EnzymeRules, ABI, FFIABI, InlineABI, DefaultABI
+import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
@@ -9514,9 +9514,9 @@ end
 ##
 
 function _link(job, (mod, adjoint_name, primal_name, ctx, TapeType))
-    if job.config.params.ABI <: InlineABI
-        return CompileResult(Val((Symbol(mod), Symbol(adjoint_name))), Val((Symbol(mod), Symbol(primal_name))), TapeType)
-    end
+    # if job.config.params.ABI <: InlineABI
+    #     return CompileResult(Val((Symbol(mod), Symbol(adjoint_name))), Val((Symbol(mod), Symbol(primal_name))), TapeType)
+    # end
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
@@ -9568,9 +9568,8 @@ function _thunk(job, ctx=nothing, postopt=true)
     end
     
     # Run post optimization pipeline
-    if postopt && !(job.config.params.ABI <: InlineABI)
+    if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
-        @show mod
     end
     return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
 end
