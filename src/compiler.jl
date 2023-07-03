@@ -7891,23 +7891,25 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                                 API.e_extract_value!(builder, val, idxs), idxs)
                 end
 
-                if isa(ctype, LLVM.ArrayType)
-                    @assert length(ctype) == length(elements(tape))
-                    for (i, ty) in enumerate(elements(tape))
-                        n = copy(idxs)
-                        push!(n, i-1)
-                        prev = typefix(val, ty, prev, n)
+                if isa(tape, LLVM.StructType)
+                    if isa(ctype, LLVM.ArrayType)
+                        @assert length(ctype) == length(elements(tape))
+                        for (i, ty) in enumerate(elements(tape))
+                            n = copy(idxs)
+                            push!(n, i-1)
+                            prev = typefix(val, ty, prev, n)
+                        end
+                        return prev
                     end
-                    return prev
-                end
-                if isa(ctype, LLVM.StructType)
-                    @assert length(elements(ctype)) == length(elements(tape))
-                    for (i, ty) in enumerate(elements(tape))
-                        n = copy(idxs)
-                        push!(n, i-1)
-                        prev = typefix(val, ty, prev, n)
+                    if isa(ctype, LLVM.StructType)
+                        @assert length(elements(ctype)) == length(elements(tape))
+                        for (i, ty) in enumerate(elements(tape))
+                            n = copy(idxs)
+                            push!(n, i-1)
+                            prev = typefix(val, ty, prev, n)
+                        end
+                        return prev
                     end
-                    return prev
                 end
 
                 if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
