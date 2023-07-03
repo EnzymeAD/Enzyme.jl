@@ -5174,165 +5174,6 @@ function idtablerehash_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValu
     return nothing
 end
 
-function gcpreserve_begin_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-
-    ops = collect(operands(orig))[1:end-1]
-
-    to_preserve = LLVM.Value[]
-
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    B = LLVM.IRBuilder(B)
-    for op in ops 
-        needsShadowP = Ref{UInt8}(0)
-        needsPrimalP = Ref{UInt8}(0)
-
-        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
-        needsPrimal = needsPrimalP[] != 0
-
-        if needsPrimal
-            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-            push!(to_preserve, val)
-        end
-
-        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
-
-        if active
-            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
-
-            if width == 1
-                push!(to_preserve, shadowin)
-            else
-                for idx in 1:width
-                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
-                end
-            end
-        end
-    end
-
-    token = emit_gc_preserve_begin(B, to_preserve)
-    unsafe_store!(normalR, token.ref)
-
-    return 0
-end
-
-function gcpreserve_begin_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-
-    ops = collect(operands(orig))[1:end-1]
-
-    to_preserve = LLVM.Value[]
-
-    width = API.EnzymeGradientUtilsGetWidth(gutils)
-    B = LLVM.IRBuilder(B)
-    for op in ops
-        needsShadowP = Ref{UInt8}(0)
-        needsPrimalP = Ref{UInt8}(0)
-
-        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
-        needsPrimal = needsPrimalP[] != 0
-
-        if needsPrimal
-            val = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, op))
-            push!(to_preserve, val)
-        end
-
-        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
-
-        if active
-            shadowin = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, op, B))
-
-            if width == 1
-                push!(to_preserve, shadowin)
-            else
-                for idx in 1:width
-                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
-                end
-            end
-        end
-    end
-
-    token = emit_gc_preserve_begin(B, to_preserve)
-    unsafe_store!(normalR, token.ref)
-
-    return 0
-end
-
-const GCToks = Dict{LLVM.Instruction, LLVM.Instruction}()
-
-function gcpreserve_begin_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    builder = LLVM.IRBuilder(B)
-    orig = LLVM.Instruction(OrigCI)
-    if haskey(GCToks, orig)
-        token = GCToks[orig]
-        delete!(GCToks, orig)
-    else
-        f   = LLVM.parent(orig)
-        mod = LLVM.parent(f)
-        ctx = LLVM.context(mod)
-
-
-        token = emit_gc_preserve_begin(LLVM.IRBuilder(B))
-        # token = LLVM.phi!(builder, LLVM.TokenType(ctx), "placeholder")
-        GCToks[orig] = token
-    end
-    emit_gc_preserve_end(builder, token)
-    return nothing
-end
-
-function gcpreserve_end_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    return 0
-end
-
-function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    origPres = operands(orig)[1]
-
-    ops = collect(operands(origPres))[1:end-1]
-
-    to_preserve = LLVM.Value[]
-
-    for op in ops 
-        needsShadowP = Ref{UInt8}(0)
-        needsPrimalP = Ref{UInt8}(0)
-
-        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
-        needsPrimal = needsPrimalP[] != 0
-
-        if needsPrimal
-            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, op), B))
-            push!(to_preserve, val)
-        end
-
-        active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
-
-        if active
-            shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B))
-
-            if width == 1
-                push!(to_preserve, shadowin)
-            else
-                for idx in 1:width
-                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
-                end
-            end
-        end
-    end
-
-    token = emit_gc_preserve_begin(LLVM.IRBuilder(B), to_preserve)
-
-    if haskey(GCToks, origPres)
-        placeHolder = GCToks[origPres]
-        LLVM.replace_uses!(placeHolder, token)
-        delete!(GCToks, origPres)
-        API.EnzymeGradientUtilsErase(gutils, placeHolder)
-    else
-        GCToks[origPres] = token
-    end
-
-    return nothing
-end
-
 function jl_array_grow_end_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
     orig = LLVM.Instruction(OrigCI)
     origops = collect(operands(orig))
@@ -6871,17 +6712,6 @@ function __init__()
         @cfunction(arrayreshape_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
         @cfunction(arrayreshape_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
         @cfunction(arrayreshape_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-    )
-    register_handler!(
-        ("llvm.julia.gc_preserve_begin",),
-        @cfunction(gcpreserve_begin_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-        @cfunction(gcpreserve_begin_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
-        @cfunction(gcpreserve_begin_fwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-    )
-    register_handler!(
-        ("llvm.julia.gc_preserve_end",),
-        @cfunction(gcpreserve_end_augfwd, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})),
-        @cfunction(gcpreserve_end_rev, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)),
     )
     register_handler!(
         ("jl_f_setfield","ijl_f_setfield"),
@@ -9731,15 +9561,16 @@ function _thunk(job, ctx=nothing, postopt=true)
     else
         primal_name = nothing
     end
-
-    # Enzyme kills dead instructions, and removes the ptls call
-    # which we need for correct GC handling in LateLowerGC
-    reinsert_gcmarker!(adjointf)
-    augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-
+ 
+    LLVM.ModulePassManager() do pm
+        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+        run!(pm, mod)
+    end
+    
     # Run post optimization pipeline
     if postopt && !(job.config.params.ABI <: InlineABI)
         post_optimze!(mod, JIT.get_tm())
+        @show mod
     end
     return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
 end
