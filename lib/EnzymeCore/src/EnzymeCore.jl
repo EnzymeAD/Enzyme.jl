@@ -5,7 +5,7 @@ using Adapt
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
-export DefaultABI, FFIABI
+export DefaultABI, FFIABI, InlineABI
 
 function batch_size end
 
@@ -117,6 +117,13 @@ abstract type ABI end
 Foreign function call ABI. JIT the differentiated function, then inttoptr call the address.
 """
 struct FFIABI <: ABI end
+
+"""
+    struct InlineABI <: ABI
+
+Inline ABI. Inject the differntiated function directly to the calling context.
+"""
+struct InlineABI <: ABI end
 const DefaultABI = FFIABI
 
 """
