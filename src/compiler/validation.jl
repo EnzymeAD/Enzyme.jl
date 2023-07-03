@@ -36,15 +36,17 @@ module FFI
                 symbols = Set{String}()
                 path = Libdl.dlpath(BLAS.libblas)
                 ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
-                for s in Symbols(readmeta(open(path, "r")))
-                    name = symbol_name(s)
-                    if !Sys.iswindows() && BLAS.vendor() == :openblas64
-                        endswith(name, "64_") || continue
-                    else
-                        endswith(name, "_") || continue
-                    end
-                    if !in(name, ignoreSymbols)
-                        push!(symbols, name)
+                for meta in readmeta(open(path, "r"))
+                    for s in Symbols(meta)
+                        name = symbol_name(s)
+                        if !Sys.iswindows() && BLAS.vendor() == :openblas64
+                            endswith(name, "64_") || continue
+                        else
+                            endswith(name, "_") || continue
+                        end
+                        if !in(name, ignoreSymbols)
+                            push!(symbols, name)
+                        end
                     end
                 end
                 symbols = collect(symbols)
