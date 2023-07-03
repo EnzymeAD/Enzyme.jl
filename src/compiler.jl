@@ -2141,19 +2141,20 @@ function common_jl_getfield_augfwd(offset, B::LLVM.API.LLVMBuilderRef, OrigCI::L
     else
         AT = LLVM.ArrayType(T_prjlvalue, Int(width))
 
+        forgep = cal
         if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[2]) == 0
-            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
-            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(AT, Derived))
+            forgep = LLVM.addrspacecast!(B, forgep, LLVM.PointerType(T_jlvalue, Derived))
+            forgep = LLVM.pointercast!(B, forgep, LLVM.PointerType(AT, Derived))
         end    
 
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         shadow = LLVM.UndefValue(ST)
         for i in 1:width
             if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[2]) == 0
-                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)])
+                gep = LLVM.inbounds_gep!(B, AT, forgep, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)])
                 ld = LLVM.load!(B, T_prjlvalue, gep)
             else
-                ld = cal
+                ld = forgep
             end
             shadow = insert_value!(B, shadow, ld, i-1)
         end
@@ -2319,20 +2320,20 @@ function jl_nthfield_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
         shadowres = cal
     else
         AT = LLVM.ArrayType(T_prjlvalue, Int(width))
-
+        forgep = cal
         if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
-            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
-            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(AT, Derived))
+            forgep = LLVM.addrspacecast!(B, forgep, LLVM.PointerType(T_jlvalue, Derived))
+            forgep = LLVM.pointercast!(B, forgep, LLVM.PointerType(AT, Derived))
         end    
 
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         shadow = LLVM.UndefValue(ST)
         for i in 1:width
             if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[1]) == 0
-                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)])
+                gep = LLVM.inbounds_gep!(B, AT, forgep, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(i-1; ctx)])
                 ld = LLVM.load!(B, T_prjlvalue, gep)
             else
-                ld = cal
+                ld = forgep
             end
             shadow = insert_value!(B, shadow, ld, i-1)
         end
