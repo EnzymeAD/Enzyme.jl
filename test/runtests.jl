@@ -157,6 +157,9 @@ end
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
 
+make3() = (1.0, 2.0, 3.0)
+
+
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
@@ -165,6 +168,14 @@ end
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    tup = autodiff(Forward, f2, BatchDuplicatedFunc{Float64, 3, typeof(make3)}(1.0))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
     @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)

@@ -2,6 +2,7 @@ module Compiler
 
 import ..Enzyme
 import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
+               BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
                API, TypeTree, typetree, only!, shift!, data0!, merge!,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
@@ -7346,6 +7347,7 @@ end
 
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
     world = job.world
+    interp = GPUCompiler.get_interpreter(job)
     rt  = job.config.params.rt
     shadow_init = job.config.params.shadowInit
     ctx = context(mod)
@@ -7380,7 +7382,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             else
                 push!(args_activity, API.DFT_OUT_DIFF)
             end
-        elseif  T <: Duplicated || T<: BatchDuplicated
+        elseif  T <: Duplicated || T<: BatchDuplicated || T<: BatchDuplicatedFunc
             push!(args_activity, API.DFT_DUP_ARG)
         elseif T <: DuplicatedNoNeed || T<: BatchDuplicatedNoNeed
             push!(args_activity, API.DFT_DUP_NONEED)
@@ -7409,7 +7411,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         retType = API.DFT_CONSTANT
     elseif rt <: Active
         retType = API.DFT_OUT_DIFF
-    elseif rt <: Duplicated || rt <: BatchDuplicated
+    elseif rt <: Duplicated || rt <: BatchDuplicated || rt<: BatchDuplicatedFunc
         retType = API.DFT_DUP_ARG
     elseif rt <: DuplicatedNoNeed || rt <: BatchDuplicatedNoNeed
         retType = API.DFT_DUP_NONEED
@@ -7536,7 +7538,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         end
 
         if wrap
-            augmented_primalf = create_abi_wrapper(augmented_primalf, TT, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, width, returnUsed, shadow_init, world)
+            augmented_primalf = create_abi_wrapper(augmented_primalf, TT, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, width, returnUsed, shadow_init, world, interp)
         end
 
         # TODOs:
@@ -7549,7 +7551,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             #=additionalArg=#tape, #=forceAnonymousTape=#false, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
-            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, width, #=returnPrimal=#false, shadow_init, world)
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeGradient, augmented, width, #=returnPrimal=#false, shadow_init, world, interp)
         end
     elseif mode == API.DEM_ReverseModeCombined
         returnUsed = !isghostty(actualRetType)
@@ -7561,7 +7563,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
-            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnUsed, shadow_init, world)
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnUsed, shadow_init, world, interp)
         end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
@@ -7574,7 +7576,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         augmented_primalf = nothing
         if wrap
           pf = adjointf
-          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world)
+          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -7584,7 +7586,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     return adjointf, augmented_primalf, TapeType
 end
 
-function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, width, returnPrimal, shadow_init, world)
+function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, width, returnPrimal, shadow_init, world, interp)
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -7629,7 +7631,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
         push!(T_wrapperargs, llvmT)
 
-        if T <: Const
+        if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
@@ -7859,6 +7861,29 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
                 i += 1
                 push!(realparms, val)
+            elseif T <: BatchDuplicatedFunc
+                Func = get_func(T)
+                funcspec = GPUCompiler.methodinstance(Func, Tuple{}, world)
+                llvmf = nested_codegen!(Mode, mod, funcspec, world)
+                push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
+                Func_RT = Core.Compiler.typeinf_ext_toplevel(interp, funcspec).rettype
+                @assert Func_RT == NTuple{width, T′}
+                _, sret, _ = get_return_info(Func_RT, ctx)
+                args = LLVM.Value[]
+                if sret !== nothing
+                    sret = alloca!(builder, convert(LLVMType, Func_RT; ctx))
+                    push!(args, sret)
+                end
+                res = LLVM.call!(builder, LLVM.function_type(llvmf), llvmf, args)
+                if LLVM.get_subprogram(llvmf) !== nothing
+                    metadata(res)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(llvm_f) )
+                end
+                if sret !== nothing
+                    res = load!(builder, convert(LLVMType, Func_RT; ctx), sret)
+                end
+                push!(realparms, res)
+            else
+                @assert false
             end
         end
 
@@ -9283,7 +9308,7 @@ end
 
         push!(ccexprs, argexpr)
 
-        if T <: Const
+        if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint
                 push!(ActiveRetTypes, Nothing)
             end
@@ -9399,6 +9424,10 @@ end
             push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
         elseif CC <: AugmentedForwardThunk
             push!(sret_types, Nothing)
+        elseif rettype <: Const
+        else
+            @show rettype, CC
+            @assert false
         end
     end
 

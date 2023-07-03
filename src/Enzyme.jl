@@ -6,8 +6,11 @@ export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWi
 import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI
 
-import EnzymeCore: batch_size
-export batch_size
+import EnzymeCore: BatchDuplicatedFunc
+export BatchDuplicatedFunc
+
+import EnzymeCore: batch_size, get_func 
+export batch_size, get_func
 
 import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
 export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
@@ -88,6 +91,10 @@ end
 end
 
 @inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::Type{BatchDuplicated{T, N}}, args...) where {T,N} =
@@ -193,7 +200,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                 return adjoint(f, args′..., tape)
             end
         end
-    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
+    elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed || A <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
     thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
@@ -726,7 +733,7 @@ end
     end
 end
 
-@inline function onehot(x::NTuple{N, T}) where {T, N}
+@inline function onehot(::Type{NTuple{N, T}}) where {T, N}
     ntuple(Val(N)) do i
         Base.@_inline_meta
         ntuple(Val(N)) do idx
@@ -734,6 +741,9 @@ end
             return (i == idx) ? 1.0 : 0.0
         end
     end
+end
+@inline function onehot(x::NTuple{N, T}) where {T, N}
+    onehot(NTuple{N, T})
 end
 @inline function onehot(x::NTuple{N, T}, start, endl) where {T, N}
     ntuple(Val(endl-start+1)) do i
