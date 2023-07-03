@@ -5,6 +5,7 @@ using Adapt
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export BatchDuplicatedFunc
 export DefaultABI, FFIABI, InlineABI
 
 function batch_size end
@@ -89,6 +90,12 @@ struct BatchDuplicated{T,N} <: Annotation{T}
 end
 Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
+struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
+    val::T
+end
+get_func(::BatchDuplicatedFunc{T,N,Func}) where {T,N,Func} = Func
+get_func(::Type{BatchDuplicatedFunc{T,N,Func}}) where {T,N,Func} = Func
+
 """
     BatchDuplicatedNoNeed(x, ∂f_∂xs)
 
@@ -100,6 +107,7 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     dval::NTuple{N,T}
 end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
