@@ -5292,14 +5292,30 @@ function gcpreserve_end_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMVal
 
     to_preserve = LLVM.Value[]
 
-    for op in ops
-        val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, op), B))
-        push!(to_preserve, val)
+    for op in ops 
+        needsShadowP = Ref{UInt8}(0)
+        needsPrimalP = Ref{UInt8}(0)
+
+        activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, op, needsPrimalP, needsShadowP)
+        needsPrimal = needsPrimalP[] != 0
+
+        if needsPrimal
+            val = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsNewFromOriginal(gutils, op), B))
+            push!(to_preserve, val)
+        end
 
         active = API.EnzymeGradientUtilsIsConstantValue(gutils, op) == 0
 
         if active
-            push!(to_preserve, LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B)))
+            shadowin = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, API.EnzymeGradientUtilsInvertPointer(gutils, op, B), B))
+
+            if width == 1
+                push!(to_preserve, shadowin)
+            else
+                for idx in 1:width
+                    push!(to_preserve, extract_value!(B, shadowin, idx-1))
+                end
+            end
         end
     end
 
