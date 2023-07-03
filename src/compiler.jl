@@ -7868,18 +7868,18 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
                 Func_RT = Core.Compiler.typeinf_ext_toplevel(interp, funcspec).rettype
                 @assert Func_RT == NTuple{width, T′}
-                _, sret, _ = get_return_info(Func_RT, ctx)
+                _, psret, _ = get_return_info(Func_RT, ctx)
                 args = LLVM.Value[]
-                if sret !== nothing
-                    sret = alloca!(builder, convert(LLVMType, Func_RT; ctx))
-                    push!(args, sret)
+                if psret !== nothing
+                    psret = alloca!(builder, convert(LLVMType, Func_RT; ctx))
+                    push!(args, psret)
                 end
                 res = LLVM.call!(builder, LLVM.function_type(llvmf), llvmf, args)
                 if LLVM.get_subprogram(llvmf) !== nothing
                     metadata(res)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(llvm_f) )
                 end
-                if sret !== nothing
-                    res = load!(builder, convert(LLVMType, Func_RT; ctx), sret)
+                if psret !== nothing
+                    res = load!(builder, convert(LLVMType, Func_RT; ctx), psret)
                 end
                 push!(realparms, res)
             else
