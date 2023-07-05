@@ -372,7 +372,7 @@ function propagate_returned!(mod::LLVM.Module)
             end
             attrs = collect(function_attributes(fn))
             prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs)
-            # if any(kind(attr) == kind(EnumAttribute("noinline"; ctx)) for attr in attrs) 
+            # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs) 
             #     continue
             # end
             argn = nothing
@@ -774,7 +774,7 @@ function removeDeadArgs!(mod::LLVM.Module)
             end
             attrs = collect(function_attributes(fn))
             prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs)
-            # && any(kind(attr) == kind(StringAttribute("enzyme_math"; ctx)) for attr in attrs)
+            # && any(kind(attr) == kind(StringAttribute("enzyme_math")) for attr in attrs)
             if prevent
                 B = IRBuilder()
                 position!(B, first(instructions(first(blocks(fn)))))

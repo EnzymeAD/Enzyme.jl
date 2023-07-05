@@ -1,3 +1,22 @@
+unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
+export unsafe_to_pointer
+
+const Tracked = 10
+const Derived = 11
+export Tracked, Derived
+
+function unsafe_to_llvm(val)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+    fill_val = unsafe_to_pointer(val)
+    fill_val = LLVM.ConstantInt(convert(UInt, fill_val))
+    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
+    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+end
+
+export unsafe_to_llvm
+
 import LLVM: context!, ts_context!
 
 @static if VERSION < v"1.9-"

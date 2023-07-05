@@ -1,5 +1,5 @@
 function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, kwargs...)
+        run_enzyme::Bool=true, mode::API.CDerivativeMode=API.DEM_ReverseModeCombined, dupClosure::Bool=false, argwrap::Bool=true, width::Int=1, modifiedBetween=nothing, returnPrimal::Bool=false, augmentedInit=false, world=nothing, ABI=DefaultABI, kwargs...)
 
     tt    = Tuple{map(eltype, types.parameters)...}
     if world === nothing
@@ -15,14 +15,13 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
         defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
-    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType)
+    params = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){Core.Typeof(func)}, types.parameters...}, mode, width, remove_innerty(rt), run_enzyme, argwrap, modifiedBetween, returnPrimal, augmentedInit, Compiler.UnknownTapeType, ABI)
     return Compiler.CompilerJob(primal, CompilerConfig(target, params; kernel=false), world)
 end
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
                  optimize::Bool=true, second_stage::Bool=true, ctx=nothing, kwargs...)
 
-    context!(ctx) do
     job = get_job(func, A, types; kwargs...)
     # Codegen the primal function and all its dependency in one module
     mod, meta = Compiler.codegen(:llvm, job; optimize #= validate=false =#)
@@ -34,7 +33,6 @@ function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     llvmf = meta.adjointf
 
     return llvmf, mod
-    end
 end
 
 # For VERSION >= v"1.9.0-DEV.516"
@@ -80,7 +78,7 @@ enzyme_code_llvm(@nospecialize(func), @nospecialize(A), @nospecialize(types); kw
 
 function enzyme_code_native(io::IO, @nospecialize(func), @nospecialize(A), @nospecialize(types))
     JuliaContext() do ctx
-        _, mod = reflect(func, A, types; ctx)
+        _, mod = reflect(func, A, types)
         str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
         print(io, str)
     end

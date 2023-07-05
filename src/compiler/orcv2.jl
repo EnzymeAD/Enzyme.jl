@@ -128,10 +128,14 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    return ThreadSafeContext() do ctx
-        context!(context(ctx)) do
+    ThreadSafeContext() do ctx
+        c = context(ctx)
+        try
+            activate(c)
             mod = parse(LLVM.Module, buf)
-            ThreadSafeModule(mod)
+            return ThreadSafeModule(mod)
+        finally
+            deactivate(c)
         end
     end
 end
