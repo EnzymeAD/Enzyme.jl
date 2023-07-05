@@ -5855,6 +5855,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         GPUCompiler.@safe_warn msg2
         return C_NULL
     elseif errtype == API.ET_IllegalReplaceFicticiousPHIs
+        data2 = LLVM.Value(data2)
         function rc(io)
             print(io, msg)
             println(io)
