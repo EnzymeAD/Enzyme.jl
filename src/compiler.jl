@@ -5859,15 +5859,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         function rc(io)
             print(io, msg)
             println(io)
-
-            println(io, LLVM.parent(LLVM.parent(val)))
             println(io, LLVM.parent(LLVM.parent(data2)))
             println(io, val)
             println(io, data2)
-
-            if bt !== nothing
-                Base.show_backtrace(io, bt)
-            end
         end
         msg2 = sprint(rc)
         throw(EnzymeInternalError(msg2, ir, bt))
