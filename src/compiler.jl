@@ -5855,7 +5855,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         GPUCompiler.@safe_warn msg2
         return C_NULL
     elseif errtype == API.ET_IllegalReplaceFicticiousPHIs
-        function c(io)
+        function rc(io)
             print(io, msg)
             println(io)
 
@@ -5868,7 +5868,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
             end
         end
-        msg2 = sprint(c)
+        msg2 = sprint(rc)
         throw(EnzymeInternalError(msg2, ir, bt))
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
