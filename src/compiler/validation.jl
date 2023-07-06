@@ -129,14 +129,12 @@ end
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    context!(LLVM.context(mod)) do
-        T_size_t = convert(LLVM.LLVMType, Int)
-        for (v, k) in FFI.ptr_map
-            if haskey(functions(mod), k)
-                f = functions(mod)[k]
-                replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(T_size_t, convert(UInt, v)), value_type(f))))
-                unsafe_delete!(mod, f)
-            end
+    T_size_t = convert(LLVM.LLVMType, Int)
+    for (v, k) in FFI.ptr_map
+        if haskey(functions(mod), k)
+            f = functions(mod)[k]
+            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(T_size_t, convert(UInt, v)), value_type(f))))
+            unsafe_delete!(mod, f)
         end
     end
 end
@@ -155,15 +153,13 @@ function check_ir!(job, errors, mod::LLVM.Module)
         f = functions(mod)["malloc"]
         name!(f, "")
         ctx = context(mod)
-        context!(ctx) do
-            ptr8 = LLVM.PointerType(LLVM.IntType(8))
+        ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
-            prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
+        prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
 
-            mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
-            replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
-            unsafe_delete!(mod, f)
-        end
+        mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
+        replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
+        unsafe_delete!(mod, f)
     end
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
@@ -263,61 +259,58 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
-            context!(ctx) do
-                b = IRBuilder()
-                position!(b, inst)
+            b = IRBuilder()
+            position!(b, inst)
 
-                mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
-                if mfn == C_NULL
-                    ptr8 = LLVM.PointerType(LLVM.IntType(8))
-                    mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
-                end
-                mfn2 = LLVM.Function(mfn)
-                nval = ptrtoint!(b, call!(b, LLVM.function_type(mfn2), mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), value_type(inst))
-                replace_uses!(inst, nval)
-                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
+            if mfn == C_NULL
+                ptr8 = LLVM.PointerType(LLVM.IntType(8))
+                mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
             end
+            mfn2 = LLVM.Function(mfn)
+            nval = ptrtoint!(b, call!(b, LLVM.function_type(mfn2), mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), value_type(inst))
+            replace_uses!(inst, nval)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        
         elseif fn == "jl_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
             ctx = context(mod)
-            context!(ctx) do
-                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
-                if isa(flib, LLVM.ConstantExpr)
-                    flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
-                end
-                if isa(flib, LLVM.GlobalVariable)
-                    flib = LLVM.initializer(flib)
-                end
-                if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8)
-                    flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
-                end
-
-                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
-                if isa(fname, LLVM.ConstantExpr)
-                    fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
-                end
-                if isa(fname, LLVM.GlobalVariable)
-                    fname = LLVM.initializer(fname)
-                end
-                if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
-                    fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
-                end
-                hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
-                if isa(hnd, LLVM.GlobalVariable)
-                    hnd = LLVM.name(hnd)
-                end
-
-                if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
-                    return
-                end
-                # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
-                push!(errors, ("jl_load_and_lookup", bt, nothing))
+            flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
+            if isa(flib, LLVM.ConstantExpr)
+                flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
             end
+            if isa(flib, LLVM.GlobalVariable)
+                flib = LLVM.initializer(flib)
+            end
+            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8)
+                flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
+            end
+
+            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname, LLVM.ConstantExpr)
+                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            end
+            if isa(fname, LLVM.GlobalVariable)
+                fname = LLVM.initializer(fname)
+            end
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
+                fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
+            end
+            hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
+            if isa(hnd, LLVM.GlobalVariable)
+                hnd = LLVM.name(hnd)
+            end
+
+            if !isa(hnd, String) || !isa(fname, String) || !isa(flib, String)
+                return
+            end
+            # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
+            push!(errors, ("jl_load_and_lookup", bt, nothing))
+            
         elseif fn == "jl_lazy_load_and_lookup" || fn == "ijl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            context!(context(mod)) do
 
                 ops = collect(operands(inst))[1:end-1]
                 @assert length(ops) == 2
@@ -477,7 +470,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     replace_uses!(inst, replacement)
                     LLVM.API.LLVMInstructionEraseFromParent(inst)
                 end
-            end
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
 
@@ -504,12 +496,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                         ofn = LLVM.parent(LLVM.parent(inst))
                         mod = LLVM.parent(ofn)
-                        context!(context(mod)) do
-                            inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                            LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                            nofree = LLVM.StringAttribute("nofree", "")
-                            LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
-                        end
+                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                        nofree = LLVM.StringAttribute("nofree", "")
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
+                        
                     end
                 end
             end
@@ -580,12 +571,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
-                    context!(context(mod)) do
-                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                        nofree = LLVM.StringAttribute("nofree", "")
-                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
-                    end
+                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                    nofree = LLVM.StringAttribute("nofree", "")
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                 end
             end
         end

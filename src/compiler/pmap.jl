@@ -171,9 +171,8 @@ else
         jctx = ctxToThreadSafe[jctx]
 end
         
-        cmod, adjointnm, augfwdnm, _, TapeType = _thunk(ejob, jctx)
+        cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, jctx)
         LLVM.link!(mod, cmod)
-        context!(ctx) do
             attributes = function_attributes(llvmfn)
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
@@ -181,7 +180,7 @@ end
             push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"))
             push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"))
             push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType)))))
-        end
+        
     end
 
         if mode == API.DEM_ReverseModePrimal
@@ -200,89 +199,87 @@ end
 
     splat, _, _ = julia_activity(orig, mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
-    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
 
     # 5) Call the function
-    context!(ctx) do
+    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
 
-        T_int64 = LLVM.Int64Type()
-        T_jlvalue = LLVM.StructType(LLVMType[])
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
-        T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int64 = LLVM.Int64Type()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
 
-        # count
-        vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
-        
-        # function
-        run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
-        push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0)))))
+    # count
+    vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
     
-        EB = LLVM.IRBuilder()
-        position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-        
+    # function
+    run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
+    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0)))))
 
-        # handle the accidental sret
-        if isa(value_type(parameters(entry)[1]), LLVM.PointerType)
-            a = alloca!(EB, eltype(value_type(parameters(entry)[1])))
-            pushfirst!(vals, a)
-        end
+    EB = LLVM.IRBuilder()
+    position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
-        if mode == API.DEM_ReverseModeGradient && STT != Nothing
-            @assert tape != nothing
-            push!(vals, tape)
-        end
 
-        i = 2
-        for source_typ in mi.specTypes.parameters[3:end]
-            if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
-                continue
-            end
-
-
-            primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
-            shadow = if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
-            LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
-            else
-            nothing
-            end
-
-            codegen_typ = value_type(parameters(entry)[length(vals)+1])
-
-            if codegen_typ == value_type(primal)
-                push!(vals, primal)
-                if shadow !== nothing
-                push!(vals, shadow)
-                end
-            elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
-                !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
-                if !GPUCompiler.deserves_argbox(source_typ)
-                primA = alloca!(EB, value_type(primal))
-                store!(B, primal, primA)
-                primal = addrspacecast!(B, primA, codegen_typ)
-                end
-                push!(vals, primal)
-                if shadow !== nothing
-                if !GPUCompiler.deserves_argbox(source_typ) 
-                    shadowA = alloca!(EB, value_type(shadow))
-                    store!(B, shadow, shadowA)
-                    shadow = addrspacecast!(B, shadowA, codegen_typ)
-                end
-                push!(vals, shadow)
-                end
-                # push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
-                #             codegen=(typ=codegen_typ, i=codegen_i)))
-            else
-                @assert false
-            end
-            i += 1
-        end
-
-        res = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
-        API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
-        
-        return res
+    # handle the accidental sret
+    if isa(value_type(parameters(entry)[1]), LLVM.PointerType)
+        a = alloca!(EB, eltype(value_type(parameters(entry)[1])))
+        pushfirst!(vals, a)
     end
+
+    if mode == API.DEM_ReverseModeGradient && STT != Nothing
+        @assert tape != nothing
+        push!(vals, tape)
+    end
+
+    i = 2
+    for source_typ in mi.specTypes.parameters[3:end]
+        if isghosttype(source_typ) || Core.Compiler.isconstType(source_typ)
+            continue
+        end
+
+
+        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
+        shadow = if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
+        LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
+        else
+        nothing
+        end
+
+        codegen_typ = value_type(parameters(entry)[length(vals)+1])
+
+        if codegen_typ == value_type(primal)
+            push!(vals, primal)
+            if shadow !== nothing
+            push!(vals, shadow)
+            end
+        elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
+            !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
+            if !GPUCompiler.deserves_argbox(source_typ)
+            primA = alloca!(EB, value_type(primal))
+            store!(B, primal, primA)
+            primal = addrspacecast!(B, primA, codegen_typ)
+            end
+            push!(vals, primal)
+            if shadow !== nothing
+            if !GPUCompiler.deserves_argbox(source_typ) 
+                shadowA = alloca!(EB, value_type(shadow))
+                store!(B, shadow, shadowA)
+                shadow = addrspacecast!(B, shadowA, codegen_typ)
+            end
+            push!(vals, shadow)
+            end
+            # push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
+            #             codegen=(typ=codegen_typ, i=codegen_i)))
+        else
+            @assert false
+        end
+        i += 1
+    end
+
+    res = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
+    
+    return res
 end
 
 function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8

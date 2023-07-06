@@ -87,12 +87,6 @@ function vrec(start, x)
     end
 end
 
-@testset "Nested AD" begin
-    tonest(x,y) = (x + y)^2
-
-    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
-end
-
 @testset "Internal tests" begin
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
@@ -594,6 +588,12 @@ end
     grads = zeros(T, size(xx))
     autodiff(Reverse, (x) -> x' * x, Duplicated(xx, grads))
     @test xx .* 2 == grads
+end
+
+@testset "Nested AD" begin
+    tonest(x,y) = (x + y)^2
+
+    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Compare against" begin

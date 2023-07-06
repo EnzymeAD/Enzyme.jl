@@ -51,16 +51,14 @@ function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if isnothing(ptls)
         ctx = context(LLVM.parent(func))
-        context!(ctx) do
-            B = IRBuilder()
-            entry_bb = first(blocks(func))
-            if !isempty(instructions(entry_bb))
-                position!(B, first(instructions(entry_bb)))
-            else
-                position!(B, entry_bb)
-            end
-            emit_ptls!(B)
-        end #context!
+        B = IRBuilder()
+        entry_bb = first(blocks(func))
+        if !isempty(instructions(entry_bb))
+            position!(B, first(instructions(entry_bb)))
+        else
+            position!(B, entry_bb)
+        end
+        emit_ptls!(B)
 	else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
@@ -93,9 +91,7 @@ end
 else
 
 function declare_pgcstack!(mod) 
-    context!(context(mod)) do
         get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
-    end
 end
 
 function emit_pgcstack(B)
@@ -121,16 +117,15 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        context!(context(LLVM.parent(func))) do
-            B = IRBuilder()
-            entry_bb = first(blocks(func))
-            if !isempty(instructions(entry_bb))
-                position!(B, first(instructions(entry_bb)))
-            else
-                position!(B, entry_bb)
-            end
-            emit_pgcstack(B)
+        context(LLVM.parent(func))
+        B = IRBuilder()
+        entry_bb = first(blocks(func))
+        if !isempty(instructions(entry_bb))
+            position!(B, first(instructions(entry_bb)))
+        else
+            position!(B, entry_bb)
         end
+        emit_pgcstack(B)
 	else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
