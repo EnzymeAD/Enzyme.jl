@@ -5857,6 +5857,17 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
         return C_NULL
+    elseif errtype == API.ET_IllegalReplaceFicticiousPHIs
+        data2 = LLVM.Value(data2)
+        function rc(io)
+            print(io, msg)
+            println(io)
+            println(io, LLVM.parent(LLVM.parent(data2)))
+            println(io, val)
+            println(io, data2)
+        end
+        msg2 = sprint(rc)
+        throw(EnzymeInternalError(msg2, ir, bt))
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
