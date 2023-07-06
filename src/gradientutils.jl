@@ -10,3 +10,27 @@ function call_samefunc_with_inverted_bundles!(B::LLVM.IRBuilder, gutils::Gradien
     @assert length(args) == length(vals)
     return LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(LLVM.Value(OrigCI)), vals, length(vals), orig, valTys, length(valTys), B, #=lookup=#false))
 end
+
+get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
+get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
+
+function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)    
+    uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig)))-1)
+    API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
+    return uncacheable
+end
+
+is_constant_value(gutils::GradientUtils, val::LLVM.Value) = API.EnzymeGradientUtilsIsConstantValue(gutils, val) != 0
+
+is_constant_inst(gutils::GradientUtils, inst::LLVM.Instruction) = API.EnzymeGradientUtilsIsConstantInstruction(gutils, inst) != 0
+
+new_from_original(gutils::GradientUtils, val::LLVM.Value) = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, val))
+
+lookup_value(gutils::GradientUtils, val::LLVM.Value, B::LLVM.IRBuilder) = LLVM.Value(API.EnzymeGradientUtilsLookup(gutils, val, B))
+
+invert_pointer(gutils::GradientUtils, val::LLVM.Value, B::LLVM.IRBuilder) = LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, val, B))
+
+function debug_from_orig!(gutils::GradientUtils, nval::LLVM.Instruction, oval::LLVM.Instruction)
+    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, nval, oval)
+    nothing
+end
