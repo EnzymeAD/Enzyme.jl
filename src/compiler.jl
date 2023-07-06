@@ -2318,7 +2318,7 @@ function jl_nthfield_rev(B, orig, gutils, tape)
     vals = LLVM.Value[]
     push!(vals, inps[1])
 
-    push!(vals, LLVM.Value(tape))
+    push!(vals, tape)
 
     sym = new_from_original(gutils, ops[2])
     sym = lookup_value(gutils, sym, B)
@@ -3582,7 +3582,7 @@ function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
     if width == 1
         nops = LLVM.Value[inv, new_from_original(gutils, ops[2])]
         valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
-        cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, nops, valTys, #=lookup=#false)
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, nops, valTys, #=lookup=#false)
         debug_from_orig!(gutils, cal, orig)
         callconv!(cal, callconv(orig))
     else
@@ -3590,7 +3590,7 @@ function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
             nops = LLVM.Value[extract_value(B, inv, idx-1),
                               new_from_original(gutils, ops[2])]
             valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
-            cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, nops, valTys, #=lookup=#false)
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, nops, valTys, #=lookup=#false)
     
             debug_from_orig!(gutils, cal, orig)
             callconv!(cal, callconv(orig))
