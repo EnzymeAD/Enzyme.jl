@@ -2769,11 +2769,10 @@ function jlcall2_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRe
                 return 1
             end
         end
+        @assert false "jl_call calling convention not implemented yet", orig
+
+        return 0
     end
-
-    @assert false "jl_call calling convention not implemented yet", orig
-
-    return 0
 end
 
 function jlcall2_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
@@ -2791,11 +2790,10 @@ function jlcall2_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
                 return nothing
             end
         end
+
+        @assert false "jl_call calling convention not implemented yet", orig
+        return nothing
     end
-
-    @assert false "jl_call calling convention not implemented yet", orig
-
-    return nothing
 end
 
 
