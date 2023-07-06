@@ -20,7 +20,7 @@ export unsafe_to_llvm
 import LLVM: context!, ts_context!, context
 
 @static if VERSION < v"1.9-"
-    context(ctx:LLVM.Context) = ctx
+    context(ctx::LLVM.Context) = ctx
 else
     context!(f, ctx::LLVM.ThreadSafeContext) = LLVM.ts_context!(f, ctx)
 end
