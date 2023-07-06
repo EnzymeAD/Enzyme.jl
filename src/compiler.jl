@@ -2374,11 +2374,13 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                               new_from_original(gutils, origops[3])
                               shadowout
                               ]
+            valTys = API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
             if offset != 1
                 pushfirst!(args, first(operands(orig)))
+                pushfirst!(valTys, API.VT_Primal)
             end
 
-            shadowres = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal, API.VT_Shadow], #=lookup=#false)
+            shadowres = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
             callconv!(shadowres, callconv(orig))
         else
             for idx in 1:width
@@ -2388,11 +2390,13 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                                   new_from_original(gutils, origops[3])
                                   extract_value!(B, shadowout, idx-1)
                                   ]
+                valTys = API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
                 if offset != 1
                     pushfirst!(args, first(operands(orig)))
+                    pushfirst!(valTys, API.VT_Primal)
                 end
 
-                tmp = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal, API.VT_Shadow], #=lookup=#false)
+                tmp = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
 
                 callconv!(tmp, callconv(orig))
             end
