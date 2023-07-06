@@ -172,6 +172,8 @@ function autodiff_deferred end
 function autodiff_thunk end
 function autodiff_deferred_thunk end
 
+function tape_type end
+
 include("rules.jl")
 
 end # module EnzymeCore
