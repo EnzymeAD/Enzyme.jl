@@ -1531,7 +1531,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, ctx::LLVM.Context,
 
     if tape !== nothing
         pushfirst!(vals, shadow_ptr)
-        pushfirst!(vals, LLVM.Value(tape))
+        pushfirst!(vals, tape)
     else
         pushfirst!(vals, unsafe_to_llvm(Val(ReturnType), ctx))
     end
@@ -1653,7 +1653,6 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         return true
     end
 
-    B = LLVM.IRBuilder(B)
     width = get_width(gutils)
     sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset, ctx, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
@@ -1690,12 +1689,11 @@ function generic_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 
     @assert conv == 37
 
-    common_generic_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+    common_generic_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
-        B = LLVM.IRBuilder(B)
         ctx = LLVM.context(orig)
 
         @assert tape !== C_NULL
@@ -1711,7 +1709,7 @@ function generic_rev(B, orig, gutils, tape)::Cvoid
 
     @assert conv == 37
 
-    common_generic_rev(1, B, OrigCI, gutils, tape)
+    common_generic_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
@@ -1813,15 +1811,15 @@ function apply_latest_fwd(B, orig, gutils, normalR, shadowR)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
-    common_apply_latest_fwd(1, B, OrigCI, gutils, normalR, shadowR)
+    common_apply_latest_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function apply_latest_augfwd(B, OrigCI, gutils, normalR, shadowR, tapeR)
+function apply_latest_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
-    common_apply_latest_augfwd(1, B, OrigCI, gutils, normalR, shadowR, tapeR)
+    common_apply_latest_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function apply_latest_rev(B, orig, gutils, tape)
@@ -1829,7 +1827,7 @@ function apply_latest_rev(B, orig, gutils, tape)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
-    common_apply_latest_rev(1, B, OrigCI, gutils, tape)
+    common_apply_latest_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
@@ -1869,7 +1867,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 end
 
 function common_newstructv_rev(offset, B, orig, gutils, tape)
-    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
+    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
     return nothing
 end
 
@@ -2430,11 +2428,10 @@ function setfield_rev(B, orig, gutils, tape)
 end
 
 function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
-    orig = LLVM.Instruction(OrigCI)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
+    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -2471,7 +2468,7 @@ function apply_iterate_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function apply_iterate_rev(B, orig, gutils, tape)
-    common_apply_iterate_rev(1, B, OrigCI, gutils, tape)
+    common_apply_iterate_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
@@ -2509,7 +2506,7 @@ function common_f_svec_ref_rev(offset, B, orig, gutils, tape)
 end
 
 function f_svec_ref_fwd(B, orig, gutils, normalR, shadowR)
-    common_f_svec_ref_fwd(1, B, OrigCI, gutils, normalR, shadowR)
+    common_f_svec_ref_fwd(1, B, orig, gutils, normalR, shadowR)
     return nothing
 end
 
@@ -2519,7 +2516,7 @@ function f_svec_ref_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function f_svec_ref_rev(B, orig, gutils, tape)
-    common_f_svec_ref_rev(1, B, OrigCI, gutils, tape)
+    common_f_svec_ref_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
@@ -2878,7 +2875,7 @@ function duplicate_rev(B, orig, gutils, tape)
     real_ops = collect(operands(orig))[1:end-1]
     ops = [lookup_value(gutils, new_from_original(gutils, o), B) for o in real_ops]
     
-    c = call_samefunc_with_inverted_bundles!(B, gutils, orig, real_ops, [API.VT_Primal for _ in real_ops], #=lookup=#false)
+    c = call_samefunc_with_inverted_bundles!(B, gutils, orig, ops, [API.VT_Primal for _ in ops], #=lookup=#false)
     callconv!(c, callconv(orig))
 
     return nothing
@@ -3605,7 +3602,7 @@ function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function set_task_tid_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    set_task_tid_fwd(B, OrigCI, gutils, normalR, shadowR)
+    set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function set_task_tid_rev(B, orig, gutils, tape)
@@ -3625,7 +3622,7 @@ function enq_work_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function enq_work_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    enq_work_fwd(B, OrigCI, gutils, normalR, shadowR)
+    enq_work_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function find_match(mod, name)
@@ -4802,7 +4799,7 @@ function arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
     end
     origops = LLVM.operands(orig)
     if is_constant_value(gutils, origops[2])
-        emit_error(LLVM.IRBuilder(B), orig, "Enzyme: reshape array has active return, but inactive input")
+        emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
     end
 
     width = get_width(gutils)
@@ -5142,11 +5139,11 @@ function jl_array_grow_end_rev(B, orig, gutils, tape)
 end
 
 function jl_array_del_end_fwd(B, orig, gutils, normalR, shadowR)
-    jl_array_grow_end_fwd(B, OrigCI, gutils, normalR, shadowR)
+    jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function jl_array_del_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    jl_array_del_end_fwd(B, OrigCI, gutils, normalR, shadowR)
+    jl_array_del_end_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function jl_array_del_end_rev(B, orig, gutils, tape)
@@ -5227,7 +5224,7 @@ function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 function jl_array_ptr_copy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-  jl_array_ptr_copy_fwd(B, OrigCI, gutils, normalR, shadowR)
+  jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
 end
 function jl_array_ptr_copy_rev(B, orig, gutils, tape)
     return nothing
