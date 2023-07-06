@@ -5283,7 +5283,7 @@ function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
         return true
     end
     err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
-    newo = new_from_original(orig)
+    newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
@@ -5308,7 +5308,7 @@ function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         return true
     end
     err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
-    newo = new_from_original(orig)
+    newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -5337,7 +5337,7 @@ function finalizer_fwd(B, orig, gutils, normalR, shadowR)
         return true
     end
     err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
-    newo = new_from_original(orig)
+    newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -5351,7 +5351,7 @@ function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         return true
     end
     # err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    # newo = new_from_original(orig)
+    # newo = new_from_original(gutils, orig)
     # API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
