@@ -894,6 +894,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
 
     b = LLVM.IRBuilder(B)
+    orig = LLVM.Value(OrigCI)
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
@@ -1604,7 +1605,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
-        return 1
+        return true
     end
 
     width = get_width(gutils)
@@ -1631,14 +1632,14 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0; ctx), LLVM.ConstantInt(0; ctx)]))
         unsafe_store!(normalR, normal.ref)
     end
-    return 0
+    return false
 end
 
 function generic_fwd(B, orig, gutils, normalR, shadowR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
-    common_generic_fwd(1, B, OrigCI, gutils, normalR, shadowR)
+    common_generic_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
 function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
@@ -2146,7 +2147,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     vals = LLVM.Value[]
     push!(vals, inps[1])
 
-    push!(vals, LLVM.Value(tape))
+    push!(vals, tape)
 
     sym = new_from_original(gutils, ops[3])
     sym = lookup_value(gutils, sym, B)
