@@ -12,8 +12,8 @@ export BatchDuplicatedFunc
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
@@ -39,6 +39,7 @@ function guess_activity end
 include("logic.jl")
 include("typeanalysis.jl")
 include("typetree.jl")
+include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
 include("internal_rules.jl")
@@ -588,6 +589,34 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     world = codegen_world_age(eltype(FA), tt)
     
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+end
+
+@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+   
+    primal_tt = Tuple{map(eltype, args)...}
+    world = codegen_world_age(eltype(FA), primal_tt)
+    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    TapeType = Compiler.get_tape_type(typeof(nondef[1]))
+    return TapeType
 end
 
 """

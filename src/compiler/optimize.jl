@@ -900,8 +900,8 @@ end
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L603
-function addTargetPasses!(pm, tm)
-    add_library_info!(pm, LLVM.triple(tm))
+function addTargetPasses!(pm, tm, trip)
+    add_library_info!(pm, trip)
     add_transform_info!(pm, tm)
 end
 
@@ -1053,7 +1053,7 @@ function post_optimze!(mod, tm, machine=true)
     # flush(stdout)
     # flush(stderr)
     LLVM.ModulePassManager() do pm
-        addTargetPasses!(pm, tm)
+        addTargetPasses!(pm, tm, LLVM.triple(mod))
         addOptimizationPasses!(pm)
         run!(pm, mod)
     end
