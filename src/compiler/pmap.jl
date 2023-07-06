@@ -1,13 +1,11 @@
-function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
-        return 1
+function pmap_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_instruction(gutils, orig)
+        return true
     end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
-    B = LLVM.IRBuilder(B)
     emit_error("fast pfor not implemented");
-    return 0
+    return false
 end
 
 function runtime_pmap_augfwd(count, ::Type{ThunkTy}, ::Val{AnyJL}, forward, args...) where {ThunkTy, AnyJL}
@@ -141,7 +139,6 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
 
     ops = collect(operands(orig))[1:end-1] 
     
-    B = LLVM.IRBuilder(B)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     
     @assert GPUCompiler.isghosttype(funcT) || Core.Compiler.isconstType(funcT) 
@@ -209,7 +206,7 @@ end
 
 
     # count
-	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
+	vals = LLVM.Value[new_from_original(gutils, ops[1])]
     
     # function
     run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
@@ -237,9 +234,9 @@ end
         end
 
 
-        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
-        shadow = if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
-          LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
+        primal = new_from_original(gutils, ops[i])
+        shadow = if is_constant_value(gutils, ops[i]) == 0
+          invert_pointer(gutils, ops[i], B)
         else
           nothing
         end
@@ -276,15 +273,13 @@ end
     end
 
     res = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
-    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
-    
+    debug_from_orig!(gutils, res, orig)    
     return res
 end
 
-function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
-        return 1
+function pmap_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
     end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
@@ -296,17 +291,16 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     if normal !== nothing
         unsafe_store!(normalR, C_NULL)
     else
-        ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
 
-    return 0
+    return false
 end
 
-function pmap_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, LLVM.Value(tape), API.DEM_ReverseModeGradient)
+function pmap_rev(B, orig, gutils, tape)
+    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, tape, API.DEM_ReverseModeGradient)
     return nothing
 end

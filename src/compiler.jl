@@ -3435,8 +3435,6 @@ function threadsfor_rev(B, orig, gutils, tape)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
-    tape = LLVM.Value(tape)
-
 
     byRef, sname, dfuncT, vals, thunkTy, TapeType, copies = threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient, tape)
 
