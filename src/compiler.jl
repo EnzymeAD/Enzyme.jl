@@ -907,7 +907,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         push!(valTys, API.VT_Primal)
     end
 
-    anti = LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(LLVM.Value(OrigCI)), vals, length(vals), OrigCI, valTys, length(valTys), b, #=lookup=#false ))
+    anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, #=lookup=#false)
 
     prod = LLVM.Value(unsafe_load(Args, 2))
     for i = 3:numArgs
@@ -3693,22 +3693,20 @@ function set_task_tid_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValue
     inv = API.EnzymeGradientUtilsInvertPointer(gutils, ops[1], B)
     width = API.EnzymeGradientUtilsGetWidth(gutils)
     if width == 1
-        nops =LLVM.API.LLVMValueRef[inv,
-                                    API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])]
+        nops = LLVM.Value[inv, LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]))]
         valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
-        cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), nops, length(nops), orig, valTys, length(valTys), B, #=lookup=#false)
-
+        cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, nops, valTys, #=lookup=#false)
         API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-        callconv!(LLVM.Instruction(cal), callconv(orig))
+        callconv!(cal, callconv(orig))
     else
         for idx in 1:width
-            nops =LLVM.API.LLVMValueRef[extract_value(B, inv, idx-1),
-                                        API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2])]
+            nops = LLVM.Value[extract_value(B, inv, idx-1),
+                              LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[2]))]
             valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
-            cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), nops, length(nops), orig, valTys, length(valTys), B, #=lookup=#false)
-
+            cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, nops, valTys, #=lookup=#false)
+    
             API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-            callconv!(LLVM.Instruction(cal), callconv(orig))
+            callconv!(cal, callconv(orig))
         end
     end
 
@@ -5369,9 +5367,9 @@ function jl_array_ptr_copy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
 
     if width == 1
         vargs = args
-        cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), vargs, length(vargs), orig, valTys, length(valTys), B, #=lookup=#false)
+        cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, vargs, valTys, #=lookup=#false)
         API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-        callconv!(LLVM.Instruction(cal), callconv(orig))
+        callconv!(cal, callconv(orig))
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx in 1:width
@@ -5380,9 +5378,9 @@ function jl_array_ptr_copy_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVM
                 push!(vargs, extract_value!(B, a, idx-1))
             end
             push!(vargs, args[end])
-            cal = API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), vargs, length(vargs), orig, valTys, length(valTys), B, #=lookup=#false)
+            cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, vargs, valTys, #=lookup=#false)
             API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, cal, orig)
-            callconv!(LLVM.Instruction(cal), callconv(orig))
+            callconv!(cal, callconv(orig))
         end
     end
 

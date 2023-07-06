@@ -39,6 +39,7 @@ function guess_activity end
 include("logic.jl")
 include("typeanalysis.jl")
 include("typetree.jl")
+include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
 include("internal_rules.jl")
