@@ -16,9 +16,8 @@ function get_function!(mod::LLVM.Module, name::AbstractString, FT::LLVM.Function
 end
 
 function get_function!(builderF, mod::LLVM.Module, name)
-    get_function!(mod, name, builderF(context(mod)))
+    get_function!(mod, name, builderF())
 end
-
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
@@ -50,7 +49,6 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
     if isnothing(ptls)
-        ctx = context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))

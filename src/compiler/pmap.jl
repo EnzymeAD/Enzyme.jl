@@ -2,8 +2,6 @@ function pmap_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_instruction(gutils, orig)
         return true
     end
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
     emit_error("fast pfor not implemented");
     return false
 end

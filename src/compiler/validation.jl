@@ -152,7 +152,6 @@ function check_ir!(job, errors, mod::LLVM.Module)
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
         name!(f, "")
-        ctx = context(mod)
         ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
         prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
@@ -258,7 +257,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         elseif fn == "gpu_malloc"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
             b = IRBuilder()
             position!(b, inst)
 
@@ -275,7 +273,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         elseif fn == "jl_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
             if isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))

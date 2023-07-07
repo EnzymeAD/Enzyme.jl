@@ -1271,7 +1271,6 @@ typeunknownvec = Float64[]
 end
 
 @testset "No Decayed / GC" begin
-    return
     @noinline function deduplicate_knots!(knots)
         last_knot = first(knots)
         for i = eachindex(knots)

@@ -20,7 +20,7 @@ function get_job(@nospecialize(func), @nospecialize(A), @nospecialize(types);
 end
 
 function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
-                 optimize::Bool=true, second_stage::Bool=true, ctx=nothing, kwargs...)
+                 optimize::Bool=true, second_stage::Bool=true, kwargs...)
 
     job = get_job(func, A, types; kwargs...)
     # Codegen the primal function and all its dependency in one module
@@ -45,7 +45,7 @@ function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospec
                           optimize::Bool=true, run_enzyme::Bool=true, second_stage::Bool=true,
                           raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false)
     JuliaContext() do ctx
-        entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, ctx)
+        entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage)
         @static if VERSION >= v"1.9.0-DEV.516"
             ts_mod = ThreadSafeModule(ir)
             if VERSION >= v"1.9.0-DEV.672"

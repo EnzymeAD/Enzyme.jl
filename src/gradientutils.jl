@@ -8,7 +8,7 @@ LLVM.dispose(gutils::GradientUtils) = throw("Cannot free gutils")
 
 function call_samefunc_with_inverted_bundles!(B::LLVM.IRBuilder, gutils::GradientUtils, orig::LLVM.CallInst, args::Vector{<:LLVM.Value}, valTys::Vector{API.CValueType}, lookup::Bool)
     @assert length(args) == length(valTys)
-    return LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_value(orig), args, length(args), orig, valTys, length(valTys), B, #=lookup=#false))
+    return LLVM.Value(API.EnzymeGradientUtilsCallWithInvertedBundles(gutils, LLVM.called_operand(orig), args, length(args), orig, valTys, length(valTys), B, #=lookup=#false))
 end
 
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
