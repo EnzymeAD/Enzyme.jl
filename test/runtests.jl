@@ -722,7 +722,7 @@ end
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-if !Sys.iswindows() && !(Sys.isapple() && Sys.ARCH == :aarch64)
+if !Sys.iswindows()
     include("packages/specialfunctions.jl")
 end
 
@@ -2044,7 +2044,7 @@ if CUDA.functional() && VERSION >= v"1.7.0"
     include("cuda.jl")
 end
 
-if VERSION >= v"1.8.0"
+if VERSION >= v"1.8.0" && Sys.isapple() && Sys.ARCH == :aarch64
     using Pkg
     Pkg.add("Metal")
     using Metal
