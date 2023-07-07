@@ -4057,7 +4057,8 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
-    if any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
+    if swiftself
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
     _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2], ctx)
