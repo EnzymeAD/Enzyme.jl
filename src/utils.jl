@@ -25,6 +25,12 @@ else
     context!(f, ctx::LLVM.ThreadSafeContext) = LLVM.ts_context!(f, ctx)
 end
 
+@static if VERSION < v"1.9-"
+    has_context() = LLVM._has_context()
+else
+    has_context() = LLVM._has_ts_context() ###??
+end
+
 function hasfieldcount(@nospecialize(dt))
     try
         fieldcount(dt)
@@ -233,7 +239,7 @@ end
 
 end
 
-export codegen_world_age, context!
+export codegen_world_age, context!, has_context
 
 
 

@@ -166,7 +166,7 @@ else
         jctx = ctxToThreadSafe[jctx]
 end
         
-        cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, jctx)
+        cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob)
         LLVM.link!(mod, cmod)
             attributes = function_attributes(llvmfn)
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))

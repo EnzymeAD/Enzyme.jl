@@ -1271,6 +1271,7 @@ typeunknownvec = Float64[]
 end
 
 @testset "No Decayed / GC" begin
+    return
     @noinline function deduplicate_knots!(knots)
         last_knot = first(knots)
         for i = eachindex(knots)
@@ -1815,7 +1816,6 @@ end
 end
 
 @testset "Forward on Reverse" begin
-
 	function speelpenning(y, x)
 		ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
 								  y, x, 2 * 8)

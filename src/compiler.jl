@@ -2949,6 +2949,7 @@ end
     # TODO:
     #  - GPU support
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
+    activate(ctx)
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
@@ -2972,6 +2973,7 @@ end
         # 4) Link the corresponding module
         LLVM.link!(mod, otherMod)
 
+        deactivate(ctx)
 
         # 5) Call the function
         return functions(mod)[entry]
@@ -3143,7 +3145,7 @@ end
             cmod, fwdmodenm, _, _ = context!(jctx) do 
                 _thunk(ejob, #=postopt=#false)
             end
-            
+
             LLVM.link!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
@@ -6451,8 +6453,14 @@ end
 
 macro augfunc(f)
    :(@cfunction((B, OrigCI, gutils, normalR, shadowR, tapeR) -> begin
-     ThreadSafeContext() do ctx
-        UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR, tapeR)::Bool)
+     g() = UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR, tapeR)::Bool)
+
+     if has_context()
+        g()
+     else
+        JuliaContext() do ctx
+            g()
+        end
      end
     end, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
     ))
@@ -6460,18 +6468,28 @@ end
 
 macro revfunc(f)
    :(@cfunction((B, OrigCI, gutils, tape) -> begin
-   ThreadSafeContext() do ctx
-        $f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), tape == C_NULL ? nothing : LLVM.Value(tape))
-     end
+        g() = $f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), tape == C_NULL ? nothing : LLVM.Value(tape))
+        if has_context()
+            g()
+         else
+            JuliaContext() do ctx
+                g()
+            end
+        end
     end,  Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)
     ))
 end
 
 macro fwdfunc(f)
    :(@cfunction((B, OrigCI, gutils, normalR, shadowR) -> begin
-   ThreadSafeContext() do ctx
-        UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
-     end
+     g() = UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
+     if has_context()
+        g()
+     else
+        JuliaContext() do ctx
+            g()
+        end
+    end
     end, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
     ))
 end
@@ -8627,6 +8645,8 @@ else
 end
     end
 
+    activate(ctx)
+
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
         run!(pm, mod)
@@ -8947,7 +8967,8 @@ end
     device_module = false
     if parent_job !== nothing
         if parent_job.config.target isa GPUCompiler.PTXCompilerTarget ||
-           parent_job.config.target isa GPUCompiler.GCNCompilerTarget
+           parent_job.config.target isa GPUCompiler.GCNCompilerTarget ||
+           parent_job.config.target isa GPUCompiler.MetalCompilerTarget
             parallel = true
             device_module = true
         end
@@ -9074,7 +9095,8 @@ end
 
     adjointf = functions(mod)[adjointf_name]
     ctx=context(mod)
-    
+    #activate(ctx)
+
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
@@ -9087,6 +9109,7 @@ end
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
+    deactivate(ctx)
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled, TapeType)
     
 end
@@ -9510,7 +9533,7 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
 end
 
 # actual compilation
-function _thunk(job, postopt=true)
+function _thunk(job, postopt::Bool=true)
 
     function __thunk()
         mod, meta = codegen(:llvm, job; optimize=false)
@@ -9537,7 +9560,7 @@ function _thunk(job, postopt=true)
         return (mod, adjoint_name, primal_name, meta.TapeType)
     end
 
-    if LLVM._has_ts_context()
+    if has_context()
         __thunk()
     else
         JuliaContext() do ctx
@@ -9576,7 +9599,6 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
 @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}
-    JuliaContext() do ctx
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
@@ -9645,7 +9667,6 @@ end
         @assert false
     end
 
-    end
 end
 
 import GPUCompiler: deferred_codegen_jobs
