@@ -5647,7 +5647,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     if errtype == API.ET_NoDerivative
         exc = NoDerivativeException(msg, ir, bt)
         if data != C_NULL
-            gutils = API.EnzymeGradientUtilsRef(data)
+            gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
             newb = new_from_original(gutils, val)
             while isa(newb, LLVM.PHIInst)
                 newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
@@ -5663,7 +5663,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         throw(exc)
     elseif errtype == API.ET_NoShadow
-        data = API.EnzymeGradientUtilsRef(data)
+        data = GradientUtils(API.EnzymeGradientUtilsRef(data))
         ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
