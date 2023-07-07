@@ -4,6 +4,7 @@ using LLVM
 import LLVM:TargetMachine
 
 import GPUCompiler
+import GPUCompiler: JuliaContext
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
@@ -128,15 +129,15 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    ThreadSafeContext() do ctx
-        c = context(ctx)
-        try
-            activate(c)
-            mod = parse(LLVM.Module, buf)
-            return ThreadSafeModule(mod)
-        finally
-            deactivate(c)
-        end
+    ts_ctx = ThreadSafeContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    try
+        mod = parse(LLVM.Module, buf)
+        return ThreadSafeModule(mod)    
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
     end
 end
 
