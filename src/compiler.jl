@@ -5207,7 +5207,7 @@ function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
 
     if width == 1
         vargs = args
-        cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, vargs, valTys, #=lookup=#false)
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, #=lookup=#false)
         debug_from_orig!(gutils, cal, orig)
         callconv!(cal, callconv(orig))
     else
