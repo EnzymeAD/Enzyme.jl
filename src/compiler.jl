@@ -8317,6 +8317,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(entry_f, i)))) for i in 1:length(collect(parameters(entry_f))))
+    @assert !swiftself "Swiftself attribute coming from differentiable context is not supported"
 	prargs = classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved)
     args = copy(prargs)
     filter!(args) do arg
