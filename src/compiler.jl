@@ -3140,7 +3140,10 @@ end
 else
             jctx = ctxToThreadSafe[jctx]
 end
-            cmod, fwdmodenm, _, _ = _thunk(ejob, jctx, #=postopt=#false)
+            cmod, fwdmodenm, _, _ = context!(jctx) do 
+                _thunk(ejob, #=postopt=#false)
+            end
+            
             LLVM.link!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
