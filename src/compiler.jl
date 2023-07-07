@@ -3759,7 +3759,9 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
     sret = sret !== nothing
     returnRoots = returnRoots !== nothing
 
-	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots, parmsRemoved)
+    cv = LLVM.called_value(orig)
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(cv, i)))) for i in 1:length(collect(parameters(cv))))
+	jlargs = classify_arguments(mi.specTypes, called_type(orig), sret, returnRoots, swiftself, parmsRemoved)
 
     alloctx = LLVM.IRBuilder(ctx)
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -4055,6 +4057,9 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0; ctx))
 
+    if any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
+        pushfirst!(reinsert_gcmarker!(fn, B))
+    end
     _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2], ctx)
     if sret !== nothing
         sret = alloca!(alloctx, convert(LLVMType, eltype(sret); ctx))
@@ -4068,6 +4073,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     else
         sret = nothing
     end
+
 
     if length(args) != length(parameters(llvmf))
         GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
@@ -4085,6 +4091,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     debug_from_orig!(gutils, res, orig)
+    callconv!(res, callconv(llvmf))
 
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn"; ctx)), collect(function_attributes(llvmf))))
 
@@ -4100,6 +4107,10 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
         res = load!(B, eltype(value_type(parameters(llvmf)[1])), sret)
+    end
+    if swiftself
+        attr = EnumAttribute("swiftself"; ctx)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1+(sret !== nothing)), attr)
     end
 
     shadowV = C_NULL
@@ -4348,6 +4359,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...}, world)
     # end
 
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
+
     if !forward
         if needsTape
             @assert tape != C_NULL
@@ -4398,6 +4411,10 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         end
     end
 
+    if swiftself
+        pushfirst!(reinsert_gcmarker!(fn, B))
+    end
+
     _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2], ctx)
     if sret !== nothing
         sret = alloca!(alloctx, convert(LLVMType, eltype(sret); ctx))
@@ -4429,6 +4446,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     ncall = res
     debug_from_orig!(gutils, res, orig)
+    callconv!(res, callconv(llvmf))
 
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn"; ctx)), collect(function_attributes(llvmf))))
 
@@ -4438,12 +4456,16 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     if sret !== nothing
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1])); ctx)
+            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1+swiftself])); ctx)
         else
             attr = EnumAttribute("sret"; ctx)
         end
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, eltype(value_type(parameters(llvmf)[1])), sret)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1+swiftself), attr)
+        res = load!(B, eltype(value_type(parameters(llvmf)[1+swiftself])), sret)
+    end
+    if swiftself
+        attr = EnumAttribute("swiftself"; ctx)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1+(sret !== nothing)+(returnRoots !== nothing)), attr)
     end
 
     shadowV = C_NULL
@@ -7133,7 +7155,9 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen == length(ops)
 
-    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, parmsRemoved)
+    cv = LLVM.called_value(inst)
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(cv, i)))) for i in 1:length(collect(parameters(cv))))
+    jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
 
     for arg in jlargs
@@ -7222,6 +7246,14 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     ctx = LLVM.context(mod)
 
     @assert length(modifiedBetween) == length(TT.parameters)
+
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(primalf, i)))) for i in 1:length(collect(parameters(primalf))))
+    if swiftself
+        push!(args_activity, API.DFT_CONSTANT)
+        push!(args_typeInfo, TypeTree())
+        push!(uncacheable_args, false)
+        push!(args_known_values, API.IntList())
+    end
 
     for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
@@ -8031,7 +8063,7 @@ struct RemovedParam
 end
 
 # Modified from GPUCompiler classify_arguments
-function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret::Bool, has_returnroots::Bool, parmsRemoved::Vector{UInt64})
+function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has_sret::Bool, has_returnroots::Bool, has_swiftself::Bool, parmsRemoved::Vector{UInt64})
     codegen_types = parameters(codegen_ft)
 
     args = []
@@ -8044,6 +8076,12 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
         orig_i += 1
     end
     if has_returnroots
+        if !in(orig_i-1, parmsRemoved)
+            codegen_i += 1
+        end
+        orig_i += 1
+    end
+    if has_swiftself
         if !in(orig_i-1, parmsRemoved)
             codegen_i += 1
         end
@@ -8277,11 +8315,13 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
-	prargs = classify_arguments(functy, entry_ft, sret, returnRoots, parmsRemoved)
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(entry_f, i)))) for i in 1:length(collect(parameters(entry_f))))
+	prargs = classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved)
     args = copy(prargs)
     filter!(args) do arg
         arg.cc != GPUCompiler.GHOST && arg.cc != RemovedParam
     end
+
 
     # @assert length(args) == length(collect(parameters(entry_f))[1+sret+returnRoots:end])
 
@@ -8290,6 +8330,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 	# 	push!(wrapper_types, value_type(parameters(entry_f)[1+sret]))
 	# end
     #
+
+    if swiftself
+        push!(wrapper_types, value_type(parameters(entry_f)[1+sret+returnRoots]))
+    end
+
     for arg in args
         typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
             eltype(arg.codegen.typ)
@@ -8302,6 +8347,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
+    callconv!(wrapper_f, callconv(entry_f))
     sfn = LLVM.get_subprogram(entry_f)
     if sfn !== nothing
         LLVM.set_subprogram!(wrapper_f, sfn)
@@ -8314,6 +8360,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     end
     push!(function_attributes(wrapper_f), EnumAttribute("returns_twice"; ctx))
     push!(function_attributes(entry_f), EnumAttribute("returns_twice"; ctx))
+    if swiftself
+        push!(parameter_attributes(wrapper_f, 1), EnumAttribute("swiftself"; ctx))
+    end
 
     # emit IR performing the "conversions"
     let builder = IRBuilder(ctx)
@@ -8330,6 +8379,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 			if returnRoots
 				push!(nops, ops[1+sret])
 			end
+            if swiftself
+                push!(nops, ops[1+sret+returnRoots])
+            end
             for arg in args
                 parm = ops[arg.codegen.i]
                 if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
@@ -8339,6 +8391,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 end
             end
             res = call!(builder, LLVM.function_type(wrapper_f), wrapper_f, nops)
+            callconv!(res, callconv(wrapper_f))
             if sret
               @assert value_type(res) == eltype(value_type(ops[1]))
               store!(builder, res, ops[1])
@@ -8377,6 +8430,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(wrapper_args, retRootPtr)
             end
         end
+        if swiftself
+            push!(wrapper_args, parameters(wrapper_f)[1])
+        end
 
         # perform argument conversions
         for arg in args
@@ -8409,7 +8465,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             metadata(res)[LLVM.MD_dbg] = DILocation(ctx, 0, 0, LLVM.get_subprogram(entry_f) )
         end
 
-        LLVM.API.LLVMSetInstructionCallConv(res, LLVM.callconv(entry_f))
+        callconv!(res, LLVM.callconv(entry_f))
+        if swiftself
+            attr = EnumAttribute("swiftself"; ctx)
+            LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1+sret+returnRoots), attr)
+        end
 
         # Box union return, from https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L3138
         if sret_union
@@ -8851,10 +8911,10 @@ end
 
             res = call!(builder, LLVM.function_type(llvmfn), llvmfn, collect(parameters(wrapper_f)))
 
-            if !isempty(parameters(llvmfn))
-                for attr in collect(parameter_attributes(llvmfn, 1))
+            for idx in length(collect(parameters(llvmfn)))
+                for attr in collect(parameter_attributes(llvmfn, idx))
                     if kind(attr) == kind(EnumAttribute("sret"; ctx))
-                        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
+                        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(idx), attr)
                     end
                 end
             end
