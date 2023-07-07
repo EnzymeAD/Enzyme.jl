@@ -5793,7 +5793,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
         end
 
-        gutils = API.EnzymeGradientUtilsRef(data)
+        gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
         newb = new_from_original(gutils, val)
         while isa(newb, LLVM.PHIInst)
             newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
