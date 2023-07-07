@@ -2044,7 +2044,11 @@ if CUDA.functional() && VERSION >= v"1.7.0"
     include("cuda.jl")
 end
 
-using Metal
-if Metal.functional() && VERSION >= v"0.5.0"
-    include("metal.jl")
+if VERSION >= v"1.8.0"
+    using Pkg
+    Pkg.add("Metal")
+    using Metal
+    if Metal.functional()
+        include("metal.jl")
+    end
 end
