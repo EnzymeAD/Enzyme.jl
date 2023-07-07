@@ -2436,7 +2436,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f__apply_iterate")
+    emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
