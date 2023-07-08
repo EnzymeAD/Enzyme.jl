@@ -264,6 +264,12 @@ euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
 test_scalar(euroad, 0.5)
 end
 
+@testset "Nested AD" begin
+    tonest(x,y) = (x + y)^2
+
+    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+end
+
 @testset "Array tests" begin
 
     function arsum(f::Array{T}) where T
@@ -588,12 +594,6 @@ end
     grads = zeros(T, size(xx))
     autodiff(Reverse, (x) -> x' * x, Duplicated(xx, grads))
     @test xx .* 2 == grads
-end
-
-@testset "Nested AD" begin
-    tonest(x,y) = (x + y)^2
-
-    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Compare against" begin
@@ -1271,7 +1271,6 @@ typeunknownvec = Float64[]
 end
 
 @testset "No Decayed / GC" begin
-    
     @noinline function deduplicate_knots!(knots)
         last_knot = first(knots)
         for i = eachindex(knots)
@@ -1816,7 +1815,8 @@ end
 end
 
 @testset "Forward on Reverse" begin
-	function speelpenning(y, x)
+
+    function speelpenning(y, x)
 		ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
 								  y, x, 2 * 8)
 		return nothing

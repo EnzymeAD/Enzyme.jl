@@ -115,7 +115,7 @@ end
 function reinsert_gcmarker!(func, PB=nothing)
     ctx = LLVM.context(func)
     for (i, v) in enumerate(parameters(func))
-        if any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(func, i))))
+        if any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(func, i))))
             return v
         end
     end

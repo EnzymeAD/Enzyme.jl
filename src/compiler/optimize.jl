@@ -1,7 +1,6 @@
 function addNA(inst, node::LLVM.Metadata, MD)
     md = metadata(inst)
     next = nothing 
-    ctx = LLVM.context(inst)
     if haskey(md, MD)
         next = LLVM.MDNode(Metadata[node, operands(md[MD])...])
     else
@@ -40,8 +39,6 @@ end
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
-    ctx = LLVM.context(mod)
-
     for f in functions(mod), bb in blocks(f)
         todo = LLVM.PHIInst[]
         nonphi = nothing
@@ -91,7 +88,6 @@ function nodecayed_phis!(mod::LLVM.Module)
 end
 
 function fix_decayaddr!(mod::LLVM.Module)
-    ctx = LLVM.context(mod)
     for f in functions(mod)
         invalid = LLVM.AddrSpaceCastInst[]
         for bb in blocks(f), inst in instructions(bb)
@@ -244,7 +240,6 @@ end
 
 function pre_attr!(mod::LLVM.Module)
     return nothing
-    ctx = LLVM.context(mod)
     tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
     for fn in collect(functions(mod))
         if isempty(blocks(fn))
@@ -274,7 +269,7 @@ end
 function post_attr!(mod::LLVM.Module)
 end
 
-function prop_global!(g, ctx)
+function prop_global!(g)
     newfns = String[]
     changed = false
         todo = Tuple{Vector{Cuint},LLVM.Value}[]
@@ -335,7 +330,6 @@ function prop_global!(g, ctx)
 end
 
 function propagate_returned!(mod::LLVM.Module)
-    ctx = LLVM.context(mod)
     globs = LLVM.GlobalVariable[]
     for g in globals(mod)
         if linkage(g) == LLVM.API.LLVMInternalLinkage || linkage(g) == LLVM.API.LLVMPrivateLinkage
@@ -350,7 +344,7 @@ function propagate_returned!(mod::LLVM.Module)
         next = Set{String}()
         changed = false
         for g in globs
-            tc, tn = prop_global!(g, ctx)
+            tc, tn = prop_global!(g)
             changed |= tc
             for f in tn
                 push!(next, f)
@@ -532,7 +526,6 @@ function propagate_returned!(mod::LLVM.Module)
 end
 
 function detect_writeonly!(mod::LLVM.Module)
-    ctx = LLVM.context(mod)
     for f in functions(mod)
         if isempty(LLVM.blocks(f))
             continue
@@ -599,7 +592,6 @@ function detect_writeonly!(mod::LLVM.Module)
 end
 
 function validate_return_roots!(mod)
-    ctx = LLVM.context(mod)
     for f in functions(mod)
         srets = []
         enzyme_srets = Int[]
@@ -732,7 +724,6 @@ function removeDeadArgs!(mod::LLVM.Module)
         run!(pm, mod)
     end
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
-    ctx = LLVM.context(mod)
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
     func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
     rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly"), EnumAttribute("nocapture")])
