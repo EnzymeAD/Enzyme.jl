@@ -722,7 +722,7 @@ end
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-if !Sys.iswindows()
+if !Sys.iswindows() && !(Sys.ARCH == :aarch64 && Sys.isapple())
     include("packages/specialfunctions.jl")
 end
 

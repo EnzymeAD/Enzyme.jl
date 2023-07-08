@@ -3,7 +3,6 @@ using SpecialFunctions
 # From https://github.com/JuliaDiff/ChainRules.jl/blob/02e7857e34b5c01067a288262f69cfcb9fce069b/test/rulesets/packages/SpecialFunctions.jl#L1
 
 @testset "SpecialFunctions" for x in (1, -1, 0, 0.5, 10, -17.1, 1.5 + 0.7im)
-    return
     # 32-bit erf currently broken
     if sizeof(Int) != sizeof(Int32)
         test_scalar(SpecialFunctions.erf, x)
