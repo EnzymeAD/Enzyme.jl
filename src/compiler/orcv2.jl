@@ -129,15 +129,9 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    ts_ctx = ThreadSafeContext()
-    ctx = context(ts_ctx)
-    activate(ctx)
-    try
+    JuliaContext() do ctx
         mod = parse(LLVM.Module, buf)
-        return ThreadSafeModule(mod)    
-    finally
-        deactivate(ctx)
-        dispose(ts_ctx)
+        return ThreadSafeModule(mod)
     end
 end
 

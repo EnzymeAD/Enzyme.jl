@@ -113,7 +113,6 @@ function get_pgcstack(func)
 end
 
 function reinsert_gcmarker!(func, PB=nothing)
-    ctx = LLVM.context(func)
     for (i, v) in enumerate(parameters(func))
         if any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(func, i))))
             return v

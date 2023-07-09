@@ -115,6 +115,8 @@ end
     end
 end
 
+import GPUCompiler: JuliaContext
+
 """
     autodiff(::ReverseMode, f, Activity, args...)
 
@@ -176,6 +178,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(::ReverseMode{ReturnPrimal, RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RABI<:ABI}
+    JuliaContext() do ctx
     args′  = annotate(args...)
     tt′    = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -211,6 +214,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         args′ = (args′..., one(rt))
     end
     thunk(f, args′...)
+    end
 end
 
 """
@@ -291,6 +295,7 @@ f(x) = x*x
 ```
 """
 @inline function autodiff(::ForwardMode{RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI}
+    JuliaContext() do ctx
     args′  = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -328,6 +333,7 @@ f(x) = x*x
     thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
     thunk(f, args′...)
+    end
 end
 
 """
@@ -337,6 +343,7 @@ Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
+    JuliaContext() do ctx
     args′ = annotate(args...)
     tt′   = Tuple{map(Core.Typeof, args′)...}
     width = same_or_one(args...)
@@ -371,6 +378,7 @@ code, as well as high-order differentiation.
     end
     thunk(f, args′...)
 end
+end
 
 """
     autodiff_deferred(::ForwardMode, f, Activity, args...)
@@ -379,6 +387,7 @@ Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support 
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
+    JuliaContext() do ctx
     args′ = annotate(args...)
     if any_active(args′...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -429,8 +438,9 @@ code, as well as high-order differentiation.
     
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     @assert primal_ptr === nothing
-    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)    
     thunk(f, args′...)
+    end
 end
 
 """
@@ -504,6 +514,7 @@ result, ∂v, ∂A
 """
 @inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI}
     # args′  = annotate(args...)
+    JuliaContext() do ctx
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
@@ -526,6 +537,7 @@ result, ∂v, ∂A
     
     @assert ReturnShadow
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+end
 end
 
 """
@@ -574,6 +586,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 """
 @inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, RABI<:ABI}
     # args′  = annotate(args...)
+    JuliaContext() do ctx
     width = same_or_one(A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
@@ -589,6 +602,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     world = codegen_world_age(eltype(FA), tt)
     
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+end
 end
 
 @inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
@@ -663,6 +677,7 @@ result, ∂v, ∂A
 ```
 """
 @inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    JuliaContext() do ctx
     @assert RABI == FFIABI
     # args′  = annotate(args...)
     width = if Width == 0
@@ -698,6 +713,7 @@ result, ∂v, ∂A
     AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
     @assert AdjT == typeof(nondef[2])
     AugT(primal_ptr), AdjT(adjoint_ptr)
+    end
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
@@ -985,6 +1001,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 ```
 """
 @inline function jacobian(::ReverseMode{ReturnPrimal,RABI}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, ReturnPrimal, RABI<:ABI}
+    JuliaContext() do ctx
     @assert !ReturnPrimal
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
@@ -1028,9 +1045,11 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     end
     rows = tupleconcat(tmp...)
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
+    end
 end
 
 @inline function jacobian(::ReverseMode{ReturnPrimal,RABI}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,ReturnPrimal,RABI<:ABI}
+    JuliaContext() do ctx
     @assert !ReturnPrimal
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
@@ -1049,6 +1068,7 @@ end
         return dx
     end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
+    end
 end
 
 

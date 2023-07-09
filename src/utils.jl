@@ -17,20 +17,6 @@ end
 
 export unsafe_to_llvm
 
-import LLVM: context!, ts_context!, context
-
-@static if VERSION < v"1.9-"
-    context(ctx::LLVM.Context) = ctx
-else
-    context!(f, ctx::LLVM.ThreadSafeContext) = LLVM.ts_context!(f, ctx)
-end
-
-@static if VERSION < v"1.9-"
-    has_context() = LLVM._has_context()
-else
-    has_context() = LLVM._has_ts_context() ###??
-end
-
 function hasfieldcount(@nospecialize(dt))
     try
         fieldcount(dt)
@@ -239,7 +225,7 @@ end
 
 end
 
-export codegen_world_age, context!, has_context
+export codegen_world_age
 
 
 
