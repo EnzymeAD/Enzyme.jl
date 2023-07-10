@@ -2899,10 +2899,11 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, funcspec::
     prepare_llvm(otherMod, job, meta)
 
     entry = name(meta.entry)
-
+   
     for f in functions(otherMod)
         permit_inlining!(f)
     end
+
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
     # 4) Link the corresponding module
@@ -4156,7 +4157,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     world = enzyme_extract_world(fn)
 
     C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
-
+    
     mode = get_mode(gutils)
 
     ami = nothing
@@ -4397,6 +4398,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     shadowV = C_NULL
     normalV = C_NULL
 
+
     if forward
         ShadT = RealRt
         if width != 1
@@ -4521,7 +4523,7 @@ end
 
 function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
-    
+
     if is_constant_value(gutils, orig)
         return true
     end
@@ -7227,26 +7229,26 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
     rules = Dict{String, API.CustomRuleType}(
         "jl_apply_generic" => @cfunction(ptr_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_apply_generic" => @cfunction(ptr_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_float32" => @cfunction(f32_box_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_box_float32" => @cfunction(f32_box_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_int64" => @cfunction(i64_box_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_box_int64" => @cfunction(i64_box_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_box_uint64" => @cfunction(i64_box_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
@@ -7254,11 +7256,11 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_array_copy" => @cfunction(inout_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_alloc_array_1d" => @cfunction(alloc_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
@@ -7291,22 +7293,22 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_inactive_inout" => @cfunction(inout_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_excstack_state" => @cfunction(int_return_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_excstack_state" => @cfunction(int_return_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.except_enter" => @cfunction(int_return_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
     )
     for jl in jlrules
         rules[jl] = @cfunction(julia_type_rule,
-                                        UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
+                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
+                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
     end
 
     logic = Logic()
@@ -7381,8 +7383,8 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args))
         augmented_primalf = nothing
         if wrap
-            pf = adjointf
-            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
+          pf = adjointf
+          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -7399,7 +7401,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
-    
+
     push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0))
     hasNoInline = any(map(k->kind(k)==kind(EnumAttribute("noinline")), collect(function_attributes(enzymefn))))
     if hasNoInline
@@ -7570,14 +7572,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     returnRoots = false
     root_ty = nothing
     if uses_sret
-        returnRoots = deserves_rooting(jltype)
-        if returnRoots
-            tracked = CountTrackedPointers(jltype)
+    	returnRoots = deserves_rooting(jltype)
+		if returnRoots
+	        tracked = CountTrackedPointers(jltype)
             root_ty = LLVM.ArrayType(T_prjlvalue, tracked.count)
             pushfirst!(T_wrapperargs, LLVM.PointerType(root_ty))
 
             pushfirst!(T_wrapperargs, LLVM.PointerType(jltype))
-        end
+		end
     end
 
     if needs_tape
@@ -7663,7 +7665,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 isboxed = GPUCompiler.deserves_argbox(NTuple{width, T′})
                 val = params[i]
                 if isboxed
-                val = load!(builder, val)
+                  val = load!(builder, val)
                 end
                 i += 1
                 push!(realparms, val)
@@ -8462,7 +8464,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         throw(LLVM.LLVMException("broken function"))
     end
 
-    ModulePassManager() do pm
+	ModulePassManager() do pm
         always_inliner!(pm)
         run!(pm, mod)
     end
@@ -8982,7 +8984,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled, TapeType)
-    
 end
 
 # Compiler result
@@ -9290,7 +9291,7 @@ end
         end
 
         if returnRoots
-            tracked = CountTrackedPointers(jltype)
+	        tracked = CountTrackedPointers(jltype)
             pushfirst!(callparams, alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count)))
             pushfirst!(callparams, alloca!(builder, jltype))
         end
@@ -9340,11 +9341,11 @@ end
         else
             ret!(builder)
         end
-    end
+	end
     reinsert_gcmarker!(llvm_f)
 
-    ir = string(mod)
-    fn = LLVM.name(llvm_f)
+	ir = string(mod)
+	fn = LLVM.name(llvm_f)
 
     @assert length(types) == length(ccexprs)
 
@@ -9413,7 +9414,7 @@ function _thunk(job, postopt::Bool=true)
     else
         primal_name = nothing
     end
-
+ 
     LLVM.ModulePassManager() do pm
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         run!(pm, mod)
@@ -9423,7 +9424,7 @@ function _thunk(job, postopt::Bool=true)
     if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
     end
-    return (mod, adjoint_name, primal_name, meta.TapeType)
+    return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
 end
 
 const cache = Dict{UInt, CompileResult}()
@@ -9441,7 +9442,7 @@ const cache_lock = ReentrantLock()
             obj = _link(job, asm)
             cache[key] = obj
         end
-        obj   
+        obj
     finally
         unlock(cache_lock)
     end
