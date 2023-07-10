@@ -88,6 +88,7 @@ function vrec(start, x)
 end
 
 @testset "Internal tests" begin
+    JuliaContext() do ctx
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
@@ -129,7 +130,7 @@ end
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
-
+    end
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint

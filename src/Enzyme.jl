@@ -536,7 +536,18 @@ result, ∂v, ∂A
     world = codegen_world_age(eltype(FA), tt)
     
     @assert ReturnShadow
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    forward, reverse = Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    function w_forward(args...)
+        JuliaContext() do ctx
+            @inline forward(args...)
+        end
+    end
+    function w_reverse(args...)
+        JuliaContext() do ctx
+            @inline reverse(args...)
+        end
+    end
+    return (w_forward, w_reverse)
 end
 end
 
@@ -601,7 +612,13 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
         
     world = codegen_world_age(eltype(FA), tt)
     
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+    forward = Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+    function w_forward(args...)
+        JuliaContext() do ctx
+            @inline forward(args...)
+        end
+    end
+    return w_forward
 end
 end
 
@@ -712,7 +729,19 @@ result, ∂v, ∂A
     @assert AugT == typeof(nondef[1])
     AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
     @assert AdjT == typeof(nondef[2])
-    AugT(primal_ptr), AdjT(adjoint_ptr)
+    forward = AugT(primal_ptr)
+    reverse = AdjT(adjoint_ptr)
+    function w_forward(args...)
+        #JuliaContext() do ctx
+            @inline forward(args...)
+        #end
+    end
+    function w_reverse(args...)
+        #JuliaContext() do ctx
+            @inline reverse(args...)
+        #end
+    end
+    return (w_forward, w_reverse)
     end
 end
 
