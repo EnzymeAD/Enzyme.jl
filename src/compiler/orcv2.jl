@@ -129,10 +129,17 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    JuliaContext() do ctx
+    ts_ctx = ThreadSafeContext()   
+    ctx = context(ts_ctx)
+    activate(ctx)
+    try
         mod = parse(LLVM.Module, buf)
         return ThreadSafeModule(mod)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
     end
+
 end
 
 function add_trampoline!(jd, (lljit, lctm, ism), entry, target)

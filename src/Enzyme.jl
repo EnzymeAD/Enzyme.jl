@@ -539,12 +539,12 @@ result, ∂v, ∂A
     forward, reverse = Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     function w_forward(args...)
         JuliaContext() do ctx
-            @inline forward(args...)
+            forward(args...)
         end
     end
     function w_reverse(args...)
         JuliaContext() do ctx
-            @inline reverse(args...)
+            reverse(args...)
         end
     end
     return (w_forward, w_reverse)
@@ -615,7 +615,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     forward = Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
     function w_forward(args...)
         JuliaContext() do ctx
-            @inline forward(args...)
+            forward(args...)
         end
     end
     return w_forward
@@ -732,14 +732,14 @@ result, ∂v, ∂A
     forward = AugT(primal_ptr)
     reverse = AdjT(adjoint_ptr)
     function w_forward(args...)
-        #JuliaContext() do ctx
-            @inline forward(args...)
-        #end
+        JuliaContext() do ctx
+            forward(args...)
+        end
     end
     function w_reverse(args...)
-        #JuliaContext() do ctx
-            @inline reverse(args...)
-        #end
+        JuliaContext() do ctx
+            reverse(args...)
+        end
     end
     return (w_forward, w_reverse)
     end
