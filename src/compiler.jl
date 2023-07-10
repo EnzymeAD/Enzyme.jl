@@ -3801,8 +3801,8 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
 
             push!(args, al)
 
-        push!(activity, Ty)
-        push!(actives, op)
+            push!(activity, Ty)
+            push!(actives, op)
         else
             ival = invert_pointer(gutils, op, B)
             if reverse
@@ -7381,8 +7381,8 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args))
         augmented_primalf = nothing
         if wrap
-        pf = adjointf
-        adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
+            pf = adjointf
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -8308,10 +8308,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             res = call!(builder, LLVM.function_type(wrapper_f), wrapper_f, nops)
             callconv!(res, callconv(wrapper_f))
             if sret
-            @assert value_type(res) == eltype(value_type(ops[1]))
-            store!(builder, res, ops[1])
+                @assert value_type(res) == eltype(value_type(ops[1]))
+                store!(builder, res, ops[1])
             else
-            LLVM.replace_uses!(ci, res)
+                LLVM.replace_uses!(ci, res)
             end
             push!(toErase, ci)
         end
