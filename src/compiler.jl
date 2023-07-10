@@ -8677,7 +8677,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = meth.name
         jlmod  = meth.module
 
-        function handleCustom(name, attrs=[], setlink=true)
+        function handleCustom(name, attrs=[], setlink=true, noinl=true)
             attributes = function_attributes(llvmfn)
             custom[k_name] = linkage(llvmfn)
             if setlink
@@ -8687,7 +8687,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 push!(attributes, a)
             end
             push!(attributes, StringAttribute("enzyme_math", name))
-            push!(attributes, EnumAttribute("noinline", 0))
+            if noinl
+                push!(attributes, EnumAttribute("noinline", 0))
+            end
             must_wrap |= llvmfn == primalf
             nothing
         end
@@ -8745,7 +8747,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Core.Compiler.return_type || func == Base.Broadcast.combine_eltypes
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"; ctx), StringAttribute("nofree"; ctx)])
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], noinl=false)
             continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task
