@@ -3,7 +3,7 @@ module JIT
 using LLVM
 import LLVM: TargetMachine
 
-import GPUCompiler: CompilerJob
+import GPUCompiler: CompilerJob, JuliaContext
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
@@ -52,7 +52,8 @@ const outstanding = Dict{Symbol, Tuple{CallbackContext, Union{Nothing, CallbackC
 
 # Setup the lazy callback for creating a module
 function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
-    orc = OrcJIT(orc_ref)
+    JuliaContext() do ctx
+		orc = OrcJIT(orc_ref)
     cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
 
     # 1. Lock job
@@ -96,6 +97,7 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
     # 5. Return the address of the implementation, since we are going to call it now
     @assert cc.addr != C_NULL
     return UInt64(reinterpret(UInt, cc.addr))
+		end
 end
 
 function get_trampoline(job)
