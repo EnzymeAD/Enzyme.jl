@@ -9424,7 +9424,7 @@ function _thunk(job, postopt::Bool=true)
     if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
     end
-    return (mod, adjoint_name, primal_name, ctx, meta.TapeType)
+    return (mod, adjoint_name, primal_name, meta.TapeType)
 end
 
 const cache = Dict{UInt, CompileResult}()
