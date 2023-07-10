@@ -357,17 +357,21 @@ end
 end
 
 @inline @generated function active_reg(::Type{T}) where {T}
+    JuliaContext() do ctx
     seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
+    end
 end
 
 @inline @generated function active_reg_nothrow(::Type{T}) where {T}
+    JuliaContext() do ctx
     seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
     return state == ActiveState
+    end
 end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
@@ -1233,9 +1237,11 @@ function func_runtime_generic_fwd(N, Width)
 end
 
 @generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    end
 end
 
 function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
@@ -1312,9 +1318,11 @@ function func_runtime_generic_augfwd(N, Width)
 end
 
 @generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
+    end
 end
 
 function body_runtime_generic_rev(N, Width, wrapped, primttypes)
@@ -1395,9 +1403,11 @@ function func_runtime_generic_rev(N, Width)
 end
 
 @generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
+    end
 end
 
 # Create specializations
@@ -9033,6 +9043,7 @@ end
 @generated function enzyme_call(::Val{RawCall}, fptr::PT, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
         rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, PT, FA, T, RT, TapeType, N, CC, width, returnPrimal}
 
+    JuliaContext() do ctx
     F = eltype(FA)
     is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
     is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
@@ -9185,7 +9196,6 @@ end
         jlRT = Any
     end
 
-    JuliaContext() do ctx
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
         # TODO handle batch width
@@ -9456,6 +9466,7 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
 @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+    JuliaContext() do ctx
     mi = fspec(eltype(FA), TT, World)
 
     target = Compiler.EnzymeTarget()
@@ -9524,11 +9535,14 @@ end
         @assert false
     end
 end
+end
 
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
         ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
+    JuliaContext() do ctx
+
     mi = fspec(eltype(FA), tt, World)
     target = EnzymeTarget()
     params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
@@ -9554,6 +9568,7 @@ import GPUCompiler: deferred_codegen_jobs
         end
         adjoint, primal
     end
+end
 end
 
 include("compiler/reflection.jl")

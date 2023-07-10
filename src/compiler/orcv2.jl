@@ -4,7 +4,6 @@ using LLVM
 import LLVM:TargetMachine
 
 import GPUCompiler
-import GPUCompiler: JuliaContext
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
@@ -129,17 +128,10 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    ts_ctx = ThreadSafeContext()   
-    ctx = context(ts_ctx)
-    activate(ctx)
-    try
+    return ThreadSafeContext() do ctx
         mod = parse(LLVM.Module, buf)
-        return ThreadSafeModule(mod)
-    finally
-        deactivate(ctx)
-        dispose(ts_ctx)
+        ThreadSafeModule(mod)
     end
-
 end
 
 function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
@@ -197,6 +189,7 @@ function get_trampoline(job)
         # 1. Make the runtime decision about what symbol should implement "foo". Let's call this "foo.rt.impl".
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
+        GPUCompiler.JuliaContext() do ctx
         mod, adjoint_name, primal_name = Compiler._thunk(job)
         adjointf = functions(mod)[adjoint_name]
         LLVM.name!(adjointf, adjoint_sym)
@@ -211,7 +204,7 @@ function get_trampoline(job)
         tsm = move_to_threadsafe(mod)
         il = LLVM.IRTransformLayer(lljit)
         LLVM.emit(il, mr, tsm)
-
+        end
         return nothing
     end
 

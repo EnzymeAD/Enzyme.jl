@@ -87,31 +87,3 @@ end
 function EnzymeRules.inactive(::typeof(Base.nextind), args...)
     return nothing
 end
-function EnzymeRules.inactive(::DataType)
-    nothing
-end
-
-@static if LLVM.has_orc_v2()
-
-function EnzymeRules.inactive(::typeof(LLVM.context), ::LLVM.ThreadSafeContext)
-    nothing
-end
-function EnzymeRules.inactive(::typeof(LLVM.dispose), ::LLVM.ThreadSafeContext)
-    nothing
-end
-
-end
-
-function EnzymeRules.inactive(::typeof(LLVM.context), ::LLVM.Context)
-    nothing
-end
-function EnzymeRules.inactive(::typeof(LLVM.activate), ::LLVM.Context)
-    nothing
-end
-
-function EnzymeRules.inactive(::typeof(LLVM.deactivate), ::LLVM.Context)
-    nothing
-end
-function EnzymeRules.inactive(::typeof(GPUCompiler.JuliaContext))
-    nothing
-end
