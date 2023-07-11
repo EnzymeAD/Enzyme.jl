@@ -53,51 +53,51 @@ const outstanding = Dict{Symbol, Tuple{CallbackContext, Union{Nothing, CallbackC
 # Setup the lazy callback for creating a module
 function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
     JuliaContext() do ctx
-		orc = OrcJIT(orc_ref)
-    cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
+        orc = OrcJIT(orc_ref)
+        cc = Base.unsafe_pointer_to_objref(callback_ctx)::CallbackContext
 
-    # 1. Lock job
-    lock(cc.l_job)
+        # 1. Lock job
+        lock(cc.l_job)
 
-    # 2. lookup if we are the first
-    lock(l_outstanding)
-    if haskey(outstanding, cc.tag)
-        ccs = outstanding[cc.tag]
-        delete!(outstanding, cc.tag)
-    else
-        ccs = nothing
-    end
-    unlock(l_outstanding)
+        # 2. lookup if we are the first
+        lock(l_outstanding)
+        if haskey(outstanding, cc.tag)
+            ccs = outstanding[cc.tag]
+            delete!(outstanding, cc.tag)
+        else
+            ccs = nothing
+        end
+        unlock(l_outstanding)
 
-    # 3. We are the second callback to run, but we raced the other one
-    #    thus we return the addr from them.
-    if ccs === nothing
-        unlock(cc.l_job)
+        # 3. We are the second callback to run, but we raced the other one
+        #    thus we return the addr from them.
+        if ccs === nothing
+            unlock(cc.l_job)
+            @assert cc.addr != C_NULL
+            return UInt64(reinterpret(UInt, cc.addr))
+        end
+
+        cc_adjoint, cc_primal = ccs
+        try
+            thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))
+            cc_adjoint.addr = thunk.adjoint
+            if cc_primal !== nothing
+                cc_primal.addr  = thunk.primal
+            end
+
+            # 4. Update the stub pointer to point to the recently compiled module
+            set_stub!(orc, string(cc_adjoint.stub), thunk.adjoint)
+            if cc_primal !== nothing
+                set_stub!(orc, string(cc_primal.stub),  thunk.primal)
+            end
+        finally
+            unlock(cc.l_job)
+        end
+
+        # 5. Return the address of the implementation, since we are going to call it now
         @assert cc.addr != C_NULL
         return UInt64(reinterpret(UInt, cc.addr))
-    end
-
-    cc_adjoint, cc_primal = ccs
-    try
-        thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))
-        cc_adjoint.addr = thunk.adjoint
-        if cc_primal !== nothing
-            cc_primal.addr  = thunk.primal
-        end
-
-        # 4. Update the stub pointer to point to the recently compiled module
-        set_stub!(orc, string(cc_adjoint.stub), thunk.adjoint)
-        if cc_primal !== nothing
-            set_stub!(orc, string(cc_primal.stub),  thunk.primal)
-        end
-    finally
-        unlock(cc.l_job)
-    end
-
-    # 5. Return the address of the implementation, since we are going to call it now
-    @assert cc.addr != C_NULL
-    return UInt64(reinterpret(UInt, cc.addr))
-		end
+	end
 end
 
 function get_trampoline(job)

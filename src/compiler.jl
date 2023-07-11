@@ -357,21 +357,17 @@ end
 end
 
 @inline @generated function active_reg(::Type{T}) where {T}
-    JuliaContext() do ctx
     seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
-    end
 end
 
 @inline @generated function active_reg_nothrow(::Type{T}) where {T}
-    JuliaContext() do ctx
     seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
     return state == ActiveState
-    end
 end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
@@ -1237,11 +1233,9 @@ function func_runtime_generic_fwd(N, Width)
 end
 
 @generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
-    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
-    end
 end
 
 function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
@@ -1318,11 +1312,9 @@ function func_runtime_generic_augfwd(N, Width)
 end
 
 @generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
-    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
-    end
 end
 
 function body_runtime_generic_rev(N, Width, wrapped, primttypes)
@@ -1403,11 +1395,9 @@ function func_runtime_generic_rev(N, Width)
 end
 
 @generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
-    JuliaContext() do ctx
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
-    end
 end
 
 # Create specializations
@@ -8864,12 +8854,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if parent_job !== nothing
         if parent_job.config.target isa GPUCompiler.PTXCompilerTarget ||
             parent_job.config.target isa GPUCompiler.GCNCompilerTarget ||
-            parent_job.config.target isa GPUCompiler.MetalCompilerTarget           
+            parent_job.config.target isa GPUCompiler.MetalCompilerTarget
             parallel = true
             device_module = true
         end
-        if parent_job.config.target isa GPUCompiler.GCNCompilerTarget            
-           process_module = true
+        if parent_job.config.target isa GPUCompiler.GCNCompilerTarget ||
+            parent_job.config.target isa GPUCompiler.MetalCompilerTarget                      
+            process_module = true
         end
     end
 
@@ -8977,10 +8968,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
 
     if process_module
-        GPUCompiler.process_module!(parent_job, mod)
+        adjointf = GPUCompiler.finish_module!(parent_job, mod, adjointf)
     end
 
-    adjointf = functions(mod)[adjointf_name]
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]
@@ -9044,337 +9034,337 @@ end
         rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, PT, FA, T, RT, TapeType, N, CC, width, returnPrimal}
 
     JuliaContext() do ctx
-    F = eltype(FA)
-    is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
-    is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
-    is_split   = CC <: AdjointThunk || CC <: AugmentedForwardThunk
-    needs_tape = CC <: AdjointThunk
+        F = eltype(FA)
+        is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
+        is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
+        is_split   = CC <: AdjointThunk || CC <: AugmentedForwardThunk
+        needs_tape = CC <: AdjointThunk
 
-    argtt    = tt.parameters[1]
-    rettype  = rt.parameters[1]
-    argtypes = DataType[argtt.parameters...]
-    argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
+        argtt    = tt.parameters[1]
+        rettype  = rt.parameters[1]
+        argtypes = DataType[argtt.parameters...]
+        argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
 
-    if !RawCall
-        if rettype <: Active
-            @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
-        elseif rettype <: Const
-            @assert length(argtypes)              + needs_tape == length(argexprs)
-        else
-            @assert length(argtypes)              + needs_tape == length(argexprs)
-        end
-    end
-
-    types = DataType[]
-
-    if eltype(rettype) === Union{}
-        error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
-    end
-    if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
-        rrt = eltype(rettype)
-        error("Return type `$rrt` not marked Const, but is ghost or const type.")
-    end
-
-    sret_types  = []  # Julia types of all returned variables
-    # By ref values we create and need to preserve
-    ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
-
-    if !isghostty(F) && !Core.Compiler.isconstType(F)
-        isboxed = GPUCompiler.deserves_argbox(F)
-        argexpr = :(fn.val)
-
-        if isboxed
-            push!(types, Any)
-        else
-            push!(types, F)
+        if !RawCall
+            if rettype <: Active
+                @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
+            elseif rettype <: Const
+                @assert length(argtypes)              + needs_tape == length(argexprs)
+            else
+                @assert length(argtypes)              + needs_tape == length(argexprs)
+            end
         end
 
-        push!(ccexprs, argexpr)
-        if !(FA <: Const)
-            argexpr = :(fn.dval)
+        types = DataType[]
+
+        if eltype(rettype) === Union{}
+            error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+        end
+        if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
+            rrt = eltype(rettype)
+            error("Return type `$rrt` not marked Const, but is ghost or const type.")
+        end
+
+        sret_types  = []  # Julia types of all returned variables
+        # By ref values we create and need to preserve
+        ccexprs = Union{Expr, Symbol}[] # The expressions passed to the `llvmcall`
+
+        if !isghostty(F) && !Core.Compiler.isconstType(F)
+            isboxed = GPUCompiler.deserves_argbox(F)
+            argexpr = :(fn.val)
+
             if isboxed
                 push!(types, Any)
             else
                 push!(types, F)
             end
+
             push!(ccexprs, argexpr)
-        end
-    end
-
-    i = 1
-    ActiveRetTypes = Type[]
-
-    for T in argtypes
-        source_typ = eltype(T)
-
-		expr = argexprs[i]
-        i+=1
-        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            @assert T <: Const
-            if is_adjoint
-                push!(ActiveRetTypes, Nothing)
-            end
-            continue
-        end
-
-        isboxed = GPUCompiler.deserves_argbox(source_typ)
-
-        argexpr = if RawCall
-            expr
-        else
-            Expr(:., expr, QuoteNode(:val))
-        end
-
-        if isboxed
-            push!(types, Any)
-        else
-            push!(types, source_typ)
-        end
-
-        push!(ccexprs, argexpr)
-
-        if T <: Const || T <: BatchDuplicatedFunc
-            if is_adjoint
-                push!(ActiveRetTypes, Nothing)
-            end
-            continue
-        end
-
-        if T <: Active
-            if is_adjoint
-                if width == 1
-                    push!(ActiveRetTypes, source_typ)
+            if !(FA <: Const)
+                argexpr = :(fn.dval)
+                if isboxed
+                    push!(types, Any)
                 else
-                    push!(ActiveRetTypes, NTuple{width, source_typ})
+                    push!(types, F)
                 end
+                push!(ccexprs, argexpr)
             end
-        elseif T <: Duplicated || T <: DuplicatedNoNeed
-            if RawCall
-                argexpr = argexprs[i]
-                i+=1
+        end
+
+        i = 1
+        ActiveRetTypes = Type[]
+
+        for T in argtypes
+            source_typ = eltype(T)
+
+            expr = argexprs[i]
+            i+=1
+            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+                @assert T <: Const
+                if is_adjoint
+                    push!(ActiveRetTypes, Nothing)
+                end
+                continue
+            end
+
+            isboxed = GPUCompiler.deserves_argbox(source_typ)
+
+            argexpr = if RawCall
+                expr
             else
-                argexpr = Expr(:., expr, QuoteNode(:dval))
+                Expr(:., expr, QuoteNode(:val))
             end
+
             if isboxed
                 push!(types, Any)
             else
                 push!(types, source_typ)
             end
-            if is_adjoint
-                push!(ActiveRetTypes, Nothing)
-            end
+
             push!(ccexprs, argexpr)
-        elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            if RawCall
-                argexpr = argexprs[i]
-                i+=1
+
+            if T <: Const || T <: BatchDuplicatedFunc
+                if is_adjoint
+                    push!(ActiveRetTypes, Nothing)
+                end
+                continue
+            end
+
+            if T <: Active
+                if is_adjoint
+                    if width == 1
+                        push!(ActiveRetTypes, source_typ)
+                    else
+                        push!(ActiveRetTypes, NTuple{width, source_typ})
+                    end
+                end
+            elseif T <: Duplicated || T <: DuplicatedNoNeed
+                if RawCall
+                    argexpr = argexprs[i]
+                    i+=1
+                else
+                    argexpr = Expr(:., expr, QuoteNode(:dval))
+                end
+                if isboxed
+                    push!(types, Any)
+                else
+                    push!(types, source_typ)
+                end
+                if is_adjoint
+                    push!(ActiveRetTypes, Nothing)
+                end
+                push!(ccexprs, argexpr)
+            elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
+                if RawCall
+                    argexpr = argexprs[i]
+                    i+=1
+                else
+                    argexpr = Expr(:., expr, QuoteNode(:dval))
+                end
+                isboxedvec = GPUCompiler.deserves_argbox(NTuple{width, source_typ})
+                if isboxedvec
+                    push!(types, Any)
+                else
+                    push!(types, NTuple{width, source_typ})
+                end
+                if is_adjoint
+                    push!(ActiveRetTypes, Nothing)
+                end
+                push!(ccexprs, argexpr)
             else
-                argexpr = Expr(:., expr, QuoteNode(:dval))
+                error("calling convention should be annotated, got $T")
             end
-            isboxedvec = GPUCompiler.deserves_argbox(NTuple{width, source_typ})
-            if isboxedvec
-                push!(types, Any)
+        end
+
+        jlRT = eltype(rettype)
+        if typeof(jlRT) == UnionAll
+        # Future improvement, add type assertion on load
+        jlRT = DataType
+        end
+
+        if is_sret_union(jlRT)
+            jlRT = Any
+        end
+
+        # API.DFT_OUT_DIFF
+        if is_adjoint && rettype <: Active
+            # TODO handle batch width
+            @assert allocatedinline(jlRT)
+            j_drT = if width == 1
+                jlRT
             else
-                push!(types, NTuple{width, source_typ})
+                NTuple{width, jlRT}
             end
-            if is_adjoint
-                push!(ActiveRetTypes, Nothing)
-            end
-            push!(ccexprs, argexpr)
-        else
-            error("calling convention should be annotated, got $T")
-        end
-    end
-
-    jlRT = eltype(rettype)
-    if typeof(jlRT) == UnionAll
-      # Future improvement, add type assertion on load
-      jlRT = DataType
-    end
-
-    if is_sret_union(jlRT)
-        jlRT = Any
-    end
-
-    # API.DFT_OUT_DIFF
-    if is_adjoint && rettype <: Active
-        # TODO handle batch width
-        @assert allocatedinline(jlRT)
-        j_drT = if width == 1
-            jlRT
-        else
-            NTuple{width, jlRT}
-        end
-        push!(types, j_drT)
-        push!(ccexprs, argexprs[i])
-        i+=1
-    end
-
-    if needs_tape
-        if !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
-            push!(types, TapeType)
+            push!(types, j_drT)
             push!(ccexprs, argexprs[i])
+            i+=1
         end
-        i+=1
-    end
 
-
-    if is_adjoint
-        NT = Tuple{ActiveRetTypes...}
-        if any(any_jltypes(convert(LLVM.LLVMType, b; allow_boxed=true)) for b in ActiveRetTypes)
-            NT = AnonymousStruct(NT)
+        if needs_tape
+            if !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
+                push!(types, TapeType)
+                push!(ccexprs, argexprs[i])
+            end
+            i+=1
         end
-        push!(sret_types, NT)
-    end
 
-    @assert i == length(argexprs)+1
 
-    # Tape
-    if CC <: AugmentedForwardThunk
-        push!(sret_types, TapeType)
-    end
-
-    if returnPrimal
-        push!(sret_types, jlRT)
-    end
-    if is_forward
-        if !returnPrimal && CC <: AugmentedForwardThunk
-            push!(sret_types, Nothing)
+        if is_adjoint
+            NT = Tuple{ActiveRetTypes...}
+            if any(any_jltypes(convert(LLVM.LLVMType, b; allow_boxed=true)) for b in ActiveRetTypes)
+                NT = AnonymousStruct(NT)
+            end
+            push!(sret_types, NT)
         end
-        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+
+        @assert i == length(argexprs)+1
+
+        # Tape
+        if CC <: AugmentedForwardThunk
+            push!(sret_types, TapeType)
+        end
+
+        if returnPrimal
             push!(sret_types, jlRT)
-        elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
-            push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
-        elseif CC <: AugmentedForwardThunk
-            push!(sret_types, Nothing)
-        elseif rettype <: Const
-        else
-            @show rettype, CC
-            @assert false
         end
-    end
-
-    # calls fptr
-    llvmtys = LLVMType[convert(LLVMType, x; allow_boxed=true) for x in types]
-
-    T_void = convert(LLVMType, Nothing)
-
-    combinedReturn = Tuple{sret_types...}
-    if any(any_jltypes(convert(LLVM.LLVMType, T; allow_boxed=true)) for T in sret_types)
-        combinedReturn = AnonymousStruct(combinedReturn)
-    end
-    uses_sret = is_sret(combinedReturn)
-    jltype = convert(LLVM.LLVMType, combinedReturn)
-
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
-    returnRoots = false
-    if uses_sret
-        returnRoots = deserves_rooting(jltype)
-    end
-
-    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-        pushfirst!(llvmtys, convert(LLVMType, PT))
-    end
-
-    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
-    T_ret = jltype
-    # if returnRoots
-    #     T_ret = T_prjlvalue
-    # end
-    llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
-    push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
-
-    mod = LLVM.parent(llvm_f)
-    i64 = LLVM.IntType(64)
-    LLVM.IRBuilder() do builder
-        entry = BasicBlock(llvm_f, "entry")
-        position!(builder, entry)
-        callparams = collect(LLVM.Value, parameters(llvm_f))
-
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            lfn = callparams[1]
-            deleteat!(callparams, 1)
-        end
-
-        if returnRoots
-	        tracked = CountTrackedPointers(jltype)
-            pushfirst!(callparams, alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count)))
-            pushfirst!(callparams, alloca!(builder, jltype))
-        end
-
-        if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
-            tape = callparams[end]
-            if TapeType <: EnzymeTapeToLoad
-                llty = from_tape_type(eltype(TapeType))
-                tape = bitcast!(builder, LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))))
-                tape = load!(builder, llty, tape)
-                API.SetMustCache!(tape)
-                callparams[end] = tape
+        if is_forward
+            if !returnPrimal && CC <: AugmentedForwardThunk
+                push!(sret_types, Nothing)
+            end
+            if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                push!(sret_types, jlRT)
+            elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+                push!(sret_types, AnonymousStruct(NTuple{width, jlRT}))
+            elseif CC <: AugmentedForwardThunk
+                push!(sret_types, Nothing)
+            elseif rettype <: Const
             else
-                llty = from_tape_type(TapeType)
-                @assert value_type(tape) == llty
+                @show rettype, CC
+                @assert false
             end
         end
 
+        # calls fptr
+        llvmtys = LLVMType[convert(LLVMType, x; allow_boxed=true) for x in types]
+
+        T_void = convert(LLVMType, Nothing)
+
+        combinedReturn = Tuple{sret_types...}
+        if any(any_jltypes(convert(LLVM.LLVMType, T; allow_boxed=true)) for T in sret_types)
+            combinedReturn = AnonymousStruct(combinedReturn)
+        end
+        uses_sret = is_sret(combinedReturn)
+        jltype = convert(LLVM.LLVMType, combinedReturn)
+
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+        returnRoots = false
+        if uses_sret
+            returnRoots = deserves_rooting(jltype)
+        end
+
         if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            FT = LLVM.FunctionType(returnRoots ? T_void : T_ret, [value_type(x) for x in callparams])
-            lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
-        else
-            val_inner(::Type{Val{V}}) where V = V
-            submod, subname = val_inner(PT)
-            # TODO, consider optimization
-            # However, julia will optimize after this, so no need
-            submod = parse(LLVM.Module, String(submod))
-            LLVM.link!(mod, submod)
-            lfn = functions(mod)[String(subname)]
-            FT = LLVM.function_type(lfn)
+            pushfirst!(llvmtys, convert(LLVMType, PT))
         end
 
-        r = call!(builder, FT, lfn, callparams)
-        
-        if returnRoots
-            attr = if LLVM.version().major >= 12
-                TypeAttribute("sret", jltype)
-            else
-                EnumAttribute("sret")
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+        T_ret = jltype
+        # if returnRoots
+        #     T_ret = T_prjlvalue
+        # end
+        llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
+        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+
+        mod = LLVM.parent(llvm_f)
+        i64 = LLVM.IntType(64)
+        LLVM.IRBuilder() do builder
+            entry = BasicBlock(llvm_f, "entry")
+            position!(builder, entry)
+            callparams = collect(LLVM.Value, parameters(llvm_f))
+
+            if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+                lfn = callparams[1]
+                deleteat!(callparams, 1)
             end
-            LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
-            r = load!(builder, eltype(value_type(callparams[1])), callparams[1])
-        end
 
-        if T_ret != T_void
-            ret!(builder, r)
+            if returnRoots
+                tracked = CountTrackedPointers(jltype)
+                pushfirst!(callparams, alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count)))
+                pushfirst!(callparams, alloca!(builder, jltype))
+            end
+
+            if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
+                tape = callparams[end]
+                if TapeType <: EnzymeTapeToLoad
+                    llty = from_tape_type(eltype(TapeType))
+                    tape = bitcast!(builder, LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))))
+                    tape = load!(builder, llty, tape)
+                    API.SetMustCache!(tape)
+                    callparams[end] = tape
+                else
+                    llty = from_tape_type(TapeType)
+                    @assert value_type(tape) == llty
+                end
+            end
+
+            if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+                FT = LLVM.FunctionType(returnRoots ? T_void : T_ret, [value_type(x) for x in callparams])
+                lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
+            else
+                val_inner(::Type{Val{V}}) where V = V
+                submod, subname = val_inner(PT)
+                # TODO, consider optimization
+                # However, julia will optimize after this, so no need
+                submod = parse(LLVM.Module, String(submod))
+                LLVM.link!(mod, submod)
+                lfn = functions(mod)[String(subname)]
+                FT = LLVM.function_type(lfn)
+            end
+
+            r = call!(builder, FT, lfn, callparams)
+            
+            if returnRoots
+                attr = if LLVM.version().major >= 12
+                    TypeAttribute("sret", jltype)
+                else
+                    EnumAttribute("sret")
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
+                r = load!(builder, eltype(value_type(callparams[1])), callparams[1])
+            end
+
+            if T_ret != T_void
+                ret!(builder, r)
+            else
+                ret!(builder)
+            end
+        end
+        reinsert_gcmarker!(llvm_f)
+
+        ir = string(mod)
+        fn = LLVM.name(llvm_f)
+
+        @assert length(types) == length(ccexprs)
+
+        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+            return quote
+                Base.@_inline_meta
+                Base.llvmcall(($ir, $fn), $combinedReturn,
+                        Tuple{$PT, $(types...)},
+                        fptr, $(ccexprs...))
+            end
         else
-            ret!(builder)
-        end
-	end
-    reinsert_gcmarker!(llvm_f)
-
-	ir = string(mod)
-	fn = LLVM.name(llvm_f)
-
-    @assert length(types) == length(ccexprs)
-
-    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-        return quote
-            Base.@_inline_meta
-            Base.llvmcall(($ir, $fn), $combinedReturn,
-                    Tuple{$PT, $(types...)},
-                    fptr, $(ccexprs...))
-        end
-    else
-        return quote
-            Base.@_inline_meta
-            Base.llvmcall(($ir, $fn), $combinedReturn,
-                    Tuple{$(types...)},
-                    $(ccexprs...))
+            return quote
+                Base.@_inline_meta
+                Base.llvmcall(($ir, $fn), $combinedReturn,
+                        Tuple{$(types...)},
+                        $(ccexprs...))
+            end
         end
     end
-end
 end
 
 ##
@@ -9467,74 +9457,74 @@ end
 
 @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
     JuliaContext() do ctx
-    mi = fspec(eltype(FA), TT, World)
+        mi = fspec(eltype(FA), TT, World)
 
-    target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        target = Compiler.EnzymeTarget()
+        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
-    sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
+        sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
 
-    interp = GPUCompiler.get_interpreter(job)
+        interp = GPUCompiler.get_interpreter(job)
 
-    # TODO check compile return here, early
-    # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
-    rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
+        # TODO check compile return here, early
+        # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
+        rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
-    if rrt == Union{}
-        error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
-    end
-    
-    if !(A <: Const) && (isghostty(rrt) || Core.Compiler.isconstType(rrt) || rrt === DataType)
-        error("Return type `$rrt` not marked Const, but is ghost or const type.")
-    end
-
-    if A isa UnionAll
-        rt = A{rrt}
-    else
-        @assert A isa DataType
-        # Can we relax this condition?
-        # @assert eltype(A) == rrt
-        rt = A
-    end
-
-    if rrt == Nothing && !(A <: Const)
-        error("Return of nothing must be marked Const")
-    end
-
-    # @assert isa(rrt, DataType)
-
-    # We need to use primal as the key, to lookup the right method
-    # but need to mixin the hash of the adjoint to avoid cache collisions
-    # This is counter-intuitive since we would expect the cache to be split
-    # by the primal, but we want the generated code to be invalidated by
-    # invalidations of the primal, which is managed by GPUCompiler.
-
-
-    compile_result = cached_compilation(job)
-    if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-        TapeType = compile_result.TapeType
-        AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-        AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
-        return quote
-            augmented = $AugT($(compile_result.primal))
-            adjoint  = $AdjT($(compile_result.adjoint))
-            (augmented, adjoint)
+        if rrt == Union{}
+            error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
         end
-    elseif Mode == API.DEM_ReverseModeCombined
-        CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-        return quote
-            $CAdjT($(compile_result.adjoint))
+        
+        if !(A <: Const) && (isghostty(rrt) || Core.Compiler.isconstType(rrt) || rrt === DataType)
+            error("Return type `$rrt` not marked Const, but is ghost or const type.")
         end
-    elseif Mode == API.DEM_ForwardMode
-        FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-        return quote
-            $FMT($(compile_result.adjoint))
+
+        if A isa UnionAll
+            rt = A{rrt}
+        else
+            @assert A isa DataType
+            # Can we relax this condition?
+            # @assert eltype(A) == rrt
+            rt = A
         end
-    else
-        @assert false
+
+        if rrt == Nothing && !(A <: Const)
+            error("Return of nothing must be marked Const")
+        end
+
+        # @assert isa(rrt, DataType)
+
+        # We need to use primal as the key, to lookup the right method
+        # but need to mixin the hash of the adjoint to avoid cache collisions
+        # This is counter-intuitive since we would expect the cache to be split
+        # by the primal, but we want the generated code to be invalidated by
+        # invalidations of the primal, which is managed by GPUCompiler.
+
+
+        compile_result = cached_compilation(job)
+        if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+            TapeType = compile_result.TapeType
+            AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
+            AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
+            return quote
+                augmented = $AugT($(compile_result.primal))
+                adjoint  = $AdjT($(compile_result.adjoint))
+                (augmented, adjoint)
+            end
+        elseif Mode == API.DEM_ReverseModeCombined
+            CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            return quote
+                $CAdjT($(compile_result.adjoint))
+            end
+        elseif Mode == API.DEM_ForwardMode
+            FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            return quote
+                $FMT($(compile_result.adjoint))
+            end
+        else
+            @assert false
+        end
     end
-end
 end
 
 import GPUCompiler: deferred_codegen_jobs
@@ -9543,32 +9533,32 @@ import GPUCompiler: deferred_codegen_jobs
         ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     JuliaContext() do ctx
 
-    mi = fspec(eltype(FA), tt, World)
-    target = EnzymeTarget()
-    params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
-    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        mi = fspec(eltype(FA), tt, World)
+        target = EnzymeTarget()
+        params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
-    adjoint_addr, primal_addr = get_trampoline(job)
-    adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))
-    deferred_codegen_jobs[adjoint_id] = job
+        adjoint_addr, primal_addr = get_trampoline(job)
+        adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))
+        deferred_codegen_jobs[adjoint_id] = job
 
-    if primal_addr !== nothing
-        primal_id = Base.reinterpret(Int, pointer(primal_addr))
-        deferred_codegen_jobs[primal_id] = job
-    else
-        primal_id = 0
-    end
-
-    quote
-        adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
-        primal = if $(primal_addr !== nothing)
-            ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
+        if primal_addr !== nothing
+            primal_id = Base.reinterpret(Int, pointer(primal_addr))
+            deferred_codegen_jobs[primal_id] = job
         else
-            nothing
+            primal_id = 0
         end
-        adjoint, primal
+
+        quote
+            adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
+            primal = if $(primal_addr !== nothing)
+                ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
+            else
+                nothing
+            end
+            adjoint, primal
+        end
     end
-end
 end
 
 include("compiler/reflection.jl")

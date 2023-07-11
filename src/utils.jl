@@ -14,8 +14,15 @@ function unsafe_to_llvm(val)
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
-
 export unsafe_to_llvm
+
+function makeInstanceOf(@nospecialize(T), ctx)
+    @assert Core.Compiler.isconstType(T)
+    @assert T <: Type
+    return unsafe_to_llvm(T.parameters[1], ctx)
+end
+
+export makeInstanceOf
 
 function hasfieldcount(@nospecialize(dt))
     try

@@ -16,13 +16,13 @@ function fun_gpu!(A, B, a)
 end
 
 function ∇_fun_cpu!(A, Ā, B, B̄, a)
-    Enzyme.autodiff_deferred(Enzyme.Reverse, fun_cpu!, Enzyme.Const, DuplicatedNoNeed(A, Ā), DuplicatedNoNeed(B, B̄), Const(a))
-    return nothing
+    Enzyme.autodiff_deferred(Reverse, fun_cpu!, Const, DuplicatedNoNeed(A, Ā), DuplicatedNoNeed(B, B̄), Const(a))
+    nothing
 end
 
 function ∇_fun_gpu!(A_d, Ā_d, B_d, B̄_d, a)
-    Enzyme.autodiff_deferred(Enzyme.Reverse, fun_gpu!, Enzyme.Const, DuplicatedNoNeed(A_d, Ā_d), DuplicatedNoNeed(B_d, B̄_d), Const(a))
-    return nothing
+    Enzyme.autodiff_deferred(Reverse, fun_gpu!, Const, Duplicated(A_d, Ā_d), Duplicated(B_d, B̄_d), Const(a))
+    nothing
 end
 
 @testset "Metal autodiff" begin
@@ -41,12 +41,10 @@ end
     B̄_d = Metal.ones(Float32, size(B_d))
 
     ∇_fun_cpu!(A, Ā, B, B̄, a)
-
     
-    # Metal.@sync @metal threads=N groups=1 fun_gpu!(A_d, B_d, a)
-    Metal.@sync @metal threads=N groups=1 ∇_fun_gpu!(A_d, Ā_d, B_d, B̄_d, a)
+    @sync @metal threads=N groups=1 ∇_fun_gpu!(A_d, Ā_d, B_d, B̄_d, a)
 
-    @test Ā_d ≈ Ā
-    @test B̄_d ≈ B̄
-    
+    @test Array(Ā_d) ≈ Ā
+    @test Array(B̄_d) ≈ B̄
+
 end

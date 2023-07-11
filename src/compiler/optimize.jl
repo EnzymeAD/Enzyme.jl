@@ -84,7 +84,6 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
     end
     return nothing
-    
 end
 
 function fix_decayaddr!(mod::LLVM.Module)
@@ -524,7 +523,6 @@ function propagate_returned!(mod::LLVM.Module)
         end
     end
 end
-
 function detect_writeonly!(mod::LLVM.Module)
     for f in functions(mod)
         if isempty(LLVM.blocks(f))

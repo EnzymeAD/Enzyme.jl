@@ -158,8 +158,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
                                                 #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType, FFIABI)
-        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
-                    
+        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)                
         cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob)
         LLVM.link!(mod, cmod)
         attributes = function_attributes(llvmfn)
@@ -214,7 +213,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         a = alloca!(EB, eltype(value_type(parameters(entry)[1])))
         pushfirst!(vals, a)
     end
-
+   
     if mode == API.DEM_ReverseModeGradient && STT != Nothing
         @assert tape != nothing
         push!(vals, tape)
@@ -229,9 +228,9 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
 
         primal = new_from_original(gutils, ops[i])
         shadow = if is_constant_value(gutils, ops[i]) == 0
-            invert_pointer(gutils, ops[i], B)
+          invert_pointer(gutils, ops[i], B)
         else
-            nothing
+          nothing
         end
 
         codegen_typ = value_type(parameters(entry)[length(vals)+1])
@@ -239,28 +238,28 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         if codegen_typ == value_type(primal)
             push!(vals, primal)
             if shadow !== nothing
-                push!(vals, shadow)
+              push!(vals, shadow)
             end
         elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
-            !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
+               !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
             if !GPUCompiler.deserves_argbox(source_typ)
-                primA = alloca!(EB, value_type(primal))
-                store!(B, primal, primA)
-                primal = addrspacecast!(B, primA, codegen_typ)
+              primA = alloca!(EB, value_type(primal))
+              store!(B, primal, primA)
+              primal = addrspacecast!(B, primA, codegen_typ)
             end
             push!(vals, primal)
             if shadow !== nothing
-                if !GPUCompiler.deserves_argbox(source_typ) 
-                    shadowA = alloca!(EB, value_type(shadow))
-                    store!(B, shadow, shadowA)
-                    shadow = addrspacecast!(B, shadowA, codegen_typ)
-                end
-                push!(vals, shadow)
+              if !GPUCompiler.deserves_argbox(source_typ) 
+                shadowA = alloca!(EB, value_type(shadow))
+                store!(B, shadow, shadowA)
+                shadow = addrspacecast!(B, shadowA, codegen_typ)
+              end
+              push!(vals, shadow)
             end
             # push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ,
             #             codegen=(typ=codegen_typ, i=codegen_i)))
         else
-			@assert false        
+			@assert false
         end
         i += 1
     end
