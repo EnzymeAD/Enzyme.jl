@@ -21,7 +21,7 @@ using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
 # Test against FiniteDifferences
-function test_scalar(f, x; rtol=1e-7, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
+function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
     if typeof(x) <: Complex
     else
@@ -129,6 +129,7 @@ end
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
+
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
@@ -721,7 +722,7 @@ end
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
-if !Sys.iswindows() && !(Sys.ARCH == :aarch64 && Sys.isapple())
+if !Sys.iswindows()
     include("packages/specialfunctions.jl")
 end
 
@@ -1815,7 +1816,7 @@ end
 
 @testset "Forward on Reverse" begin
 
-    function speelpenning(y, x)
+	function speelpenning(y, x)
 		ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
 								  y, x, 2 * 8)
 		return nothing
