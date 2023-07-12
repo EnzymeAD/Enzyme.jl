@@ -5220,8 +5220,23 @@ end
 function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     newo = new_from_original(gutils, orig)
     origops = collect(operands(orig))
-    err = emit_error(B, orig, "Enzyme: unhandled forward for "*string(origops[end]))
-    API.moveBefore(newo, err, B)
+    err = emit_error(LLVM.IRBuilder(B), orig, "Enzyme: unhandled forward for "*string(origops[end]))
+    API.moveBefore(newo, err, C_NULL)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+
+    if shadowR != C_NULL && normal !== nothing
+        width = get_width(gutils)
+        if width == 1
+            shadowres = normal
+        else
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
+            for idx in 1:width
+                shadowres = insert_value!(B, shadowres, normal, idx-1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
 function jl_unhandled_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
@@ -6618,7 +6633,7 @@ function __init__()
         @fwdfunc(jl_array_ptr_copy_fwd),
     )
     register_handler!(
-        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2"),
+        ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2", "ijl_call_in_typeinf_world", "jl_call_in_typeinf_world"),
         @augfunc(jl_unhandled_augfwd),
         @revfunc(jl_unhandled_rev),
         @fwdfunc(jl_unhandled_fwd),
@@ -8662,7 +8677,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = meth.name
         jlmod  = meth.module
 
-        function handleCustom(name, attrs=[], setlink=true)
+        function handleCustom(name, attrs=[], setlink=true, noinl=true)
             attributes = function_attributes(llvmfn)
             custom[k_name] = linkage(llvmfn)
             if setlink
@@ -8672,7 +8687,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 push!(attributes, a)
             end
             push!(attributes, StringAttribute("enzyme_math", name))
-            push!(attributes, EnumAttribute("noinline", 0))
+            if noinl
+                push!(attributes, EnumAttribute("noinline", 0))
+            end
             must_wrap |= llvmfn == primalf
             nothing
         end
@@ -8727,6 +8744,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")])
+            continue
+        end
+        if func == Core.Compiler.return_type || func == Base.Broadcast.combine_eltypes
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], noinl=false)
             continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task
