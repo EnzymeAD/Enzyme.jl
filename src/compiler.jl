@@ -8747,7 +8747,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Core.Compiler.return_type || func == Base.Broadcast.combine_eltypes
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], noinl=false)
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], false, false)
             continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task
