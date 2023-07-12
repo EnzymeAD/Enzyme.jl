@@ -77,7 +77,7 @@ g[1] == dy[1]
 # ```math
 # \begin{aligned}
 # y &= f(x) \\
-# \dot{y} &= f(x) \cdot \dot{x} \\
+# \dot{y} &= \nabla f(x) \cdot \dot{x} \\
 # \bar{x} &= \bar{y} \cdot \nabla f(x) \\
 # \dot{\bar{x}} &= \bar{y} \cdot \nabla^2 f(x) \cdot \dot{x} + \dot{\bar{y}} \cdot \nabla f(x)
 # \end{aligned}
@@ -116,7 +116,7 @@ dbx[2] == 1.0
 # (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
 # ```math
 # \begin{aligned}
-# \bar{x} = \bar{x} + \bar{y} \cdot \nabla f(x) \\
+# \b{x} = \bar{x} + \bar{y} \cdot \nabla f(x) \\
 # \bar{y} = 0
 # \begin{end}
 
