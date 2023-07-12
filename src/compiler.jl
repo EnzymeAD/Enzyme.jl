@@ -5424,30 +5424,6 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     end
 end
 
-struct NoTypeException <: CompilationException
-    msg::String
-    sval::String
-    ir::Union{Nothing, String}
-    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
-    val::LLVM.Instruction
-end
-
-function Base.showerror(io::IO, ece::NoTypeException)
-    print(io, "Enzyme cannot deduce type\n")
-    if ece.ir !== nothing
-        print(io, "Current scope: \n")
-        print(io, ece.ir)
-    end
-    print(io, "\n Type analysis state: \n")
-    write(io, ece.sval)
-    print(io, '\n', ece.msg, '\n')
-    if ece.bt !== nothing
-        print(io,"\nCaused by:")
-        Base.show_backtrace(io, ece.bt)
-        println(io)
-    end
-end
-
 struct IllegalFirstPointerException <: CompilationException
     msg::String
     ir::Union{Nothing, String}
@@ -5580,25 +5556,18 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
-            ir = sprint(io->show(io, parent_scope(val)))
+            ir = string(parent_scope(val))
         end
     end
 
     if errtype == API.ET_NoDerivative
         exc = NoDerivativeException(msg, ir, bt)
-        if data != C_NULL
-            gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
-            newb = new_from_original(gutils, val)
-            while isa(newb, LLVM.PHIInst)
-                newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
-            end
-            b = IRBuilder()
-            position!(b, newb)
-            function eac(io)
+        if B != C_NULL
+            B = IRBuilder(B)
+            msg2 = sprint() do io
                 Base.showerror(io, exc)
             end
-            msg2 = sprint(eac)
-            emit_error(b, nothing, msg2)
+            emit_error(B, nothing, msg2)
             return C_NULL
         end
         throw(exc)
@@ -5615,17 +5584,37 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         API.EnzymeStringFree(ip)
         throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
     elseif errtype == API.ET_NoType
+        @assert B != C_NULL
+        B = IRBuilder(B)
+        
         data = API.EnzymeTypeAnalyzerRef(data)
         ip = API.EnzymeTypeAnalyzerToString(data)
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
-        throw(NoTypeException(msg, sval, ir, bt, val))
+
+        msg2 = sprint() do io::IO
+            print(io, "Enzyme cannot deduce type\n")
+            if ir !== nothing
+                print(io, "Current scope: \n")
+                print(io, ir)
+            end
+            print(io, "\n Type analysis state: \n")
+            write(io, sval)
+            print(io, '\n', msg, '\n')
+            if bt !== nothing
+                print(io,"\nCaused by:")
+                Base.show_backtrace(io, bt)
+                println(io)
+            end
+        end
+        emit_error(B, nothing, msg2)
+        return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
     elseif errtype == API.ET_InternalError
         throw(EnzymeInternalError(msg, ir, bt))
     elseif errtype == API.ET_TypeDepthExceeded
-        function c(io)
+        msg2 = sprint() do io
             print(io, msg)
             println(io)
 
@@ -5641,19 +5630,17 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
             end
         end
-        msg2 = sprint(c)
         GPUCompiler.@safe_warn msg2
         return C_NULL
     elseif errtype == API.ET_IllegalReplaceFicticiousPHIs
         data2 = LLVM.Value(data2)
-        function rc(io)
+        msg2 = sprint() do io
             print(io, msg)
             println(io)
             println(io, LLVM.parent(LLVM.parent(data2)))
             println(io, val)
             println(io, data2)
         end
-        msg2 = sprint(rc)
         throw(EnzymeInternalError(msg2, ir, bt))
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
@@ -5739,7 +5726,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
         end
         b = IRBuilder(B)
-        function ac(io)
+        msg2 = sprint() do io
             print(io, msg)
             println(io)
             ttval = val
@@ -5759,7 +5746,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
             end
         end
-        msg2 = sprint(ac)
         emit_error(b, nothing, msg2)
         return C_NULL
     end
