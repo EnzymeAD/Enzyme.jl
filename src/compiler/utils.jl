@@ -16,15 +16,15 @@ function get_function!(mod::LLVM.Module, name::AbstractString, FT::LLVM.Function
 end
 
 function get_function!(builderF, mod::LLVM.Module, name)
-    get_function!(mod, name, builderF(context(mod)))
+    get_function!(mod, name, builderF())
 end
 
+T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
-T_ppjlvalue(ctx) = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[]; ctx)))
 
 if VERSION < v"1.7.0-DEV.1205"
 
-declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
 
 function emit_ptls!(B)
     curent_bb = position(B)
@@ -39,7 +39,7 @@ function get_ptls(func)
     ptls_func = declare_ptls!(LLVM.parent(func))
 
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == ptls_func
+        if I isa LLVM.CallInst && called_operand(I) == ptls_func
             return I
         end
     end
@@ -48,8 +48,8 @@ end
 
 function reinsert_gcmarker!(func, PB=nothing)
 	ptls = get_ptls(func) 
-    if ptls === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
+    if isnothing(ptls)
+        B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
@@ -73,7 +73,7 @@ function unique_gcmarker!(func)
 
     found = LLVM.CallInst[]
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == ptls_func
+        if I isa LLVM.CallInst && called_operand(I) == ptls_func
             push!(found, I)
         end
     end
@@ -88,7 +88,9 @@ end
 
 else
 
-declare_pgcstack!(mod) = get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue(context(mod)))))
+function declare_pgcstack!(mod) 
+        get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
+end
 
 function emit_pgcstack(B)
     curent_bb = position(B)
@@ -103,7 +105,7 @@ function get_pgcstack(func)
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
 
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == pgcstack_func
+        if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
             return I
         end
     end
@@ -111,16 +113,16 @@ function get_pgcstack(func)
 end
 
 function reinsert_gcmarker!(func, PB=nothing)
-    ctx = LLVM.context(func)
     for (i, v) in enumerate(parameters(func))
-        if any(map(k->kind(k)==kind(EnumAttribute("swiftself"; ctx)), collect(parameter_attributes(func, i))))
+        if any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(func, i))))
             return v
         end
     end
 
 	pgs = get_pgcstack(func)
     if pgs === nothing
-        B = IRBuilder(context(LLVM.parent(func)))
+        context(LLVM.parent(func))
+        B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
             position!(B, first(instructions(entry_bb)))
@@ -144,7 +146,7 @@ function unique_gcmarker!(func)
 
     found = LLVM.CallInst[]
     for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_value(I) == pgcstack_func
+        if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
             push!(found, I)
         end
     end

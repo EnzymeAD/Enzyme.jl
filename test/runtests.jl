@@ -2043,3 +2043,12 @@ using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
     include("cuda.jl")
 end
+
+if VERSION >= v"1.8.0" && Sys.isapple() && Sys.ARCH == :aarch64
+    using Pkg
+    Pkg.add("Metal")
+    using Metal
+    if Metal.functional()
+        include("metal.jl")
+    end
+end

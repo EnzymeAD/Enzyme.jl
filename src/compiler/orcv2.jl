@@ -129,8 +129,8 @@ function move_to_threadsafe(ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
     return ThreadSafeContext() do ctx
-        mod = parse(LLVM.Module, buf; ctx=context(ctx))
-        ThreadSafeModule(mod; ctx)
+        mod = parse(LLVM.Module, buf)
+        ThreadSafeModule(mod)
     end
 end
 
@@ -189,21 +189,22 @@ function get_trampoline(job)
         # 1. Make the runtime decision about what symbol should implement "foo". Let's call this "foo.rt.impl".
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
-        mod, adjoint_name, primal_name = Compiler._thunk(job)
-        adjointf = functions(mod)[adjoint_name]
-        LLVM.name!(adjointf, adjoint_sym)
-        if needs_augmented_primal
-            primalf = functions(mod)[primal_name]
-            LLVM.name!(primalf, primal_sym)
-        else
-            @assert primal_name === nothing
-            primalf = nothing
+        GPUCompiler.JuliaContext() do ctx
+            mod, adjoint_name, primal_name = Compiler._thunk(job)
+            adjointf = functions(mod)[adjoint_name]
+            LLVM.name!(adjointf, adjoint_sym)
+            if needs_augmented_primal
+                primalf = functions(mod)[primal_name]
+                LLVM.name!(primalf, primal_sym)
+            else
+                @assert primal_name === nothing
+                primalf = nothing
+            end
+
+            tsm = move_to_threadsafe(mod)
+            il = LLVM.IRTransformLayer(lljit)
+            LLVM.emit(il, mr, tsm)
         end
-
-        tsm = move_to_threadsafe(mod)
-        il = LLVM.IRTransformLayer(lljit)
-        LLVM.emit(il, mr, tsm)
-
         return nothing
     end
 

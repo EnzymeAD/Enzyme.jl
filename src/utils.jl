@@ -5,12 +5,12 @@ const Tracked = 10
 const Derived = 11
 export Tracked, Derived
 
-function unsafe_to_llvm(val, ctx)
-    T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+function unsafe_to_llvm(val)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
     fill_val = unsafe_to_pointer(val)
-    fill_val = LLVM.ConstantInt(convert(UInt, fill_val); ctx)
+    fill_val = LLVM.ConstantInt(convert(UInt, fill_val))
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
