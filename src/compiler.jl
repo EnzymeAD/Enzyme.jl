@@ -8746,8 +8746,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")])
             continue
         end
-        if func == Core.Compiler.return_type || func == Base.Broadcast.combine_eltypes
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], noinl=false)
+        if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], false, false)
+            for bb in blocks(llvmfn)
+                for inst in instructions(bb)
+                    if isa(inst, LLVM.CallInst)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, StringAttribute("enzyme_inactive"))
+                    end
+                end
+            end
             continue
         end
         if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task

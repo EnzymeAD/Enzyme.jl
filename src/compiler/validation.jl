@@ -489,14 +489,13 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
+                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...}) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}) 
                         ofn = LLVM.parent(LLVM.parent(inst))
                         mod = LLVM.parent(ofn)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                         nofree = LLVM.StringAttribute("nofree", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
-                        
                     end
                 end
             end
@@ -564,7 +563,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                     tys = flib.specTypes.parameters
                 end
-                if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
+                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}) 
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
