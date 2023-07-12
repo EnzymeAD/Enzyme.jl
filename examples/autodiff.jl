@@ -114,8 +114,11 @@ dbx[2] == 1.0
 # second-order model by computing the derivative of the gradient at multiple points at once.
 # We begin by defining a helper function for the gradient. Since we will not need the original results
 # (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
-#      dx += dy * gradient f wrt x  
-#      dy = 0
+# ```math
+# \begin{aligned}
+# \bar{x} = \bar{x} + \bar{y} \cdot \nabla f(x) \\
+# \bar{y} = 0
+# \begin{end}
 
 function grad(x, dx, y, dy)
   Enzyme.autodiff_deferred(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
