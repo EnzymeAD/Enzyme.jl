@@ -140,12 +140,10 @@ grad(x, dx, y, dy)
 # in the `vx[1]=[1.0, 0.0]` and `vx[2]=[0.0, 1.0]` direction. These tuples have to be put into a `BatchDuplicated` type.
 # We then compute the forward mode derivative at all these points.
 
-undefvar = similar(x)
-onehotv = onehot(x)
-
 vx = ([1.0, 0.0], [0.0, 1.0])
 hess = ([0.0, 0.0], [0.0, 0.0])
 dx = [0.0, 0.0]
+dy = [1.0]
 
 Enzyme.autodiff(Enzyme.Forward, grad,
                 Enzyme.BatchDuplicated(x, vx),
