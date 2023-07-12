@@ -111,36 +111,58 @@ dbx[2] == 1.0
 
 # # Vector forward over reverse
 # The vector FoR allows us to propagate several tangents at once through the
-# second-order model. This allows us the acquire the Hessian in one autodiff
-# call. The multiple tangents are organized in tuples. Following the same seeding strategy as before, we now seed both
-# in the `vdx[1]=[1.0, 0.0]` and `vdx[2]=[0.0, 1.0]` direction. These tuples have to be put into a `BatchDuplicated` type.
-y = [0.0]
+# second-order model by computing the derivative of the gradient at multiple points at once.
+# We begin by defining a helper function for the gradient. Since we will not need the original results
+# (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
+#      dx += dy * gradient f wrt x
+#      dy = 0
+
+function grad(x, dx, y, dy)
+  Enzyme.autodiff_deferred(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+  nothing
+end
+
+# To compute the conventional gradient, we would call this function with our given inputs,
+# dy = [1.0], and dx = [0.0, 0.0]. Since y is not needed, we can just set it to an undef vector.
+
 x = [2.0, 2.0]
+y = Vector{Float64}(undef, 1)
+dx = [0.0, 0.0]
+dy = [1.0]
 
-vdy = ([0.0],[0.0])
-vdx = ([1.0, 0.0], [0.0, 1.0])
+grad(x, dx, y, dy)
 
-bx = [0.0, 0.0]
-by = [1.0]
-vdbx = ([0.0, 0.0], [0.0, 0.0])
-vdby = ([0.0], [0.0]);
+# dx now contains the gradient
+@show dx 
 
-# The `BatchedDuplicated` objects are constructed using the broadcast operator
-# on our tuples of `Duplicated` for the tangents.
-Enzyme.autodiff(
-    Forward,
-    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
-    BatchDuplicated(Duplicated(x, bx), Duplicated.(vdx, vdbx)),
-    BatchDuplicated(Duplicated(y, by), Duplicated.(vdy, vdby)),
-);
+# To compute the hessian, we need to take the dervative of this gradient function at every input.
+# Following the same seeding strategy as before, we now seed both
+# in the `vx[1]=[1.0, 0.0]` and `vx[2]=[0.0, 1.0]` direction. These tuples have to be put into a `BatchDuplicated` type.
+# We then compute the forward mode derivative at all these points.
+
+vx = ([1.0, 0.0], [0.0, 1.0])
+hess = ([0.0, 0.0], [0.0, 0.0])
+dx = [0.0, 0.0]
+dy = [1.0]
+
+Enzyme.autodiff(Enzyme.Forward, grad,
+                Enzyme.BatchDuplicated(x, vx),
+                Enzyme.BatchDuplicated(dx, hess),
+                Const(y),
+                Const(dy))
+
 
 # Again we obtain the first-order gradient.
-g[1] == vdy[1][1]
+# If we did not want to compute the gradient again,
+# we could instead have used `Enzyme.BatchDuplicatedNoNeed(dx, hess)`
+g[1] == dx[1]
+
 # We have now the first row/column of the Hessian
-vdbx[1][1] == 2.0
+hess[1][1] == 2.0
 
-vdbx[1][2] == 1.0
+hess[1][2] == 1.0
+
 # as well as the second row/column
-vdbx[2][1] == 1.0
+hess[2][1] == 1.0
 
-vdbx[2][2] == 0.0
+hess[2][2] == 0.0
