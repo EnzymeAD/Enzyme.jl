@@ -6634,7 +6634,7 @@ GPUCompiler.llvm_triple(::EnzymeTarget) = Sys.MACHINE
 # GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
 
 function GPUCompiler.llvm_machine(::EnzymeTarget)
-    return tm[]
+    return JIT.get_tm()
 end
 
 module Runtime

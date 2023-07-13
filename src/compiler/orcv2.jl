@@ -10,10 +10,18 @@ import ..Compiler: API, cpu_name, cpu_features
 
 export get_trampoline
 
-struct CompilerInstance
-    jit::LLVM.LLJIT
-    lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-    ism::Union{LLVM.IndirectStubsManager, Nothing}
+@static if LLVM.has_julia_ojit()
+    struct CompilerInstance
+        jit::LLVM.JuliaOJIT
+        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
+        ism::Union{LLVM.IndirectStubsManager, Nothing}
+    end
+else
+    struct CompilerInstance
+        jit::LLVM.LLJIT
+        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
+        ism::Union{LLVM.IndirectStubsManager, Nothing}
+    end
 end
 
 function LLVM.dispose(ci::CompilerInstance)
@@ -63,34 +71,37 @@ function __init__()
     tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
+    
+    lljit = if !LLVM.has_julia_ojit()
+        tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
+        LLVM.asm_verbosity!(tempTM, true)
 
-    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
-    LLVM.asm_verbosity!(tempTM, true)
-
-    gdb = haskey(ENV, "ENABLE_GDBLISTENER")
-    perf = haskey(ENV, "ENABLE_JITPROFILING")
-    if gdb || perf
-        ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
-            oll = ObjectLinkingLayer(es)
-            if gdb
-                register!(oll, GDBRegistrationListener())
+        gdb = haskey(ENV, "ENABLE_GDBLISTENER")
+        perf = haskey(ENV, "ENABLE_JITPROFILING")
+        if gdb || perf
+            ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
+                oll = ObjectLinkingLayer(es)
+                if gdb
+                    register!(oll, GDBRegistrationListener())
+                end
+                if perf
+                    register!(oll, IntelJITEventListener())
+                    register!(oll, PerfJITEventListener())
+                end
+                return oll
             end
-            if perf
-                register!(oll, IntelJITEventListener())
-                register!(oll, PerfJITEventListener())
+            GC.@preserve ollc begin
+                builder = LLJITBuilder()
+                LLVM.linkinglayercreator!(builder, ollc)
+                tmb = TargetMachineBuilder(tempTM)
+                LLVM.targetmachinebuilder!(builder, tmb)
+                LLJIT(builder)
             end
-            return oll
-        end
-
-        GC.@preserve ollc begin
-            builder = LLJITBuilder()
-            LLVM.linkinglayercreator!(builder, ollc)
-            tmb = TargetMachineBuilder(tempTM)
-            LLVM.targetmachinebuilder!(builder, tmb)
-            lljit = LLJIT(builder)
+        else
+            LLJIT(;tm=tempTM)
         end
     else
-        lljit = LLJIT(;tm=tempTM)
+        JuliaOJIT()
     end
 
     jd_main = JITDylib(lljit)
@@ -115,8 +126,10 @@ function __init__()
     end
 
     atexit() do
-        ci = jit[]
-        dispose(ci)
+        if !LLVM.has_julia_ojit()
+           ci = jit[]
+           dispose(ci)
+        end
         dispose(tm[])
     end
 end
@@ -146,7 +159,7 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
 
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
-    
+
     LLVM.lookup(lljit, entry)
 end
 
@@ -202,7 +215,12 @@ function get_trampoline(job)
             end
 
             tsm = move_to_threadsafe(mod)
-            il = LLVM.IRTransformLayer(lljit)
+
+            il = if LLVM.has_julia_ojit()
+                LLVM.IRCompileLayer(lljit)
+            else
+                LLVM.IRTransformLayer(lljit)
+            end
             LLVM.emit(il, mr, tsm)
         end
         return nothing
