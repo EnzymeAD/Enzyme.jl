@@ -119,7 +119,7 @@ dbx[2] == 1.0
 # \b{x} = \bar{x} + \bar{y} \cdot \nabla f(x) \\
 # \bar{y} = 0
 # \begin{end}
-
+#```
 function grad(x, dx, y, dy)
   Enzyme.autodiff_deferred(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
   nothing
