@@ -245,6 +245,9 @@ end
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
 function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
+    world = job.world
+    interp = GPUCompiler.get_interpreter(job)
+    method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
     if isa(dest, LLVM.Function)
@@ -489,7 +492,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...}) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}) 
+                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
                         ofn = LLVM.parent(LLVM.parent(inst))
                         mod = LLVM.parent(ofn)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
@@ -563,7 +566,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                     tys = flib.specTypes.parameters
                 end
-                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}) 
+                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table) 
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
