@@ -181,7 +181,8 @@ const nofreefns = Set{String}((
     "uv_os_homedir",
     "jl_array_to_string",
     "ijl_array_to_string",
-    "pcre2_jit_compile_8"
+    "pcre2_jit_compile_8",
+    "memmove",
 ))
 
 const inactivefns = Set{String}((
