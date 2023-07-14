@@ -103,7 +103,8 @@ end
   DEM_ForwardMode = 0,
   DEM_ReverseModePrimal = 1,
   DEM_ReverseModeGradient = 2,
-  DEM_ReverseModeCombined = 3
+  DEM_ReverseModeCombined = 3,
+  DEM_BatchMode = 4,
 )
 
 @cenum(CProbProgMode,
@@ -140,16 +141,36 @@ function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA
         augmented, atomicAdd)
 end
 
-function EnzymeCreateTraceInterface(fns::Vararg{T,13}) where {T}
-    ccall((:EnzymeCreateTraceInterface), EnzymeTraceInterfaceRef,
-            (LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef)
-            fns...)
+# TODO rename abi -> CreateEnzymeStaticTraceInterface
+# TODO remove contextref
+# function EnzymeCreateStaticTraceInterface(fns::Vararg{T,13}) where {T}
+#     ccall((:CreateEnzymeStaticTraceInterface), EnzymeTraceInterfaceRef,
+#             (LLVMContextRef, LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef,LLVMValueRef),
+#             LLVM.context(fns[1]), fns...)
+# end
+
+# TODO rename abi
+function EnzymeFreeTraceInterface(interface)
+    ccall((:FreeTraceInterface), Cvoid,
+            (EnzymeTraceInterfaceRef,), interface)
 end
 
-function EnzymeCreateTrace(logic, totrace, mode, autodiff, interface)
-    ccall((:EnzymeCreateTrace, libEnzyme), LLVMValueRef, 
-        (EnzymeLogicRef, LLVMValueRef, CProbProgMode,
-         UInt8, EnzymeTraceInterfaceRef), logic, totrace, mode, autodiff, interface)
+# TODO rename abi -> EnzymeCreateTrace
+function EnzymeCreateTrace(logic, totrace, sample_functions, observe_functions, generative_functions, active_random_variables, mode, autodiff, interface)
+    ccall((:CreateTrace, libEnzyme), LLVMValueRef, 
+        (EnzymeLogicRef, LLVMValueRef,
+        Ptr{LLVMValueRef}, Csize_t,
+        Ptr{LLVMValueRef}, Csize_t,
+        Ptr{LLVMValueRef}, Csize_t,
+        Ptr{Cstring}, Csize_t,
+        CProbProgMode,
+         UInt8, EnzymeTraceInterfaceRef),
+         logic, totrace,
+         sample_functions, length(sample_functions),
+         observe_functions, length(observe_functions),
+         generative_functions, length(generative_functions),
+         active_random_variables, length(active_random_variables),
+         mode, autodiff, interface)
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 

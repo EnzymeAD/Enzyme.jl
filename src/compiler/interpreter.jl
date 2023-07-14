@@ -18,9 +18,9 @@ struct EnzymeInterpreter <: AbstractInterpreter
     inf_params::InferenceParams
     opt_params::OptimizationParams
 
-    mode::API.CDerivativeMode
+    mode::Union{API.CDerivativeMode, API.CProbProgMode}
 
-    function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
+    function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::Union{API.CDerivativeMode, API.CProbProgMode})
         @assert world <= Base.get_world_counter()
 
         return new(
@@ -195,7 +195,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
             @safe_debug "Blocking inlining due to frule" mi.specTypes
             return nothing
         end
-    else
+    elseif interp.mode == API.DEM_ReverseModeGradient || interp.mode == API.DEM_ReverseModeCombined || interp.mode == API.DEM_ReverseModePrimal
         if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             @safe_debug "Blocking inling due to rrule" mi.specTypes
             return nothing
@@ -225,7 +225,7 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
         if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
-    else
+    elseif interp.mode == API.DEM_ReverseModeGradient || interp.mode == API.DEM_ReverseModeCombined || interp.mode == API.DEM_ReverseModePrimal
         if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
@@ -260,7 +260,7 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
         if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
-    else
+    elseif interp.mode == API.DEM_ReverseModeGradient || interp.mode == API.DEM_ReverseModeCombined || interp.mode == API.DEM_ReverseModePrimal
         if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end

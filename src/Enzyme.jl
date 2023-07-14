@@ -700,6 +700,15 @@ result, ∂v, ∂A
     AugT(primal_ptr), AdjT(adjoint_ptr)
 end
 
+@inline function batch(f::F, args...) where {F}
+    tt     = Tuple{map(Core.Typeof, args)...}
+    world = codegen_world_age(Core.Typeof(f), tt)
+    width = 1
+    RABI = DefaultABI
+    thunk = Enzyme.Compiler.batch_thunk(Val(world), F, tt, Val(width), RABI)
+    thunk(f, args...)
+end
+
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
 Base.@ccallable function __enzyme_float(x::Ptr{Cvoid})::Cvoid
     return nothing
