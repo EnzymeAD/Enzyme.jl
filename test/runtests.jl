@@ -2011,6 +2011,50 @@ end
 
 end
 
+@testset "Union return getproperty" begin
+	using Enzyme
+
+	struct DOSData
+		interp_func
+	end
+
+	function get_dos(Ef=0.)
+		return x->x+Ef
+	end
+
+	struct MyMarcusHushChidseyDOS
+		A::Float64
+		dos::DOSData
+	end
+
+	mhcd = MyMarcusHushChidseyDOS(0.3,  DOSData(get_dos()));
+
+	function myintegrand(V, a_r)
+		function z(E)
+			dos = mhcd.dos
+
+			interp = dos.interp_func
+
+			res = interp(V)
+
+			return res
+		end
+		return z
+	end
+
+	function f2(V)
+		fn = myintegrand(V, 1.0)
+
+		fn(0.0)
+	end
+
+    Enzyme.API.runtimeActivity!(true)
+	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
+    Enzyme.API.runtimeActivity!(false)
+    @test res[1] ≈ 0.2
+    @test res[2] ≈ 1.0
+end
+
 @testset "Static activity" begin
 
     struct Test2{T}
