@@ -1,12 +1,34 @@
 module EnzymeCore
 
 using Adapt
+using Preferences
 
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export DefaultABI, FFIABI
 export BatchDuplicatedFunc
+
+const structure_check = parse(Bool, @load_preference("structure_check", "false"))
+
+"""
+    structure_check!(flag)
+
+Toggle the default setting for congruence/structure checking.
+"""
+function structure_check!(flag)
+    @set_preferences!("structure_check" => flag)
+    @info("structure_check toggled, restart your Julia session for this change to take effect!")
+
+    if VERSION <= v"1.6.5" || VERSION == v"1.7.0"
+        @warn """
+        Due to a bug in Julia (until 1.6.5 and 1.7.1), setting preferences in transitive dependencies
+        is broken (https://github.com/JuliaPackaging/Preferences.jl/issues/24). To fix this either update
+        your version of Julia, or add EnzymeCore as a direct dependency to your project.
+        """
+    end
+    return nothing
+end
 
 function batch_size end
 
@@ -63,6 +85,10 @@ accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
+    function Duplicated(val::T, dval::T; checked=structure_check) where T
+        checked && check_congruence(val, dval)
+        new{T}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -75,6 +101,10 @@ the original result and only compute the derivative values.
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
+    function DuplicatedNoNeed(val::T, dval::T; checked=structure_check) where T
+        checked && check_congruence(val, dval)
+        new{T}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
@@ -87,6 +117,10 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    function BatchDuplicated(val::T, dval::NTuple{N,T}; checked=structure_check) where {T, N}
+        checked && check_congruence(val, dval)
+        new{T, N}(val, dval)
+    end
 end
 Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -105,6 +139,10 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    function BatchDuplicatedNoNeed(val::T, dval::NTuple{N,T}; checked=structure_check) where {T, N}
+        checked && check_congruence(val, dval)
+        new{T, N}(val, dval)
+    end
 end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
@@ -126,6 +164,47 @@ Foreign function call ABI. JIT the differentiated function, then inttoptr call t
 """
 struct FFIABI <: ABI end
 const DefaultABI = FFIABI
+
+"""
+    congruent(a::T, b::T)::T
+
+Defines values to be congruent, e.g. structurally equivalent.
+"""
+function congruent end
+
+congruent(a, b) = false
+congruent(a::T, b::T) where T<:Number = true
+function congruent(a::T, b::T) where T<:DenseArray
+    axes(a) == axes(b) && all(congruent, zip(a, b))
+end
+congruent(a::T, b::T) where T<:Ref = congruent(a[], b[])
+congruent(a::T, b::T) where T<:Tuple = all(congruent, zip(a, b))
+congruent(a::T, b::T) where T<:NamedTuple = all(congruent, zip(a, b))
+
+congruent(tup::Tuple{T, T}) where T = congruent(tup...)
+
+function check_congruence(a::T, b::T) where T
+    # TODO: Use once hasmethod is static
+    # if !hasmethod(congruent, Tuple{T, T})
+    #     error("""
+    #     Implement EnzymeCore.congruent(a, b) for your type $T
+    #     """)
+    # end
+    if !congruent(a, b)
+        error("""
+        Your values are not congruent, structural equivalence is
+        requirement for the correctness of the adjoint pass.
+
+        You may need to implement EnzymeCore.congruent(a, b) for your type $T
+        """)
+    end
+end
+
+function check_congruence(a::T, b::NTuple{N, T}) where {N, T}
+    ntuple(Val(N)) do i
+        check_congruence(a, b[i])
+    end
+end
 
 """
     abstract type Mode
