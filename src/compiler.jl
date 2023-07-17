@@ -8412,12 +8412,15 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                         fill_val = unsafe_to_llvm(jlrettype.instance)
                         ret!(builder, fill_val)
                     else
-                        obj = emit_allocobj!(builder, jlrettype)
-                        if sretPtr !== nothing
+                        nobj = if sretPtr !== nothing
+                            obj = emit_allocobj!(builder, jlrettype)
                             llty = convert(LLVMType, jlrettype)
                             ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
                             store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
                             # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(value_type(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
+                            obj
+                        else
+                            @assert false
                         end
                         ret!(builder, obj)
                     end
@@ -8429,8 +8432,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 for_each_uniontype_small(inner, actualRetType)
 
                 position!(builder, def)
-                fill_val = unsafe_to_llvm(nothing)
-                ret!(builder, fill_val)
+                ret!(builder, extract_value!(builder, res, 0))
             end
         elseif sret
             if sretPtr === nothing
@@ -9487,7 +9489,7 @@ end
         rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
         if rrt == Union{}
-            error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+            error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
         end
         
         if !(A <: Const) && (isghostty(rrt) || Core.Compiler.isconstType(rrt) || rrt === DataType)
