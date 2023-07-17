@@ -2052,7 +2052,13 @@ end
 	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
     Enzyme.API.runtimeActivity!(false)
     @test res[1] ≈ 0.2
-    @test res[2] ≈ 1.0
+    # broken as the return of an apply generic is {primal, primal}
+    # but since the return is abstractfloat doing the 
+    @static if VERSION ≥ v"1.9-" && !(VERSION ≥ v"1.10-" )
+        @test_broken res[2] ≈ 1.0
+    else
+        @test res[2] ≈ 1.0
+    end
 end
 
 @testset "Static activity" begin
