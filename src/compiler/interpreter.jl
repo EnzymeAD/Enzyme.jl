@@ -177,6 +177,7 @@ import Core.Compiler: CallInfo
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
+    method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(mi.specTypes)
 
     if is_primitive_func(specTypes)
@@ -184,18 +185,18 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
         return nothing
     end
 
-    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
         return nothing
     end
 
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             @safe_debug "Blocking inlining due to frule" mi.specTypes
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             @safe_debug "Blocking inling due to rrule" mi.specTypes
             return nothing
         end
@@ -211,20 +212,21 @@ elseif isdefined(Core.Compiler, :is_stmt_inline)
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
+    method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(mi.specTypes)
 
     if is_primitive_func(specTypes)
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         return nothing
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
     end
@@ -250,15 +252,16 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     interp = state.policy.interp
-    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world)
+    method_table = Core.Compiler.method_table(interp)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     else
-        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     end

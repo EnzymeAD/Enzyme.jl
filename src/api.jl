@@ -32,13 +32,13 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Unknown = 6
 )
 
-function EnzymeConcreteTypeIsFloat(cc::CConcreteType, ctx)
+function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
   if cc == DT_Half
-    return LLVM.HalfType(ctx)
+    return LLVM.HalfType()
   elseif cc == DT_Float
-    return LLVM.FloatType(ctx)
+    return LLVM.FloatType()
   elseif cc == DT_Double
-    return LLVM.DoubleType(ctx)
+    return LLVM.DoubleType()
   else
     return nothing
   end
@@ -438,6 +438,7 @@ end
   ET_InternalError = 5,
   ET_TypeDepthExceeded = 6,
   ET_MixedActivityError = 7,
+  ET_IllegalReplaceFicticiousPHIs = 8
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
@@ -554,4 +555,15 @@ EnzymeAttributeKnownFunctions(f) = ccall((:EnzymeAttributeKnownFunctions, libEnz
 EnzymeAnonymousAliasScopeDomain(str, ctx) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScopeDomain, libEnzyme), LLVM.API.LLVMMetadataRef, (Cstring,LLVMContextRef), str, ctx))
 EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScope, libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,Cstring), dom.ref, str))
 EnzymeFixupJuliaCallingConvention(f) = ccall((:EnzymeFixupJuliaCallingConvention, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
+
+e_extract_value!(builder, AggVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildExtractValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, Index, length(Index), Name))
+  end
+
+e_insert_value!(builder, AggVal, EltVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildInsertValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, EltVal, Index, length(Index), Name))
+  end
+
 end

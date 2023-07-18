@@ -89,12 +89,13 @@ end
 
 @testset "Internal tests" begin
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
-    world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    world = codegen_world_age(typeof(f0), Tuple{Float64})
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -103,7 +104,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -113,8 +114,8 @@ end
     end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
-    world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
+    world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -122,8 +123,8 @@ end
     @test d.dval[2] ≈ 3.0
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    world = GPUCompiler.codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -156,6 +157,9 @@ end
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
 
+make3() = (1.0, 2.0, 3.0)
+
+
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
@@ -164,6 +168,14 @@ end
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    tup = autodiff(Forward, f2, BatchDuplicatedFunc{Float64, 3, typeof(make3)}(1.0))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
     @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
@@ -256,6 +268,42 @@ end
     tonest(x,y) = (x + y)^2
 
     @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+end
+
+@testset "Hessian" begin
+    function origf(x::Array{Float64}, y::Array{Float64})
+        y[1] = x[1] * x[1] + x[2] * x[1]
+        return nothing
+    end
+
+    function grad(x, dx, y, dy)
+      Enzyme.autodiff_deferred(Reverse, origf, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+      nothing
+    end
+
+    x = [2.0, 2.0]
+    y = Vector{Float64}(undef, 1)
+    dx = [0.0, 0.0]
+    dy = [1.0]
+
+    grad(x, dx, y, dy)
+
+    vx = ([1.0, 0.0], [0.0, 1.0])
+    hess = ([0.0, 0.0], [0.0, 0.0])
+    dx2 = [0.0, 0.0]
+    dy = [1.0]
+
+    Enzyme.autodiff(Enzyme.Forward, grad,
+                    Enzyme.BatchDuplicated(x, vx),
+                    Enzyme.BatchDuplicated(dx2, hess),
+                    Const(y),
+                    Const(dy))
+
+    @test dx ≈ dx2
+    @test hess[1][1] ≈ 2.0
+    @test hess[1][2] ≈ 1.0
+    @test hess[2][1] ≈ 1.0
+    @test hess[2][2] ≈ 0.0
 end
 
 @testset "Array tests" begin
@@ -1047,6 +1095,11 @@ end
     end
 
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
+end
+
+@testset "Mismatched return" begin
+    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
@@ -1958,6 +2011,56 @@ end
 
 end
 
+@testset "Union return getproperty" begin
+	using Enzyme
+
+	struct DOSData
+		interp_func
+	end
+
+	function get_dos(Ef=0.)
+		return x->x+Ef
+	end
+
+	struct MyMarcusHushChidseyDOS
+		A::Float64
+		dos::DOSData
+	end
+
+	mhcd = MyMarcusHushChidseyDOS(0.3,  DOSData(get_dos()));
+
+	function myintegrand(V, a_r)
+		function z(E)
+			dos = mhcd.dos
+
+			interp = dos.interp_func
+
+			res = interp(V)
+
+			return res
+		end
+		return z
+	end
+
+	function f2(V)
+		fn = myintegrand(V, 1.0)
+
+		fn(0.0)
+	end
+
+    Enzyme.API.runtimeActivity!(true)
+	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
+    Enzyme.API.runtimeActivity!(false)
+    @test res[1] ≈ 0.2
+    # broken as the return of an apply generic is {primal, primal}
+    # but since the return is abstractfloat doing the 
+    @static if VERSION ≥ v"1.9-" && !(VERSION ≥ v"1.10-" )
+        @test_broken res[2] ≈ 1.0
+    else
+        @test res[2] ≈ 1.0
+    end
+end
+
 @testset "Static activity" begin
 
     struct Test2{T}
@@ -2025,4 +2128,13 @@ end
 using CUDA
 if CUDA.functional() && VERSION >= v"1.7.0"
     include("cuda.jl")
+end
+
+if VERSION >= v"1.8.0" && Sys.isapple() && Sys.ARCH == :aarch64
+    using Pkg
+    Pkg.add("Metal")
+    using Metal
+    if Metal.functional()
+        include("metal.jl")
+    end
 end

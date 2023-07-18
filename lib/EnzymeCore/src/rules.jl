@@ -198,4 +198,19 @@ function is_inactive_from_sig(@nospecialize(TT);
     return isapplicable(inactive, TT; world, method_table, caller)
 end
 
+"""
+    inactive_noinl(func::typeof(f), args...)
+
+Mark a particular function as always being inactive in both its return result and the function call itself,
+but do not prevent inlining of the function.
+"""
+function inactive_noinl end
+
+function is_inactive_noinl_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+    return isapplicable(inactive_noinl, TT; world, method_table, caller)
+end
+
 end # EnzymeRules
