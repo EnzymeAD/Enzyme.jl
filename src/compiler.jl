@@ -681,6 +681,83 @@ function emit_svec!(B, args)::LLVM.Value
     call!(B, fty, fn, [LLVM.ConstantInt(sz, length(args)), args...])
 end
 
+function absint(arg::LLVM.Value)
+    if isa(arg, LLVM.CallInst)
+        fn = LLVM.called_operand(arg)
+        nm = ""
+        if isa(fn, LLVM.Function)
+            nm = LLVM.name(fn)
+        end
+        for (fname, ty) in (
+                             ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
+                             ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
+                             ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
+                             ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                            )
+            if nm == fname
+                v = first(operands(arg))
+                if isa(v, ConstantInt)
+                    return (true, convert(ty, v))
+                end
+            end
+        end
+        if LLVM.callconv(arg) == 37 || nm == "julia.call"
+            index = 2
+            if LLVM.callconv(arg) != 37
+                fn = first(operands(arg))
+                nm = LLVM.name(fn)
+                index = 3
+            end
+            if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
+                found = []
+                legal, Ty = absint(operands(arg)[index])
+                for sarg in operands(arg)[index+1:end-1]
+                    slegal , foundv = absint(sarg)
+                    if slegal
+                        push!(found, foundv)
+                    else
+                        legal = false
+                        break
+                    end
+                end
+
+                if legal
+                    return unsafe_to_llvm(Ty{found...})
+                end
+            end
+            if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
+                found = []
+                legal = true
+                for sarg in operands(arg)[index+1:end-1]
+                    slegal , foundv = absint(sarg)
+                    if slegal
+                        push!(found, foundv)
+                    else
+                        legal = false
+                        break
+                    end
+                end
+
+                if legal
+                    return unsafe_to_llvm((found...,))
+                end
+            end
+        end
+    end
+    if isa(arg, ConstantExpr)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            ce = operands(ce)[1]
+        end
+        if !isa(ce, LLVM.ConstantInt)
+            return (false, nothing)
+        end
+        ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+        typ = Base.unsafe_pointer_to_objref(ptr)
+        return (true, typ)
+    end
+    return (false, nothing)
+end
 
 function emit_apply_type!(B, Ty, args)::LLVM.Value
     curent_bb = position(B)
@@ -690,48 +767,13 @@ function emit_apply_type!(B, Ty, args)::LLVM.Value
     legal = true
     found = []
     for arg in args
-        if isa(arg, LLVM.CallInst)
-            fn = LLVM.called_operand(arg)
-            nm = ""
-            if isa(fn, LLVM.Function)
-                nm = LLVM.name(fn)
-            end
-            match = false
-            for (fname, ty) in (
-                                 ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
-                                 ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
-                                 ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
-                                 ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
-                                )
-                if nm == "jl_box_int64" || nm == "ijl_box_int64"
-                    v = first(operands(arg))
-                    if isa(v, ConstantInt)
-                        push!(found, convert(Int64, v))
-                        match = true
-                        break
-                    end
-                end
-            end
-            if match
-                continue
-            end
-        end
-        if !isa(arg, ConstantExpr)
+        slegal , foundv = absint(arg)
+        if slegal
+            push!(found, foundv)
+        else
             legal = false
             break
         end
-
-        ce = arg
-        while isa(ce, ConstantExpr)
-            ce = operands(ce)[1]
-        end
-        if !isa(ce, LLVM.ConstantInt)
-            legal = false
-            break
-        end
-        ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-        typ = Base.unsafe_pointer_to_objref(ptr)
-        push!(found, typ)
     end
 
     if legal
@@ -759,6 +801,51 @@ function emit_apply_type!(B, Ty, args)::LLVM.Value
             LLVM.FunctionType(T_prjlvalue,
                               [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
         tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
+    end
+    return tag
+end
+
+function emit_tuple!(B, args)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+
+    legal = true
+    found = []
+    for arg in args
+        slegal , foundv = absint(arg)
+        if slegal
+            push!(found, foundv)
+        else
+            legal = false
+            break
+        end
+    end
+
+    if legal
+        return unsafe_to_llvm((found...,))
+    end
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type()
+
+    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+    f_apply_type, _ = get_function!(mod, "jl_f_tuple", generic_FT)
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
+        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
+        tag = call!(B, FT, f_apply_type, LLVM.Value[LLVM.PointerNull(T_prjlvalue), args...])
+        LLVM.callconv!(tag, 37)
+    else
+        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+        julia_call, FT = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue,
+                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+        tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...])
     end
     return tag
 end
@@ -1227,13 +1314,13 @@ function func_runtime_generic_fwd(N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_fwd(activity::Val{ActivityTup}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+@generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -1306,13 +1393,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -1389,13 +1476,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Val{ActivityTup}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width)-1
     _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes)
@@ -1440,7 +1527,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    ActivityList = Bool[]
+    ActivityList = LLVM.Value[]
 
     to_preserve = LLVM.Value[]
 
@@ -1477,7 +1564,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         push!(vals, val)
 
         active = !is_constant_value(gutils, op)
-        push!(ActivityList, active)
+        if !active
+            push!(ActivityList, unsafe_to_llvm(false))
+        end
 
         inverted = nothing
 
@@ -1486,6 +1575,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
             end
+            push!(ActivityList, select!(B, icmp!(B, LLVM.API.LLVMIntNE, val, inverted), unsafe_to_llvm(true), unsafe_to_llvm(false)))
         end
 
         for w in 1:width
@@ -1533,7 +1623,8 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
-    pushfirst!(vals, unsafe_to_llvm(Val((ActivityList...,))))
+    pushfirst!(vals, emit_apply_type!(B, Base.Val, (emit_tuple!(B, ActivityList),)))
+    @show vals[end-1]
 
     @static if VERSION < v"1.7.0-" || true
     else
