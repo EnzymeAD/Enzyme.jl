@@ -757,6 +757,34 @@ end
     Enzyme.API.runtimeActivity!(false)
 end
 
+
+mutable struct RTGData
+	x
+end
+
+@noinline function rtg_sub(V, cv)
+	return cv
+end
+
+@noinline function rtg_cast(cv)
+	return cv
+end
+
+function rtg_f(V,@nospecialize(cv))
+	s = rtg_sub(V, Base.inferencebarrier(cv))::RTGData
+	s = rtg_cast(Base.inferencebarrier(s.x))::Float64
+	return s
+end
+
+@testset "RuntimeActivity generic call" begin
+    Enzyme.API.runtimeActivity!(true)
+    res = autodiff(Forward, rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    @test 3.14 ≈ res[1]
+    @test 0.0 ≈ res[2]
+    Enzyme.API.runtimeActivity!(false)
+end
+
+
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
     include("packages/specialfunctions.jl")

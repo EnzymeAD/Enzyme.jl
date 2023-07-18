@@ -722,7 +722,7 @@ function absint(arg::LLVM.Value)
                 end
 
                 if legal
-                    return unsafe_to_llvm(Ty{found...})
+                    return (true, Ty{found...})
                 end
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
@@ -737,9 +737,9 @@ function absint(arg::LLVM.Value)
                         break
                     end
                 end
-
                 if legal
-                    return unsafe_to_llvm((found...,))
+                    res = (found...,)
+                    return (true, res)
                 end
             end
         end
@@ -1575,7 +1575,16 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
             end
-            push!(ActivityList, select!(B, icmp!(B, LLVM.API.LLVMIntNE, val, inverted), unsafe_to_llvm(true), unsafe_to_llvm(false)))
+            if API.runtimeActivity()
+                inv_0 = if width == 1
+                    inverted
+                else
+                    extract_value!(B, inverted, 0)
+                end
+                push!(ActivityList, select!(B, icmp!(B, LLVM.API.LLVMIntNE, val, inv_0), unsafe_to_llvm(true), unsafe_to_llvm(false)))
+            else
+                push!(ActivityList, unsafe_to_llvm(true))
+            end
         end
 
         for w in 1:width
@@ -1623,8 +1632,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
-    pushfirst!(vals, emit_apply_type!(B, Base.Val, (emit_tuple!(B, ActivityList),)))
-    @show vals[end-1]
+    pushfirst!(vals, emit_apply_type!(B, Base.Val, [emit_tuple!(B, ActivityList)]))
 
     @static if VERSION < v"1.7.0-" || true
     else
