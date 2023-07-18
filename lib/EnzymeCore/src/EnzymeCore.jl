@@ -169,7 +169,7 @@ function tape_type end
 include("rules.jl")
 
 if !isdefined(Base, :get_extension)
-    include("ext/EnzymeCoreAdaptExt.jl")
+    include("../ext/EnzymeCoreAdaptExt.jl")
 end
 
 end # module EnzymeCore
