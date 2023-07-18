@@ -1,7 +1,5 @@
 module EnzymeCore
 
-using Adapt
-
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
@@ -28,7 +26,6 @@ Enzyme will not auto-differentiate in respect `Const` arguments.
 struct Const{T} <: Annotation{T}
     val::T
 end
-Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
 Const(::Type{T}) where T = Const{Type{T}}(T)
@@ -48,7 +45,6 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 struct Active{T} <: Annotation{T}
     val::T
 end
-Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 Active(i::Integer) = Active(float(i))
 
@@ -64,7 +60,6 @@ struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
 end
-Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
@@ -76,7 +71,6 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
 end
-Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
     BatchDuplicated(x, ∂f_∂xs)
@@ -88,7 +82,6 @@ struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
 end
-Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
 struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
     val::T
@@ -109,7 +102,6 @@ end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
-Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 
 """
@@ -175,5 +167,9 @@ function autodiff_deferred_thunk end
 function tape_type end
 
 include("rules.jl")
+
+if !isdefined(Base, :get_extension)
+    include("ext/EnzymeCoreAdaptExt.jl")
+end
 
 end # module EnzymeCore
