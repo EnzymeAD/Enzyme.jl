@@ -1917,20 +1917,21 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
 
-    if all(is_constant_value(gutils, v) for v in origops[offset:end-1])
-        shadowres = new_from_original(gutils, orig)
-        if width != 1
-            shadowres2 = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(shadowres))))
-            for idx in 1:width
-                shadowres2 = insert_value!(B, shadowres2, shadowres, idx-1)
-            end
-            shadowres = shadowres2
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-        return false
-    end
-    if any(is_constant_value(gutils, v) for v in origops[offset:end-1])
-        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct")
+    icvs = [is_constant_value(gutils, v) for v in origops[offset:end-1]]
+    # if all(icvs)
+    #     shadowres = new_from_original(gutils, orig)
+    #     if width != 1
+    #         shadowres2 = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(shadowres))))
+    #         for idx in 1:width
+    #             shadowres2 = insert_value!(B, shadowres2, shadowres, idx-1)
+    #         end
+    #         shadowres = shadowres2
+    #     end
+    #     unsafe_store!(shadowR, shadowres.ref)
+    #     return false
+    # end
+    if any(icvs)
+        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig))
     end
 
     shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:end-1] ]
