@@ -180,6 +180,16 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
+
+    for T in (Float64, Float32, Float16)
+        res = autodiff(Reverse, tanh, Active, Active(T(1.0)))[1][1]
+        @test res isa T
+        @test res ≈ T(0.41997434161402606939)
+        res = autodiff(Forward, tanh, Duplicated(T(1.0), T(1.0)))[1]
+        @test res isa T
+        @test res ≈ T(0.41997434161402606939)
+    end
+
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
     test_scalar(log2, 1.0)
@@ -243,6 +253,50 @@ end
     @test first(autodiff(Forward, g, Duplicated(3.0, 1.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
+end
+
+@testset "Base functions" begin
+    f1(x) = prod(ntuple(i -> i * x, 3))
+    @test autodiff(Reverse, f1, Active, Active(2.0))[1][1] == 72
+    @test autodiff(Forward, f1, Duplicated(2.0, 1.0))[1]   == 72
+
+    f2(x) = x * something(nothing, 2)
+    @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] == 2
+    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1]   == 2
+
+    f3(x) = x * sum(unique([x, 2.0, 2.0, 3.0]))
+    @test autodiff(Reverse, f3, Active, Active(1.0))[1][1] == 7
+    @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1]   == 7
+
+    for rf in (reduce, foldl, foldr)
+        f4(x) = rf(*, [1.0, x, x, 3.0])
+        @test autodiff(Reverse, f4, Active, Active(2.0))[1][1] == 12
+        @test autodiff(Forward, f4, Duplicated(2.0, 1.0))[1]   == 12
+    end
+
+    f5(x) = sum(accumulate(+, [1.0, x, x, 3.0]))
+    @test autodiff(Reverse, f5, Active, Active(2.0))[1][1] == 5
+    @test autodiff(Forward, f5, Duplicated(2.0, 1.0))[1]   == 5
+
+    f6(x) = x |> inv |> abs
+    @test autodiff(Reverse, f6, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f6, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f7(x) = (inv ∘ abs)(x)
+    @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f8(x) = x * count(i -> i > 1, [0.5, x, 1.5])
+    @test autodiff(Reverse, f8, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1]   == 2
+
+    function f9(x)
+        y = []
+        foreach(i -> push!(y, i^2), [1.0, x, x])
+        return sum(y)
+    end
+    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
 end
 
 @testset "Taylor series tests" begin
@@ -323,6 +377,34 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
+
+    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
+        function f1(m)
+            s = 0.0
+            for (i, col) in enumerate(eachcol(m))
+                s += i * sum(col)
+            end
+            return s
+        end
+
+        m = Float64[1 2 3; 4 5 6; 7 8 9]
+        dm = zero(m)
+        autodiff(Reverse, f1, Active, Duplicated(m, dm))
+        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+        function f2(m)
+            s = 0.0
+            for (i, col) in enumerate(eachrow(m))
+                s += i * sum(col)
+            end
+            return s
+        end
+
+        dm = zero(m)
+        autodiff(Reverse, f2, Active, Duplicated(m, dm))
+        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+    end
 end
 
 @testset "Advanced array tests" begin
@@ -1912,10 +1994,15 @@ end
 using Random
 
 @testset "Random" begin
-	f_rand(x) = x*rand()
-	f_randn(x, N) = x*sum(randn(N))
-    autodiff(Reverse, f_rand, Active, Active(1.0))
-    autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))
+    f_rand(x) = x*rand()
+    f_randn(x, N) = x*sum(randn(N))
+    @test 0 <= autodiff(Reverse, f_rand, Active, Active(1.0))[1][1] < 1
+    @test !iszero(autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))[1][1])
+    @test iszero(autodiff(Reverse, x -> rand(), Active, Active(1.0))[1][1])
+    @test iszero(autodiff(Reverse, (x, N) -> sum(randn(N)), Active, Active(1.0), Const(64))[1][1])
+    @test autodiff(Reverse, x -> x * sum(randcycle(5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(randperm( 5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(shuffle(1:5)), Active, Active(1.0))[1][1] == 15
 end
 
 @testset "Reshape" begin
@@ -2150,6 +2237,61 @@ end
         Const(rhs_terms),
     )
     @test ad_eta[1] ≈ 0.0
+end
+
+@testset "Type preservation" begin
+    # Float16 fails due to #870
+    for T in (Float64, Float32, #=Float16=#)
+        res = autodiff(Reverse, x -> x * 2.0, Active, Active(T(1.0)))[1][1]
+        @test res isa T
+        @test res == 2
+    end
+end
+
+@testset "Statistics" begin
+    f1(x) = var([x, 2.0, 3.0])
+    @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f1, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f2(x) = varm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f2, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f2, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f3(x) = std([x, 2.0, 3.0])
+    @test autodiff(Reverse, f3, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f3, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f4(x) = stdm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f4, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f5(x) = cor([2.0, x, 1.0], [1.0, 2.0, 3.0])
+    @test autodiff(Reverse, f5, Active, Active(4.0))[1][1] ≈ 0.11690244120
+    @test autodiff(Forward, f5, Duplicated(4.0, 1.0))[1]   ≈ 0.11690244120
+
+    f6(x) = cov([2.0, x, 1.0])
+    @test autodiff(Reverse, f6, Active, Active(4.0))[1][1] ≈ 5/3
+    @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
+
+    f7(x) = median([2.0, 1.0, x])
+    # Fails on Julia 1.9 due to #880
+    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
+    @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
+
+    f8(x) = middle([2.0, x, 1.0])
+    @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
+    @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1]   == 0.5
+    @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
+    @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
+
+    # On Julia 1.6 the gradients are wrong (0.7 not 1.2) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
+        f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+        @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+        @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    end
 end
 
 # Always run last since otherwise on 1.6 device functions cause breakage.
