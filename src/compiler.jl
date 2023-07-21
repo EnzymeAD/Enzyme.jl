@@ -401,6 +401,10 @@ struct CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal} <: AbstractThun
     adjoint::PT
 end
 
+struct BatchModeThunk{PT, FT, RT, TT, Width}
+    adjoint::PT
+end
+
 struct ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
     adjoint::PT
 end
@@ -6767,7 +6771,7 @@ end
 abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
 struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     TT::Type{<:Tuple}
-    mode::API.CDerivativeMode
+    mode::Union{API.CDerivativeMode, API.CProbProgMode}
     width::Int
     rt::Type{<:Annotation{T} where T}
     run_enzyme::Bool
@@ -6784,10 +6788,19 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     ABI::Type{<:ABI}
 end
 
+struct BatchingCompilerParams <: AbstractEnzymeCompilerParams
+    TT::Type{<:Tuple}
+    mode::Union{API.CDerivativeMode, API.CProbProgMode}
+    width::Int
+    abiwrap::Bool
+    # Whether to use the pointer ABI, default true
+    ABI::Type{<:ABI}
+end
+
 struct UnknownTapeType end
 
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
-    mode::API.CDerivativeMode
+    mode::Union{API.CDerivativeMode, API.CProbProgMode}
 end
 
 DefaultCompilerTarget(;kwargs...) = GPUCompiler.NativeCompilerTarget(;jlruntime=true, kwargs...)
@@ -6834,7 +6847,7 @@ end
 # Enzyme compiler step
 ##
 
-function annotate!(mod, mode)
+function annotate!(mod::LLVM.Module)
     inactive = LLVM.StringAttribute("enzyme_inactive", "")
     active = LLVM.StringAttribute("enzyme_active", "")
     fns = functions(mod)
@@ -7271,85 +7284,120 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     return UInt8(false)
 end
 
-function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
+function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, jlrules)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
-    rt  = job.config.params.rt
-    shadow_init = job.config.params.shadowInit
+    rt  = if isa(job.config.params, EnzymeCompilerParams)
+        job.config.params.rt
+    else
+        nothing
+    end
+    shadow_init = if  isa(job.config.params, EnzymeCompilerParams)
+        job.config.params.shadowInit
+    else
+        nothing
+    end
+
+    returnPrimal = if isa(job.config.params, EnzymeCompilerParams)
+        job.config.params.returnPrimal
+    elseif isa(job.config.params, BatchingCompilerParams)
+        true
+    else
+        @assert false
+    end
+    wrap = job.config.params.abiwrap
+    modifiedBetween = if isa(job.config.params, EnzymeCompilerParams)
+        @assert length(job.config.params.modifiedBetween) == length(TT.parameters)
+        job.config.params.modifiedBetween
+    else
+        nothing
+    end
+
+    expectedTapeType = if isa(job.config.params, EnzymeCompilerParams)
+        job.config.params.expectedTapeType
+    else
+        nothing
+    end
     ctx = context(mod)
     dl  = string(LLVM.datalayout(mod))
 
     tt = [TT.parameters[2:end]...,]
 
-    args_activity     = API.CDIFFE_TYPE[]
-    uncacheable_args  = Bool[]
-    args_typeInfo     = TypeTree[]
-    args_known_values = API.IntList[]
-
-
-    @assert length(modifiedBetween) == length(TT.parameters)
 
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(primalf, i)))) for i in 1:length(collect(parameters(primalf))))
-    if swiftself
-        push!(args_activity, API.DFT_CONSTANT)
-        push!(args_typeInfo, TypeTree())
-        push!(uncacheable_args, false)
-        push!(args_known_values, API.IntList())
-    end
 
-    for (i, T) in enumerate(TT.parameters)
-        source_typ = eltype(T)
-        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            if !(T <: Const)
-                error("Type of ghost or constant type "*string(T)*" is marked as differentiable.")
-            end
-            continue
-        end
-        isboxed = GPUCompiler.deserves_argbox(source_typ)
-
-        if T <: Const
+    if isa(job.config.params, EnzymeCompilerParams)
+        args_activity     = API.CDIFFE_TYPE[]
+        uncacheable_args  = Bool[]
+        args_typeInfo     = TypeTree[]
+        args_known_values = API.IntList[]
+        if swiftself
             push!(args_activity, API.DFT_CONSTANT)
-        elseif T <: Active
-            if isboxed
-                push!(args_activity, API.DFT_DUP_ARG)
-            else
-                push!(args_activity, API.DFT_OUT_DIFF)
-            end
-        elseif  T <: Duplicated || T<: BatchDuplicated || T<: BatchDuplicatedFunc
-            push!(args_activity, API.DFT_DUP_ARG)
-        elseif T <: DuplicatedNoNeed || T<: BatchDuplicatedNoNeed
-            push!(args_activity, API.DFT_DUP_NONEED)
-        else
-            error("illegal annotation type")
+            push!(args_typeInfo, TypeTree())
+            push!(uncacheable_args, false)
+            push!(args_known_values, API.IntList())
         end
-        typeTree = typetree(source_typ, ctx, dl)
-        if isboxed
-            merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
-            only!(typeTree, -1)
-        end
-        push!(args_typeInfo, typeTree)
-        push!(uncacheable_args, modifiedBetween[i])
-        push!(args_known_values, API.IntList())
-    end
-    @assert length(uncacheable_args) == length(collect(parameters(primalf)))
-    @assert length(args_typeInfo) == length(collect(parameters(primalf)))
 
-    # The return of createprimal and gradient has this ABI
-    #  It returns a struct containing the following values
-    #     If requested, the original return value of the function
-    #     If requested, the shadow return value of the function
-    #     For each active (non duplicated) argument
-    #       The adjoint of that argument
-    if rt <: Const
-        retType = API.DFT_CONSTANT
-    elseif rt <: Active
-        retType = API.DFT_OUT_DIFF
-    elseif rt <: Duplicated || rt <: BatchDuplicated || rt<: BatchDuplicatedFunc
-        retType = API.DFT_DUP_ARG
-    elseif rt <: DuplicatedNoNeed || rt <: BatchDuplicatedNoNeed
-        retType = API.DFT_DUP_NONEED
-    else
-        error("Unhandled return type $rt")
+        for (i, T) in enumerate(TT.parameters)
+            source_typ = eltype(T)
+            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+                if !(T <: Const)
+                    error("Type of ghost or constant type "*string(T)*" is marked as differentiable.")
+                end
+                continue
+            end
+            isboxed = GPUCompiler.deserves_argbox(source_typ)
+
+            if T <: Const
+                push!(args_activity, API.DFT_CONSTANT)
+            elseif T <: Active
+                if isboxed
+                    push!(args_activity, API.DFT_DUP_ARG)
+                else
+                    push!(args_activity, API.DFT_OUT_DIFF)
+                end
+            elseif  T <: Duplicated || T<: BatchDuplicated || T<: BatchDuplicatedFunc
+                push!(args_activity, API.DFT_DUP_ARG)
+            elseif T <: DuplicatedNoNeed || T<: BatchDuplicatedNoNeed
+                push!(args_activity, API.DFT_DUP_NONEED)
+            else
+                error("illegal annotation type")
+            end
+            typeTree = typetree(source_typ, ctx, dl)
+            if isboxed
+                merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                only!(typeTree, -1)
+            end
+            push!(args_typeInfo, typeTree)
+            push!(uncacheable_args, modifiedBetween[i])
+            push!(args_known_values, API.IntList())
+        end
+        @assert length(uncacheable_args) == length(collect(parameters(primalf)))
+        @assert length(args_typeInfo) == length(collect(parameters(primalf)))
+
+        # The return of createprimal and gradient has this ABI
+        #  It returns a struct containing the following values
+        #     If requested, the original return value of the function
+        #     If requested, the shadow return value of the function
+        #     For each active (non duplicated) argument
+        #       The adjoint of that argument
+
+        if rt <: Const
+            retType = API.DFT_CONSTANT
+        elseif rt <: Active
+            retType = API.DFT_OUT_DIFF
+        elseif rt <: Duplicated || rt <: BatchDuplicated || rt<: BatchDuplicatedFunc
+            retType = API.DFT_DUP_ARG
+        elseif rt <: DuplicatedNoNeed || rt <: BatchDuplicatedNoNeed
+            retType = API.DFT_DUP_NONEED
+        else
+            error("Unhandled return type $rt")
+        end
+
+        retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+
+        typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
+
     end
 
     rules = Dict{String, API.CustomRuleType}(
@@ -7439,12 +7487,6 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl)
-
-    typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
-
-    TapeType = Cvoid
-
     if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
         shadowReturnUsed = returnUsed && (retType == API.DFT_DUP_ARG || retType == API.DFT_DUP_NONEED)
@@ -7498,6 +7540,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         if wrap
             adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnUsed, shadow_init, world, interp)
         end
+        TapeType = Cvoid
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
         returnUsed &= returnPrimal
@@ -7508,9 +7551,28 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args))
         augmented_primalf = nothing
         if wrap
-          pf = adjointf
           adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
         end
+        TapeType = Cvoid
+    elseif mode == API.DEM_BatchMode
+        # TODO batching
+        adjointf = primalf
+        augmented_primalf = nothing
+        # TODO create abi wrapper
+        @assert width == 1
+        if wrap
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_BatchMode, nothing, width, #=returnUsed=#true, #=shadow_init=#false, world, interp)
+        end
+        TapeType = Cvoid
+    elseif mode == API.DEM_Trace
+        # TODO TRACE STUFF
+        adjointf = TODO
+        augmented_primalf = nothing
+        # TODO create abi wrapper
+        if wrap
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
+        end
+        TapeType = Cvoid
     else
         @assert "Unhandled derivative mode", mode
     end
@@ -7523,6 +7585,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
+    shadow_inputs = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeCombined || Mode == API.DEM_ForwardMode
 
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
@@ -7550,9 +7613,15 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
     ActiveRetTypes = Type[]
     for (i, T) in enumerate(TT.parameters)
-        source_typ = eltype(T)
+        source_typ = if shadow_inputs
+            eltype(T)
+        else
+            T
+        end
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            @assert T <: Const
+            if shadow_inputs
+                @assert T <: Const
+            end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
@@ -7563,6 +7632,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
 
         push!(T_wrapperargs, llvmT)
+
+        if !shadow_inputs
+            continue
+        end
 
         if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint && i != 1
@@ -7614,9 +7687,9 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         push!(T_wrapperargs, dretTy)
     end
 
-    data    = Array{Int64}(undef, 3)
-    existed = Array{UInt8}(undef, 3)
     if Mode == API.DEM_ReverseModePrimal
+        data    = Array{Int64}(undef, 3)
+        existed = Array{UInt8}(undef, 3)
         API.EnzymeExtractReturnInfo(augmented, data, existed)
         # tape -- todo ??? on wrap
         if existed[1] != 0
@@ -7655,13 +7728,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             @assert rettype <: Const || rettype <: Active
             push!(sret_types, Nothing)
         end
-    end
-    if Mode == API.DEM_ReverseModeCombined
+    elseif Mode == API.DEM_ReverseModeCombined
         if returnPrimal
             push!(sret_types, actualRetType)
         end
-    end
-    if Mode == API.DEM_ForwardMode
+    elseif Mode == API.DEM_ReverseModeGradient
+    elseif Mode == API.DEM_ForwardMode
         if returnPrimal
             push!(sret_types, actualRetType)
         end
@@ -7672,6 +7744,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
             end
         end
+    elseif Mode == API.DEM_BatchMode
+        if returnPrimal
+            push!(sret_types, actualRetType)
+        end
+    else
+        @assert "Unhandled derivative mode", Mode
     end
 
     combinedReturn = Tuple{sret_types...}
@@ -7761,13 +7839,22 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         activeNum = 0
 
         for T in TT.parameters
-            T′ = eltype(T)
+            T′ = if shadow_inputs
+                eltype(T)
+            else
+                T
+            end
 
             if isghostty(T′) || Core.Compiler.isconstType(T′)
                 continue
             end
             push!(realparms, params[i])
             i += 1
+
+            if !shadow_inputs
+                continue
+            end
+
             if T <: Const
             elseif T <: Active
                 isboxed = GPUCompiler.deserves_argbox(T′)
@@ -7985,7 +8072,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 si = store!(builder, eval, ptr)
             end
             @assert count_Sret == numLLVMReturns
-        else
+        elseif Mode == API.DEM_ReverseModeCombined || Mode == API.DEM_ReverseModeGradient
             activeNum = 0
             returnNum = 0
             if Mode == API.DEM_ReverseModeCombined
@@ -8010,6 +8097,13 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
             end
             @assert (returnNum - activeNum) + (activeNum != 0 ? 1 : 0) == numLLVMReturns
+        elseif Mode == API.DEM_BatchMode
+            ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
+            ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(val)))
+            si = store!(builder, val, ptr)
+            @assert 1 == numLLVMReturns
+        else
+            @assert "Unhandled derivative mode", Mode
         end
 
         if returnRoots
@@ -8635,16 +8729,18 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, toplevel::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
     params  = job.config.params
-    expectedTapeType = params.expectedTapeType
     mode   = params.mode
     TT = params.TT
     width = params.width
-    abiwrap = params.abiwrap
     primal  = job.source
-    modifiedBetween = params.modifiedBetween
-    returnPrimal = params.returnPrimal
-
-    if !(params.rt <: Const)
+    run_enzyme = if isa(params, EnzymeCompilerParams)
+        params.run_enzyme
+    elseif isa(params, BatchingCompilerParams)
+        true
+    else
+        @assert false
+    end
+    if isa(params, EnzymeCompilerParams) && !(params.rt <: Const)
         @assert !isghostty(eltype(params.rt))
     end
     if parent_job === nothing
@@ -8670,7 +8766,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     disableFallback = String[]
     # Tablegen BLAS does not support runtime activity, nor forward mode yet
-    if !API.runtimeActivity() && mode != API.DEM_ForwardMode
+    if !API.runtimeActivity() && (mode == API.DEM_ReverseModeGradient || mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal)
         blas_types = ("s", "d")
         blas_readonly = ("dot",)
         for ty in ("s", "d")
@@ -8769,7 +8865,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
-        else
+        elseif mode == API.DEM_ReverseModeGradient || mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal
             has_custom_rule = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table, caller)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
@@ -9005,7 +9101,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     # annotate
-    annotate!(mod, mode)
+    annotate!(mod)
 
     # Run early pipeline
     optimize!(mod, target_machine)
@@ -9016,7 +9112,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     TapeType::Type = Cvoid
 
-    if params.run_enzyme
+    if run_enzyme
         # Generate the adjoint
         jlrules = String[]
         for (fname, (ftyp, mi)) in foundTys
@@ -9024,7 +9120,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(jlrules, fname)
         end
 
-        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
+        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, jlrules)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
@@ -9139,6 +9235,9 @@ enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk, Width, ReturnPrimal
 @inline (thunk::ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk, Width, ReturnPrimal, TT, RT, fn, Cvoid, args...)
 
+@inline (thunk::BatchModeThunk{PT, FT, RT, TT, Width})(fn::FT, args...) where {PT, FT, Width, RT, TT} =
+enzyme_call(Val(false), thunk.adjoint, BatchModeThunk, Width, #=ReturnPrimal=#Val(true), TT, RT, fn, Cvoid, args...)
+
 @inline (thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
 enzyme_call(Val(false), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 @inline raw_enzyme_call(thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
@@ -9174,7 +9273,13 @@ end
         rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, PT, FA, T, RT, TapeType, N, CC, width, returnPrimal}
 
     JuliaContext() do ctx
-        F = eltype(FA)
+        needs_shadow = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: CombinedAdjointThunk || CC <: AdjointThunk
+        F = if needs_shadow
+            eltype(FA)
+        else
+            FA
+        end
+
         is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
         is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
         is_split   = CC <: AdjointThunk || CC <: AugmentedForwardThunk
@@ -9186,7 +9291,9 @@ end
         argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
 
         if !RawCall
-            if rettype <: Active
+            if !needs_shadow
+                @assert length(argtypes)                           == length(argexprs)
+            elseif rettype <: Active
                 @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
             elseif rettype <: Const
                 @assert length(argtypes)              + needs_tape == length(argexprs)
@@ -9197,12 +9304,14 @@ end
 
         types = DataType[]
 
-        if eltype(rettype) === Union{}
-            error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
-        end
-        if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
-            rrt = eltype(rettype)
-            error("Return type `$rrt` not marked Const, but is ghost or const type.")
+        if needs_shadow
+            if eltype(rettype) === Union{}
+                error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+            end
+            if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
+                rrt = eltype(rettype)
+                error("Return type `$rrt` not marked Const, but is ghost or const type.")
+            end
         end
 
         sret_types  = []  # Julia types of all returned variables
@@ -9220,7 +9329,7 @@ end
             end
 
             push!(ccexprs, argexpr)
-            if !(FA <: Const)
+            if needs_shadow && !(FA <: Const)
                 argexpr = :(fn.dval)
                 if isboxed
                     push!(types, Any)
@@ -9239,7 +9348,7 @@ end
 
             expr = argexprs[i]
             i+=1
-            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+            if needs_shadow && isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
                 @assert T <: Const
                 if is_adjoint
                     push!(ActiveRetTypes, Nothing)
@@ -9249,7 +9358,7 @@ end
 
             isboxed = GPUCompiler.deserves_argbox(source_typ)
 
-            argexpr = if RawCall
+            argexpr = if RawCall || !needs_shadow
                 expr
             else
                 Expr(:., expr, QuoteNode(:val))
@@ -9262,6 +9371,10 @@ end
             end
 
             push!(ccexprs, argexpr)
+
+            if !needs_shadow
+                continue
+            end
 
             if T <: Const || T <: BatchDuplicatedFunc
                 if is_adjoint
@@ -9316,10 +9429,15 @@ end
             end
         end
 
-        jlRT = eltype(rettype)
+        jlRT = if needs_shadow
+            eltype(rettype)
+        else
+            rettype
+        end
+
         if typeof(jlRT) == UnionAll
-        # Future improvement, add type assertion on load
-        jlRT = DataType
+            # Future improvement, add type assertion on load
+            jlRT = DataType
         end
 
         if is_sret_union(jlRT)
@@ -9640,7 +9758,6 @@ end
         # by the primal, but we want the generated code to be invalidated by
         # invalidations of the primal, which is managed by GPUCompiler.
 
-
         compile_result = cached_compilation(job)
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             TapeType = compile_result.TapeType
@@ -9663,6 +9780,32 @@ end
             end
         else
             @assert false
+        end
+    end
+end
+
+@generated function batch_thunk(::Val{World}, ::Type{F}, tt::Type{TT}, ::Val{width}, ::Type{ABI}) where {F, TT, width, World, ABI}
+    JuliaContext() do ctx
+        mi = fspec(F, TT, World)
+
+        target = Compiler.EnzymeTarget()
+        Mode = API.DEM_BatchMode
+        params = Compiler.BatchingCompilerParams(Tuple{F, TT.parameters...}, Mode, width, #=abiwrap=#true, ABI)
+        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+
+        sig = Tuple{F, TT.parameters...}
+
+        interp = GPUCompiler.get_interpreter(job)
+
+        # TODO check compile return here, early
+        # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
+        rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
+
+        compile_result = cached_compilation(job)
+
+        FMT = BatchModeThunk{typeof(compile_result.adjoint), F, rrt, TT, Val{width}}
+        return quote
+            $FMT($(compile_result.adjoint))
         end
     end
 end
