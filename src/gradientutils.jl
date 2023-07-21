@@ -20,6 +20,7 @@ function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)
     return uncacheable
 end
 
+erase_with_placeholder(gutils::GradientUtils, inst::LLVM.Instruction, erase::Bool=true) = API.EnzymeGradientUtilsEraseWithPlaceholder(gutils, inst, erase)
 is_constant_value(gutils::GradientUtils, val::LLVM.Value) = API.EnzymeGradientUtilsIsConstantValue(gutils, val) != 0
 
 is_constant_inst(gutils::GradientUtils, inst::LLVM.Instruction) = API.EnzymeGradientUtilsIsConstantInstruction(gutils, inst) != 0
