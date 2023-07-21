@@ -1917,7 +1917,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
 
-    icvs = [is_constant_value(gutils, v) for v in origops[offset:end-1]]
+    @assert is_constant_value(gutils, origops[offset])
+    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
     # if all(icvs)
     #     shadowres = new_from_original(gutils, orig)
     #     if width != 1
