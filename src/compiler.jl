@@ -552,7 +552,7 @@ declare_juliacall!(mod) = get_function!(mod, "julia.call") do
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
 end
 
-function emit_jl!(B, val)::LLVM.Value
+function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -802,8 +802,6 @@ function emit_apply_type!(B, Ty, args)::LLVM.Value
                               [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
         tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
     end
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("readnone", 0))
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nounwind", 0))
     return tag
 end
 
@@ -849,8 +847,6 @@ function emit_tuple!(B, args)::LLVM.Value
                               [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
         tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...])
     end
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("readnone", 0))
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nounwind", 0))
     return tag
 end
 
@@ -1361,7 +1357,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
-
         if annotation <: Const
             shadow_return = nothing
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
@@ -1567,14 +1562,12 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
 
         push!(vals, val)
 
+        inverted = nothing
         active = !is_constant_value(gutils, op)
+        
         if !active
             push!(ActivityList, unsafe_to_llvm(false))
-        end
-
-        inverted = nothing
-
-        if active
+        else
             inverted = invert_pointer(gutils, op, B)
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
@@ -1614,6 +1607,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             end
         end
     end
+    @assert length(ActivityList) == length(ops)
 
     if tape !== nothing
         pushfirst!(vals, shadow_ptr)
@@ -1636,7 +1630,12 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
-    pushfirst!(vals, emit_apply_type!(B, Base.Val, [emit_tuple!(B, ActivityList)]))
+    etup0 = emit_tuple!(B, ActivityList)
+    etup =  emit_apply_type!(B, Base.Val, [etup0])
+    if isa(etup, LLVM.Instruction)
+        @assert length(collect(LLVM.uses(etup0))) == 1
+    end
+    pushfirst!(vals, etup)
 
     @static if VERSION < v"1.7.0-" || true
     else
@@ -1917,7 +1916,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
 
-    icvs = [is_constant_value(gutils, v) for v in origops[offset:end-1]]
+    @assert is_constant_value(gutils, origops[offset])
+    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
     # if all(icvs)
     #     shadowres = new_from_original(gutils, orig)
     #     if width != 1
@@ -8642,6 +8642,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     abiwrap = params.abiwrap
     primal  = job.source
     modifiedBetween = params.modifiedBetween
+    @assert length(modifiedBetween) == length(TT.parameters) 
     returnPrimal = params.returnPrimal
 
     if !(params.rt <: Const)
