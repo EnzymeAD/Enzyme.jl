@@ -803,8 +803,6 @@ function emit_apply_type!(B, Ty, args)::LLVM.Value
                               [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
         tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
     end
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("readnone", 0))
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nounwind", 0))
     return tag
 end
 
@@ -850,8 +848,6 @@ function emit_tuple!(B, args)::LLVM.Value
                               [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
         tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...])
     end
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("readnone", 0))
-    LLVM.API.LLVMAddCallSiteAttribute(tag, LLVM.API.LLVMAttributeFunctionIndex, LLVM.EnumAttribute("nounwind", 0))
     return tag
 end
 
@@ -1527,8 +1523,6 @@ function emit_gc_preserve_end(B::LLVM.IRBuilder, token)
     return
 end
 
-pres = []
-
 function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -1645,17 +1639,14 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
-    etup = emit_tuple!(B, ActivityList)
+    etup0 = emit_tuple!(B, ActivityList)
     # @show etup, ActivityList, length(ActivityList)
+    etup =  emit_apply_type!(B, Base.Val, [etup0])
+    if isa(etup, LLVM.Instruction)
+        @assert length(collect(LLVM.uses(etup0))) == 1
+        emit_jl!(B, etup0)
+    end
     emit_jl!(B, etup)
-    sval = string(etup)
-    push!(pres, sval)
-    emit_jl!(B, unsafe_to_llvm(sval))
-    etup =  emit_apply_type!(B, Base.Val, [etup])
-    emit_jl!(B, etup)
-    sval = string(etup)
-    push!(pres, sval)
-    emit_jl!(B, unsafe_to_llvm(sval))
     pushfirst!(vals, etup)
 
     @static if VERSION < v"1.7.0-" || true
@@ -9586,7 +9577,6 @@ function _thunk(job, postopt::Bool=true)
     if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
     end
-    println(string(mod))
     return (mod, adjoint_name, primal_name, meta.TapeType)
 end
 
