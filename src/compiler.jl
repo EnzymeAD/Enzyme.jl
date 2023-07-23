@@ -18,12 +18,12 @@ import GPUCompiler: CompilerJob, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
+using Printf
+
 using Preferences
 
 bitcode_replacement() = parse(Bool, @load_preference("bitcode_replacement", "true"))
 bitcode_replacement!(val) = @set_preferences!("bitcode_replacement" => string(val))
-
-using Printf
 
 function cpu_name()
     ccall(:jl_get_cpu_name, String, ())
