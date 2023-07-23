@@ -552,7 +552,7 @@ declare_juliacall!(mod) = get_function!(mod, "julia.call") do
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
 end
 
-function emit_jl!(B, val)::LLVM.Value
+function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -737,6 +737,7 @@ function absint(arg::LLVM.Value)
                         break
                     end
                 end
+                # @show found, arg, index, collect(operands(arg)[index:end-1])
                 if legal
                     res = (found...,)
                     return (true, res)
@@ -1347,6 +1348,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
 
+        @show ActivityTup, length(args)
+        @assert length(ActivityTup) == length(args) + 1
         dupClosure = ActivityTup[1]
         FT = Core.Typeof(f)
         if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
@@ -1361,7 +1364,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
-
+        @show annotation, origRet, initShadow, f, df, args
+        # @show annotation, internal_tape, origRet, initShadow, f, df, args
         if annotation <: Const
             shadow_return = nothing
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
@@ -1398,6 +1402,7 @@ function func_runtime_generic_augfwd(N, Width)
 
     quote
         function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+            @show ActivityTup, f, df, $(allargs...)
             $body
         end
     end
@@ -1467,6 +1472,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
         end
+        
+        @show "revgen", f, df, args # , tape.internal_tape
 
         tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
 
@@ -1520,6 +1527,8 @@ function emit_gc_preserve_end(B::LLVM.IRBuilder, token)
     return
 end
 
+pres = []
+
 function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -1559,6 +1568,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         push!(vals, val)
     end
 
+    # @show orig, start, firstconst, length(ops), [absint(a) for a in ops], ops
     for (i, op) in enumerate(ops)
         val = new_from_original(gutils, op)
         if lookup
@@ -1567,14 +1577,12 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
 
         push!(vals, val)
 
+        inverted = nothing
         active = !is_constant_value(gutils, op)
+        
         if !active
             push!(ActivityList, unsafe_to_llvm(false))
-        end
-
-        inverted = nothing
-
-        if active
+        else
             inverted = invert_pointer(gutils, op, B)
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
@@ -1614,6 +1622,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             end
         end
     end
+    @assert length(ActivityList) == length(ops)
 
     if tape !== nothing
         pushfirst!(vals, shadow_ptr)
@@ -1636,7 +1645,18 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
-    pushfirst!(vals, emit_apply_type!(B, Base.Val, [emit_tuple!(B, ActivityList)]))
+    etup = emit_tuple!(B, ActivityList)
+    # @show etup, ActivityList, length(ActivityList)
+    emit_jl!(B, etup)
+    sval = string(etup)
+    push!(pres, sval)
+    emit_jl!(B, unsafe_to_llvm(sval))
+    etup =  emit_apply_type!(B, Base.Val, [etup])
+    emit_jl!(B, etup)
+    sval = string(etup)
+    push!(pres, sval)
+    emit_jl!(B, unsafe_to_llvm(sval))
+    pushfirst!(vals, etup)
 
     @static if VERSION < v"1.7.0-" || true
     else
@@ -8643,6 +8663,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     abiwrap = params.abiwrap
     primal  = job.source
     modifiedBetween = params.modifiedBetween
+    @assert length(modifiedBetween) == length(TT.parameters) 
     returnPrimal = params.returnPrimal
 
     if !(params.rt <: Const)
@@ -9565,6 +9586,7 @@ function _thunk(job, postopt::Bool=true)
     if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
     end
+    println(string(mod))
     return (mod, adjoint_name, primal_name, meta.TapeType)
 end
 
