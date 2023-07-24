@@ -4749,8 +4749,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         # ip = API.EnzymeTypeAnalyzerToString(analyzer)
         # sval = Base.unsafe_string(ip)
         # API.EnzymeStringFree(ip)
-        GPUCompiler.@safe_warn "Unknown concrete type" tt=string(tt) orig=string(orig)
-        emit_error(B, orig, "Enzyme: Unknown concrete type in arraycopy_common")
+        emit_error(B, orig, "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt))
         return nothing
     end
 
