@@ -83,6 +83,60 @@ function nodecayed_phis!(mod::LLVM.Module)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
     end
+    for f in functions(mod), bb in blocks(f)
+        todo = LLVM.PHIInst[]
+        nonphi = nothing
+        for inst in instructions(bb)
+            if !isa(inst, LLVM.PHIInst)
+                nonphi = inst
+                break
+            end
+            ty = value_type(inst)
+            if !isa(ty, LLVM.PointerType)
+                continue
+            end
+            if addrspace(ty) != 13
+                continue
+            end
+            push!(todo, inst)
+        end
+        for inst in todo
+            ty = value_type(inst)
+            nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
+            nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            for (v, pb) in LLVM.incoming(inst)
+                b = IRBuilder()
+                position!(b, terminator(pb))
+                if !isa(v, LLVM.LoadInst)
+                    @show f
+                    @show v, inst
+                end
+                @assert isa(v, LLVM.LoadInst)
+                v = operands(v)[1]
+
+                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+                    v = operands(v)[1]
+                end
+                if value_type(v) != nty
+                    @show f
+                    @show v, inst, nty
+                end
+                @assert value_type(v) == nty
+                push!(nvs, (v, pb))
+            end
+            nb = IRBuilder()
+            position!(nb, inst)
+            nphi = phi!(nb, nty)
+            append!(LLVM.incoming(nphi), nvs)
+            
+            position!(nb, nonphi)
+            nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
+            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
+            nphi = load!(nb, ty, nphi)
+            replace_uses!(inst, nphi)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
     return nothing
 end
 
