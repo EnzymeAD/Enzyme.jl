@@ -36,6 +36,13 @@ function addr13NoAlias(mod::LLVM.Module)
     end
 end
 
+function source_elem(v)
+    @static if LLVM.version() >= v"15"
+        LLVM.Type(LLVM.API.LLVMGetGEPSourceElementType(v))
+    else
+        eltype(value_type(operands(v)[1]))
+    end
+end
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
@@ -74,8 +81,13 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
             nb = IRBuilder()
             position!(nb, inst)
-            nphi = phi!(nb, nty)
-            append!(LLVM.incoming(nphi), nvs)
+            
+            if !all(x->x[1]==nvs[1][1], nvs)
+                nphi = phi!(nb, nty)
+                append!(LLVM.incoming(nphi), nvs)
+            else
+                nphi = nvs[1][1]
+            end
             
             position!(nb, nonphi)
             nphi = addrspacecast!(nb, nphi, ty)
@@ -104,11 +116,34 @@ function nodecayed_phis!(mod::LLVM.Module)
             ty = value_type(inst)
             nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            gty = nothing
+            gvty = nothing
+            for (v, pb) in LLVM.incoming(inst)
+                if isa(v, LLVM.GetElementPtrInst)
+                    @assert length(operands(v)) == 2
+                    if gty !== nothing
+                        @assert gty == value_type(operands(v)[2])
+                        @assert gvty == source_elem(v)
+                        continue
+                    end
+                    gty = value_type(operands(v)[2])
+                    gvty = source_elem(v)
+                end
+            end
+            geps = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
                 b = IRBuilder()
                 position!(b, terminator(pb))
+                if gty !== nothing
+                    if isa(v, LLVM.GetElementPtrInst)
+                        push!(geps, (operands(v)[2], pb))
+                        v = operands(v)[1]
+                    else
+                        push!(geps, (LLVM.ConstantInt(gty, 0), pb))
+                    end
+                end
                 if !isa(v, LLVM.LoadInst)
-                    @show f
+                    println(string(f))
                     @show v, inst
                 end
                 @assert isa(v, LLVM.LoadInst)
@@ -118,7 +153,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     v = operands(v)[1]
                 end
                 if value_type(v) != nty
-                    @show f
+                    println(string(f))
                     @show v, inst, nty
                 end
                 @assert value_type(v) == nty
@@ -126,13 +161,27 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
             nb = IRBuilder()
             position!(nb, inst)
-            nphi = phi!(nb, nty)
-            append!(LLVM.incoming(nphi), nvs)
             
+            if gty !== nothing
+                gphi = phi!(nb, gty)
+                append!(LLVM.incoming(gphi), geps)
+                gty = nothing 
+            end
+
+            if !all(x->x[1]==nvs[1][1], nvs)
+                nphi = phi!(nb, nty)
+                append!(LLVM.incoming(nphi), nvs)
+            else
+                nphi = nvs[1][1]
+            end
+
             position!(nb, nonphi)
             nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
             nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
             nphi = load!(nb, ty, nphi)
+            if gty !== nothing
+                nphi = gep!(nb, gvty, nphi, [gphi])
+            end
             replace_uses!(inst, nphi)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
