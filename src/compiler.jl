@@ -4744,7 +4744,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         # ip = API.EnzymeTypeAnalyzerToString(analyzer)
         # sval = Base.unsafe_string(ip)
         # API.EnzymeStringFree(ip)
-        emit_error(B, orig, "Enzyme: Unknown concrete type in arraycopy_common")
+        emit_error(B, orig, "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt))
         return nothing
     end
 
