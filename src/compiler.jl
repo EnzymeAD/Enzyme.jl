@@ -20,6 +20,11 @@ import LLVM: Target, TargetMachine
 
 using Printf
 
+using Preferences
+
+bitcode_replacement() = parse(Bool, @load_preference("bitcode_replacement", "true"))
+bitcode_replacement!(val) = @set_preferences!("bitcode_replacement" => string(val))
+
 function cpu_name()
     ccall(:jl_get_cpu_name, String, ())
 end
@@ -8685,7 +8690,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
     end
-    if API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
+    if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
             run!(pm, mod)
