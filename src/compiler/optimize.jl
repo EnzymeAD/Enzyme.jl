@@ -38,7 +38,7 @@ end
 
 function source_elem(v)
     @static if LLVM.version() >= v"15"
-        LLVM.Type(LLVM.API.LLVMGetGEPSourceElementType(v))
+        LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(v))
     else
         eltype(value_type(operands(v)[1]))
     end
@@ -95,26 +95,41 @@ function nodecayed_phis!(mod::LLVM.Module)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
     end
-    for f in functions(mod), bb in blocks(f)
-        todo = LLVM.PHIInst[]
-        nonphi = nothing
-        for inst in instructions(bb)
-            if !isa(inst, LLVM.PHIInst)
-                nonphi = inst
-                break
+    for f in functions(mod)
+        nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
+        nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
+        mtodo = Vector{LLVM.PHIInst}[]
+        nonphis = LLVM.Instruction[]
+        anyV = false
+        for bb in blocks(f)
+            todo = LLVM.PHIInst[]
+            nonphi = nothing
+            for inst in instructions(bb)
+                if !isa(inst, LLVM.PHIInst)
+                    nonphi = inst
+                    break
+                end
+                ty = value_type(inst)
+                if !isa(ty, LLVM.PointerType)
+                    continue
+                end
+                if addrspace(ty) != 13
+                    continue
+                end
+                push!(todo, inst)
+                nb = IRBuilder()
+                position!(nb, inst)
+                nphi = phi!(nb, nty)
+                nextvs[inst] = nphi
+                anyV = true
             end
-            ty = value_type(inst)
-            if !isa(ty, LLVM.PointerType)
-                continue
-            end
-            if addrspace(ty) != 13
-                continue
-            end
-            push!(todo, inst)
+            push!(mtodo, todo)
+            push!(nonphis, nonphi)
         end
+        for (bb, todo, nonphi) in zip(blocks(f), mtodo, nonphis)
+
         for inst in todo
             ty = value_type(inst)
-            nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             gty = nothing
             gvty = nothing
@@ -142,6 +157,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                         push!(geps, (LLVM.ConstantInt(gty, 0), pb))
                     end
                 end
+                if isa(v, LLVM.PHIInst)
+                    push!(nvs, (nextvs[v], pb))
+                    continue
+                end
                 if !isa(v, LLVM.LoadInst)
                     println(string(f))
                     @show v, inst
@@ -165,13 +184,14 @@ function nodecayed_phis!(mod::LLVM.Module)
             if gty !== nothing
                 gphi = phi!(nb, gty)
                 append!(LLVM.incoming(gphi), geps)
-                gty = nothing 
             end
 
+            nphi = nextvs[inst]
             if !all(x->x[1]==nvs[1][1], nvs)
-                nphi = phi!(nb, nty)
                 append!(LLVM.incoming(nphi), nvs)
             else
+                replace_uses!(nphi, nvs[1][1])
+                LLVM.API.LLVMInstructionEraseFromParent(nphi)
                 nphi = nvs[1][1]
             end
 
@@ -183,8 +203,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                 nphi = gep!(nb, gvty, nphi, [gphi])
             end
             replace_uses!(inst, nphi)
+        end
+        for inst in todo
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
+    end
     end
     return nothing
 end
