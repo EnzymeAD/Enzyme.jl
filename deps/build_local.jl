@@ -76,14 +76,10 @@ built_libs = filter(readdir(joinpath(scratch_dir, "BCLoad"))) do file
     endswith(file, ".$(Libdl.dlext)") && startswith(file, "lib")
 end
 
-libBC_path = joinpath(scratch_dir, "BCLoad", only(built_libs))
-isfile(libBC_path) || error("Could not find library $libBC_path in build directory")
-
 # Tell Enzyme_jll to load our library instead of the default artifact one
 set_preferences!(
     joinpath(dirname(@__DIR__), "LocalPreferences.toml"),
     "Enzyme_jll",
     "libEnzyme_path" => lib_path,
-    "libEnzymeBCLoad_path" => libBC_path;
     force=true,
 )
