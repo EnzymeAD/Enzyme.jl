@@ -68,10 +68,19 @@ module FFI
         known_names = (
             "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d", 
             "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d", 
-            "jl_new_array", "jl_array_copy", "jl_alloc_string",
+            "jl_new_array", "ijl_new_array",
+            "jl_array_copy", "ijl_array_copy",
+            "jl_alloc_string",
             "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
-            "malloc", "memmove", "memcpy", "memset", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
-            "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
+            "malloc", "memmove", "memcpy", "memset",
+            "jl_array_grow_beg", "ijl_array_grow_beg",
+            "jl_array_grow_end", "ijl_array_grow_end",
+            "jl_array_grow_at", "ijl_array_grow_at",
+            "jl_array_del_beg", "ijl_array_del_beg",
+            "jl_array_del_end", "ijl_array_del_end",
+            "jl_array_del_at", "ijl_array_del_at",
+            "jl_array_ptr", "ijl_array_ptr",
+            "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
             "jl_symbol_n", "jl_", "jl_object_id",
             "jl_reshape_array","ijl_reshape_array",
             "jl_matching_methods", "ijl_matching_methods",
@@ -85,7 +94,12 @@ module FFI
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
             "memcmp","memchr",
-            "jl_get_nth_field_checked", "ijl_get_nth_field_checked"
+            "jl_get_nth_field_checked", "ijl_get_nth_field_checked",
+            "jl_stored_inline",
+            "ijl_stored_inline",
+            "jl_array_isassigned", "ijl_array_isassigned",
+            "jl_array_ptr_copy", "ijl_array_ptr_copy",
+            "jl_array_typetagdata", "ijl_array_typetagdata",
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
