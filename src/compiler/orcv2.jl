@@ -44,8 +44,11 @@ function absolute_symbol_materialization(name, ptr)
 	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
 	flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
 	symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
-	gv = LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
-
+	gv = if LLVM.version() >= v"15"
+		LLVM.API.LLVMOrcCSymbolMapPair(name, symbol)
+	else
+		LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
+	end
 	return LLVM.absolute_symbols(Ref(gv))
 end
 
