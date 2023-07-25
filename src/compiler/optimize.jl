@@ -161,6 +161,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                         push!(geps, (LLVM.ConstantInt(gty, 0), pb))
                     end
                 end
+                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+                    v = operands(v)[1]
+                end
                 if isa(v, LLVM.PHIInst)
                     push!(nvs, (nextvs[v], pb))
                     continue
