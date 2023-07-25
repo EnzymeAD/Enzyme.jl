@@ -175,6 +175,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                 while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
                     v = operands(v)[1]
                 end
+                if eltype(value_type(v)) != LLVM.StructType(LLVM.LLVMType[])
+                    v = bitcast!(b, v, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), addrspace(value_type(v))))
+                end
                 if value_type(v) != nty
                     println(string(f))
                     @show v, inst, nty
