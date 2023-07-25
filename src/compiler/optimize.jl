@@ -135,6 +135,10 @@ function nodecayed_phis!(mod::LLVM.Module)
             gvty = nothing
             for (v, pb) in LLVM.incoming(inst)
                 if isa(v, LLVM.GetElementPtrInst)
+                    if length(operands(v)) != 2
+                        println(string(f))
+                        @show v, inst
+                    end
                     @assert length(operands(v)) == 2
                     if gty !== nothing
                         @assert gty == value_type(operands(v)[2])
