@@ -8732,6 +8732,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, toplevel=toplevel, cleanup=false, validate=false, parent_job=parent_job)
  
     prepare_llvm(mod, primal_job, meta)
+
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
         run!(pm, mod)
@@ -9135,6 +9136,34 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         API.AddPreserveNVVMPass!(pm, #=Begin=#false)
         run!(pm, mod)
     end
+    if parent_job !== nothing
+        if parent_job.config.target isa GPUCompiler.PTXCompilerTarget
+			arg1 = ("sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
+				  "exp10",      "cosh",    "sinh",      "tanh",   "atan",
+				  "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
+				  "asinh",      "atanh",   "expm1",    				   "cbrt",
+				  "rcbrt",      "j0",      "j1",        "y0",     "y1",   
+				  "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
+				   "remquo",  "tgamma",
+				  "round",      "fdim",    "logb",   "isinf", 
+				  "sqrt",        "fabs",   )
+			# isinf, finite "modf",       "fmod",    "remainder", 
+			# "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",
+			#   "hypot",  "rhypot",
+			# "yn", "jn", "norm3d", "ilogb", powi
+		    # "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
+			# arg1 = ("atan2", "fmax", "pow")
+			for n in arg1, (T, pf, lpf) in ((LLVM.DoubleType(), "", "f64"), (LLVM.FloatType(), "f", "f32"))
+				fname = "__nv_"*n*pf
+				if !haskey(functions(mod), fname)
+					FT = LLVM.FunctionType(T, [T], vararg=false)
+					wrapper_f = LLVM.Function(mod, fname, FT)
+					llname = "llvm."*n*"."*lpf
+    				push!(function_attributes(wrapper_f), StringAttribute("implements", llname))
+				end
+			end
+		end
+	end
     API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom
