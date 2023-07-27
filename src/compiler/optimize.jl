@@ -237,11 +237,25 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
 
             position!(nb, nonphi)
-            nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
-            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
-            nphi = load!(nb, ty, nphi)
+            sty = if gty !== nothing
+                LLVM.PointerType(gvty, 13)
+            else
+                ty
+            end
+            nphi = bitcast!(nb, nphi, LLVM.PointerType(sty, 10))
+            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(sty, 11))
+            nphi = load!(nb, sty, nphi)
             if gty !== nothing
-                nphi = gep!(nb, gvty, nphi, gphi)
+                vs = LLVM.Value[]
+                for v in gphi
+                    inc = LLVM.incoming(v)
+                    if all(x->x[1]==inc[1][1], inc)
+                        push!(vs, inc[1][1])
+                    else
+                        push!(vs, v)
+                    end
+                end
+                nphi = gep!(nb, gvty, nphi, vs)
             end
             replace_uses!(inst, nphi)
         end
