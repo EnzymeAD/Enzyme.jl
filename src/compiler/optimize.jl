@@ -99,6 +99,9 @@ function nodecayed_phis!(mod::LLVM.Module)
         nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
         nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
         mtodo = Vector{LLVM.PHIInst}[]
+        gtys = Dict{LLVM.PHIInst, Any}()
+        gphis = Dict{LLVM.PHIInst, Vector{LLVM.PHIInst}}()
+        gvtys = Dict{LLVM.PHIInst, Any}()
         nonphis = LLVM.Instruction[]
         anyV = false
         for bb in blocks(f)
@@ -122,6 +125,30 @@ function nodecayed_phis!(mod::LLVM.Module)
                 nphi = phi!(nb, nty)
                 nextvs[inst] = nphi
                 anyV = true
+
+                gty = nothing
+                gvty = nothing
+                for (v, pb) in LLVM.incoming(inst)
+                    if isa(v, LLVM.GetElementPtrInst)
+                        if gty !== nothing
+                            @assert gty == [value_type(t) for t in operands(v)[2:end]]
+                            @assert gvty == source_elem(v)
+                            continue
+                        end
+                        gty =[value_type(t) for t in operands(v)[2:end]]
+                        gvty = source_elem(v)
+                    end
+                end
+                gtys[inst] = gty
+                gvtys[inst] = gvty
+                gphi = LLVM.PHIInst[]
+                if gty !== nothing
+                    for sgty in gty
+                        sgphi = phi!(nb, sgty)
+                        push!(gphi, sgphi)
+                    end
+                end
+                gphis[inst] = gphi
             end
             push!(mtodo, todo)
             push!(nonphis, nonphi)
@@ -129,36 +156,34 @@ function nodecayed_phis!(mod::LLVM.Module)
         for (bb, todo, nonphi) in zip(blocks(f), mtodo, nonphis)
 
         for inst in todo
+            gty = gtys[inst]
+            gvty = gvtys[inst]
             ty = value_type(inst)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
-            gty = nothing
-            gvty = nothing
-            for (v, pb) in LLVM.incoming(inst)
-                if isa(v, LLVM.GetElementPtrInst)
-                    if length(operands(v)) != 2
-                        println(string(f))
-                        @show v, inst
-                    end
-                    @assert length(operands(v)) == 2
-                    if gty !== nothing
-                        @assert gty == value_type(operands(v)[2])
-                        @assert gvty == source_elem(v)
-                        continue
-                    end
-                    gty = value_type(operands(v)[2])
-                    gvty = source_elem(v)
-                end
-            end
-            geps = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            geps = Vector{Tuple{LLVM.Value, LLVM.BasicBlock}}[]
             for (v, pb) in LLVM.incoming(inst)
                 b = IRBuilder()
                 position!(b, terminator(pb))
                 if gty !== nothing
+                    push!(geps, Tuple{LLVM.Value, LLVM.BasicBlock}[])
                     if isa(v, LLVM.GetElementPtrInst)
-                        push!(geps, (operands(v)[2], pb))
+                        for (i, op) in enumerate(operands(v)[2:end])
+                            push!(geps[i], (op, pb))
+                        end
                         v = operands(v)[1]
+                    elseif isa(v, LLVM.PHIInst)
+                        for (i, gp) in enumerate(gphis[v])
+                            push!(geps[i], (gp, pb))
+                        end
+                    elseif isa(v, LLVM.LoadInst)
+                        for (i, gp) in enumerate(gty)
+                            push!(geps[i], (LLVM.ConstantInt(gp, 0), pb))
+                        end
                     else
-                        push!(geps, (LLVM.ConstantInt(gty, 0), pb))
+                        @show f
+                        @show gty, inst, v
+                        @assert false
+                        # push!(geps, (LLVM.ConstantInt(gty, 0), pb))
                     end
                 end
                 while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
@@ -192,8 +217,10 @@ function nodecayed_phis!(mod::LLVM.Module)
             position!(nb, inst)
             
             if gty !== nothing
-                gphi = phi!(nb, gty)
-                append!(LLVM.incoming(gphi), geps)
+                gphi = gphis[inst]
+                for (gep, sgphi) in zip(geps, gphi)
+                    append!(LLVM.incoming(sgphi), gep)
+                end
             end
 
             nphi = nextvs[inst]
@@ -210,7 +237,7 @@ function nodecayed_phis!(mod::LLVM.Module)
             nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
             nphi = load!(nb, ty, nphi)
             if gty !== nothing
-                nphi = gep!(nb, gvty, nphi, [gphi])
+                nphi = gep!(nb, gvty, nphi, gphi)
             end
             replace_uses!(inst, nphi)
         end
