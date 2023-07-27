@@ -127,6 +127,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "memhash32_seed", "memhash_seed",
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
     "ijl_set_task_tid", "jl_set_task_tid",
@@ -191,6 +192,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "memhash32_seed", "memhash_seed",
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
     "ijl_set_task_tid", "jl_set_task_tid",
