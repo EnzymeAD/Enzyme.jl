@@ -2070,8 +2070,73 @@ end
 getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
-@inline function make_zero(::Type{RT}) where RT
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:AbstractFloat}
     return RT(0)
+end
+
+@inline function make_zero(::Type{Complex{RT}}, seen::IdDict, prev::Complex{RT})::Complex{RT} where {RT<:AbstractFloat}
+    return RT(0)
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Integer}
+    return prev
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Function}
+    return prev
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:DataType}
+    return prev
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Module}
+    return prev
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:AbstractString}
+    return prev
+end
+
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Tuple}
+    return ((make_zero(a, seen, prev[i]) for (i, a) in enumerate(RT.parameters))...,)
+end
+
+
+@inline function make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT})::NamedTuple{A,RT} where {A,RT}
+    return NamedTuple{A,RT}(make_zero(RT, seen, RT(prev)))
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT}
+    if RT isa UnionAll || RT isa Union || RT == Union{}
+        return prev
+    end
+    # if RT ∈ keys(seen)
+    #     return seen[RT]
+    # end
+    @assert !ismutable(prev)
+    @assert !Base.isabstracttype(RT)
+    @assert Base.isconcretetype(RT)
+    nf = fieldcount(RT)
+    if nf == 0
+        return prev
+    end
+    # @assert !isbitstype(RT)
+
+    flds = Vector{Any}(undef, nf)
+    for i in 1:nf
+        if isdefined(prev, i)
+            xi = getfield(prev, i)
+            xi = make_zero(Core.Typeof(xi), seen, xi)
+            flds[i] = xi
+        else
+            nf = i - 1 # rest of tail must be undefined values
+            break
+        end
+    end
+    y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)
+    return y
 end
 
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
@@ -2079,9 +2144,9 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT))
+            return Ref{RT}(make_zero(RT,IdDict(),res))
         else
-            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -2097,9 +2162,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT))
+            return Ref{RT}(make_zero(RT,IdDict(),res))
         else
-            return ( (Ref{RT}(make_zero(RT)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
