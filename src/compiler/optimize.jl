@@ -161,11 +161,15 @@ function nodecayed_phis!(mod::LLVM.Module)
             ty = value_type(inst)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             geps = Vector{Tuple{LLVM.Value, LLVM.BasicBlock}}[]
+            if gty !== nothing
+                for _ in gty
+                    push!(geps, Tuple{LLVM.Value, LLVM.BasicBlock}[])
+                end
+            end
             for (v, pb) in LLVM.incoming(inst)
                 b = IRBuilder()
                 position!(b, terminator(pb))
                 if gty !== nothing
-                    push!(geps, Tuple{LLVM.Value, LLVM.BasicBlock}[])
                     if isa(v, LLVM.GetElementPtrInst)
                         for (i, op) in enumerate(operands(v)[2:end])
                             push!(geps[i], (op, pb))
