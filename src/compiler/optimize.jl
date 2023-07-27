@@ -197,6 +197,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                     push!(nvs, (nextvs[v], pb))
                     continue
                 end
+                if isa(v, LLVM.UndefValue)
+                    push!(nvs, (LLVM.UndefValue(nty), pb))
+                    continue
+                end
                 if !isa(v, LLVM.LoadInst)
                     println(string(f))
                     @show v, inst
