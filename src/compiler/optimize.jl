@@ -36,6 +36,13 @@ function addr13NoAlias(mod::LLVM.Module)
     end
 end
 
+function source_elem(v)
+    @static if LLVM.version() >= v"15"
+        LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(v))
+    else
+        eltype(value_type(operands(v)[1]))
+    end
+end
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
@@ -74,14 +81,192 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
             nb = IRBuilder()
             position!(nb, inst)
-            nphi = phi!(nb, nty)
-            append!(LLVM.incoming(nphi), nvs)
+            
+            if !all(x->x[1]==nvs[1][1], nvs)
+                nphi = phi!(nb, nty)
+                append!(LLVM.incoming(nphi), nvs)
+            else
+                nphi = nvs[1][1]
+            end
             
             position!(nb, nonphi)
             nphi = addrspacecast!(nb, nphi, ty)
             replace_uses!(inst, nphi)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
+    end
+    for f in functions(mod)
+        nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
+        nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
+        mtodo = Vector{LLVM.PHIInst}[]
+        gtys = Dict{LLVM.PHIInst, Any}()
+        gphis = Dict{LLVM.PHIInst, Vector{LLVM.PHIInst}}()
+        gvtys = Dict{LLVM.PHIInst, Any}()
+        nonphis = LLVM.Instruction[]
+        anyV = false
+        for bb in blocks(f)
+            todo = LLVM.PHIInst[]
+            nonphi = nothing
+            for inst in instructions(bb)
+                if !isa(inst, LLVM.PHIInst)
+                    nonphi = inst
+                    break
+                end
+                ty = value_type(inst)
+                if !isa(ty, LLVM.PointerType)
+                    continue
+                end
+                if addrspace(ty) != 13
+                    continue
+                end
+                push!(todo, inst)
+                nb = IRBuilder()
+                position!(nb, inst)
+                nphi = phi!(nb, nty)
+                nextvs[inst] = nphi
+                anyV = true
+
+                gty = nothing
+                gvty = nothing
+                for (v, pb) in LLVM.incoming(inst)
+                    if isa(v, LLVM.GetElementPtrInst)
+                        if gty !== nothing
+                            @assert gty == [value_type(t) for t in operands(v)[2:end]]
+                            @assert gvty == source_elem(v)
+                            continue
+                        end
+                        gty =[value_type(t) for t in operands(v)[2:end]]
+                        gvty = source_elem(v)
+                    end
+                end
+                gtys[inst] = gty
+                gvtys[inst] = gvty
+                gphi = LLVM.PHIInst[]
+                if gty !== nothing
+                    for sgty in gty
+                        sgphi = phi!(nb, sgty)
+                        push!(gphi, sgphi)
+                    end
+                end
+                gphis[inst] = gphi
+            end
+            push!(mtodo, todo)
+            push!(nonphis, nonphi)
+        end
+        for (bb, todo, nonphi) in zip(blocks(f), mtodo, nonphis)
+
+        for inst in todo
+            gty = gtys[inst]
+            gvty = gvtys[inst]
+            ty = value_type(inst)
+            nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            geps = Vector{Tuple{LLVM.Value, LLVM.BasicBlock}}[]
+            if gty !== nothing
+                for _ in gty
+                    push!(geps, Tuple{LLVM.Value, LLVM.BasicBlock}[])
+                end
+            end
+            for (v, pb) in LLVM.incoming(inst)
+                b = IRBuilder()
+                position!(b, terminator(pb))
+                if gty !== nothing
+                    if isa(v, LLVM.GetElementPtrInst)
+                        for (i, op) in enumerate(operands(v)[2:end])
+                            push!(geps[i], (op, pb))
+                        end
+                        v = operands(v)[1]
+                    elseif isa(v, LLVM.PHIInst)
+                        for (i, gp) in enumerate(gphis[v])
+                            push!(geps[i], (gp, pb))
+                        end
+                    elseif isa(v, LLVM.LoadInst)
+                        for (i, gp) in enumerate(gty)
+                            push!(geps[i], (LLVM.ConstantInt(gp, 0), pb))
+                        end
+                    else
+                        @show f
+                        @show gty, inst, v
+                        @assert false
+                        # push!(geps, (LLVM.ConstantInt(gty, 0), pb))
+                    end
+                end
+                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+                    v = operands(v)[1]
+                end
+                if isa(v, LLVM.PHIInst)
+                    push!(nvs, (nextvs[v], pb))
+                    continue
+                end
+                if isa(v, LLVM.UndefValue)
+                    push!(nvs, (LLVM.UndefValue(nty), pb))
+                    continue
+                end
+                if !isa(v, LLVM.LoadInst)
+                    println(string(f))
+                    @show v, inst
+                end
+                @assert isa(v, LLVM.LoadInst)
+                v = operands(v)[1]
+
+                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+                    v = operands(v)[1]
+                end
+                if eltype(value_type(v)) != LLVM.StructType(LLVM.LLVMType[])
+                    v = bitcast!(b, v, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), addrspace(value_type(v))))
+                end
+                if value_type(v) != nty
+                    println(string(f))
+                    @show v, inst, nty
+                end
+                @assert value_type(v) == nty
+                push!(nvs, (v, pb))
+            end
+            nb = IRBuilder()
+            position!(nb, inst)
+            
+            if gty !== nothing
+                gphi = gphis[inst]
+                for (gep, sgphi) in zip(geps, gphi)
+                    append!(LLVM.incoming(sgphi), gep)
+                end
+            end
+
+            nphi = nextvs[inst]
+            if !all(x->x[1]==nvs[1][1], nvs)
+                append!(LLVM.incoming(nphi), nvs)
+            else
+                replace_uses!(nphi, nvs[1][1])
+                LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                nphi = nvs[1][1]
+            end
+
+            position!(nb, nonphi)
+            sty = if gty !== nothing
+                LLVM.PointerType(gvty, 13)
+            else
+                ty
+            end
+            nphi = bitcast!(nb, nphi, LLVM.PointerType(sty, 10))
+            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(sty, 11))
+            nphi = load!(nb, sty, nphi)
+            if gty !== nothing
+                vs = LLVM.Value[]
+                for v in gphi
+                    inc = LLVM.incoming(v)
+                    if all(x->x[1]==inc[1][1], inc)
+                        push!(vs, inc[1][1])
+                    else
+                        push!(vs, v)
+                    end
+                end
+                nphi = gep!(nb, gvty, nphi, vs)
+            end
+            replace_uses!(inst, nphi)
+        end
+        for inst in todo
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
     end
     return nothing
 end
