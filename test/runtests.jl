@@ -615,33 +615,30 @@ end
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 
-    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
-    @static if VERSION ≥ v"1.8-"
-        function f1(m)
-            s = 0.0
-            for (i, col) in enumerate(eachcol(m))
-                s += i * sum(col)
-            end
-            return s
+    function f1(m)
+        s = 0.0
+        for (i, col) in enumerate(eachcol(m))
+            s += i * sum(col)
         end
-
-        m = Float64[1 2 3; 4 5 6; 7 8 9]
-        dm = zero(m)
-        autodiff(Reverse, f1, Active, Duplicated(m, dm))
-        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
-
-        function f2(m)
-            s = 0.0
-            for (i, col) in enumerate(eachrow(m))
-                s += i * sum(col)
-            end
-            return s
-        end
-
-        dm = zero(m)
-        autodiff(Reverse, f2, Active, Duplicated(m, dm))
-        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+        return s
     end
+
+    m = Float64[1 2 3; 4 5 6; 7 8 9]
+    dm = zero(m)
+    autodiff(Reverse, f1, Active, Duplicated(m, dm))
+    @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+    function f2(m)
+        s = 0.0
+        for (i, col) in enumerate(eachrow(m))
+            s += i * sum(col)
+        end
+        return s
+    end
+
+    dm = zero(m)
+    autodiff(Reverse, f2, Active, Duplicated(m, dm))
+    @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
 
     function my_conv_3(x, w)
         y = zeros(Float64, 2, 3, 4, 5)
@@ -2914,8 +2911,8 @@ end
     @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
     @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
 
-    # On Julia 1.6 the gradients are wrong (0.7 not 1.2) and on 1.7 it errors
-    @static if VERSION ≥ v"1.8-"
+    # On Julia 1.6 the gradients are wrong (0.7 not 1.2)
+    @static if VERSION ≥ v"1.7-"
         f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
         @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
         @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
