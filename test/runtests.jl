@@ -782,16 +782,19 @@ end
     @test autodiff(Reverse, f24, Active, Active(2.0))[1][1] == 3
     @test autodiff(Forward, f24, Duplicated(2.0, 1.0))[1]   == 3
 
-    function f25(x)
-        try
-            sqrt(-1.0)
-            return 3x
-        catch
-            return 2x
+    # See #971
+    @static if VERSION ≥ v"1.9-"
+        function f25(x)
+            try
+                sqrt(-1.0)
+                return 3x
+            catch
+                return 2x
+            end
         end
+        @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+        @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
     end
-    @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
-    @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
 
     f26(x) = circshift([1.0, 2x, 3.0], 1)[end]
     @test autodiff(Reverse, f26, Active, Active(2.0))[1][1] == 2
@@ -821,9 +824,12 @@ end
     @test autodiff(Reverse, f32, Active, Active(2.0))[1][1] == 3
     @test autodiff(Forward, f32, Duplicated(2.0, 1.0))[1]   == 3
 
-    f33(x) = sum(skipmissing([x, missing, 3.0, 3x]))
-    @test autodiff(Reverse, f33, Active, Active(2.0))[1][1] == 4
-    @test autodiff(Forward, f33, Duplicated(2.0, 1.0))[1]   == 4
+    # See #970
+    @static if VERSION ≥ v"1.9-"
+        f33(x) = sum(skipmissing([x, missing, 3.0, 3x]))
+        @test autodiff(Reverse, f33, Active, Active(2.0))[1][1] == 4
+        @test autodiff(Forward, f33, Duplicated(2.0, 1.0))[1]   == 4
+    end
 end
 
 function deadarg_pow(z::T, i) where {T<:Real}
