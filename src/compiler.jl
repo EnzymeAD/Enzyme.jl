@@ -9100,6 +9100,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
+            for b in blocks(f)
+                term = terminator(b)
+                if isa(term, LLVM.UnreachableInst)
+                    b = IRBuilder()
+                    position!(b, term)
+                    emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
+                end
+            end
             if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline")), collect(function_attributes(f))))
                 continue
             end
