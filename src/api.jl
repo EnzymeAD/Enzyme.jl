@@ -512,9 +512,8 @@ end
 
 function __init__()
     ptr = cglobal((:EnzymeJuliaAddrLoad, libEnzyme))
-    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, true)
-    ptr = cglobal((:EnzymeExecuteUnreachable, libEnzyme))
-    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, true)
+    val = true
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
     zcache!(true)
 end
 
