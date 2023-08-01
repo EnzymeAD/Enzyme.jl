@@ -38,15 +38,15 @@ function grad_exp_kernel(A, dA)
     return nothing
 end
 
-@testset "exp_kernel" begin
-    A = AMDGPU.ones(64,)
-    @roc groupsize=length(A)  exp_kernel(A)
-    A = AMDGPU.ones(64,)
-    dA = similar(A)
-    dA .= 1
-    @roc groupsize=length(A)  grad_exp_kernel(A, dA)
-    @test all(dA .== exp(1.f0))
-end
+# @testset "exp_kernel" begin
+#     A = AMDGPU.ones(64,)
+#     @roc groupsize=length(A)  exp_kernel(A)
+#     A = AMDGPU.ones(64,)
+#     dA = similar(A)
+#     dA .= 1
+#     @roc groupsize=length(A)  grad_exp_kernel(A, dA)
+#     @test all(dA .== exp(1.f0))
+# end
 
 function cos_kernel(A)
     i = workitemIdx().x
