@@ -50,7 +50,7 @@ steps:
           Pkg.develop(; name = "AMDGPU")' || exit 3
 
       echo "+++ Run tests"
-      # julia --color=yes test/amdgpu.jl
+      julia --color=yes test/amdgpu.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
