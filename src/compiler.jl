@@ -9216,10 +9216,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
 
-    if process_module
-        adjointf = GPUCompiler.finish_module!(parent_job, mod, adjointf)
-    end
-
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]

@@ -1,8 +1,15 @@
 steps:
-  - label: "Julia v1.6"
+  - label: "CUDA Julia v{{matrix.version}}"
+    matrix:
+      setup:
+        version:
+          - "1.6"
+          - "1.7"
+          - "1.8"
+          - "1.9"
     plugins:
       - JuliaCI/julia#v1:
-          version: "1.6"
+          version: "{{matrix.version}}"
     agents:
       queue: "juliagpu"
       cuda: "*"
@@ -10,65 +17,67 @@ steps:
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-      julia --color=yes --project=. -e '
+      julia --color=yes -e '
           import Pkg
+          Pkg.develop(; path = pwd())
           Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-          '
+          Pkg.develop(; name = "CUDA")' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes --project=. -e '
-        import Pkg
-        Pkg.test("Enzyme")
-        '
+      julia --color=yes test/cuda.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
-steps:
-  - label: "Julia v1.7"
+  - label: "AMDGPU Julia v{{matrix.version}}"
+    matrix:
+      setup:
+        version:
+          - "1.9"
     plugins:
       - JuliaCI/julia#v1:
-          version: "1.7"
+          version: "{{matrix.version}}"
     agents:
       queue: "juliagpu"
-      cuda: "*"
+      rocm: "*"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-      julia --color=yes --project=. -e '
+      julia --color=yes -e '
           import Pkg
+          Pkg.develop(; path = pwd())
           Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-          '
+          Pkg.develop(; name = "AMDGPU")' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes --project=. -e '
-        import Pkg
-        Pkg.test("Enzyme")
-        '
+      julia --color=yes test/amdgpu.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
-steps:
-  - label: "Julia v1"
-    plugins:
-      - JuliaCI/julia#v1:
-          version: "1"
-    agents:
-      queue: "juliagpu"
-      cuda: "*"
-    if: build.message !~ /\[skip tests\]/
-    timeout_in_minutes: 60
-    commands: |
-      echo "--- Setup Julia packages"
-      julia --color=yes --project=. -e '
-          import Pkg
-          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
-          '
+  # - label: "Metal Julia v{{matrix.version}}"
+  #   matrix:
+  #     setup:
+  #       version:
+  #         - "1.8"
+  #         - "1.9"
+  #   plugins:
+  #     - JuliaCI/julia#v1:
+  #         version: "{{matrix.version}}"
+  #   agents:
+  #     queue: "juliaecosystem"
+  #     os: "macos"
+  #     arch: "aarch64"
+  #   if: build.message !~ /\[skip tests\]/
+  #   timeout_in_minutes: 60
+  #   commands: |
+  #     echo "--- Setup Julia packages"
+  #     julia --color=yes -e '
+  #         import Pkg
+  #         Pkg.develop(; path = pwd())
+  #         Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+  #         Pkg.develop(; name = "Metal")' || exit 3
 
-      echo "+++ Run tests"
-      julia --color=yes --project=. -e '
-        import Pkg
-        Pkg.test("Enzyme")
-        '
-    env:
-      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+  #     echo "+++ Run tests"
+  #     julia --color=yes test/metal.jl
+  #   env:
+  #     JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
