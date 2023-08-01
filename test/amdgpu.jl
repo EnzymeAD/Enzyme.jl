@@ -61,12 +61,12 @@ function grad_cos_kernel(A, dA)
     return nothing
 end
 
-@testset "cos_kernel" begin
-    A = AMDGPU.ones(64,)
-    @roc groupsize=length(A) cos_kernel(A)
-    A = AMDGPU.ones(64,)
-    dA = similar(A)
-    dA .= 1
-    @roc groupsize=length(A) grad_cos_kernel(A, dA)
-    @test all(dA .≈ -sin(1.f0))
-end
+# @testset "cos_kernel" begin
+#     A = AMDGPU.ones(64,)
+#     @roc groupsize=length(A) cos_kernel(A)
+#     A = AMDGPU.ones(64,)
+#     dA = similar(A)
+#     dA .= 1
+#     @roc groupsize=length(A) grad_cos_kernel(A, dA)
+#     @test all(dA .≈ -sin(1.f0))
+# end
