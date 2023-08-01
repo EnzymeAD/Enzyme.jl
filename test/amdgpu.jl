@@ -17,11 +17,11 @@ end
 
 @testset "mul_kernel" begin
     A = AMDGPU.ones(64,)
-    @rocm groupsize=length(A) mul_kernel(A)
+    @roc groupsize=length(A) mul_kernel(A)
     A = AMDGPU.ones(64,)
     dA = similar(A)
     dA .= 1
-    @rocm groupsize=length(A) grad_mul_kernel(A, dA)
+    @roc groupsize=length(A) grad_mul_kernel(A, dA)
     @test all(dA .== 2)
 end
 
@@ -40,11 +40,11 @@ end
 
 @testset "exp_kernel" begin
     A = AMDGPU.ones(64,)
-    @rocm groupsize=length(A)  exp_kernel(A)
+    @roc groupsize=length(A)  exp_kernel(A)
     A = AMDGPU.ones(64,)
     dA = similar(A)
     dA .= 1
-    @rocm groupsize=length(A)  grad_exp_kernel(A, dA)
+    @roc groupsize=length(A)  grad_exp_kernel(A, dA)
     @test all(dA .== exp(1.f0))
 end
 
@@ -63,10 +63,10 @@ end
 
 @testset "cos_kernel" begin
     A = AMDGPU.ones(64,)
-    @rocm groupsize=length(A) cos_kernel(A)
+    @roc groupsize=length(A) cos_kernel(A)
     A = AMDGPU.ones(64,)
     dA = similar(A)
     dA .= 1
-    @rocm groupsize=length(A) grad_cos_kernel(A, dA)
+    @roc groupsize=length(A) grad_cos_kernel(A, dA)
     @test all(dA .≈ -sin(1.f0))
 end
