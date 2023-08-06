@@ -949,16 +949,20 @@ function removeDeadArgs!(mod::LLVM.Module)
     end
     propagate_returned!(mod)
     pre_attr!(mod)
-    ModulePassManager() do pm
-        API.EnzymeAddAttributorLegacyPass(pm)
-        run!(pm, mod)
+    if LLVM.version().major >= 13
+        ModulePassManager() do pm
+            API.EnzymeAddAttributorLegacyPass(pm)
+            run!(pm, mod)
+        end
     end
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        API.EnzymeAddAttributorLegacyPass(pm)
+        if LLVM.version().major >= 13
+            API.EnzymeAddAttributorLegacyPass(pm)
+        end
         run!(pm, mod)
     end
     post_attr!(mod)
@@ -1067,7 +1071,7 @@ end
         gvn!(pm) # Exxtra
         run!(pm, mod)
     end
-    
+
     removeDeadArgs!(mod)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
