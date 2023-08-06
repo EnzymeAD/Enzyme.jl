@@ -179,7 +179,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         for (i, gp) in enumerate(gphis[v])
                             push!(geps[i], (gp, pb))
                         end
-                    elseif isa(v, LLVM.LoadInst)
+                    elseif isa(v, LLVM.LoadInst) || isa(v, LLVM.UndefValue)
                         for (i, gp) in enumerate(gty)
                             push!(geps[i], (LLVM.ConstantInt(gp, 0), pb))
                         end
