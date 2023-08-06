@@ -243,7 +243,7 @@ EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign
     ( EnzymeGradientUtilsRef, CDerivativeMode, LLVMTypeRef, UInt64, UInt64, UInt64, UInt64, UInt8, LLVMValueRef, UInt8, LLVMValueRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, UInt8, UInt8),
 	gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
         
-EnzymeGradientUtilsCallWithInvertedBundles(gutils, func, argvs, argc, orig, valTys, valCnt, B, lookup) = ccall((:EnzymeGradientUtilsCallWithInvertedBundles, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{LLVMValueRef}, UInt64, LLVMValueRef, Ptr{CValueType}, UInt64, LLVM.API.LLVMBuilderRef, UInt8), gutils, func, argvs, argc, orig, valTys, valCnt, B, lookup)
+EnzymeGradientUtilsCallWithInvertedBundles(gutils, func, funcTy, argvs, argc, orig, valTys, valCnt, B, lookup) = ccall((:EnzymeGradientUtilsCallWithInvertedBundles, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef,LLVMValueRef, LLVMTypeRef, Ptr{LLVMValueRef}, UInt64, LLVMValueRef, Ptr{CValueType}, UInt64, LLVM.API.LLVMBuilderRef, UInt8), gutils, func, funcTy, argvs, argc, orig, valTys, valCnt, B, lookup)
 
 function sub_transfer(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
     GC.@preserve secretty begin
