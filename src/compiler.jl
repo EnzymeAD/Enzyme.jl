@@ -5899,6 +5899,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 if width(value_type(cur)) <= 8
                     continue
                 end
+                # if storing a constant int as a non-pointer, presume it is not a GC'd var and is safe
+                # for activity state to mix
+                if isa(val, LLVM.StoreInst) operands(val)[1] == cur && !isa(value_type(operands(val)[1]), LLVM.PointerType)
+                    continue
+                end
             end
             illegal = true
             break
