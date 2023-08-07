@@ -891,11 +891,13 @@ end
         return @inbounds (map(y->myquantile(v, y, alpha=1.), [0.7]))[1]
     end
 
+    Enzyme.API.runtimeActivity!(true)
     cor = f(2.0)
     res = autodiff(Forward, f, Duplicated,Duplicated(2.0, 1.0))
     @test cor ≈ res[1]
     @test 0.7 ≈ res[2]
 
+    Enzyme.API.runtimeActivity!(false)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
