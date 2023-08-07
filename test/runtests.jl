@@ -866,38 +866,37 @@ end
     Enzyme.API.runtimeActivity!(false)
 end
 
+@inline function myquantile(v::AbstractVector, p::Real; alpha)
+    n = length(v)
+    
+    m = 1.0 + p * (1.0 - alpha - 1.0)
+    aleph = n*p + oftype(p, m)
+    j = clamp(trunc(Int, aleph), 1, n-1)
+    γ = clamp(aleph - j, 0, 1)
+
+    if n == 1
+        a = @inbounds v[1]
+        b = @inbounds v[1]
+    else
+        a = @inbounds v[j]
+        b = @inbounds v[j + 1]
+    end
+    
+    return a + γ*(b-a)
+end
+
+function fquantile(x)
+    v = [1.0, x]
+    return @inbounds (map(y->myquantile(v, y, alpha=1.), [0.7]))[1]
+end
+
 @testset "Attributor issues" begin
-    @inline function myquantile(v::AbstractVector, p::Real; alpha)
-        n = length(v)
-        
-        m = 1.0 + p * (1.0 - alpha - 1.0)
-        aleph = n*p + oftype(p, m)
-        j = clamp(trunc(Int, aleph), 1, n-1)
-        γ = clamp(aleph - j, 0, 1)
 
-        if n == 1
-            a = @inbounds v[1]
-            b = @inbounds v[1]
-        else
-            a = @inbounds v[j]
-            b = @inbounds v[j + 1]
-        end
-        
-        return a + γ*(b-a)
-    end
-
-    function f(x)
-        v = [1.0, x]
-        return @inbounds (map(y->myquantile(v, y, alpha=1.), [0.7]))[1]
-    end
-
-    Enzyme.API.runtimeActivity!(true)
-    cor = f(2.0)
-    res = autodiff(Forward, f, Duplicated,Duplicated(2.0, 1.0))
+    cor = fquantile(2.0)
+    res = autodiff(Forward, fquantile, Duplicated,Duplicated(2.0, 1.0))
     @test cor ≈ res[1]
     @test 0.7 ≈ res[2]
 
-    Enzyme.API.runtimeActivity!(false)
 end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
