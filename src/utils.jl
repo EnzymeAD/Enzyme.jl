@@ -79,7 +79,7 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     tt = tt.parameters[1]
 
     # validation
-    ft <: Core.Builtin && error("$(unsafe_function_from_type(ft)) is not a generic function")
+    ft <: Core.Builtin && error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
     # look up the method
     method_error = :(throw(MethodError(ft, tt, $world)))
@@ -155,7 +155,7 @@ function codegen_world_age_generator(self, ft::Type, tt::Type)
     tt = tt.parameters[1]
 
     # validation
-    ft <: Core.Builtin && error("$(unsafe_function_from_type(ft)) is not a generic function")
+    ft <: Core.Builtin && error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
     # look up the method
     method_error = :(throw(MethodError(ft, tt)))
