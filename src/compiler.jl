@@ -6406,7 +6406,9 @@ function zero_allocation(B::LLVM.IRBuilder, jlType, LLVMType, obj, AlignedSize, 
     push!(function_attributes(wrapper_f), EnumAttribute("argmemonly", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("writeonly", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("willreturn", 0))
-    push!(function_attributes(wrapper_f), EnumAttribute("mustprogress", 0))
+    if LLVM.version().major >= 12
+        push!(function_attributes(wrapper_f), EnumAttribute("mustprogress", 0))
+    end
     push!(parameter_attributes(wrapper_f, 1), EnumAttribute("writeonly", 0))
     push!(parameter_attributes(wrapper_f, 1), EnumAttribute("nocapture", 0))
     linkage!(wrapper_f, LLVM.API.LLVMInternalLinkage)
@@ -6820,7 +6822,7 @@ function __init__()
     )
     register_handler!(
         ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2", "ijl_call_in_typeinf_world", "jl_call_in_typeinf_world",
-         "dpotrf_64_", "dpotrf_", "dtrtrs_64_", "dtrtrs_", "dgetrf_64_", "dgetrf_", "dgetrs_", "dgetrs_64_", "dtzrzf_", "dtzrzf_64_", "dormqr_", "dormqr_64_"),
+         "dpotrf_64_", "dpotrf_", "dtrtrs_64_", "dtrtrs_", "dgetrf_64_", "dgetrf_", "dgetrs_", "dgetrs_64_", "dtzrzf_", "dtzrzf_64_", "dormqr_", "dormqr_64_", "dormrz_", "dormrz_64_", "dlaic1_", "dlaic1_64_", "dgeqp3_", "dgeqp3_64_"),
         @augfunc(jl_unhandled_augfwd),
         @revfunc(jl_unhandled_rev),
         @fwdfunc(jl_unhandled_fwd),
