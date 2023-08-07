@@ -47,6 +47,8 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 """
 struct Active{T} <: Annotation{T}
     val::T
+    @inline Active(x::T1) where {T1} = new{T1}(x)
+    @inline Active(x::T1) where {T1 <: AbstractArray} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
 end
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
@@ -63,6 +65,15 @@ accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
+    @inline Duplicated(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline function Duplicated(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+        if check
+            @assert x.indices == dx.indices
+            @assert x.offset1 == dx.offset1
+            @assert x.stride1 == dx.stride1
+        end
+        new{T1}(x, dx)
+    end
 end
 Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -75,6 +86,15 @@ the original result and only compute the derivative values.
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
+    @inline DuplicatedNoNeed(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline function DuplicatedNoNeed(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+        if check
+            @assert x.indices == dx.indices
+            @assert x.offset1 == dx.offset1
+            @assert x.stride1 == dx.stride1
+        end
+        new{T1}(x, dx)
+    end
 end
 Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
@@ -87,6 +107,17 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    @inline BatchDuplicated(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    @inline function DuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+        if check
+            for dxi in dx
+                @assert x.indices == dxi.indices
+                @assert x.offset1 == dxi.offset1
+                @assert x.stride1 == dxi.stride1
+            end
+        end
+        new{T1, N}(x, dx)
+    end
 end
 Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
@@ -105,6 +136,17 @@ for all at once. Argument `∂f_∂xs` should be a tuple of the several values o
 struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
+    @inline BatchDuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    @inline function DuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+        if check
+            for dxi in dx
+                @assert x.indices == dxi.indices
+                @assert x.offset1 == dxi.offset1
+                @assert x.stride1 == dxi.stride1
+            end
+        end
+        new{T1, N}(x, dx)
+    end
 end
 batch_size(::BatchDuplicated{T,N}) where {T,N} = N
 batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N

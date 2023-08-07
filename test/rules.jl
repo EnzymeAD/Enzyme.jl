@@ -141,7 +141,11 @@ function EnzymeRules.forward(
     RT::Type{<:Union{Duplicated,BatchDuplicated}},
     x::Union{Duplicated,BatchDuplicated},
 )
-    return RT(func.val(x.val), map(func.val, x.dval))
+    if RT <: BatchDuplicated
+        return BatchDuplicated(func.val(x.val), map(func.val, x.dval))
+    else
+        return Duplicated(func.val(x.val), func.val(x.dval))
+    end
 end
 
 @testset "Batch complex" begin
