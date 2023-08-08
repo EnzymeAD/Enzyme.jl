@@ -7160,6 +7160,9 @@ function ptr_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTre
 end
 
 function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+    if numArgs != 1
+        return UInt8(false)
+    end
     inst = LLVM.Instruction(val)
     ce = operands(inst)[1]
     while isa(ce, ConstantExpr)
