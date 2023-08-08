@@ -297,6 +297,9 @@ end
     end
     @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
     @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
+
+    f10(x) = hypot(x, 2x)
+    @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
 end
 
 @testset "Taylor series tests" begin
