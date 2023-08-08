@@ -805,8 +805,14 @@ end
             return 2x
         end
     end
-    @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
-    @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    # Gives 0.0 on Julia 1.6, see #971
+    @static if VERSION ≥ v"1.7-"
+        @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+        @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    else
+        @test_broken autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+        @test_broken autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    end
     println("Done 25")
 
     f26(x) = circshift([1.0, 2x, 3.0], 1)[end]
