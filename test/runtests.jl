@@ -91,6 +91,10 @@ end
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
+    @assert Enzyme.Compiler.active_reg_inner(Base.RefValue{Float32}, Dict{DataType, ActivityState}()) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Colon, Dict{DataType, ActivityState}()) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(Symbol, Dict{DataType, ActivityState}()) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(String, Dict{DataType, ActivityState}()) == Enzyme.Compiler.AnyState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
