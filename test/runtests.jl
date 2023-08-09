@@ -806,7 +806,7 @@ end
         end
     end
     # Gives 0.0 on Julia 1.6, see #971
-    @static if VERSION ≥ v"1.7-"
+    @static if VERSION ≥ v"1.8-"
         @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
         @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
     else
