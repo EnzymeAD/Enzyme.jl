@@ -2614,7 +2614,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string(orig))
 
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
@@ -7227,8 +7227,14 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
     GPUCompiler.@safe_error "Enzyme: Could not find world", fn
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Instruction)
-    enzyme_custom_extract_mi(LLVM.called_operand(orig)::LLVM.Function)
+function enzyme_custom_extract_mi(orig::LLVM.Instruction, error=true)
+    operand = LLVM.called_operand(orig)
+    if isa(operand, LLVM.Function)
+        return enzyme_custom_extract_mi(operand::LLVM.Function, error)
+    elseif error
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find fn", orig
+    end
+    return nothing, nothing
 end
 
 function enzyme_custom_extract_mi(orig::LLVM.Function, error=true)
@@ -8939,15 +8945,16 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")])
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), StringAttribute("nofree")], false, false)
+            handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, StringAttribute("enzyme_inactive"))
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, EnumAttribute("nofree"))
                     end
                 end
             end
