@@ -511,7 +511,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     iterlib = Base.unsafe_pointer_to_objref(rep)
                     if iterlib == Base.iterate
                         GT = guess_julia_type(operands(inst)[4+1])
-                        @show GT, operands(inst)[4+1], inst
                         if GT <: Vector
                             funcoff = 3
                             funclib = operands(inst)[funcoff+1]
@@ -521,18 +520,17 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             if isa(funclib, ConstantInt)
                                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, funclib))
                                 funclib = Base.unsafe_pointer_to_objref(rep)
-                                @show funclib
                                 tys = [typeof(funclib), Vararg{Any}]
                                 if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
                                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                                    nofree = LLVM.StringAttribute("nofree", "")
+                                    nofree = LLVM.EnumAttribute("nofree")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                                 end
                                 if funclib == Base.tuple && Base.isconcretetype(eltype(GT)) && sizeof(eltype(GT)) == 0
                                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                                    nofree = LLVM.StringAttribute("nofree", "")
+                                    nofree = LLVM.EnumAttribute("nofree")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                                 end
                             end
@@ -564,7 +562,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                        nofree = LLVM.StringAttribute("nofree", "")
+                        nofree = LLVM.EnumAttribute("nofree")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                     end
                 end
@@ -638,7 +636,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     mod = LLVM.parent(ofn)
                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                    nofree = LLVM.StringAttribute("nofree", "")
+                    nofree = LLVM.EnumAttribute("nofree")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                 end
             end
