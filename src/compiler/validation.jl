@@ -36,15 +36,17 @@ module FFI
                 symbols = Set{String}()
                 path = Libdl.dlpath(BLAS.libblas)
                 ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
-                for s in Symbols(readmeta(open(path, "r")))
-                    name = symbol_name(s)
-                    if !Sys.iswindows() && BLAS.vendor() == :openblas64
-                        endswith(name, "64_") || continue
-                    else
-                        endswith(name, "_") || continue
-                    end
-                    if !in(name, ignoreSymbols)
-                        push!(symbols, name)
+                for meta in readmeta(open(path, "r"))
+                    for s in Symbols(meta)
+                        name = symbol_name(s)
+                        if !Sys.iswindows() && BLAS.vendor() == :openblas64
+                            endswith(name, "64_") || continue
+                        else
+                            endswith(name, "_") || continue
+                        end
+                        if !in(name, ignoreSymbols)
+                            push!(symbols, name)
+                        end
                     end
                 end
                 symbols = collect(symbols)
@@ -66,10 +68,19 @@ module FFI
         known_names = (
             "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d", 
             "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d", 
-            "jl_new_array", "jl_array_copy", "jl_alloc_string",
+            "jl_new_array", "ijl_new_array",
+            "jl_array_copy", "ijl_array_copy",
+            "jl_alloc_string",
             "jl_in_threaded_region", "jl_enter_threaded_region", "jl_exit_threaded_region", "jl_set_task_tid", "jl_new_task",
-            "malloc", "memmove", "memcpy", "memset", "jl_array_grow_beg", "jl_array_grow_end", "jl_array_grow_at", "jl_array_del_beg",
-            "jl_array_del_end", "jl_array_del_at", "jl_array_ptr", "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
+            "malloc", "memmove", "memcpy", "memset",
+            "jl_array_grow_beg", "ijl_array_grow_beg",
+            "jl_array_grow_end", "ijl_array_grow_end",
+            "jl_array_grow_at", "ijl_array_grow_at",
+            "jl_array_del_beg", "ijl_array_del_beg",
+            "jl_array_del_end", "ijl_array_del_end",
+            "jl_array_del_at", "ijl_array_del_at",
+            "jl_array_ptr", "ijl_array_ptr",
+            "jl_value_ptr", "jl_get_ptls_states", "jl_gc_add_finalizer_th",
             "jl_symbol_n", "jl_", "jl_object_id",
             "jl_reshape_array","ijl_reshape_array",
             "jl_matching_methods", "ijl_matching_methods",
@@ -83,7 +94,12 @@ module FFI
             "jl_ptr_to_array_1d",
             "jl_eqtable_get", "ijl_eqtable_get",
             "memcmp","memchr",
-            "jl_get_nth_field_checked", "ijl_get_nth_field_checked"
+            "jl_get_nth_field_checked", "ijl_get_nth_field_checked",
+            "jl_stored_inline",
+            "ijl_stored_inline",
+            "jl_array_isassigned", "ijl_array_isassigned",
+            "jl_array_ptr_copy", "ijl_array_ptr_copy",
+            "jl_array_typetagdata", "ijl_array_typetagdata",
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -127,7 +143,7 @@ end
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)
-    T_size_t = convert(LLVM.LLVMType, Int; ctx=LLVM.context(mod))
+    T_size_t = convert(LLVM.LLVMType, Int)
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
@@ -150,14 +166,16 @@ function check_ir!(job, errors, mod::LLVM.Module)
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
         name!(f, "")
-        ctx = context(mod)
-        ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+        ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
         prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
 
         mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
         replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
         unsafe_delete!(mod, f)
+    end
+    for f in collect(functions(mod))
+        check_ir!(job, errors, imported, f)
     end
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
@@ -223,12 +241,22 @@ function guess_julia_type(val::LLVM.Value, typeof=true)
             end
         end
         if isa(val, LLVM.CallInst) && typeof
-            fn = LLVM.called_value(val)
+            fn = LLVM.called_operand(val)
             if isa(fn, LLVM.Function) && LLVM.name(fn) == "julia.gc_alloc_obj"
                 res = guess_julia_type(operands(val)[3], false)
                 if res !== nothing
                     return res
                 end
+            end
+            if isa(fn, LLVM.Function) && in(LLVM.name(fn), ("ijl_alloc_array_1d", "jl_alloc_array_1d", "ijl_alloc_array_2d", "jl_alloc_array_2d", "ijl_alloc_array_3d", "jl_alloc_array_3d"))
+                res = guess_julia_type(operands(val)[1], false)
+                if res !== nothing
+                    return res
+                end
+            end
+            _, RT = enzyme_custom_extract_mi(val, false)
+            if RT !== nothing
+                return RT
             end
             break
         end
@@ -244,8 +272,11 @@ end
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
 function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
+    world = job.world
+    interp = GPUCompiler.get_interpreter(job)
+    method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
-    dest = called_value(inst)
+    dest = called_operand(inst)
     if isa(dest, LLVM.Function)
         fn = LLVM.name(dest)
 
@@ -256,25 +287,21 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         elseif fn == "gpu_malloc"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
-
-            b = IRBuilder(ctx)
+            b = IRBuilder()
             position!(b, inst)
 
             mfn = LLVM.API.LLVMGetNamedFunction(mod, "malloc")
             if mfn == C_NULL
-                ptr8 = LLVM.PointerType(LLVM.IntType(8; ctx))
+                ptr8 = LLVM.PointerType(LLVM.IntType(8))
                 mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, [value_type(LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0)))]))
             end
             mfn2 = LLVM.Function(mfn)
             nval = ptrtoint!(b, call!(b, LLVM.function_type(mfn2), mfn2, [LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))]), value_type(inst))
             replace_uses!(inst, nval)
-            LLVM.API.LLVMInstructionEraseFromParent(inst)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)   
         elseif fn == "jl_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
-
             flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
             if isa(flib, LLVM.ConstantExpr)
                 flib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
@@ -282,7 +309,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, LLVM.GlobalVariable)
                 flib = LLVM.initializer(flib)
             end
-            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8; ctx)
+            if (isa(flib, LLVM.ConstantArray) || isa(flib, LLVM.ConstantDataArray)) && eltype(value_type(flib)) == LLVM.IntType(8)
                 flib = String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)]))
             end
 
@@ -293,7 +320,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
             hnd = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 2))
@@ -306,10 +333,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             end
             # res = ccall(:jl_load_and_lookup, Ptr{Cvoid}, (Cstring, Cstring, Ptr{Cvoid}), flib, fname, cglobal(Symbol(hnd)))
             push!(errors, ("jl_load_and_lookup", bt, nothing))
+            
         elseif fn == "jl_lazy_load_and_lookup" || fn == "ijl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
-            ctx = context(mod)
 
             ops = collect(operands(inst))[1:end-1]
             @assert length(ops) == 2
@@ -338,7 +365,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
-            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8; ctx)
+            if (isa(fname, LLVM.ConstantArray)  || isa(fname, LLVM.ConstantDataArray)) && eltype(value_type(fname)) == LLVM.IntType(8)
                 fname = String(map((x)->convert(UInt8, x), collect(fname)[1:(end-1)]))
             end
 
@@ -360,7 +387,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 end
 
                 if data !== nothing
-                    inmod = parse(LLVM.Module, data; ctx)
+                    inmod = parse(LLVM.Module, data)
                     found = haskey(functions(inmod), fname)
                 end
             catch e
@@ -395,7 +422,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder(ctx)
+                                b = IRBuilder()
                                 position!(b, ld)
                                 replace_uses!(ld, LLVM.pointercast!(b, replaceWith, value_type(inst)))
                             end
@@ -403,7 +430,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = IRBuilder(ctx)
+                b = IRBuilder()
 
                 position!(b, inst)
                 replace_uses!(inst, LLVM.pointercast!(b, replaceWith, value_type(inst)))
@@ -415,7 +442,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 else
                     res = ccall(:ijl_lazy_load_and_lookup, Ptr{Cvoid}, (Any, Cstring), flib, fname)
                 end
-                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int); ctx), reinterpret(UInt, res))
+                replaceWith = LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int)), reinterpret(UInt, res))
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) && LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
@@ -423,7 +450,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder(ctx)
+                                b = IRBuilder()
                                 position!(b, ld)
                                 for u in LLVM.uses(ld)
                                     u = LLVM.user(u)
@@ -437,7 +464,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                 end
 
-                b = IRBuilder(ctx)
+                b = IRBuilder()
                 position!(b, inst)
                 replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
                             for u in LLVM.uses(inst)
@@ -472,6 +499,46 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
 
+            if isa(dest, LLVM.Function) && LLVM.name(dest) == "jl_f__apply_iterate"
+                # Add 1 to account for function being first arg
+                iteroff = 2
+                iterlib = operands(inst)[iteroff+1]
+                while isa(iterlib, LLVM.ConstantExpr)
+                    iterlib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(iterlib, 0))
+                end
+                if isa(iterlib, ConstantInt)
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, iterlib))
+                    iterlib = Base.unsafe_pointer_to_objref(rep)
+                    if iterlib == Base.iterate
+                        GT = guess_julia_type(operands(inst)[4+1])
+                        if GT <: Vector
+                            funcoff = 3
+                            funclib = operands(inst)[funcoff+1]
+                            while isa(funclib, LLVM.ConstantExpr)
+                                funclib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(funclib, 0))
+                            end
+                            if isa(funclib, ConstantInt)
+                                rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, funclib))
+                                funclib = Base.unsafe_pointer_to_objref(rep)
+                                tys = [typeof(funclib), Vararg{Any}]
+                                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
+                                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                                    nofree = LLVM.EnumAttribute("nofree")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
+                                end
+                                if funclib == Base.tuple && Base.isconcretetype(eltype(GT)) && sizeof(eltype(GT)) == 0
+                                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                                    nofree = LLVM.EnumAttribute("nofree")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
@@ -482,7 +549,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if isa(flib, ConstantInt)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                     flib = Base.unsafe_pointer_to_objref(rep)
-                    tys = [typeof(flib)]
+                    tys = Type[typeof(flib)]
                     for op in collect(operands(inst))[start+1:end-1]
                         push!(tys, guess_julia_type(op))
                     end
@@ -492,13 +559,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
-                        ofn = LLVM.parent(LLVM.parent(inst))
-                        mod = LLVM.parent(ofn)
-                        ctx = context(mod)
-                        inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
+                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                        nofree = LLVM.StringAttribute("nofree", ""; ctx)
+                        nofree = LLVM.EnumAttribute("nofree")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                     end
                 end
@@ -554,7 +618,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, ConstantInt)
                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                 flib = Base.unsafe_pointer_to_objref(rep)
-                tys = [typeof(flib)]
+                tys = Type[typeof(flib)]
                 for op in collect(operands(inst))[start:end-1]
                     push!(tys, guess_julia_type(op))
                 end
@@ -567,13 +631,12 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                     tys = flib.specTypes.parameters
                 end
-                if EnzymeRules.is_inactive_from_sig(Tuple{tys...})
+                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table) 
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
-                    ctx = context(mod)
-                    inactive = LLVM.StringAttribute("enzyme_inactive", ""; ctx)
+                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
-                    nofree = LLVM.StringAttribute("nofree", ""; ctx)
+                    nofree = LLVM.EnumAttribute("nofree")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                 end
             end

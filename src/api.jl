@@ -32,13 +32,13 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Unknown = 6
 )
 
-function EnzymeConcreteTypeIsFloat(cc::CConcreteType, ctx)
+function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
   if cc == DT_Half
-    return LLVM.HalfType(ctx)
+    return LLVM.HalfType()
   elseif cc == DT_Float
-    return LLVM.FloatType(ctx)
+    return LLVM.FloatType()
   elseif cc == DT_Double
-    return LLVM.DoubleType(ctx)
+    return LLVM.DoubleType()
   else
     return nothing
   end
@@ -210,6 +210,7 @@ EnzymeGetShadowType(width, T) = ccall((:EnzymeGetShadowType, libEnzyme), LLVMTyp
 
 EnzymeGradientUtilsReplaceAWithB(gutils, a, b) = ccall((:EnzymeGradientUtilsReplaceAWithB, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef, LLVMValueRef), gutils, a, b)
 EnzymeGradientUtilsErase(gutils, a) = ccall((:EnzymeGradientUtilsErase, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef), gutils, a)
+EnzymeGradientUtilsEraseWithPlaceholder(gutils, a, erase) = ccall((:EnzymeGradientUtilsEraseWithPlaceholder, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef, UInt8), gutils, a, erase)
 EnzymeGradientUtilsGetMode(gutils) = ccall((:EnzymeGradientUtilsGetMode, libEnzyme), CDerivativeMode, (EnzymeGradientUtilsRef,), gutils)
 EnzymeGradientUtilsGetWidth(gutils) = ccall((:EnzymeGradientUtilsGetWidth, libEnzyme), UInt64, (EnzymeGradientUtilsRef,), gutils)
 EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall((:EnzymeGradientUtilsNewFromOriginal, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
@@ -242,7 +243,7 @@ EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign
     ( EnzymeGradientUtilsRef, CDerivativeMode, LLVMTypeRef, UInt64, UInt64, UInt64, UInt64, UInt8, LLVMValueRef, UInt8, LLVMValueRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, UInt8, UInt8),
 	gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
         
-EnzymeGradientUtilsCallWithInvertedBundles(gutils, func, argvs, argc, orig, valTys, valCnt, B, lookup) = ccall((:EnzymeGradientUtilsCallWithInvertedBundles, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{LLVMValueRef}, UInt64, LLVMValueRef, Ptr{CValueType}, UInt64, LLVM.API.LLVMBuilderRef, UInt8), gutils, func, argvs, argc, orig, valTys, valCnt, B, lookup)
+EnzymeGradientUtilsCallWithInvertedBundles(gutils, func, funcTy, argvs, argc, orig, valTys, valCnt, B, lookup) = ccall((:EnzymeGradientUtilsCallWithInvertedBundles, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef,LLVMValueRef, LLVMTypeRef, Ptr{LLVMValueRef}, UInt64, LLVMValueRef, Ptr{CValueType}, UInt64, LLVM.API.LLVMBuilderRef, UInt8), gutils, func, funcTy, argvs, argc, orig, valTys, valCnt, B, lookup)
 
 function sub_transfer(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp)
     GC.@preserve secretty begin
@@ -438,6 +439,7 @@ end
   ET_InternalError = 5,
   ET_TypeDepthExceeded = 6,
   ET_MixedActivityError = 7,
+  ET_IllegalReplaceFicticiousPHIs = 8
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
@@ -554,4 +556,15 @@ EnzymeAttributeKnownFunctions(f) = ccall((:EnzymeAttributeKnownFunctions, libEnz
 EnzymeAnonymousAliasScopeDomain(str, ctx) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScopeDomain, libEnzyme), LLVM.API.LLVMMetadataRef, (Cstring,LLVMContextRef), str, ctx))
 EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScope, libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,Cstring), dom.ref, str))
 EnzymeFixupJuliaCallingConvention(f) = ccall((:EnzymeFixupJuliaCallingConvention, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
+
+e_extract_value!(builder, AggVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildExtractValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, Index, length(Index), Name))
+  end
+
+e_insert_value!(builder, AggVal, EltVal, Index, Name::String="") =
+  GC.@preserve Index begin
+    LLVM.Value(ccall((:EnzymeBuildInsertValue, libEnzyme), LLVM.API.LLVMValueRef,  (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring), builder, AggVal, EltVal, Index, length(Index), Name))
+  end
+
 end

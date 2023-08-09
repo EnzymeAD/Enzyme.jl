@@ -17,3 +17,12 @@ function forward(::Const{typeof(f)}, ::Type{<:Const}; kwargs...)
 end
 
 @test has_frule_from_sig(Base.signature_type(f, Tuple{}))
+
+data = [1.0, 2.0, 3.0, 4.0]
+
+d = @view data[2:end]
+y = @view data[3:end]
+@test_throws ErrorException Duplicated(d, y)
+
+@test_throws ErrorException Active(data)
+@test_throws ErrorException Active(d)

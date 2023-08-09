@@ -1,13 +1,9 @@
-function pmap_fwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
-        return 1
+function pmap_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_instruction(gutils, orig)
+        return true
     end
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    ctx = LLVM.context(orig)
-    B = LLVM.IRBuilder(B)
     emit_error("fast pfor not implemented");
-    return 0
+    return false
 end
 
 function runtime_pmap_augfwd(count, ::Type{ThunkTy}, ::Val{AnyJL}, forward, args...) where {ThunkTy, AnyJL}
@@ -116,7 +112,7 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     ctx = LLVM.context(orig)
 
-    llvmfn = LLVM.called_value(orig)
+    llvmfn = LLVM.called_operand(orig)
     mi, _ = enzyme_custom_extract_mi(orig)
     adjointnm = nothing
     augfwdnm = nothing
@@ -141,20 +137,19 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
 
     ops = collect(operands(orig))[1:end-1] 
     
-    B = LLVM.IRBuilder(B)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     
     @assert GPUCompiler.isghosttype(funcT) || Core.Compiler.isconstType(funcT) 
 
     _, dup, overwritten = julia_activity(orig, mi.specTypes.parameters, [], ops, gutils)
-        e_tt = Tuple{dup...}
-        @static if VERSION >= v"1.8" 
-          RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...}, world)
-        else
-          RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...}, world)
-        end
-        eprimal = fspec(funcT, e_tt, world)
-        width = API.EnzymeGradientUtilsGetWidth(gutils)
+    e_tt = Tuple{dup...}
+    @static if VERSION >= v"1.8" 
+        RT = Core.Compiler.return_type(Tuple{funcT, map(eltype, dup)...}, world)
+    else
+        RT = Core.Compiler.return_type(Core.Compiler.singleton_type(funcT), Tuple{map(eltype, dup)...}, world)
+    end
+    eprimal = fspec(funcT, e_tt, world)
+    width = API.EnzymeGradientUtilsGetWidth(gutils)
         
     if augfwdnm === nothing
         # TODO: Clean this up and add to `nested_codegen!` asa feature
@@ -162,33 +157,27 @@ function commonInnerCompile(runtime_fn, B, orig, gutils, tape, mode)
         funcOverwritten = true
         indexOverwritten = false
         eparams = Compiler.EnzymeCompilerParams(Tuple{Const{funcT}, dup...}, API.DEM_ReverseModePrimal, width, Const{RT}, true,
-                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType)
-        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)
-            
-        jctx = ctx
-@static if VERSION < v"1.9-"
-else
-        jctx = ctxToThreadSafe[jctx]
-end
-        
-        cmod, adjointnm, augfwdnm, _, TapeType = _thunk(ejob, jctx)
+                                                #=abiwrap=#true, #=modifiedBetween=#(funcOverwritten, indexOverwritten, overwritten...,), #=returnPrimal=#false, #=shadowprimalInit=#false, Compiler.UnknownTapeType, FFIABI)
+        ejob    = Compiler.CompilerJob(eprimal, CompilerConfig(etarget, eparams; kernel=false), world)                
+        cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob)
         LLVM.link!(mod, cmod)
         attributes = function_attributes(llvmfn)
-        push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm; ctx))
-        push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm; ctx))
+        push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
+        push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
         attributes = function_attributes(llvmfn)
-        push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"; ctx))
-        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType))); ctx))
+        push!(function_attributes(functions(mod)[augfwdnm]), EnumAttribute("alwaysinline"))
+        push!(function_attributes(functions(mod)[adjointnm]), EnumAttribute("alwaysinline"))
+        push!(attributes, StringAttribute("enzymejl_tapetype", string(convert(UInt, unsafe_to_pointer(TapeType)))))
+        
     end
 
-        if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
-            subfunc = functions(mod)[augfwdnm]
-       else
-           thunkTy = AdjointThunk{Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
-            subfunc = functions(mod)[adjointnm]
-        end
+    if mode == API.DEM_ReverseModePrimal
+        thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(true), TapeType}
+        subfunc = functions(mod)[augfwdnm]
+    else
+        thunkTy = AdjointThunk{Ptr{Cvoid}, Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+        subfunc = functions(mod)[adjointnm]
+    end
 
     STT = if !any_jltypes(TapeType)
         Ptr{TapeType}
@@ -198,24 +187,24 @@ end
 
     splat, _, _ = julia_activity(orig, mi.specTypes.parameters, (mode != API.DEM_ReverseModeGradient) ? [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, funcT, funcT] : [Type{thunkTy}, Val{any_jltypes(TapeType)}, Int, STT, funcT, funcT], ops, gutils)
     tt = Tuple{splat...}
-    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
 
     # 5) Call the function
-    
-    T_int64 = LLVM.Int64Type(ctx)
-    T_jlvalue = LLVM.StructType(LLVMType[]; ctx)
+    entry = nested_codegen!(mode, mod, runtime_fn, tt, world)
+
+    T_int64 = LLVM.Int64Type()
+    T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, #= AddressSpace::Tracked =# 10)
     T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
 
 
     # count
-	vals = LLVM.Value[LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[1]))]
+	vals = LLVM.Value[new_from_original(gutils, ops[1])]
     
     # function
     run_fn = functions(mod)[tape === nothing ? augfwdnm : adjointnm]
-    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0); ctx))))
- 
-    EB = LLVM.IRBuilder(ctx)
+    push!(vals, ptrtoint!(B, run_fn, value_type(LLVM.ConstantInt(Int(0)))))
+
+    EB = LLVM.IRBuilder()
     position!(EB, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     
 
@@ -226,7 +215,7 @@ end
     end
    
     if mode == API.DEM_ReverseModeGradient && STT != Nothing
-		@assert tape != nothing
+        @assert tape != nothing
         push!(vals, tape)
     end
 
@@ -237,9 +226,9 @@ end
         end
 
 
-        primal = LLVM.Value(API.EnzymeGradientUtilsNewFromOriginal(gutils, ops[i]))
-        shadow = if API.EnzymeGradientUtilsIsConstantValue(gutils, ops[i]) == 0
-          LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, ops[i], B))
+        primal = new_from_original(gutils, ops[i])
+        shadow = if is_constant_value(gutils, ops[i]) == 0
+          invert_pointer(gutils, ops[i], B)
         else
           nothing
         end
@@ -276,15 +265,13 @@ end
     end
 
     res = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
-    API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, res, orig)
-    
+    debug_from_orig!(gutils, res, orig)    
     return res
 end
 
-function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
-    orig = LLVM.Instruction(OrigCI)
-    if API.EnzymeGradientUtilsIsConstantValue(gutils, orig) != 0 && API.EnzymeGradientUtilsIsConstantInstruction(gutils, orig) != 0
-        return 1
+function pmap_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
     end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
@@ -296,17 +283,16 @@ function pmap_augfwd(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, 
     if normal !== nothing
         unsafe_store!(normalR, C_NULL)
     else
-        ni = LLVM.Instruction(API.EnzymeGradientUtilsNewFromOriginal(gutils, orig))
+        ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     unsafe_store!(tapeR, tape.ref)
 
-    return 0
+    return false
 end
 
-function pmap_rev(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
-    orig = LLVM.Instruction(OrigCI)
-    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, LLVM.Value(tape), API.DEM_ReverseModeGradient)
+function pmap_rev(B, orig, gutils, tape)
+    commonInnerCompile(runtime_pmap_rev, B, orig, gutils, tape, API.DEM_ReverseModeGradient)
     return nothing
 end

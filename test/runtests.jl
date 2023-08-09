@@ -89,12 +89,13 @@ end
 
 @testset "Internal tests" begin
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
-    world = GPUCompiler.codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)))
+    world = codegen_world_age(typeof(f0), Tuple{Float64})
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -103,7 +104,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -113,8 +114,8 @@ end
     end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
-    world = GPUCompiler.codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)))
+    world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -122,8 +123,8 @@ end
     @test d.dval[2] ≈ 3.0
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
-    world = GPUCompiler.codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)))
+    world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI)
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -156,6 +157,9 @@ end
 #     @test thunk_split.primal !== thunk_split.adjoint
 # end
 
+make3() = (1.0, 2.0, 3.0)
+
+
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
     f2(x) = x*x
@@ -164,10 +168,28 @@ end
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    tup = autodiff(Forward, f2, BatchDuplicatedFunc{Float64, 3, typeof(make3)}(1.0))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
     @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
     @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
     @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
+
+    for T in (Float64, Float32, Float16)
+        res = autodiff(Reverse, tanh, Active, Active(T(1.0)))[1][1]
+        @test res isa T
+        @test res ≈ T(0.41997434161402606939)
+        res = autodiff(Forward, tanh, Duplicated(T(1.0), T(1.0)))[1]
+        @test res isa T
+        @test res ≈ T(0.41997434161402606939)
+    end
+
     test_scalar(f1, 1.0)
     test_scalar(f2, 1.0)
     test_scalar(log2, 1.0)
@@ -233,6 +255,53 @@ end
     test_scalar(g, 3.0)
 end
 
+@testset "Base functions" begin
+    f1(x) = prod(ntuple(i -> i * x, 3))
+    @test autodiff(Reverse, f1, Active, Active(2.0))[1][1] == 72
+    @test autodiff(Forward, f1, Duplicated(2.0, 1.0))[1]   == 72
+
+    f2(x) = x * something(nothing, 2)
+    @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] == 2
+    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1]   == 2
+
+    f3(x) = x * sum(unique([x, 2.0, 2.0, 3.0]))
+    @test autodiff(Reverse, f3, Active, Active(1.0))[1][1] == 7
+    @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1]   == 7
+
+    for rf in (reduce, foldl, foldr)
+        f4(x) = rf(*, [1.0, x, x, 3.0])
+        @test autodiff(Reverse, f4, Active, Active(2.0))[1][1] == 12
+        @test autodiff(Forward, f4, Duplicated(2.0, 1.0))[1]   == 12
+    end
+
+    f5(x) = sum(accumulate(+, [1.0, x, x, 3.0]))
+    @test autodiff(Reverse, f5, Active, Active(2.0))[1][1] == 5
+    @test autodiff(Forward, f5, Duplicated(2.0, 1.0))[1]   == 5
+
+    f6(x) = x |> inv |> abs
+    @test autodiff(Reverse, f6, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f6, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f7(x) = (inv ∘ abs)(x)
+    @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1/4
+    @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1]   == 1/4
+
+    f8(x) = x * count(i -> i > 1, [0.5, x, 1.5])
+    @test autodiff(Reverse, f8, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1]   == 2
+
+    function f9(x)
+        y = []
+        foreach(i -> push!(y, i^2), [1.0, x, x])
+        return sum(y)
+    end
+    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
+
+    f10(x) = hypot(x, 2x)
+    @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
@@ -258,6 +327,42 @@ end
     @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
+@testset "Hessian" begin
+    function origf(x::Array{Float64}, y::Array{Float64})
+        y[1] = x[1] * x[1] + x[2] * x[1]
+        return nothing
+    end
+
+    function grad(x, dx, y, dy)
+      Enzyme.autodiff_deferred(Reverse, origf, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+      nothing
+    end
+
+    x = [2.0, 2.0]
+    y = Vector{Float64}(undef, 1)
+    dx = [0.0, 0.0]
+    dy = [1.0]
+
+    grad(x, dx, y, dy)
+
+    vx = ([1.0, 0.0], [0.0, 1.0])
+    hess = ([0.0, 0.0], [0.0, 0.0])
+    dx2 = [0.0, 0.0]
+    dy = [1.0]
+
+    Enzyme.autodiff(Enzyme.Forward, grad,
+                    Enzyme.BatchDuplicated(x, vx),
+                    Enzyme.BatchDuplicated(dx2, hess),
+                    Const(y),
+                    Const(dy))
+
+    @test dx ≈ dx2
+    @test hess[1][1] ≈ 2.0
+    @test hess[1][2] ≈ 1.0
+    @test hess[2][1] ≈ 1.0
+    @test hess[2][2] ≈ 0.0
+end
+
 @testset "Array tests" begin
 
     function arsum(f::Array{T}) where T
@@ -275,6 +380,34 @@ end
     @test dinp ≈ Float64[1.0, 1.0]
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
+
+    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
+        function f1(m)
+            s = 0.0
+            for (i, col) in enumerate(eachcol(m))
+                s += i * sum(col)
+            end
+            return s
+        end
+
+        m = Float64[1 2 3; 4 5 6; 7 8 9]
+        dm = zero(m)
+        autodiff(Reverse, f1, Active, Duplicated(m, dm))
+        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+        function f2(m)
+            s = 0.0
+            for (i, col) in enumerate(eachrow(m))
+                s += i * sum(col)
+            end
+            return s
+        end
+
+        dm = zero(m)
+        autodiff(Reverse, f2, Active, Duplicated(m, dm))
+        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+    end
 end
 
 @testset "Advanced array tests" begin
@@ -709,6 +842,66 @@ end
     Enzyme.API.runtimeActivity!(false)
 end
 
+
+mutable struct RTGData
+	x
+end
+
+@noinline function rtg_sub(V, cv)
+	return cv
+end
+
+@noinline function rtg_cast(cv)
+	return cv
+end
+
+function rtg_f(V,@nospecialize(cv))
+	s = rtg_sub(V, Base.inferencebarrier(cv))::RTGData
+	s = rtg_cast(Base.inferencebarrier(s.x))::Float64
+	return s
+end
+
+@testset "RuntimeActivity generic call" begin
+    Enzyme.API.runtimeActivity!(true)
+    res = autodiff(Forward, rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    @test 3.14 ≈ res[1]
+    @test 0.0 ≈ res[2]
+    Enzyme.API.runtimeActivity!(false)
+end
+
+@inline function myquantile(v::AbstractVector, p::Real; alpha)
+    n = length(v)
+    
+    m = 1.0 + p * (1.0 - alpha - 1.0)
+    aleph = n*p + oftype(p, m)
+    j = clamp(trunc(Int, aleph), 1, n-1)
+    γ = clamp(aleph - j, 0, 1)
+
+    if n == 1
+        a = @inbounds v[1]
+        b = @inbounds v[1]
+    else
+        a = @inbounds v[j]
+        b = @inbounds v[j + 1]
+    end
+    
+    return a + γ*(b-a)
+end
+
+function fquantile(x)
+    v = [1.0, x]
+    return @inbounds (map(y->myquantile(v, y, alpha=1.), [0.7]))[1]
+end
+
+@testset "Attributor issues" begin
+
+    cor = fquantile(2.0)
+    res = autodiff(Forward, fquantile, Duplicated,Duplicated(2.0, 1.0))
+    @test cor ≈ res[1]
+    @test 0.7 ≈ res[2]
+
+end
+
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
     include("packages/specialfunctions.jl")
@@ -1047,6 +1240,11 @@ end
     end
 
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
+end
+
+@testset "Mismatched return" begin
+    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
@@ -1831,10 +2029,15 @@ end
 using Random
 
 @testset "Random" begin
-	f_rand(x) = x*rand()
-	f_randn(x, N) = x*sum(randn(N))
-    autodiff(Reverse, f_rand, Active, Active(1.0))
-    autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))
+    f_rand(x) = x*rand()
+    f_randn(x, N) = x*sum(randn(N))
+    @test 0 <= autodiff(Reverse, f_rand, Active, Active(1.0))[1][1] < 1
+    @test !iszero(autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))[1][1])
+    @test iszero(autodiff(Reverse, x -> rand(), Active, Active(1.0))[1][1])
+    @test iszero(autodiff(Reverse, (x, N) -> sum(randn(N)), Active, Active(1.0), Const(64))[1][1])
+    @test autodiff(Reverse, x -> x * sum(randcycle(5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(randperm( 5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(shuffle(1:5)), Active, Active(1.0))[1][1] == 15
 end
 
 @testset "Reshape" begin
@@ -1958,6 +2161,56 @@ end
 
 end
 
+@testset "Union return getproperty" begin
+	using Enzyme
+
+	struct DOSData
+		interp_func
+	end
+
+	function get_dos(Ef=0.)
+		return x->x+Ef
+	end
+
+	struct MyMarcusHushChidseyDOS
+		A::Float64
+		dos::DOSData
+	end
+
+	mhcd = MyMarcusHushChidseyDOS(0.3,  DOSData(get_dos()));
+
+	function myintegrand(V, a_r)
+		function z(E)
+			dos = mhcd.dos
+
+			interp = dos.interp_func
+
+			res = interp(V)
+
+			return res
+		end
+		return z
+	end
+
+	function f2(V)
+		fn = myintegrand(V, 1.0)
+
+		fn(0.0)
+	end
+
+    Enzyme.API.runtimeActivity!(true)
+	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
+    Enzyme.API.runtimeActivity!(false)
+    @test res[1] ≈ 0.2
+    # broken as the return of an apply generic is {primal, primal}
+    # but since the return is abstractfloat doing the 
+    @static if VERSION ≥ v"1.9-" && !(VERSION ≥ v"1.10-" )
+        @test_broken res[2] ≈ 1.0
+    else
+        @test res[2] ≈ 1.0
+    end
+end
+
 @testset "Static activity" begin
 
     struct Test2{T}
@@ -2021,8 +2274,57 @@ end
     @test ad_eta[1] ≈ 0.0
 end
 
-# Always run last since otherwise on 1.6 device functions cause breakage.
-using CUDA
-if CUDA.functional() && VERSION >= v"1.7.0"
-    include("cuda.jl")
+@testset "Type preservation" begin
+    # Float16 fails due to #870
+    for T in (Float64, Float32, #=Float16=#)
+        res = autodiff(Reverse, x -> x * 2.0, Active, Active(T(1.0)))[1][1]
+        @test res isa T
+        @test res == 2
+    end
+end
+
+@testset "Statistics" begin
+    f1(x) = var([x, 2.0, 3.0])
+    @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f1, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f2(x) = varm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f2, Active, Active(0.0))[1][1] ≈ -5/3
+    @test autodiff(Forward, f2, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+
+    f3(x) = std([x, 2.0, 3.0])
+    @test autodiff(Reverse, f3, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f3, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f4(x) = stdm([x, 2.0, 3.0], 5/3)
+    @test autodiff(Reverse, f4, Active, Active(0.0))[1][1] ≈ -0.54554472559
+    @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+
+    f5(x) = cor([2.0, x, 1.0], [1.0, 2.0, 3.0])
+    @test autodiff(Reverse, f5, Active, Active(4.0))[1][1] ≈ 0.11690244120
+    @test autodiff(Forward, f5, Duplicated(4.0, 1.0))[1]   ≈ 0.11690244120
+
+    f6(x) = cov([2.0, x, 1.0])
+    @test autodiff(Reverse, f6, Active, Active(4.0))[1][1] ≈ 5/3
+    @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
+
+    f7(x) = median([2.0, 1.0, x])
+    # Fails on Julia 1.9 due to #880
+    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
+    @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
+
+    f8(x) = middle([2.0, x, 1.0])
+    @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
+    @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1]   == 0.5
+    @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
+    @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
+
+    # On Julia 1.6 the gradients are wrong (0.7 not 1.2) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
+        f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+        @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+        @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    end
 end

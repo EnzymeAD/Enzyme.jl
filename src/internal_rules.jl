@@ -87,4 +87,15 @@ end
 function EnzymeRules.inactive(::typeof(Base.nextind), args...)
     return nothing
 end
-
+function EnzymeRules.inactive_noinl(::typeof(Core.Compiler.return_type), args...)
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base.Broadcast.combine_eltypes), args...)
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base.typejoin), args...)
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
+    return nothing
+end
