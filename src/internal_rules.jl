@@ -96,3 +96,6 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.typejoin), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
+    return nothing
+end

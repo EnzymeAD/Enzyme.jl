@@ -177,6 +177,9 @@ function check_ir!(job, errors, mod::LLVM.Module)
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
     end
+    for f in collect(functions(mod))
+        check_ir!(job, errors, imported, f)
+    end
 
     return errors
 end
@@ -244,6 +247,16 @@ function guess_julia_type(val::LLVM.Value, typeof=true)
                 if res !== nothing
                     return res
                 end
+            end
+            if isa(fn, LLVM.Function) && in(LLVM.name(fn), ("ijl_alloc_array_1d", "jl_alloc_array_1d", "ijl_alloc_array_2d", "jl_alloc_array_2d", "ijl_alloc_array_3d", "jl_alloc_array_3d"))
+                res = guess_julia_type(operands(val)[1], false)
+                if res !== nothing
+                    return res
+                end
+            end
+            _, RT = enzyme_custom_extract_mi(val, false)
+            if RT !== nothing
+                return RT
             end
             break
         end
@@ -486,6 +499,48 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
 
+            if isa(dest, LLVM.Function) && LLVM.name(dest) == "jl_f__apply_iterate"
+                # Add 1 to account for function being first arg
+                iteroff = 2
+                iterlib = operands(inst)[iteroff+1]
+                while isa(iterlib, LLVM.ConstantExpr)
+                    iterlib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(iterlib, 0))
+                end
+                if isa(iterlib, ConstantInt)
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, iterlib))
+                    iterlib = Base.unsafe_pointer_to_objref(rep)
+                    if iterlib == Base.iterate
+                        GT = guess_julia_type(operands(inst)[4+1])
+                        @show GT, operands(inst)[4+1], inst
+                        if GT <: Vector
+                            funcoff = 3
+                            funclib = operands(inst)[funcoff+1]
+                            while isa(funclib, LLVM.ConstantExpr)
+                                funclib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(funclib, 0))
+                            end
+                            if isa(funclib, ConstantInt)
+                                rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, funclib))
+                                funclib = Base.unsafe_pointer_to_objref(rep)
+                                @show funclib
+                                tys = [typeof(funclib), Vararg{Any}]
+                                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
+                                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                                    nofree = LLVM.StringAttribute("nofree", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
+                                end
+                                if funclib == Base.tuple && Base.isconcretetype(eltype(GT)) && sizeof(eltype(GT)) == 0
+                                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
+                                    nofree = LLVM.StringAttribute("nofree", "")
+                                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
@@ -496,7 +551,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if isa(flib, ConstantInt)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                     flib = Base.unsafe_pointer_to_objref(rep)
-                    tys = [typeof(flib)]
+                    tys = Type[typeof(flib)]
                     for op in collect(operands(inst))[start+1:end-1]
                         push!(tys, guess_julia_type(op))
                     end
@@ -507,8 +562,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         tys = flib.specTypes.parameters
                     end
                     if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
-                        ofn = LLVM.parent(LLVM.parent(inst))
-                        mod = LLVM.parent(ofn)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                         nofree = LLVM.StringAttribute("nofree", "")
@@ -567,7 +620,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(flib, ConstantInt)
                 rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, flib))
                 flib = Base.unsafe_pointer_to_objref(rep)
-                tys = [typeof(flib)]
+                tys = Type[typeof(flib)]
                 for op in collect(operands(inst))[start:end-1]
                     push!(tys, guess_julia_type(op))
                 end
