@@ -481,4 +481,56 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
     end
     return (nothing, nothing)
 end
+
+function EnzymeRules.forward(
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated;
+        kwargs...
+    )
+    inds = sortperm(xs.val; kwargs...)
+    xs.val .= xs.val[inds]
+    xs.dval .= xs.dval[inds]
+    if RT <: Const
+        return xs.val
+    elseif RT <: DuplicatedNoNeed
+        return xs.dval
+    else
+        return xs
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.ConfigWidth{1},
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated;
+        kwargs...
+    )
+    inds = sortperm(xs.val; kwargs...)
+    if EnzymeRules.needs_primal(config)
+        primal = xs.val[inds]
+    else
+        primal = nothing
+    end
+    if RT <: Const
+        shadow = nothing
+    else
+        shadow = xs.dval[inds]
+    end
+    return EnzymeRules.AugmentedReturn(primal, shadow, inds)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.ConfigWidth{1},
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        tape,
+        xs::Duplicated;
+        kwargs...,
+    )
+    inds = tape
+    back_inds = sortperm(inds)
+    xs.dval .= xs.dval[back_inds]
+    return (nothing,)
 end
