@@ -4689,7 +4689,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             unsafe_store!(normalR, normalV)
         else
             ni = new_from_original(gutils, orig)
-            erase_with_placeholder(gutils, ni)
+            erase_with_placeholder(gutils, ni, orig)
         end
     end
 
