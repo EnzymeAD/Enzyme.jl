@@ -30,6 +30,10 @@ function cpu_name()
 end
 
 function cpu_features()
+    if VERSION >= v"1.10.0-beta1"
+        return ccall(:jl_get_cpu_features, String, ())
+    end
+
     @static if Sys.ARCH == :x86_64 ||
                Sys.ARCH == :x86
         return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
