@@ -30,7 +30,7 @@ function cpu_name()
 end
 
 function cpu_features()
-    if VERSION >= v"1.10"
+    if VERSION >= v"1.10.0-beta1"
         return ccall(:jl_get_cpu_features, String, ())
     end
 
