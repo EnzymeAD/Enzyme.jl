@@ -6059,10 +6059,8 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return UInt32, false
         elseif N == 64
             return UInt64, false
-        elseif N == 128
-            return UInt128, false
         else
-            error("Can't construct tape type for integer of width $N")
+            return NTuple{Int64(N), UInt8}, false
         end
     end
     if tkind == LLVM.API.LLVMHalfTypeKind
