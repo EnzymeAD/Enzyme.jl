@@ -2280,16 +2280,16 @@ end
 end
 
 @testset "Tape Width" begin
-    struct Foo
+    struct Roo
         x::Float64
         bar::String63
     end
 
-    function g(f::Foo)
+    function g(f::Roo)
         return f.x*5.0
     end
 
-    res = autodiff(Reverse, g, Active, Active(Foo(3.0, "a")))[1][1]
+    res = autodiff(Reverse, g, Active, Active(Roo(3.0, "a")))[1][1]
 
     @test res.x == 5.0
 
