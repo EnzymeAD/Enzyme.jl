@@ -31,7 +31,7 @@ end
 
 function cpu_features()
     if VERSION >= v"1.10"
-        @show ccall(:jl_get_cpu_features, String, ())
+        return ccall(:jl_get_cpu_features, String, ())
     end
 
     @static if Sys.ARCH == :x86_64 ||
