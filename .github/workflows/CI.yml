@@ -58,6 +58,11 @@ jobs:
           - os: ubuntu-20.04
             arch: x64
             libEnzyme: packaged
+            version: '1.10'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
             version: '1.7'
             assertions: true
           - os: ubuntu-20.04
@@ -69,6 +74,11 @@ jobs:
             arch: x64
             libEnzyme: packaged
             version: '1.9'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.10'
             assertions: true
     steps:
       - uses: actions/checkout@v2
