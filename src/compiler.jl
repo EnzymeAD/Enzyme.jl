@@ -321,7 +321,7 @@ end
     end
     return DupState
 end
-@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+@inline function active_reg_inner(PT::Type{<:Array{T}}, seen) where {T}
     state = active_reg_inner(T, seen)
     if state == AnyState
         return AnyState
@@ -5832,7 +5832,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            println(io, LLVM.parent(LLVM.parent(data2)))
+            println(io, string(LLVM.parent(LLVM.parent(data2))))
             println(io, val)
             println(io, data2)
         end
