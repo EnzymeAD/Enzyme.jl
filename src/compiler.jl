@@ -5887,6 +5887,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if isa(cur, LLVM.UndefValue)
                 continue
             end
+            @static if LLVM.version() >= v"12"
+            if isa(cur, LLVM.PoisonValue)
+                continue
+            end
+            end
             if isa(cur, LLVM.ConstantAggregateZero)
                 continue
             end
