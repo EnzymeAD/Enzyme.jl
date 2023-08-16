@@ -2285,7 +2285,12 @@ end
         bar::String63
     end
 
-    function g(f::Roo)
+    struct Moo
+        x::Float64
+        bar::String63
+    end
+
+    function g(f)
         return f.x*5.0
     end
 
@@ -2293,6 +2298,9 @@ end
 
     @test res.x == 5.0
 
+    res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
+
+    @test res.x == 5.0
 end
 
 @testset "Type preservation" begin

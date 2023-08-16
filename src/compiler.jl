@@ -6060,7 +6060,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         elseif N == 64
             return UInt64, false
         else
-            return NTuple{Int64(N), UInt8}, false
+            return NTuple{Int(N), UInt8}, false
         end
     end
     if tkind == LLVM.API.LLVMHalfTypeKind
