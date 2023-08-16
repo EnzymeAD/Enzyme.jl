@@ -337,6 +337,10 @@ end
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
     end
+    # if abstract it must be by reference
+    if Base.isabstracttype(T)
+        return DupState
+    end
     if T ∈ keys(seen)
         return seen[T]
     end
