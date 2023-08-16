@@ -337,6 +337,10 @@ end
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
     end
+    # if abstract it must be by reference
+    if Base.isabstracttype(T)
+        return DupState
+    end
     if T ∈ keys(seen)
         return seen[T]
     end
@@ -5886,6 +5890,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             if isa(cur, LLVM.UndefValue)
                 continue
+            end
+            @static if LLVM.version() >= v"12"
+            if isa(cur, LLVM.PoisonValue)
+                continue
+            end
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 continue
