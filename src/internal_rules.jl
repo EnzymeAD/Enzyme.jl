@@ -508,15 +508,17 @@ function EnzymeRules.augmented_primal(
         kwargs...
     )
     inds = sortperm(xs.val; kwargs...)
+    xs.val .= xs.val[inds]
+    xs.dval .= xs.dval[inds]
     if EnzymeRules.needs_primal(config)
-        primal = xs.val[inds]
+        primal = xs.val
     else
         primal = nothing
     end
     if RT <: Const
         shadow = nothing
     else
-        shadow = xs.dval[inds]
+        shadow = xs.dval
     end
     return EnzymeRules.AugmentedReturn(primal, shadow, inds)
 end
