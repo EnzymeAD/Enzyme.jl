@@ -76,6 +76,7 @@ include("typetree.jl")
     include("rrules.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
+    include("internal_rules.jl")
     @static if VERSION ≥ v"1.9-"
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
