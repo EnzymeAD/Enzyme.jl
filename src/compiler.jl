@@ -30,6 +30,10 @@ function cpu_name()
 end
 
 function cpu_features()
+    if VERSION >= v"1.10.0-beta1"
+        return ccall(:jl_get_cpu_features, String, ())
+    end
+
     @static if Sys.ARCH == :x86_64 ||
                Sys.ARCH == :x86
         return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
@@ -321,7 +325,7 @@ end
     end
     return DupState
 end
-@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+@inline function active_reg_inner(PT::Type{<:Array{T}}, seen) where {T}
     state = active_reg_inner(T, seen)
     if state == AnyState
         return AnyState
@@ -5832,7 +5836,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            println(io, LLVM.parent(LLVM.parent(data2)))
+            println(io, string(LLVM.parent(LLVM.parent(data2))))
             println(io, val)
             println(io, data2)
         end
