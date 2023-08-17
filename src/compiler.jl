@@ -30,6 +30,10 @@ function cpu_name()
 end
 
 function cpu_features()
+    if VERSION >= v"1.10.0-beta1"
+        return ccall(:jl_get_cpu_features, String, ())
+    end
+
     @static if Sys.ARCH == :x86_64 ||
                Sys.ARCH == :x86
         return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
@@ -332,6 +336,10 @@ end
 @inline function active_reg_inner(::Type{T}, seen) where T
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
+    end
+    # if abstract it must be by reference
+    if Base.isabstracttype(T)
+        return DupState
     end
     if T ∈ keys(seen)
         return seen[T]
@@ -5882,6 +5890,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             if isa(cur, LLVM.UndefValue)
                 continue
+            end
+            @static if LLVM.version() >= v"12"
+            if isa(cur, LLVM.PoisonValue)
+                continue
+            end
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 continue

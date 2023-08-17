@@ -170,6 +170,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                 b = IRBuilder()
                 position!(b, terminator(pb))
                 if gty !== nothing
+                    undeforpoison = isa(v, LLVM.UndefValue)
+                    @static if LLVM.version() >= v"12"
+                        undeforpoison |= isa(v, LLVM.PoisonValue)
+                    end
                     if isa(v, LLVM.GetElementPtrInst)
                         for (i, op) in enumerate(operands(v)[2:end])
                             push!(geps[i], (op, pb))
@@ -183,11 +187,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                         for (i, gp) in enumerate(gty)
                             push!(geps[i], (LLVM.ConstantInt(gp, 0), pb))
                         end
-                    elseif isa(v, LLVM.UndefValue)
+                    elseif undeforpoison
                         for (i, gp) in enumerate(gty)
                             push!(geps[i], (LLVM.ConstantInt(gp, 0), pb))
                         end
                     else
+
                         @show f
                         @show gty, inst, v
                         @assert false
@@ -204,6 +209,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                 if isa(v, LLVM.UndefValue)
                     push!(nvs, (LLVM.UndefValue(nty), pb))
                     continue
+                end
+                @static if LLVM.version() >= v"12"
+                if isa(v, LLVM.PoisonValue)
+                    push!(nvs, (LLVM.PoisonValue(nty), pb))
+                    continue
+                end
                 end
                 if !isa(v, LLVM.LoadInst)
                     println(string(f))
@@ -578,6 +589,11 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         if isa(ops[i], LLVM.UndefValue)
                             continue
+                        end
+                        @static if LLVM.version() >= v"12"
+                        if isa(ops[i], LLVM.PoisonValue)
+                            continue
+                        end
                         end
                         if ops[i] == arg
                             continue
