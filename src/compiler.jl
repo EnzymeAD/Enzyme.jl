@@ -2612,7 +2612,16 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     end
     emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
     if shadowR != C_NULL
-        unsafe_store!(shadowR, new_from_original(gutils, orig).ref)
+        cal =  new_from_original(gutils, orig)
+        if width == 1
+            shadow = cal
+        else
+            shadow = LLVM.UndefValue(ST)
+            for i in 1:width
+                shadow = insert_value!(B, shadow, cal, i-1)
+            end
+        end
+        unsafe_store!(shadowR, shadow.ref)
     end
     return false
 end
@@ -2624,7 +2633,16 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
     emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string(orig))
 
     if shadowR != C_NULL
-        unsafe_store!(shadowR, new_from_original(gutils, orig).ref)
+        cal =  new_from_original(gutils, orig)
+        if width == 1
+            shadow = cal
+        else
+            shadow = LLVM.UndefValue(ST)
+            for i in 1:width
+                shadow = insert_value!(B, shadow, cal, i-1)
+            end
+        end
+        unsafe_store!(shadowR, shadow.ref)
     end
     return false
 end
