@@ -8989,8 +8989,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Base.wait || func == Base._wait
-            if length(sparam_vals) == 0 ||
-                (length(sparam_vals) == 1 && first(sparam_vals) <: Task)
+            if length(sparam_vals) == 1 && first(sparam_vals) <: Task
                 handleCustom("jl_wait")
             end
             continue
