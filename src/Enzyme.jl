@@ -1199,6 +1199,35 @@ end
 
 using ChainRulesCore
 
+"""
+    import_frule(::fn, tys...)
+
+Automatically import a ChainRules.frule as a custom forward mode EnzymeRule. When called in batch mode, this
+will end up calling the primal multiple times, which may result in incorrect behavior if the function mutates,
+and slow code, always. Importing the rule from ChainRules is also likely to be slower than writing your own rule,
+and may also be slower than not having a rule at all.
+
+Use with caution.
+
+```jldoctest
+Enzyme.@import_frule(typeof(Base.sort), Any);
+
+x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
+
+# output
+
+(var"1" = [0.0, 1.0, 2.0], var"2" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]))
+(var"1" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]),)
+(var"1" = [0.3, 0.1, 0.2],)
+(var"1" = [0.0, 1.0, 2.0], var"2" = [0.3, 0.1, 0.2])
+
+```
+"""
 macro import_frule(fn, tys...)
     vals = []
     valtys = []
@@ -1269,6 +1298,110 @@ macro import_frule(fn, tys...)
                     @assert false
                 end
             end
+        end
+    )
+end
+
+
+"""
+    import_rrule(::fn, tys...)
+
+Automatically import a ChainRules.rrule as a custom reverse mode EnzymeRule. When called in batch mode, this
+will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
+function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
+inputs permit a .+= operation and that the output has a valid Enzyme.Compiler.make_zero function defined.
+
+Finally, this macro falls back to almost always caching all of the inputs, even if it may not be needed for the
+derivative computation.
+
+As a result, this auto importer is also likely to be slower than writing your own rule, and may also be slower
+than not having a rule at all.
+
+Use with caution.
+
+```
+Enzyme.@import_rrule(typeof(Base.sort), Any);
+```
+"""
+macro import_rrule(fn, tys...)
+    vals = []
+    valtys = []
+    valtyexprs = []
+    exprs = []
+    primals = []
+    tangents = []
+    tangentsi = []
+    anns = []
+    nothings = [(:nothing)]
+    for (i, ty) in enumerate(tys)
+        push!(nothings, :(nothing))
+        val = Symbol("arg_$i")
+        TA = Symbol("AN_$i")
+        e = :($val::$TA)
+        push!(anns, :($TA <: Union{Const, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed}{<:$ty}))
+        push!(vals, val)
+        push!(exprs, e)
+        ty = Symbol("ty_$i")
+        push!(valtyexprs, ty)
+        push!(valtys, :($ty = Core.Typeof($val)))
+        primal = Symbol("primcopy_$i")
+        push!(primals, primal)
+        push!(valtys, :($primal = overwritten(config)[$i+1] ? deepcopy($val.val) : $val.val))
+        push!(tangents, :($ty <: Const ? ChainRulesCore.NoTangent() : $val.dval))
+        push!(tangentsi, :($ty <: Const ? ChainRulesCore.NoTangent() : $val.dval[i]))
+    end
+
+    :(
+        function EnzymeRules.augmented_primal(config::ConfigWidth{batchsize}, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {batchsize, RetAnnotation, FA<:Annotation{<:$fn}, $(anns...)}
+            $(valtys...)
+            
+            res, pullback = ChainRulesCore.rrule(fn.val, $(primals...); kwargs...)
+
+            if needs_primal(config)
+                primal = res
+            else
+                primal = nothing
+            end
+
+            if RetAnnotation <: Const
+                shadow = nothing
+            else
+                if batchsize == 1
+                    shadow = Core.Compiler.make_zero(Core.Typeof(res), IdDict(), res)
+                else
+                    shadow = ntuple(function f1(j)
+                        Base.@_inline_meta
+                        Core.Compiler.make_zero(Core.Typeof(res), IdDict(), res)
+                    end, Val(batchsize))
+                end
+
+            return AugmentedReturn(primal, shadow, (shadow, pullback))
+        end
+
+        function EnzymeRules.reverse(config::ConfigWidth{batchsize}, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {batchsize, RetAnnotation, TapeTy, FA<:Annotation{<:$fn}, $(anns...)}
+            shadow, pullback = tape
+
+            if batchsize == 1
+                res = pullback(shadow)
+                for (cr, en) in zip(res, (fn, $(vals...),))
+                    if en <: Const || cr <: ChainRulesCore.NoTangent
+                        continue
+                    end
+                    en.dval .+= cr
+                end
+            else
+                for i in 1:batchsize
+                    res = pullback(shadow[i])
+                    for (cr, en) in zip(res, (fn, $(vals...),))
+                        if en <: Const || cr <: ChainRulesCore.NoTangent
+                            continue
+                        end
+                        en.dval[i] .+= cr
+                    end
+                end
+            end
+
+            return ($(nothings...),)
         end
     )
 end
