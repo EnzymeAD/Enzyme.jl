@@ -5594,8 +5594,10 @@ function Base.showerror(io::IO, ece::NoShadowException)
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
-    print(io, "\n Inverted pointers: \n")
-    write(io, ece.sval)
+    if length(ece.sval) != 0
+        print(io, "\n Inverted pointers: \n")
+        write(io, ece.sval)
+    end
     print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         print(io,"\nCaused by:")
@@ -5776,9 +5778,15 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(exc)
     elseif errtype == API.ET_NoShadow
         data = GradientUtils(API.EnzymeGradientUtilsRef(data))
-        ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
-        sval = Base.unsafe_string(ip)
-        API.EnzymeStringFree(ip)
+        sval = ""
+        if isa(val, LLVM.Argument)
+            fn = parent_scope(val)
+            ir = string(LLVM.name(fn))*string(function_type(fn))
+        else
+            ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+            sval = Base.unsafe_string(ip)
+            API.EnzymeStringFree(ip)
+        end
         throw(NoShadowException(msg, sval, ir, bt))
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
@@ -5797,12 +5805,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
 
         msg2 = sprint() do io::IO
             print(io, "Enzyme cannot deduce type\n")
-            if ir !== nothing
-                print(io, "Current scope: \n")
-                print(io, ir)
+            if !occursin(msg, "Cannot deduce single type of store")
+                if ir !== nothing
+                    print(io, "Current scope: \n")
+                    print(io, ir)
+                end
+                print(io, "\n Type analysis state: \n")
+                write(io, sval)
             end
-            print(io, "\n Type analysis state: \n")
-            write(io, sval)
             print(io, '\n', msg, '\n')
             if bt !== nothing
                 print(io,"\nCaused by:")
