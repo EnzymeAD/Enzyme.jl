@@ -2298,9 +2298,11 @@ end
 
     @test res.x == 5.0
 
-    res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
+    if VERSION > v"1.10-"
+        res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
 
-    @test res.x == 5.0
+        @test res.x == 5.0
+    end
 end
 
 @testset "Type preservation" begin

@@ -6072,6 +6072,8 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return UInt32, false
         elseif N == 64
             return UInt64, false
+        elseif N = 128
+            return UInt128, false
         else
             return NTuple{Int(N), UInt8}, false
         end
