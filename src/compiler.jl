@@ -5821,7 +5821,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
 
         msg2 = sprint() do io::IO
             print(io, "Enzyme cannot deduce type\n")
-            if !occursin(msg, "Cannot deduce single type of store")
+            if !occursin("Cannot deduce single type of store", msg)
                 if ir !== nothing
                     print(io, "Current scope: \n")
                     print(io, ir)
