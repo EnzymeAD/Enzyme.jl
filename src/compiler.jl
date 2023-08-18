@@ -5761,7 +5761,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
-            ir = parent_scope(val)
+            ir = string(parent_scope(val))
         end
     end
 
@@ -5805,12 +5805,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
 
         msg2 = sprint() do io::IO
             print(io, "Enzyme cannot deduce type\n")
-            if ir !== nothing
-                print(io, "Current scope: \n")
-                print(io, ir)
+            if !occursin(msg, "Cannot deduce single type of store")
+                if ir !== nothing
+                    print(io, "Current scope: \n")
+                    print(io, ir)
+                end
+                print(io, "\n Type analysis state: \n")
+                write(io, sval)
             end
-            print(io, "\n Type analysis state: \n")
-            write(io, sval)
             print(io, '\n', msg, '\n')
             if bt !== nothing
                 print(io,"\nCaused by:")
