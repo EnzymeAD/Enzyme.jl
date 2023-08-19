@@ -30,6 +30,10 @@ function cpu_name()
 end
 
 function cpu_features()
+    if VERSION >= v"1.10.0-beta1"
+        return ccall(:jl_get_cpu_features, String, ())
+    end
+
     @static if Sys.ARCH == :x86_64 ||
                Sys.ARCH == :x86
         return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
@@ -321,7 +325,7 @@ end
     end
     return DupState
 end
-@inline function active_reg_inner(PT::Type{Array{T}}, seen) where {T}
+@inline function active_reg_inner(PT::Type{<:Array{T}}, seen) where {T}
     state = active_reg_inner(T, seen)
     if state == AnyState
         return AnyState
@@ -332,6 +336,10 @@ end
 @inline function active_reg_inner(::Type{T}, seen) where T
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
+    end
+    # if abstract it must be by reference
+    if Base.isabstracttype(T)
+        return DupState
     end
     if T ∈ keys(seen)
         return seen[T]
@@ -2603,9 +2611,17 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
     emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+    if shadowR != C_NULL
+        cal =  new_from_original(gutils, orig)
+        if width == 1
+            shadow = cal
+        else
+            shadow = LLVM.UndefValue(ST)
+            for i in 1:width
+                shadow = insert_value!(B, shadow, cal, i-1)
+            end
+        end
+        unsafe_store!(shadowR, shadow.ref)
     end
     return false
 end
@@ -2616,9 +2632,17 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
     end
     emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string(orig))
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+    if shadowR != C_NULL
+        cal =  new_from_original(gutils, orig)
+        if width == 1
+            shadow = cal
+        else
+            shadow = LLVM.UndefValue(ST)
+            for i in 1:width
+                shadow = insert_value!(B, shadow, cal, i-1)
+            end
+        end
+        unsafe_store!(shadowR, shadow.ref)
     end
     return false
 end
@@ -4689,7 +4713,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             unsafe_store!(normalR, normalV)
         else
             ni = new_from_original(gutils, orig)
-            erase_with_placeholder(gutils, ni)
+            erase_with_placeholder(gutils, ni, orig)
         end
     end
 
@@ -5586,8 +5610,10 @@ function Base.showerror(io::IO, ece::NoShadowException)
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
-    print(io, "\n Inverted pointers: \n")
-    write(io, ece.sval)
+    if length(ece.sval) != 0
+        print(io, "\n Inverted pointers: \n")
+        write(io, ece.sval)
+    end
     print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         print(io,"\nCaused by:")
@@ -5768,9 +5794,15 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(exc)
     elseif errtype == API.ET_NoShadow
         data = GradientUtils(API.EnzymeGradientUtilsRef(data))
-        ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
-        sval = Base.unsafe_string(ip)
-        API.EnzymeStringFree(ip)
+        sval = ""
+        if isa(val, LLVM.Argument)
+            fn = parent_scope(val)
+            ir = string(LLVM.name(fn))*string(function_type(fn))
+        else
+            ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+            sval = Base.unsafe_string(ip)
+            API.EnzymeStringFree(ip)
+        end
         throw(NoShadowException(msg, sval, ir, bt))
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
@@ -5789,12 +5821,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
 
         msg2 = sprint() do io::IO
             print(io, "Enzyme cannot deduce type\n")
-            if ir !== nothing
-                print(io, "Current scope: \n")
-                print(io, ir)
+            if !occursin("Cannot deduce single type of store", msg)
+                if ir !== nothing
+                    print(io, "Current scope: \n")
+                    print(io, ir)
+                end
+                print(io, "\n Type analysis state: \n")
+                write(io, sval)
             end
-            print(io, "\n Type analysis state: \n")
-            write(io, sval)
             print(io, '\n', msg, '\n')
             if bt !== nothing
                 print(io,"\nCaused by:")
@@ -5832,7 +5866,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            println(io, LLVM.parent(LLVM.parent(data2)))
+            println(io, string(LLVM.parent(LLVM.parent(data2))))
             println(io, val)
             println(io, data2)
         end
@@ -5882,6 +5916,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             if isa(cur, LLVM.UndefValue)
                 continue
+            end
+            @static if LLVM.version() >= v"12"
+            if isa(cur, LLVM.PoisonValue)
+                continue
+            end
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 continue
@@ -6822,7 +6861,8 @@ function __init__()
     )
     register_handler!(
         ("jl_uv_associate_julia_struct","uv_async_init","cuLaunchHostFunc","uv_timer_init","uv_timer_start","jl_array_del_beg","ijl_array_del_beg","jl_array_grow_beg","ijl_array_grow_beg","cublasDgemm_v2", "cublasDscal_v2", "ijl_call_in_typeinf_world", "jl_call_in_typeinf_world",
-         "dpotrf_64_", "dpotrf_", "dtrtrs_64_", "dtrtrs_", "dgetrf_64_", "dgetrf_", "dgetrs_", "dgetrs_64_", "dtzrzf_", "dtzrzf_64_", "dormqr_", "dormqr_64_", "dormrz_", "dormrz_64_", "dlaic1_", "dlaic1_64_", "dgeqp3_", "dgeqp3_64_"),
+         "dpotrf_64_", "dpotrf_", "dtrtrs_64_", "dtrtrs_", "dgetrf_64_", "dgetrf_", "dgetrs_", "dgetrs_64_", "dtzrzf_", "dtzrzf_64_", "dormqr_", "dormqr_64_", "dormrz_", "dormrz_64_", "dlaic1_", "dlaic1_64_", "dgeqp3_", "dgeqp3_64_",
+         "cholmod_l_start"),
         @augfunc(jl_unhandled_augfwd),
         @revfunc(jl_unhandled_rev),
         @fwdfunc(jl_unhandled_fwd),
@@ -8965,8 +9005,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == Base.wait || func == Base._wait
-            if length(sparam_vals) == 0 ||
-                (length(sparam_vals) == 1 && first(sparam_vals) <: Task)
+            if length(sparam_vals) == 1 && first(sparam_vals) <: Task
                 handleCustom("jl_wait")
             end
             continue

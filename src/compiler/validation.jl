@@ -527,7 +527,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                     nofree = LLVM.EnumAttribute("nofree")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, nofree)
                                 end
-                                if funclib == Base.tuple && Base.isconcretetype(eltype(GT)) && sizeof(eltype(GT)) == 0
+                                if funclib == Base.tuple && length(operands(inst)) == 4+1+1 && Base.isconcretetype(GT) && Enzyme.Compiler.active_reg_inner(GT, Dict{DataType, ActivityState}()) == Enzyme.Compiler.AnyState
                                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                                     nofree = LLVM.EnumAttribute("nofree")
