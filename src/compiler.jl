@@ -6082,7 +6082,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             if isnothing(T)
                 symname = Symbol(:UInt,N)
                 Tp = @ccall jl_new_primitivetype(symname::Symbol, 
-                    Main::Module,
+                    Enzyme::Module,
                     Core.Intrinsics.cglobal(:jl_any_type)::Ptr{Nothing},
                     pointer_from_objref(EmptySVec)::Ptr{Nothing},
                     N::Base.Csize_t)::Any
