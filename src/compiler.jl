@@ -6030,7 +6030,6 @@ Base.eltype(::EnzymeTapeToLoad{T}) where T = T
 const TapeTypes = Dict{String, DataType}()
 
 const WideTypes = Dict{Int, DataType}()
-const EmptySVec = Core.svec()
 
 base_type(T::UnionAll) = base_type(T.body)
 base_type(T::DataType) = T
@@ -6107,11 +6106,15 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             T = get(WideTypes, N, nothing)
             if isnothing(T)
                 symname = Symbol(:UInt,N)
-                Tp = @ccall jl_new_primitivetype(symname::Symbol, 
-                    Enzyme::Module,
+                emptysvec = Core.svec()
+                _module = Main
+                Tp = GC.@preserve emptysvec symname @ccall jl_new_primitivetype(symname::Symbol, 
+                    _module::Module,
                     Core.Intrinsics.cglobal(:jl_any_type)::Ptr{Nothing},
-                    pointer_from_objref(EmptySVec)::Ptr{Nothing},
+                    pointer_from_objref(emptysvec)::Ptr{Core.SimpleVector},
                     N::Base.Csize_t)::Any
+
+                #setproperty!(_module, symname, Tp)
 
                 WideTypes[N] = Tp
                 return Tp, false
