@@ -6003,6 +6003,9 @@ Base.eltype(::EnzymeTapeToLoad{T}) where T = T
 
 const TapeTypes = Dict{String, DataType}()
 
+const WideTypes = Dict{Int, DataType}()
+const EmptySVec = Core.svec()
+
 base_type(T::UnionAll) = base_type(T.body)
 base_type(T::DataType) = T
 
@@ -6075,7 +6078,20 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         elseif N == 128
             return UInt128, false
         else
-            return NTuple{Int(N), UInt8}, false
+            T = get(WideTypes, N, nothing)
+            if isnothing(T)
+                symname = Symbol(:UInt,N)
+                Tp = @ccall jl_new_primitivetype(symname::Symbol, 
+                    Main::Module,
+                    Core.Intrinsics.cglobal(:jl_any_type)::Ptr{Nothing},
+                    pointer_from_objref(EmptySVec)::Ptr{Nothing},
+                    N::Base.Csize_t)::Any
+
+                WideTypes[N] = Tp
+                return Tp, false
+            else
+                return T, false
+            end
         end
     end
     if tkind == LLVM.API.LLVMHalfTypeKind
