@@ -17,11 +17,15 @@ When a test set loops over many activities, some of which may be `BatchedDuplica
 incompatible and will raise errors.
 =#
 function _all_or_no_batch(activities...)
-    no_batch = !any(activities) do T
-        T <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
-    end
+    no_batch = !_any_batch(activities...)
     all_batch_or_const = all(activities) do T
         T <: Union{BatchDuplicated,BatchDuplicatedNoNeed,Const}
     end
     return all_batch_or_const || no_batch
+end
+
+function _any_batch(activities...)
+    return any(activities) do T
+        T <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
+    end
 end
