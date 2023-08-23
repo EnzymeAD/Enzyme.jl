@@ -133,7 +133,10 @@ end
                             x = TestStruct(randn(T, 5), randn(T))
                         end
                         atol = rtol = sqrt(eps(real(T)))
-                        test_forward(fun, Tret, (x, Tx); atol, rtol)
+                        @test !fails() do
+                            test_forward(fun, Tret, (x, Tx); atol, rtol)
+                            # https://github.com/EnzymeAD/Enzyme.jl/issues/874
+                        end broken = (TT <: TestStruct && T <: Float32 && !(Tret <: Const))
                     end
                 end
             end
@@ -197,7 +200,9 @@ end
                     y = randn(T, n)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
+                    @test !fails() do
+                        test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
+                    end broken = (T <: ComplexF32 && !(Tc <: Const && Ty <: Const))
                 end
             end
         end
@@ -330,7 +335,13 @@ end
                     y = randn(T, n)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                    @test !fails() do
+                        test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                        # https://github.com/EnzymeAD/Enzyme.jl/issues/877
+                    end broken = (
+                        !(Tc <: Const && Ty <: Const) ||
+                        (T <: ComplexF64 && !(Tret <: Const))
+                    )
                 end
             end
         end
