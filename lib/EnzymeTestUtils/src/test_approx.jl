@@ -9,7 +9,8 @@ function test_approx(x::Array{<:Number}, y::Array{<:Number}, msg; kwargs...)
 end
 function test_approx(x::AbstractArray{<:Number}, y::AbstractArray{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)
-    invoke(test_approx, Tuple{typeof(x),typeof(y),typeof(msg)}, x, y, msg; kwargs...)
+    # for custom array types, fields should also match
+    _test_fields_approx(x, y, msg; kwargs...)
     return nothing
 end
 function test_approx(x::AbstractArray, y::AbstractArray, msg; kwargs...)
@@ -20,8 +21,9 @@ function test_approx(x::AbstractArray, y::AbstractArray, msg; kwargs...)
     end
     return nothing
 end
-# base case: check all fields
-function test_approx(x, y, msg; kwargs...)
+test_approx(x, y, msg; kwargs...) = _test_fields_approx(x, y, msg; kwargs...)
+
+function _test_fields_approx(x, y, msg; kwargs...)
     @test_msg "$msg: types must match" typeof(x) == typeof(y)
     names = fieldnames(typeof(x))
     if isempty(names)
