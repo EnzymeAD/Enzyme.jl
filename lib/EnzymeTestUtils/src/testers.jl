@@ -53,7 +53,7 @@ function test_forward(
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
         # call finitedifferences, avoid mutating original arguments
-        dy_fdm = _make_jvp_call(fdm, call_with_copy, ret_activity, y, activities)
+        dy_fdm = _fd_forward(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
         y_and_dy_ad = autodiff(Forward, call_with_kwargs, ret_activity, activities...)
         if ret_activity <: Union{Duplicated,BatchDuplicated}
@@ -174,7 +174,7 @@ function test_reverse(
         # generate tangent for output
         ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
         # call finitedifferences, avoid mutating original arguments
-        dx_fdm = _make_j′vp_call(fdm, call_with_kwargs, ȳ, activities)
+        dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities)
         # call autodiff, allow mutating original arguments
         c_act = Const(call_with_kwargs)
         forward, reverse = autodiff_thunk(

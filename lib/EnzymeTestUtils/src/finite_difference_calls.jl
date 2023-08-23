@@ -3,7 +3,7 @@
 # Copyright (c) 2020 JuliaDiff
 
 #=
-    _make_jvp_call(fdm, f, rettype, y, activities)
+    _fd_forward(fdm, f, rettype, y, activities)
 
 Call `FiniteDifferences.jvp` on `f` with the arguments `xs` determined by `activities`.
 
@@ -18,7 +18,7 @@ Call `FiniteDifferences.jvp` on `f` with the arguments `xs` determined by `activ
 - `ẏ`: Derivative of output w.r.t. `t` estimated by finite differencing. If `rettype` is a
     batch return type, then `ẏ` is a `NamedTuple` of derivatives.
 =#
-function _make_jvp_call(fdm, f, rettype, y, activities)
+function _fd_forward(fdm, f, rettype, y, activities)
     xs = map(x -> x.val, activities)
     ẋs = map(a -> a isa Const ? nothing : a.dval, activities)
     ignores = map(a -> a isa Const, activities)
@@ -39,10 +39,10 @@ function _make_jvp_call(fdm, f, rettype, y, activities)
         throw(ArgumentError("Unsupported return type: $rettype"))
     end
 end
-_make_jvp_call(fdm, f, ::Type{<:Const}, y, activities) = ()
+_fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 #=
-    _make_j′vp_call(fdm, f, ȳ, activities)
+    _fd_reverse(fdm, f, ȳ, activities)
 
 Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `activities`.
 
@@ -55,7 +55,7 @@ Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `ac
 # Returns
 - `x̄s`: Derivatives of output `s` w.r.t. `xs` estimated by finite differencing.
 =#
-function _make_j′vp_call(fdm, f, ȳ, activities)
+function _fd_reverse(fdm, f, ȳ, activities)
     xs = map(x -> x.val, activities)
     ignores = map(a -> a isa Const, activities)
     f2 = _wrap_reverse_function(f, xs, ignores)
