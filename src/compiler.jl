@@ -4613,6 +4613,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1+swiftself), attr)
         res = load!(B, eltype(value_type(parameters(llvmf)[1+swiftself])), sret)
+        API.SetMustCache!(res)
     end
     if swiftself
         attr = EnumAttribute("swiftself")
