@@ -53,7 +53,8 @@ function EnzymeRules.forward(
         return dval
     else
         val = func.val(x.val; a=(incorrect_primal ? a - 1 : a), kwargs...)
-        return RT(val, dval)
+        RT <: Duplicated && return Duplicated(val, dval)
+        RT <: BatchDuplicated && return BatchDuplicated(val, dval)
     end
 end
 
