@@ -176,9 +176,8 @@ jobs:
         shell: julia --color=yes {0}
         run: |
           using Pkg
+          Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])
           Pkg.instantiate()
-          Pkg.develop(path="lib/EnzymeCore")
-          Pkg.develop(path=".")
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
