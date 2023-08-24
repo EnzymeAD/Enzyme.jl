@@ -337,10 +337,7 @@ end
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
                         # https://github.com/EnzymeAD/Enzyme.jl/issues/877
-                    end broken = (
-                        !(Tc <: Const && Ty <: Const) ||
-                        (T <: ComplexF64 && !(Tret <: Const))
-                    )
+                    end broken = (T <: Real && !(Tc <: Const && Ty <: Const))
                 end
             end
         end
