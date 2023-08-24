@@ -61,9 +61,15 @@ function _fd_reverse(fdm, f, ȳ, activities)
     f2 = _wrap_reverse_function(f, xs, ignores)
     all(ignores) && return map(zero_tangent, xs)
     ignores = collect(ignores)
+    is_batch = _any_batch(map(typeof, activities)...)
+    batch_size = is_batch ? _batch_size(map(typeof, activities)...) : 1
     x̄s = map(collect(activities)) do a
-        a isa Union{Const,Active} && return zero_tangent(a.val)
-        return a.dval
+        if a isa Union{Const,Active}
+            dval = ntuple(_ -> zero_tangent(a.val), batch_size)
+            return is_batch ? dval : dval[1]
+        else
+            return a.dval
+        end
     end
     sigargs = xs[.!ignores]
     s̄igargs = x̄s[.!ignores]
