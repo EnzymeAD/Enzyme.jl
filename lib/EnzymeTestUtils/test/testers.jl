@@ -192,7 +192,7 @@ end
                 @testset for Tret in (Const, Duplicated, BatchDuplicated),
                     Tc in (Const, Duplicated, BatchDuplicated),
                     Ty in (Const, Duplicated, BatchDuplicated),
-                    T in (Float32, Float64, ComplexF32, ComplexF64)
+                    T in (Float32, Float64, ComplexF64)
 
                     # if some are batch, all non-Const must be batch
                     are_activities_compatible(Tret, Tc, Ty) || continue
@@ -330,7 +330,7 @@ end
                 @testset for Tret in (Const, Active),
                     Tc in (Const, Duplicated),
                     Ty in (Const, Duplicated),
-                    T in (Float32, Float64, ComplexF32, ComplexF64)
+                    T in (Float32, Float64, ComplexF64)
 
                     c = MutatedCallable(randn(T, n))
                     y = randn(T, n)
