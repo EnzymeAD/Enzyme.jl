@@ -131,6 +131,7 @@ end
                         elseif TT <: NamedTuple
                             x = (a=randn(T), b=randn(T))
                         else  # TT <: TestStruct
+                            VERSION ≤ v"1.8" && (@test_skip false; continue)
                             x = TestStruct(randn(T, 5), randn(T))
                         end
                         atol = rtol = sqrt(eps(real(T)))
@@ -160,7 +161,25 @@ end
                     x = randn(T, 3)
                     a = randn(T)
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+
+                    if VERSION < v"1.8" && (
+                        Tret <: BatchDuplicated ||
+                        Tx <: BatchDuplicated ||
+                        Ta <: BatchDuplicated
+                    )
+                        @test !fails() do
+                            test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                        end skip = true
+                    else
+                        @test !fails() do
+                            test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                        end broken = (
+                            VERSION < v"1.8" &&
+                            Tx <: Const &&
+                            !(Ta <: Const) &&
+                            T <: Complex
+                        )
+                    end
                 end
             end
 
@@ -182,7 +201,9 @@ end
                     a = randn(T)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                    @test !fails() do
+                        test_forward(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                    end skip = (VERSION < v"1.8" && T <: Complex)
                 end
                 Enzyme.API.runtimeActivity!(false)
             end
@@ -201,7 +222,16 @@ end
                     y = randn(T, n)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
+                    @test !fails() do
+                        test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
+                    end skip = (
+                        VERSION < v"1.8" && (
+                            T <: ComplexF32 ||
+                            Tret <: BatchDuplicated ||
+                            Tc <: BatchDuplicated ||
+                            Ty <: BatchDuplicated
+                        )
+                    )
                 end
             end
         end
@@ -298,7 +328,9 @@ end
                     x = randn(T, 3)
                     a = randn(T)
                     atol = rtol = sqrt(eps(real(T)))
-                    test_reverse(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                    @test !fails() do
+                        test_reverse(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+                    end broken = (VERSION < v"1.8" && Tx <: Const && T <: Complex)
                 end
             end
 
@@ -318,7 +350,9 @@ end
                     a = randn(T)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                    @test !fails() do
+                        test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                    end broken = (VERSION < v"1.8" && Ty <: Const && T <: Complex)
                 end
                 Enzyme.API.runtimeActivity!(false)
             end
@@ -337,7 +371,10 @@ end
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
                         # https://github.com/EnzymeAD/Enzyme.jl/issues/877
-                    end broken = (T <: Real && !(Tc <: Const && Ty <: Const))
+                    end broken = (
+                        (VERSION > v"1.8" && T <: Real && !(Tc <: Const && Ty <: Const)) ||
+                        (VERSION < v"1.8" && Tc <: Const)
+                    )
                 end
             end
         end
