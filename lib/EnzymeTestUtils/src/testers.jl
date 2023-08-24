@@ -172,7 +172,17 @@ function test_reverse(
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
         # generate tangent for output
-        ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+        if !_any_batch(map(typeof, activities)...)
+            ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+        else
+            i = findfirst(activities) do a
+                return a isa Union{BatchDuplicated,BatchDuplicatedNoNeed}
+            end
+            batch_size = length(activities[i].dval)
+            ȳ = ntuple(batch_size) do _
+                ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+            end
+        end
         # call finitedifferences, avoid mutating original arguments
         dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities)
         # call autodiff, allow mutating original arguments
@@ -224,7 +234,7 @@ function test_reverse(
                     test_approx(act_i.dval, dx_fdm_i, msg_deriv; atol, rtol)
                 elseif act_i isa BatchDuplicated
                     @assert length(act_i.dval) == length(dx_fdm_i)
-                    for (j, (act_i_j, dx_fdm_i_j)) in enumerate(axt_i.dval, dx_fdm_i)
+                    for (j, (act_i_j, dx_fdm_i_j)) in enumerate(zip(act_i.dval, dx_fdm_i))
                         msg_deriv = "$target_str for batch index $j should agree with finite differences"
                         test_approx(act_i_j, dx_fdm_i_j, msg_deriv; atol, rtol)
                     end

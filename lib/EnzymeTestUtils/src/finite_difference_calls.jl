@@ -68,7 +68,19 @@ function _fd_reverse(fdm, f, ȳ, activities)
     sigargs = xs[.!ignores]
     s̄igargs = x̄s[.!ignores]
     sigarginds = eachindex(x̄s)[.!ignores]
-    fd = FiniteDifferences.j′vp(fdm, f2, (ȳ, s̄igargs...), sigargs...)
+    if !_any_batch(map(typeof, activities)...)
+        fd = FiniteDifferences.j′vp(fdm, f2, (ȳ, s̄igargs...), sigargs...)
+    else
+        fd = Tuple(
+            zip(
+                map(ȳ, s̄igargs...) do y_dval, sigargs_dvals...
+                    FiniteDifferences.j′vp(
+                        fdm, f2, (y_dval, sigargs_dvals...), sigargs...
+                    )
+                end...,
+            ),
+        )
+    end
     @assert length(fd) == length(sigarginds)
     x̄s[sigarginds] = collect(fd)
     return (x̄s...,)
