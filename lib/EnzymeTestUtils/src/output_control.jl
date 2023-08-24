@@ -65,7 +65,7 @@ _string_typeof(x) = string(typeof(x))
 function _string_activity(xs::Tuple)
     strs = map(xs) do x
         x isa Tuple && return "(::$(_string_typeof(x[1])), $(x[2]))"
-        return _string_typeof(s[1])
+        return _string_typeof(x)
     end
     return join(strs, ", ")
 end
