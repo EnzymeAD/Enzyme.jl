@@ -194,13 +194,13 @@ function test_reverse(
         if !_any_batch(map(typeof, activities)...)
             ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
         else
-            i = findfirst(activities) do a
-                return a isa Union{BatchDuplicated,BatchDuplicatedNoNeed}
-            end
-            batch_size = length(activities[i].dval)
-            ȳ = ntuple(batch_size) do _
-                ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
-            end
+            batch_size = _batch_size(map(typeof, activities)...)
+            ks = ntuple(Symbol ∘ string, batch_size)
+            ȳ = NamedTuple{ks}(
+                ntuple(batch_size) do _
+                    ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+                end,
+            )
         end
         # call finitedifferences, avoid mutating original arguments
         dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities)
