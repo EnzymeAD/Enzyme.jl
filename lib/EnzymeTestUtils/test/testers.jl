@@ -308,7 +308,7 @@ end
                 sz = (2, 3, 4)
                 @testset "$name" for (name, (TT, fun)) in combinations
                     @testset for Tret in (Active, Const),
-                        Tx in (Const, Duplicated),
+                        Tx in (Const, Duplicated, BatchDuplicated),
                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
                         x = randn(T, sz[1:ndims(TT)])
