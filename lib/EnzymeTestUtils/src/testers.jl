@@ -23,11 +23,28 @@ Test `Enzyme.autodiff` of `f` in `Forward`-mode against finite differences.
 
 # Examples
 
+Here we test a rule for a function of scalars. Because we don't provide an activity
+annotation for `y`, it is assumed to be `Const`.
+
 ```julia
-x = randn()
-y = randn()  # will be Const
+using Enzyme, EnzymeTestUtils
+
+x, y = randn(2)
 for Tret in (Const, Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
     test_forward(*, Tret, (x, Tx), y)
+end
+```
+
+Here we test a rule for a function of an array in batch forward-mode:
+
+```julia
+x = randn(3)
+y = randn()
+for Tret in (Const, BatchDuplicated, BatchDuplicatedNoNeed),
+    Tx in (Const, BatchDuplicated),
+    Ty in (Const, BatchDuplicated)
+
+    test_forward(*, Tret, (x, Tx), (y, Ty))
 end
 ```
 """
@@ -130,23 +147,25 @@ additional constraints:
 
 # Examples
 
-Testing a function that returns a scalar:
+Here we test a rule for a function of scalars. Because we don't provide an activity
+annotation for `y`, it is assumed to be `Const`.
 
 ```julia
+using Enzyme, EnzymeTestUtils
+
 x = randn()
-y = randn()  # will be Const
+y = randn()
 for Tret in (Const, Active), Tx in (Const, Active)
     test_reverse(*, Tret, (x, Tx), y)
 end
 ```
 
-Testing a function that returns an array:
+Here we test a rule for a function of an array in batch reverse-mode:
 
 ```julia
 x = randn(3)
-y = randn()  # will be Const
-for Tret in (Const, Duplicated), Tx in (Const, Duplicated)
-    test_reverse(*, Tret, (x, Tx), y)
+for Tret in (Const, Active), Tx in (Const, BatchDuplicated)
+    test_reverse(prod, Tret, (x, Tx))
 end
 ```
 """
