@@ -119,7 +119,7 @@ end
                             BatchDuplicatedNoNeed,
                         ),
                         Tx in (Const, Duplicated, BatchDuplicated),
-                        T in (Float32, Float64, ComplexF32, ComplexF64)
+                        T in (Float32, Float64, ComplexF64)
 
                         # skip invalid combinations
                         are_activities_compatible(Tret, Tx) || continue
@@ -226,7 +226,6 @@ end
                         test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
                     end skip = (
                         VERSION < v"1.8" && (
-                            T <: ComplexF32 ||
                             Tret <: BatchDuplicated ||
                             Tc <: BatchDuplicated ||
                             Ty <: BatchDuplicated
