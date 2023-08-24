@@ -3,11 +3,11 @@ using EnzymeTestUtils
 using MetaTesting
 using Test
 
-f_array(x) = sum(exp, x)
+f_array(x) = sum(abs2, x)
 f_tuple(x) = (-3 * x[1], 2 * x[2])
-f_namedtuple(x) = (s=sin(x.a), c=cos(x.b))
-f_struct(x::TestStruct) = TestStruct(sinh.(x.a .* x.x), exp(x.a))
-f_multiarg(x::AbstractArray, a) = sin.(a .* x)
+f_namedtuple(x) = (s=abs2(x.a), c=x.b^3)
+f_struct(x::TestStruct) = TestStruct((x.a .* x.x) .^ 3, x.a^4)
+f_multiarg(x::AbstractArray, a) = abs2.(a .* x)
 function f_mut!(y, x, a)
     y .= x .* a
     return y
