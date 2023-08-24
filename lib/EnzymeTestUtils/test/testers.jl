@@ -201,9 +201,7 @@ end
                     y = randn(T, n)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    @test !fails() do
-                        test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
-                    end broken = (T <: ComplexF32 && !(Tc <: Const && Ty <: Const))
+                    test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
                 end
             end
         end
