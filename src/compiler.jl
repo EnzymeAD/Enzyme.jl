@@ -9739,16 +9739,18 @@ const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
 
+    haskey(cache, key) && return cache[key]
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(cache_lock)
     try
-        obj = get(cache, key, nothing)
-        if obj === nothing
+        if haskey(cache, key)
+            cache[key]
+        else
             asm = _thunk(job)
             obj = _link(job, asm)
             cache[key] = obj
+            obj
         end
-        obj
     finally
         unlock(cache_lock)
     end
