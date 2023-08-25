@@ -19,7 +19,7 @@ jobs:
           - '1.7'
           - '1.8'
           - '1.9'
-          - '1.10'
+          - '1.10-nightly'
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -34,6 +34,8 @@ jobs:
           - os: windows-latest
             arch: x64
             libEnzyme: local
+          - os: windows-latest
+            version: '1.10-nightly'
         include:
           - os: ubuntu-20.04
             arch: x86
@@ -132,7 +134,7 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
-        continue-on-error: ${{ matrix.version == 'nightly' }}
+        continue-on-error: ${{ matrix.version == 'nightly' || matrix.version == '1.10-nightly' }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
