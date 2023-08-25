@@ -132,6 +132,7 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
