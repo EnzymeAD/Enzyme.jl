@@ -9,7 +9,7 @@ f_namedtuple(x) = (s=abs2(x.a), c=x.b^3)
 f_struct(x::TestStruct) = TestStruct((x.a .* x.x) .^ 3, x.a^4)
 f_multiarg(x::AbstractArray, a) = abs2.(a .* x)
 function f_mut!(y, x, a)
-    y .= x .* a
+    map!(xi -> xi * a, y, x)
     return y
 end
 
