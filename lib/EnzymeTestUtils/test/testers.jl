@@ -339,7 +339,6 @@ end
 
             @testset "mutating function" begin
                 sz = (2, 3)
-                Enzyme.API.runtimeActivity!(true)
                 @testset for Ty in (Const, Duplicated),
                     Tx in (Const, Duplicated),
                     Ta in (Const, Active),
@@ -357,7 +356,6 @@ end
                         test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
                     end broken = (VERSION < v"1.8" && Ty <: Const && T <: Complex)
                 end
-                Enzyme.API.runtimeActivity!(false)
             end
 
             @testset "mutated callable" begin
