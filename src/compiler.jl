@@ -2613,9 +2613,11 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
     if shadowR != C_NULL
         cal =  new_from_original(gutils, orig)
+        width = get_width(gutils)
         if width == 1
             shadow = cal
         else
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
             for i in 1:width
                 shadow = insert_value!(B, shadow, cal, i-1)
@@ -2634,9 +2636,11 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
 
     if shadowR != C_NULL
         cal =  new_from_original(gutils, orig)
+        width = get_width(gutils)
         if width == 1
             shadow = cal
         else
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
             for i in 1:width
                 shadow = insert_value!(B, shadow, cal, i-1)
