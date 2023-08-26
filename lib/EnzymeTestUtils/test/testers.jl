@@ -369,17 +369,27 @@ end
                     Ty in (Const, Duplicated),
                     T in (Float32, Float64, ComplexF64)
 
+                    # if some are batch, none must be duplicated
+                    are_activities_compatible(Tret, Tc, Ty) || continue
+
                     c = MutatedCallable(randn(T, n))
                     y = randn(T, n)
 
                     atol = rtol = sqrt(eps(real(T)))
-                    @test !fails() do
-                        test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
-                        # https://github.com/EnzymeAD/Enzyme.jl/issues/877
-                    end broken = (
+                    # https://github.com/EnzymeAD/Enzyme.jl/issues/877
+                    test_broken = (
                         (VERSION > v"1.8" && T <: Real && !(Tc <: Const && Ty <: Const)) ||
                         (VERSION < v"1.8" && Tc <: Const)
                     )
+                    if Tc <: BatchDuplicated && Ty <: BatchDuplicated
+                        @test !fails() do
+                            test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                        end skip = test_broken
+                    else
+                        @test !fails() do
+                            test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
+                        end broken = test_broken
+                    end
                 end
             end
         end
