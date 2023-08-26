@@ -339,13 +339,14 @@ end
 
             @testset "mutating function" begin
                 sz = (2, 3)
-                @testset for Ty in (Const, Duplicated),
-                    Tx in (Const, Duplicated),
+                @testset for Ty in (Const, Duplicated, BatchDuplicated),
+                    Tx in (Const, Duplicated, BatchDuplicated),
                     Ta in (Const, Active),
+                    Tret in (Const,),  # return value is nothing
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
-                    # return value is nothing
-                    Tret = Const
+                    # if some are batch, none must be duplicated
+                    are_activities_compatible(Tret, Ty, Tx, Ta) || continue
 
                     x = randn(T, sz)
                     y = zeros(T, sz)
@@ -353,8 +354,11 @@ end
 
                     atol = rtol = sqrt(eps(real(T)))
                     @test !fails() do
-                        test_reverse(f_mut!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
-                    end broken = (VERSION < v"1.8" && Ty <: Const && T <: Complex)
+                        test_reverse(
+                            f_mut_nothing!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol
+                        )
+                        # https://github.com/EnzymeAD/Enzyme.jl/issues/1028
+                    end broken = (Tx <: Const && Ta <: Const && !(Ty <: Const))
                 end
             end
 
