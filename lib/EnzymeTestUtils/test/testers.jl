@@ -12,6 +12,10 @@ function f_mut!(y, x, a)
     map!(xi -> xi * a, y, x)
     return y
 end
+function f_mut_nothing!(y, x, a)
+    map!(xi -> xi * a, y, x)
+    return nothing
+end
 
 f_kwargs(x; a=3.0, kwargs...) = a .* x .^ 2
 
