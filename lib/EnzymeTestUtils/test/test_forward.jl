@@ -123,10 +123,7 @@ end
                     @test !fails() do
                         test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
                     end broken = (
-                        VERSION < v"1.8" &&
-                        Tx <: Const &&
-                        !(Ta <: Const) &&
-                        T <: Complex
+                        VERSION < v"1.8" && Tx <: Const && !(Ta <: Const) && T <: Complex
                     )
                 end
             end
