@@ -3,7 +3,9 @@
 
 Test `Enzyme.autodiff` of `f` in `Forward`-mode against finite differences.
 
-`f` has the constraints of the same argument passed to `Enzyme.autodiff`.
+`f` has all constraints of the same argument passed to `Enzyme.autodiff`, with several
+additional constraints:
+- If it mutates one of its arguments, it _must_ return that argument.
 
 # Arguments
 
@@ -121,7 +123,8 @@ end
 """
     test_reverse(f, Activity, args...; kwargs...)
 
-Test `Enzyme.autodiff` of `f` in `Reverse`-mode against finite differences.
+Test `Enzyme.autodiff_thunk` of `f` in `ReverseSplitWithPrimal`-mode against finite
+differences.
 
 `f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with several
 additional constraints:
