@@ -6,5 +6,6 @@ using Test
     include("test_approx.jl")
     include("compatible_activities.jl")
     include("generate_tangent.jl")
-    include("testers.jl")
+    include("test_forward.jl")
+    include("test_reverse.jl")
 end
