@@ -77,11 +77,9 @@ function test_reverse(
         else
             batch_size = _batch_size(map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
-            ȳ = NamedTuple{ks}(
-                ntuple(batch_size) do _
-                    ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
-                end,
-            )
+            ȳ = ntuple(batch_size) do _
+                ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+            end
         end
         # call finitedifferences, avoid mutating original arguments
         dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities)
