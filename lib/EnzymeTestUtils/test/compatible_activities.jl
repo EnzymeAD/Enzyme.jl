@@ -11,6 +11,9 @@ using Enzyme
         @testset for Tret in not_batch_ret, Tx in not_batch, Ty in not_batch
             @test are_activities_compatible(Tret, Tx, Ty)
         end
+        @testset for Tret in batch_ret, Tx in batch, Ty in batch
+            @test are_activities_compatible(Tret, Tx, Ty)
+        end
     end
     @testset "incompatible activities" begin
         @testset for Tret in batch_ret, Tx in not_batch, Ty in not_batch
