@@ -72,7 +72,7 @@ function test_reverse(
         # call primal, avoid mutating original arguments
         y = call_with_copy(primals...)
         # generate tangent for output
-        if !_any_batch(map(typeof, activities)...)
+        if !_any_batch_duplicated(map(typeof, activities)...)
             ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
         else
             batch_size = _batch_size(map(typeof, activities)...)

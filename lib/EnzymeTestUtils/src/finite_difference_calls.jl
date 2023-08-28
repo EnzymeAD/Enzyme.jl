@@ -61,7 +61,7 @@ function _fd_reverse(fdm, f, ȳ, activities)
     f2 = _wrap_reverse_function(f, xs, ignores)
     all(ignores) && return map(zero_tangent, xs)
     ignores = collect(ignores)
-    is_batch = _any_batch(map(typeof, activities)...)
+    is_batch = _any_batch_duplicated(map(typeof, activities)...)
     batch_size = is_batch ? _batch_size(map(typeof, activities)...) : 1
     x̄s = map(collect(activities)) do a
         if a isa Union{Const,Active}
@@ -74,7 +74,7 @@ function _fd_reverse(fdm, f, ȳ, activities)
     sigargs = xs[.!ignores]
     s̄igargs = x̄s[.!ignores]
     sigarginds = eachindex(x̄s)[.!ignores]
-    if !_any_batch(map(typeof, activities)...)
+    if !is_batch
         fd = FiniteDifferences.j′vp(fdm, f2, (ȳ, s̄igargs...), sigargs...)
     else
         fd = Tuple(
