@@ -4927,13 +4927,12 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     evsrc = extract_value!(B, shadowsrc, i-1)
     evdst = extract_value!(B, shadowdst, i-1)
 
-    if fwd && secretty != nothing
-        LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
-    end
+    shadowsrc0 = get_array_data(B, evsrc)
+    shadowdst0 = get_array_data(B, evdst)
 
-    addrt = LLVM.PointerType(LLVM.IntType(8), 13)
-    shadowsrc0 = load!(B, addrt, bitcast!(B, evsrc, LLVM.PointerType(addrt, LLVM.addrspace(LLVM.value_type(evsrc)))))
-    shadowdst0 = load!(B, addrt, bitcast!(B, evdst, LLVM.PointerType(addrt, LLVM.addrspace(LLVM.value_type(evdst)))))
+    if fwd && secretty != nothing
+        LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
+    end
 
     API.sub_transfer(gutils, fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient, secretty, intrinsic, #=dstAlign=#1, #=srcAlign=#1, #=offset=#0, false, shadowdst0, false, shadowsrc0, length, isVolatile, orig, allowForward, #=shadowsLookedUp=#!fwd)
     end
