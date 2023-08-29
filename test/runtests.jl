@@ -1904,6 +1904,19 @@ end
     @test bres[2][1] ≈  1.0
     @test bres[2][2] ≈  4.0
     @test bres[2][3] ≈ 12.0
+
+    times2(x) = x * 2
+    xact = BatchDuplicated([1.0, 2.0, 3.0, 4.0, 5.0], (zeros(5), zeros(5)))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(times2)}, BatchDuplicated, typeof(xact))
+
+    tape, primal, shadow = forward(Const(f), xact)
+    dy1 = [0.07, 0.011, 0.013, 0.017, 0.019]
+    dy2 = [0.23, 0.029, 0.031, 0.037, 0.041]
+    copyto!(shadow[1], dy1)
+    copyto!(shadow[2], dy2)
+    r = pullback(Const(times2), xact, tape)
+    @test xact.dval[1] ≈ dy1 * 2
+    @test xact.dval[1] ≈ dy2 * 2
 end
 
 @testset "Jacobian" begin
