@@ -102,11 +102,11 @@ end
 
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
-                    test_reverse(
-                        f_mut_rev!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol
-                    )
+                    test_reverse(f_mut_rev!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
                     # https://github.com/EnzymeAD/Enzyme.jl/issues/1028
-                end broken = (Tx <: Const && Ta <: Const && !(Ty <: Const))
+                end broken = (
+                    VERSION > v"1.8" && Tx <: Const && Ta <: Const && !(Ty <: Const)
+                )
             end
         end
 
