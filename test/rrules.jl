@@ -217,4 +217,45 @@ end
     end
 end
 
+function cmyfunc!(y, x) 
+    y .= x
+    nothing
+end
+
+function cprimal(x0, y0)
+    x = copy(x0)
+    y = copy(y0)
+    for j in 1:2
+        cmyfunc!(y, x)
+        x .+= y
+    end
+    return @inbounds x[1]
+end
+
+function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
+    y::Duplicated, x::Duplicated)
+    cmyfunc!(y.val, x.val)
+    tape = (copy(x.val), 3)
+    return AugmentedReturn(nothing, nothing, tape)
+end
+
+const seen = Set()
+function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
+    y::Duplicated,  x::Duplicated)
+    xval = tape[1] 
+    p = pointer(xval)
+    @show p, seen
+    @assert !in(p, seen)
+    push!(seen, p)
+    return (nothing, nothing)
+end
+
+@testset "Force caching on sret primal" begin
+    x = fill(2.0, 3)
+    y = fill(2.0, 3)
+    dx = zero(x)
+    dy = zero(y)
+    autodiff(Reverse, Const(cprimal), Active, Duplicated(x, dx), Duplicated(y, dy))
+end
+
 end # ReverseRules
