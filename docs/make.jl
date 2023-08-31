@@ -3,10 +3,12 @@ pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..", "lib")) # add EnzymeCore to envir
 
 using Enzyme
 using EnzymeCore
+using EnzymeTestUtils
 using Documenter
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 DocMeta.setdocmeta!(EnzymeCore, :DocTestSetup, :(using EnzymeCore); recursive=true)
+DocMeta.setdocmeta!(EnzymeTestUtils, :DocTestSetup, :(using EnzymeTestUtils); recursive=true)
 @eval EnzymeCore begin
     const Enzyme = $(Enzyme)
 end
@@ -32,7 +34,7 @@ end
 examples = [title => joinpath("generated", string(name, ".md")) for (title, name) in examples]
 
 makedocs(;
-    modules=[Enzyme, EnzymeCore],
+    modules=[Enzyme, EnzymeCore, EnzymeTestUtils],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
     repo="https://github.com/EnzymeAD/Enzyme.jl/blob/{commit}{path}#{line}",
     sitename="Enzyme.jl",
