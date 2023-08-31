@@ -271,3 +271,37 @@ double(x) = 2*x
 EnzymeRules.inactive(::typeof(double), args...) = nothing
 
 autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
+
+# ## Testing our rules
+
+# We can test our rules using finite differences using [`EnzymeTestUtils.test_forward`](@ref)
+# and [`EnzymeTestUtils.test_reverse`](@ref).
+
+using EnzymeTestUtils, Test
+
+@testset "f rules" begin
+    @testset "forward" begin
+        @testset for RT in (Const, DuplicatedNoNeed, Duplicated),
+            Tx in (Const, Duplicated),
+            Ty in (Const, Duplicated)
+
+            x = [3.0, 1.0]
+            y = [0.0, 0.0]
+            test_forward(g, RT, (x, Tx), (y, Ty))
+        end
+    end
+    @testset "reverse" begin
+        @testset for RT in (Active,),
+            Tx in (Duplicated,),
+            Ty in (Duplicated,),
+            fun in (g, h)
+
+            x = [3.0, 1.0]
+            y = [0.0, 0.0]
+            test_reverse(fun, RT, (x, Tx), (y, Ty))
+        end
+    end
+end
+
+# In any package that implements Enzyme rules using EnzymeRules, it is recommended to add
+# EnzymeTestUtils as a test dependency to test the rules.
