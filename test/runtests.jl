@@ -16,6 +16,7 @@ using ForwardDiff
 using Aqua
 using Statistics
 using LinearAlgebra
+using InlineStrings
 
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
@@ -2276,6 +2277,32 @@ end
         Const(rhs_terms),
     )
     @test ad_eta[1] ≈ 0.0
+end
+
+@testset "Tape Width" begin
+    struct Roo
+        x::Float64
+        bar::String63
+    end
+
+    struct Moo
+        x::Float64
+        bar::String63
+    end
+
+    function g(f)
+        return f.x*5.0
+    end
+
+    res = autodiff(Reverse, g, Active, Active(Roo(3.0, "a")))[1][1]
+
+    @test res.x == 5.0
+
+    if VERSION > v"1.10-"
+        res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
+
+        @test res.x == 5.0
+    end
 end
 
 @testset "Type preservation" begin

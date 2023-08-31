@@ -6037,6 +6037,15 @@ const TapeTypes = Dict{String, DataType}()
 base_type(T::UnionAll) = base_type(T.body)
 base_type(T::DataType) = T
 
+const WideIntWidths = [256, 512, 1024, 2048]
+
+let
+    for n ∈ WideIntWidths
+        let T = Symbol(:UInt,n)
+            eval(quote primitive type $T  <: Unsigned $n end end)
+        end
+    end
+end
 # return result and if contains any
 function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     tkind = LLVM.API.LLVMGetTypeKind(Type)
@@ -6105,6 +6114,14 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return UInt64, false
         elseif N == 128
             return UInt128, false
+        elseif N == 256
+            return UInt256, false
+        elseif N == 512
+            return UInt512, false
+        elseif N == 1024
+            return UInt1024, false
+        elseif N == 2048
+            return UInt2048, false
         else
             error("Can't construct tape type for integer of width $N")
         end
