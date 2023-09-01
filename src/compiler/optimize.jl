@@ -169,6 +169,9 @@ function nodecayed_phis!(mod::LLVM.Module)
             for (v, pb) in LLVM.incoming(inst)
                 b = IRBuilder()
                 position!(b, terminator(pb))
+                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+                    v = operands(v)[1]
+                end
                 if gty !== nothing
                     undeforpoison = isa(v, LLVM.UndefValue)
                     @static if LLVM.version() >= v"12"
