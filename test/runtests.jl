@@ -1909,7 +1909,7 @@ end
     xact = BatchDuplicated([1.0, 2.0, 3.0, 4.0, 5.0], (zeros(5), zeros(5)))
     forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(times2)}, BatchDuplicated, typeof(xact))
 
-    tape, primal, shadow = forward(Const(f), xact)
+    tape, primal, shadow = forward(Const(times2), xact)
     dy1 = [0.07, 0.011, 0.013, 0.017, 0.019]
     dy2 = [0.23, 0.029, 0.031, 0.037, 0.041]
     copyto!(shadow[1], dy1)
