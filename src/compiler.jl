@@ -6323,7 +6323,7 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
     end
     if isa(ty, LLVM.ArrayType)
         st = LLVM.Value(julia_undef_value_for_type(eltype(ty).ref, forceZero))
-        return ConstantArray(ty, [st for i in 1:length(ty)]).ref
+        return ConstantArray(eltype(ty), [st for i in 1:length(ty)]).ref
     end
     if isa(ty, LLVM.StructType)
         vals = LLVM.Constant[]
