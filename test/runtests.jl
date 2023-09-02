@@ -1916,7 +1916,7 @@ end
     copyto!(shadow[2], dy2)
     r = pullback(Const(times2), xact, tape)
     @test xact.dval[1] ≈ dy1 * 2
-    @test xact.dval[1] ≈ dy2 * 2
+    @test xact.dval[2] ≈ dy2 * 2
 end
 
 @testset "Jacobian" begin
