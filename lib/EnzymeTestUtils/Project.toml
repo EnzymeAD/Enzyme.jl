@@ -18,6 +18,7 @@ EnzymeCore = "0.5"
 FiniteDifferences = "0.12.12"
 MetaTesting = "0.1"
 Quaternions = "0.7"
+julia = "1.6"
 
 [extras]
 MetaTesting = "9e32d19f-1e4f-477a-8631-b16c78aa0f56"
