@@ -202,7 +202,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             end
         end
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed || A <: BatchDuplicatedFunc
-        throw(ErrorException("Duplicated Returns not yet handled"))
+        throw(ErrorException("Duplicated Return type $A not yet handled"))
     end
     thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     if A <: Active

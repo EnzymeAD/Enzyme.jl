@@ -380,6 +380,12 @@ end
     return state == ActiveState
 end
 
+@inline @generated function active_reg_outer(::Type{T}) where {T}
+    seen = Dict{DataType, ActivityState}()
+    state = active_reg_inner(T, seen)
+    return state
+end
+
 @inline @generated function active_reg_nothrow(::Type{T}) where {T}
     seen = Dict{DataType, ActivityState}()
     state = active_reg_inner(T, seen)
@@ -1257,9 +1263,17 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
         expr = :(
                  if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i]))
                    @assert $(primtypes[i]) !== DataType
-                    if !$forwardMode && active_reg($(primtypes[i]))
+                   state = if $forwardMode
+                        DupState
+                    else
+                        active_reg_outer($(primtypes[i]))
+                    end
+
+                if state == MixedState
+                    throw(AssertionError(string($(primtypes[i]))*" has mixed internal activity types"))
+                elseif state == ActiveState
                     Active($(primargs[i]))
-                 else
+                else
                      $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
                  end
              else
