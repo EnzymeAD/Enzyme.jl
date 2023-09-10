@@ -77,8 +77,8 @@ include("typetree.jl")
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
     end
-    include("rules/LinearAlgebra/blas.jl")
 end
+include("rules/LinearAlgebra/blas.jl")
 
 f0(x) = 1.0 + x
 function vrec(start, x)
