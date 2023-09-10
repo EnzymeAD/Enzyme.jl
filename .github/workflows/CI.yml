@@ -131,13 +131,6 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-      - name: "Develop EnzymeTestUtils as test dependency"
-        run: |
-          using Pkg;
-          # also must develop Enzyme to avoid project conflicts
-          # https://github.com/JuliaLang/Pkg.jl/issues/1585
-          Pkg.develop([PackageSpec(; path=pwd()), PackageSpec(; path="lib/EnzymeTestUtils")]);
-        shell: julia --color=yes --project=test {0}
       - uses: julia-actions/julia-runtest@v1
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
