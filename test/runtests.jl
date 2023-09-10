@@ -78,7 +78,7 @@ include("typetree.jl")
         include("ruleinvalidation.jl")
     end
 end
-include("rules/LinearAlgebra/blas.jl")
+include("blas.jl")
 
 f0(x) = 1.0 + x
 function vrec(start, x)
