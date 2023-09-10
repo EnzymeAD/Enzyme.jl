@@ -19,15 +19,24 @@ using Test
                 ),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2))
+                T in (fun == BLAS.dot ? RTs : RCs)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
-
-                x = randn(T, sz)
-                y = randn(T, sz)
                 atol = rtol = sqrt(eps(real(T)))
-                test_forward(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+
+                @testset "$fun(n, x, incx, y, incy)" begin
+                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                        x = randn(T, sz)
+                        y = randn(T, sz)
+                        test_forward(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+                    end
+                end
+
+                @testset "$fun(x, y)" begin
+                    x = randn(T, n)
+                    y = randn(T, n)
+                    test_forward(fun, Tret, (x, Tx), (y, Ty); atol, rtol)
+                end
             end
         end
 
@@ -35,15 +44,24 @@ using Test
             @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2))
+                T in (fun == BLAS.dot ? RTs : RCs)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
-
-                x = randn(T, sz)
-                y = randn(T, sz)
                 atol = rtol = sqrt(eps(real(T)))
-                test_reverse(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+
+                @testset "$fun(n, x, incx, y, incy)" begin
+                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                        x = randn(T, sz)
+                        y = randn(T, sz)
+                        test_reverse(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+                    end
+                end
+
+                @testset "$fun(x, y)" begin
+                    x = randn(T, n)
+                    y = randn(T, n)
+                    test_reverse(fun, Tret, (x, Tx), (y, Ty); atol, rtol)
+                end
             end
         end
     end
