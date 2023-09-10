@@ -8,6 +8,10 @@ if isfile(preferences_file) && !isfile(test_preferences_file)
 end
 end
 
+# work around https://github.com/JuliaLang/Pkg.jl/issues/1585
+using Pkg
+Pkg.develop(PackageSpec(; path=joinpath(dirname(@__DIR__), "lib", "EnzymeTestUtils")))
+
 using GPUCompiler
 using Enzyme
 using Test
@@ -78,6 +82,7 @@ include("typetree.jl")
         include("ruleinvalidation.jl")
     end
 end
+include("blas.jl")
 
 f0(x) = 1.0 + x
 function vrec(start, x)
