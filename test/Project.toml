@@ -1,7 +1,6 @@
 [deps]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
