@@ -4,8 +4,8 @@ using LinearAlgebra
 using Test
 
 @testset "BLAS rules" begin
-    RTs = (Float32, Float64)
-    RCs = (ComplexF32, ComplexF64)
+    BLASReals = (Float32, Float64)
+    BLASFloats = (ComplexF32, ComplexF64)
     n = 10
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
@@ -19,7 +19,7 @@ using Test
                 ),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs)
+                T in (fun == BLAS.dot ? BLASReals : BLASFloats)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
                 atol = rtol = sqrt(eps(real(T)))
@@ -44,7 +44,7 @@ using Test
             @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs)
+                T in (fun == BLAS.dot ? BLASReals : BLASFloats)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
                 atol = rtol = sqrt(eps(real(T)))
