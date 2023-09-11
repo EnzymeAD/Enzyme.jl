@@ -8,6 +8,39 @@ using Test
     BLASFloats = (ComplexF32, ComplexF64)
     n = 10
 
+    @testset "BLAS.scal!" begin
+        @testset "forward" begin
+            @testset for Tret in (
+                    Const,
+                    Duplicated,
+                    DuplicatedNoNeed,
+                    BatchDuplicated,
+                    BatchDuplicatedNoNeed,
+                ),
+                Ta in (Const, Duplicated, BatchDuplicated),
+                Tx in (Duplicated, BatchDuplicated),
+                T in BLASFloats
+
+                are_activities_compatible(Tret, Ta, Tx) || continue
+                atol = rtol = sqrt(eps(real(T)))
+
+                @testset "BLAS.scal!(n, a, x, incx)" begin
+                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                        a = randn(T)
+                        x = randn(T, sz)
+                        test_forward(BLAS.scal!, Tret, n, (a, Ta), (x, Tx), inc; atol, rtol)
+                    end
+                end
+
+                @testset "BLAS.scal!(a, x)" begin
+                    a = randn(T)
+                    x = randn(T, n)
+                    test_forward(BLAS.scal!, Tret, (a, Ta), (x, Tx); atol, rtol)
+                end
+            end
+        end
+    end
+
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
         @testset "forward" begin
             @testset for Tret in (
