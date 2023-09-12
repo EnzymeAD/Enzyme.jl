@@ -4,6 +4,8 @@ using LinearAlgebra
 using MetaTesting
 using Test
 
+discard(_) = nothing
+
 @testset "BLAS rules" begin
     BLASReals = (Float32, Float64)
     BLASComplexes = (ComplexF32, ComplexF64)
@@ -68,11 +70,15 @@ using Test
                         x = randn(T, sz)
                         @test !fails() do
                             test_reverse(
-                                Tret, n, (a, Ta), (x, Tx), inc; atol, rtol
-                            ) do n, a, x, inc
-                                BLAS.scal!(n, a, x, inc)
-                                return nothing
-                            end
+                                discard ∘ BLAS.scal!,
+                                Tret,
+                                n,
+                                (a, Ta),
+                                (x, Tx),
+                                inc;
+                                atol,
+                                rtol,
+                            )
                         end broken = (Tx <: BatchDuplicated && sz isa Int)
                     end
                 end
@@ -81,10 +87,9 @@ using Test
                     a = randn(T)
                     x = randn(T, n)
                     @test !fails() do
-                        test_reverse(Tret, (a, Ta), (x, Tx); atol, rtol) do a, x
-                            BLAS.scal!(a, x)
-                            return nothing
-                        end
+                        test_reverse(
+                            discard ∘ BLAS.scal!, Tret, (a, Ta), (x, Tx); atol, rtol
+                        )
                     end broken = (Tx <: BatchDuplicated)
                 end
             end
@@ -92,8 +97,8 @@ using Test
     end
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
+        n = 10
         @testset "forward" begin
-            n = 10
             @testset for Tret in (
                     Const,
                     Duplicated,
@@ -193,10 +198,15 @@ using Test
                     y = randn(T, sz)
                     atol = rtol = sqrt(eps(real(T)))
                     @test !fails() do
-                        test_reverse(Tret, (a, Ta), (x, Tx), (y, Ty); atol, rtol) do a, x, y
-                            BLAS.axpy!(a, x, y)
-                            return nothing
-                        end
+                        test_reverse(
+                            discard ∘ BLAS.axpy!,
+                            Tret,
+                            (a, Ta),
+                            (x, Tx),
+                            (y, Ty);
+                            atol,
+                            rtol,
+                        )
                     end broken = (
                         T <: ComplexF32 &&
                         xor(Tx <: BatchDuplicated, Ty <: BatchDuplicated) &&
@@ -279,6 +289,7 @@ using Test
                     atol = rtol = sqrt(eps(real(T)))
                     @test !fails() do
                         test_reverse(
+                            discard ∘ BLAS.gemv!,
                             Tret,
                             t,
                             (alpha, Talpha),
@@ -288,10 +299,7 @@ using Test
                             (y, Ty);
                             atol,
                             rtol,
-                        ) do args...
-                            BLAS.gemv!(args...)
-                            return nothing
-                        end
+                        )
                     end broken = any(Base.Fix2(<:, BatchDuplicated), (Tx, Ty))
                 end
             end
@@ -357,6 +365,7 @@ using Test
                     atol = rtol = sqrt(eps(real(T)))
                     @test !fails() do
                         test_reverse(
+                            discard ∘ BLAS.spmv!,
                             Tret,
                             uplo,
                             (alpha, Talpha),
@@ -366,10 +375,7 @@ using Test
                             (y, Ty);
                             atol,
                             rtol,
-                        ) do uplo, alpha, AP, x, beta, y
-                            BLAS.spmv!(uplo, alpha, AP, x, beta, y)
-                            return nothing
-                        end
+                        )
                     end broken = TAP <: BatchDuplicated
                 end
             end
@@ -445,6 +451,7 @@ using Test
                     atol = rtol = sqrt(eps(real(T)))
                     @test !fails() do
                         test_reverse(
+                            discard ∘ BLAS.gemm!,
                             Tret,
                             tA,
                             tB,
@@ -455,10 +462,7 @@ using Test
                             (C, TC);
                             atol,
                             rtol,
-                        ) do args...
-                            BLAS.gemm!(args...)
-                            return nothing
-                        end
+                        )
                     end broken = (
                         T <: Complex && any(Base.Fix2(<:, BatchDuplicated), (TB, TC))
                     )
