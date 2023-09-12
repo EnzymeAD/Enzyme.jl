@@ -206,4 +206,95 @@ using Test
             end
         end
     end
+
+    @testset "BLAS.gemv!" begin
+        @testset "forward" begin
+            @testset for Tret in (
+                    Const,
+                    Duplicated,
+                    DuplicatedNoNeed,
+                    BatchDuplicated,
+                    BatchDuplicatedNoNeed,
+                ),
+                Talpha in (Const, Duplicated, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Tbeta in (Const, Duplicated, BatchDuplicated),
+                Ty in (Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Talpha, TA, Tx, Tbeta, Ty) || continue
+
+                @testset for T in BLASFloats, t in ('N', 'T', 'C')
+                    sz = (2, 3)
+                    alpha, beta = randn(T, 2)
+                    A = t === 'N' ? randn(T, sz...) : randn(T, reverse(sz)...)
+                    x = randn(T, sz[2])
+                    y = randn(T, sz[1])
+                    atol = rtol = sqrt(eps(real(T)))
+                    @test !fails() do
+                        test_forward(
+                            BLAS.gemv!,
+                            Tret,
+                            t,
+                            (alpha, Talpha),
+                            (A, TA),
+                            (x, Tx),
+                            (beta, Tbeta),
+                            (y, Ty);
+                            atol,
+                            rtol,
+                        )
+                    end broken = (
+                        T <: ComplexF32 &&
+                        !(Ty <: Const) &&
+                        !(Talpha <: Const && Tbeta <: Const)
+                    )
+                end
+            end
+        end
+
+        @testset "reverse" begin
+            @testset for Tret in (Const,),
+                Talpha in (Const, Active),
+                TA in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Tbeta in (Const, Active),
+                Ty in (Const, Duplicated, BatchDuplicated),
+                T in BLASFloats
+
+                are_activities_compatible(Tret, Talpha, TA, Tx, Tbeta, Ty) || continue
+
+                if T <: Complex && any(Base.Fix2(<:, BatchDuplicated), (TA, Tx, Ty))
+                    # avoid failure that crashes Julia
+                    @test false skip = true
+                    continue
+                end
+
+                @testset for t in ('N', 'T', 'C')
+                    sz = (2, 3)
+                    alpha, beta = randn(T, 2)
+                    A = t === 'N' ? randn(T, sz...) : randn(T, reverse(sz)...)
+                    x = randn(T, sz[2])
+                    y = randn(T, sz[1])
+                    atol = rtol = sqrt(eps(real(T)))
+                    @test !fails() do
+                        test_reverse(
+                            Tret,
+                            t,
+                            (alpha, Talpha),
+                            (A, TA),
+                            (x, Tx),
+                            (beta, Tbeta),
+                            (y, Ty);
+                            atol,
+                            rtol,
+                        ) do args...
+                            BLAS.gemv!(args...)
+                            return nothing
+                        end
+                    end broken = any(Base.Fix2(<:, BatchDuplicated), (Tx, Ty))
+                end
+            end
+        end
+    end
 end
