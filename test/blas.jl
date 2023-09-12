@@ -207,12 +207,7 @@ discard(_) = nothing
                             atol,
                             rtol,
                         )
-                    end broken = (
-                        T <: ComplexF32 &&
-                        xor(Tx <: BatchDuplicated, Ty <: BatchDuplicated) &&
-                        !(Ta <: Const) &&
-                        sz isa Int
-                    )
+                    end
                 end
             end
         end
