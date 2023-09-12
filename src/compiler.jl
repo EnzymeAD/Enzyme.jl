@@ -8053,7 +8053,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     push!(lhs_n, 0)
                     return typefix(val, tape, prev, lhs_n, ridxs)
                 end
-                @show ctype, tape, val, prev, idxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true)
+                @show ctype, tape, val, prev, lidxs, ridxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true)
                 @assert false
             end
 
