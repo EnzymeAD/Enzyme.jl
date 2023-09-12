@@ -8,9 +8,9 @@ using Test
     BLASReals = (Float32, Float64)
     BLASComplexes = (ComplexF32, ComplexF64)
     BLASFloats = (BLASReals..., BLASComplexes...)
-    n = 10
 
     @testset "BLAS.scal!" begin
+        n = 10
         @testset "forward" begin
             @testset for Tret in (
                     Const,
@@ -27,7 +27,7 @@ using Test
                 atol = rtol = sqrt(eps(real(T)))
 
                 @testset "BLAS.scal!(n, a, x, incx)" begin
-                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                    @testset for (sz, inc) in ((n, 1), ((2, 2n), -2))
                         a = randn(T)
                         x = randn(T, sz)
                         @test !fails() do
@@ -63,7 +63,7 @@ using Test
                 end
 
                 @testset "BLAS.scal!(n, a, x, incx)" begin
-                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                    @testset for (sz, inc) in ((n, 1), ((2, 2n), -2))
                         a = randn(T)
                         x = randn(T, sz)
                         @test !fails() do
@@ -93,6 +93,7 @@ using Test
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
         @testset "forward" begin
+            n = 10
             @testset for Tret in (
                     Const,
                     Duplicated,
@@ -108,7 +109,7 @@ using Test
                 atol = rtol = sqrt(eps(real(T)))
 
                 @testset "$fun(n, x, incx, y, incy)" begin
-                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                    @testset for (sz, inc) in ((n, 1), ((2, 2n), -2))
                         x = randn(T, sz)
                         y = randn(T, sz)
                         test_forward(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
@@ -133,7 +134,7 @@ using Test
                 atol = rtol = sqrt(eps(real(T)))
 
                 @testset "$fun(n, x, incx, y, incy)" begin
-                    @testset for (sz, inc) in ((10, 1), ((2, 20), -2))
+                    @testset for (sz, inc) in ((n, 1), ((2, 2n), -2))
                         x = randn(T, sz)
                         y = randn(T, sz)
                         test_reverse(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
@@ -208,6 +209,7 @@ using Test
     end
 
     @testset "BLAS.gemv!" begin
+        sz = (2, 3)
         @testset "forward" begin
             @testset for Tret in (
                     Const,
@@ -225,7 +227,6 @@ using Test
                 are_activities_compatible(Tret, Talpha, TA, Tx, Tbeta, Ty) || continue
 
                 @testset for T in BLASFloats, t in ('N', 'T', 'C')
-                    sz = (2, 3)
                     alpha, beta = randn(T, 2)
                     A = t === 'N' ? randn(T, sz...) : randn(T, reverse(sz)...)
                     x = randn(T, sz[2])
@@ -271,7 +272,6 @@ using Test
                 end
 
                 @testset for t in ('N', 'T', 'C')
-                    sz = (2, 3)
                     alpha, beta = randn(T, 2)
                     A = t === 'N' ? randn(T, sz...) : randn(T, reverse(sz)...)
                     x = randn(T, sz[2])
@@ -299,6 +299,8 @@ using Test
     end
 
     @testset "BLAS.spmv!" begin
+        n = 5
+        m = div(n * (n + 1), 2)
         @testset "forward" begin
             @testset for Tret in (
                     Const,
@@ -314,9 +316,6 @@ using Test
                 Ty in (Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Talpha, TAP, Tx, Tbeta, Ty) || continue
-
-                n = 5
-                m = div(n * (n + 1), 2)
 
                 @testset for T in BLASReals, uplo in ('U', 'L')
                     alpha, beta = randn(T, 2)
@@ -350,9 +349,6 @@ using Test
 
                 are_activities_compatible(Tret, Talpha, TAP, Tx, Tbeta, Ty) || continue
 
-                n = 5
-                m = div(n * (n + 1), 2)
-
                 @testset for T in BLASReals, uplo in ('U', 'L')
                     alpha, beta = randn(T, 2)
                     AP = randn(T, m)
@@ -381,6 +377,8 @@ using Test
     end
 
     @testset "BLAS.gemm!" begin
+        szA = (2, 3)
+        szB = (3, 4)
         @testset "forward" begin
             @testset for Tret in (
                     Const,
@@ -398,8 +396,6 @@ using Test
                 are_activities_compatible(Tret, Talpha, TA, TB, Tbeta, TC) || continue
 
                 @testset for T in BLASFloats, tA in ('N', 'T', 'C'), tB in ('N', 'T', 'C')
-                    szA = (2, 3)
-                    szB = (3, 4)
                     alpha, beta = randn(T, 2)
                     A = tA === 'N' ? randn(T, szA...) : randn(T, reverse(szA)...)
                     B = tB === 'N' ? randn(T, szB...) : randn(T, reverse(szB)...)
@@ -442,8 +438,6 @@ using Test
                 end
 
                 @testset for tA in ('N', 'T', 'C'), tB in ('N', 'T', 'C')
-                    szA = (2, 3)
-                    szB = (3, 4)
                     alpha, beta = randn(T, 2)
                     A = tA === 'N' ? randn(T, szA...) : randn(T, reverse(szA)...)
                     B = tB === 'N' ? randn(T, szB...) : randn(T, reverse(szB)...)
