@@ -53,7 +53,7 @@ using Test
                 ),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? BLASReals : BLASFloats)
+                T in (fun == BLAS.dot ? BLASReals : BLASComplexes)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
                 atol = rtol = sqrt(eps(real(T)))
@@ -78,7 +78,7 @@ using Test
             @testset for Tret in (Const, Active),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? BLASReals : BLASFloats)
+                T in (fun == BLAS.dot ? BLASReals : BLASComplexes)
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
                 atol = rtol = sqrt(eps(real(T)))
