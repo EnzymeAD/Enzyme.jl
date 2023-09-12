@@ -297,4 +297,86 @@ using Test
             end
         end
     end
+
+    @testset "BLAS.spmv!" begin
+        @testset "forward" begin
+            @testset for Tret in (
+                    Const,
+                    Duplicated,
+                    DuplicatedNoNeed,
+                    BatchDuplicated,
+                    BatchDuplicatedNoNeed,
+                ),
+                Talpha in (Const, Duplicated, BatchDuplicated),
+                TAP in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Tbeta in (Const, Duplicated, BatchDuplicated),
+                Ty in (Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Talpha, TAP, Tx, Tbeta, Ty) || continue
+
+                n = 5
+                m = div(n * (n + 1), 2)
+
+                @testset for T in BLASReals, uplo in ('U', 'L')
+                    alpha, beta = randn(T, 2)
+                    AP = randn(T, m)
+                    x = randn(T, n)
+                    y = randn(T, n)
+                    atol = rtol = sqrt(eps(real(T)))
+                    test_forward(
+                        BLAS.spmv!,
+                        Tret,
+                        uplo,
+                        (alpha, Talpha),
+                        (AP, TAP),
+                        (x, Tx),
+                        (beta, Tbeta),
+                        (y, Ty);
+                        atol,
+                        rtol,
+                    )
+                end
+            end
+        end
+
+        @testset "reverse" begin
+            @testset for Tret in (Const,),
+                Talpha in (Const, Active),
+                TAP in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Tbeta in (Const, Active),
+                Ty in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Talpha, TAP, Tx, Tbeta, Ty) || continue
+
+                n = 5
+                m = div(n * (n + 1), 2)
+
+                @testset for T in BLASReals, uplo in ('U', 'L')
+                    alpha, beta = randn(T, 2)
+                    AP = randn(T, m)
+                    x = randn(T, n)
+                    y = randn(T, n)
+                    atol = rtol = sqrt(eps(real(T)))
+                    @test !fails() do
+                        test_reverse(
+                            Tret,
+                            uplo,
+                            (alpha, Talpha),
+                            (AP, TAP),
+                            (x, Tx),
+                            (beta, Tbeta),
+                            (y, Ty);
+                            atol,
+                            rtol,
+                        ) do uplo, alpha, AP, x, beta, y
+                            BLAS.spmv!(uplo, alpha, AP, x, beta, y)
+                            return nothing
+                        end
+                    end broken = TAP <: BatchDuplicated
+                end
+            end
+        end
+    end
 end
