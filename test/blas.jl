@@ -5,7 +5,8 @@ using Test
 
 @testset "BLAS rules" begin
     BLASReals = (Float32, Float64)
-    BLASFloats = (ComplexF32, ComplexF64)
+    BLASComplexes = (ComplexF32, ComplexF64)
+    BLASFloats = (BLASReals..., BLASComplexes...)
     n = 10
 
     @testset "BLAS.scal!" begin
