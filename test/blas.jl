@@ -148,4 +148,62 @@ using Test
             end
         end
     end
+
+    @testset "BLAS.axpy!" begin
+        @testset "forward" begin
+            @testset for Tret in (
+                    Const,
+                    Duplicated,
+                    DuplicatedNoNeed,
+                    BatchDuplicated,
+                    BatchDuplicatedNoNeed,
+                ),
+                Ta in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Ty in (Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Ta, Tx, Ty) || continue
+
+                @testset for T in BLASFloats, sz in (10, (2, 5), (3, 4, 5))
+                    a = randn(T)
+                    x = randn(T, sz)
+                    y = randn(T, sz)
+                    atol = rtol = sqrt(eps(real(T)))
+                    @test !fails() do
+                        test_forward(
+                            BLAS.axpy!, Tret, (a, Ta), (x, Tx), (y, Ty); atol, rtol
+                        )
+                    end broken = (T <: ComplexF32 && !(Ta <: Const) && !(Ty <: Const))
+                end
+            end
+        end
+
+        @testset "reverse" begin
+            @testset for Tret in (Const,),
+                Ta in (Const, Active),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                Ty in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Ta, Tx, Ty) || continue
+
+                @testset for T in BLASFloats, sz in (10, (2, 5), (3, 4, 5))
+                    a = randn(T)
+                    x = randn(T, sz)
+                    y = randn(T, sz)
+                    atol = rtol = sqrt(eps(real(T)))
+                    @test !fails() do
+                        test_reverse(Tret, (a, Ta), (x, Tx), (y, Ty); atol, rtol) do a, x, y
+                            BLAS.axpy!(a, x, y)
+                            return nothing
+                        end
+                    end broken = (
+                        T <: ComplexF32 &&
+                        xor(Tx <: BatchDuplicated, Ty <: BatchDuplicated) &&
+                        !(Ta <: Const) &&
+                        sz isa Int
+                    )
+                end
+            end
+        end
+    end
 end
