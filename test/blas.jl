@@ -50,7 +50,7 @@ using Test
         @testset "reverse" begin
             @testset for Tret in (Const,),
                 Ta in (Const, Active),
-                Tx in (Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
                 T in BLASFloats
 
                 are_activities_compatible(Tret, Ta, Tx) || continue
