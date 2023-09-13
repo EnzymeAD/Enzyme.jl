@@ -358,14 +358,14 @@ end
         end
 
         # Allocated inline so adjust first path
-        if allocatedinline(subT)
-            ty |= active_reg_inner(subT, seen)
-        else
-            sub = active_reg_inner(subT, seen)
-            if sub == AnyState
-                continue
-            end
+        sub = active_reg_inner(subT, seen)
+        if sub == AnyState
+            continue
+        end
+        if ismutabletype(T) || !allocatedinline(subT)
             ty |= DupState
+        else
+            ty |= sub
         end
     end
     seen[T] = ty
