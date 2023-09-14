@@ -400,8 +400,8 @@ function fix_decayaddr!(mod::LLVM.Module)
                     end
                 end
                 if !sret
-                    @safe_show f
-                    @safe_show inst, st, fop
+                    println(string(f))
+                    @show inst, st, fop
                     flush(stdout)
                 end
                 
@@ -661,10 +661,8 @@ function propagate_returned!(mod::LLVM.Module)
                     push!(toremove, i-1)
                 end
             end
-            if argn === nothing && length(toremove) == 0
-                continue
-            end
             illegalUse = !(linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
+            hasAnyUse = false
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 if !isa(un, LLVM.CallInst)
@@ -694,7 +692,19 @@ function propagate_returned!(mod::LLVM.Module)
                         push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
                         LLVM.replace_uses!(un, ops[argn])
                     end
+                else
+                    for u in LLVM.uses(un)
+                        hasAnyUse = true
+                        break
+                    end
                 end
+            end
+            #if the function return has no users whatsoever, remove it
+            if argn === nothing && !hasAnyUse && LLVM.return_type(LLVM.function_type(fn)) != LLVM.VoidType()
+                argn = -1
+            end
+            if argn === nothing && length(toremove) == 0
+                continue
             end
             if !illegalUse
                 push!(tofinalize, (fn, argn === nothing, toremove))
