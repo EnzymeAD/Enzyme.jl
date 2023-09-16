@@ -926,6 +926,52 @@ function validate_return_roots!(mod)
     end
 end
 
+function checkNoAssumeFalse(mod, shouldshow=false)
+    for f in functions(mod)
+        for bb in blocks(f), inst in instructions(bb)
+            if !isa(inst, LLVM.CallInst)
+                continue
+            end
+            intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(inst))
+            if shouldshow
+                @show intr, inst
+            end
+            if intr != LLVM.Intrinsic("llvm.assume").id
+                continue
+            end
+            if shouldshow
+                @show inst
+            end
+            op = operands(inst)[1]
+            if shouldshow
+                @show op
+            end
+            if isa(op, LLVM.ConstantInt)
+                op2 = convert(Bool, op)
+                if shouldshow
+                    @show op2
+                end
+                if !op2
+                    println(string(mod))
+                    println(string(f))
+                    println(string(bb))
+                    flush(stdout)
+                    @assert false
+                end
+            end
+            if isa(op, LLVM.ICmpInst)
+                if predicate_int(op) == LLVM.API.LLVMIntNE && operands(op)[1] == operands(op)[2]
+                    println(string(mod))
+                    println(string(f))
+                    println(string(bb))
+                    flush(stdout)
+                    @assert false
+                end
+            end
+        end
+    end
+end
+
 function removeDeadArgs!(mod::LLVM.Module)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
@@ -939,7 +985,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
     func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
-    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly"), EnumAttribute("nocapture")])
+    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
 
     for fn in functions(mod)
         if isempty(blocks(fn))
@@ -958,6 +1004,7 @@ function removeDeadArgs!(mod::LLVM.Module)
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
                     cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+                    LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
                 end
             end
         end
