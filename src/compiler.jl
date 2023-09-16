@@ -2092,6 +2092,10 @@ end
     return prev
 end
 
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Array{<:Integer}}
+    return prev
+end
+
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Function}
     return prev
 end
@@ -2108,6 +2112,22 @@ end
     return prev
 end
 
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Nothing}
+    return prev
+end
+
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Array}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = RT(undef, size(prev))
+    seen[prev] = newa
+    for I in eachindex(prev)
+        pv = prev[I]
+        @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv)
+    end
+    return newa
+end
 
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Tuple}
     return ((make_zero(a, seen, prev[i]) for (i, a) in enumerate(RT.parameters))...,)
@@ -2122,17 +2142,29 @@ end
     if RT isa UnionAll || RT isa Union || RT == Union{}
         return prev
     end
-    # if RT ∈ keys(seen)
-    #     return seen[RT]
-    # end
-    @assert !ismutable(prev)
+    if haskey(seen, prev)
+        return seen[prev]
+    end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
     nf = fieldcount(RT)
+    
+    if ismutable(prev)
+        y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
+        seen[prev] = y
+        for i in 1:nf
+            if isdefined(prev, i)
+                xi = getfield(prev, i)
+                xi = make_zero(Core.Typeof(xi), seen, xi)
+                ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
+            end
+        end
+        return y
+    end
+    
     if nf == 0
         return prev
     end
-    # @assert !isbitstype(RT)
 
     flds = Vector{Any}(undef, nf)
     for i in 1:nf
@@ -2146,6 +2178,7 @@ end
         end
     end
     y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)
+    seen[prev] = y
     return y
 end
 
@@ -3037,8 +3070,9 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     end
 
     # 2. Call error function and insert unreachable
-    call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
-
+    ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
+    LLVM.API.LLVMAddCallSiteAttribute(ct, LLVM.API.LLVMAttributeFunctionIndex, EnumAttribute("noreturn"))
+    return ct
     # FIXME(@wsmoses): Allow for emission of new BB in this code path
     # unreachable!(B)
 
@@ -4100,7 +4134,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     if sret !== nothing
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1], #=isforeign=#false)
         needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
-        needsShadowP[] = false
+        needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
     end
 
     if !needsPrimal && activep == API.DFT_DUP_ARG
@@ -9767,7 +9801,7 @@ function _thunk(job, postopt::Bool=true)
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         run!(pm, mod)
     end
-    
+
     # Run post optimization pipeline
     if postopt && job.config.params.ABI <: FFIABI
         post_optimze!(mod, JIT.get_tm())
