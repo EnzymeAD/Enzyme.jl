@@ -388,6 +388,17 @@ end
     return state == ActiveState
 end
 
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray{<:Integer}}
+    return Const{T}
+end
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Base.Ref{<:Integer}}
+    return Const{T}
+end
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Base.RefValue{<:Integer}}
+    return Const{T}
+end
+
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
     if Mode == API.DEM_ForwardMode
         return DuplicatedNoNeed{T}
