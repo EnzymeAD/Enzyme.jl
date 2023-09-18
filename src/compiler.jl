@@ -2656,6 +2656,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
             shadow = LLVM.UndefValue(ST)
             for i in 1:width
                 shadow = insert_value!(B, shadow, cal, i-1)
+                if i == 1
+                    API.moveBefore(cal, shadow, B)
+                end
             end
         end
         unsafe_store!(shadowR, shadow.ref)
@@ -2679,6 +2682,9 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
             shadow = LLVM.UndefValue(ST)
             for i in 1:width
                 shadow = insert_value!(B, shadow, cal, i-1)
+                if i == 1
+                    API.moveBefore(cal, shadow, B)
+                end
             end
         end
         unsafe_store!(shadowR, shadow.ref)
