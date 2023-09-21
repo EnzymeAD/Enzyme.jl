@@ -7,7 +7,6 @@ Enzyme_jll = Base.UUID("7cc45869-7501-5eee-bdea-0790c847d4ef")
 using Pkg, Scratch, Preferences, Libdl
 
 BUILD_TYPE = "RelWithDebInfo" 
-BUILD_TYPE = "Debug"
 
 # 1. Get a scratch directory
 scratch_dir = get_scratch!(Enzyme_jll, "build")
