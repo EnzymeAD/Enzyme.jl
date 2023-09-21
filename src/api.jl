@@ -126,10 +126,10 @@ function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA
                                        uncacheable_args, augmented, atomicAdd)
     freeMemory = true
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
-        (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
+        (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
          EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, UInt8, LLVMTypeRef, UInt8, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8),
-        logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
+        logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA, returnValue,
         dretUsed, mode, width, freeMemory, additionalArg, forceAnonymousTape, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd)
 end
@@ -140,10 +140,10 @@ function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA,
     freeMemory = true
     aug = C_NULL
     ccall((:EnzymeCreateForwardDiff, libEnzyme), LLVMValueRef, 
-        (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
+        (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
          EnzymeTypeAnalysisRef, UInt8, CDerivativeMode, UInt8, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr),
-        logic, todiff, retType, constant_args, length(constant_args), TA, returnValue,
+        logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA, returnValue,
         mode, freeMemory, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args), aug)
 end
 
@@ -162,10 +162,10 @@ function EnzymeCreateAugmentedPrimal(logic, todiff, retType, constant_args, TA, 
                                      shadowReturnUsed,
                                      typeInfo, uncacheable_args, forceAnonymousTape, width, atomicAdd)
     ccall((:EnzymeCreateAugmentedPrimal, libEnzyme), EnzymeAugmentedReturnPtr, 
-        (EnzymeLogicRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
+        (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
          EnzymeTypeAnalysisRef, UInt8, UInt8, 
          CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, Cuint, UInt8),
-        logic, todiff, retType, constant_args, length(constant_args), TA,  returnUsed,
+        logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA,  returnUsed,
         shadowReturnUsed,
         typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, width, atomicAdd)
 end
