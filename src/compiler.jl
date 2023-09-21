@@ -5964,9 +5964,33 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                         continue
                     end
                     badval = typ
+                    @show "illegal 3", cur, ce, typ
                     illegal = false
                     break
                 end
+            end
+            if isa(cur, LLVM.LoadInst)
+                ptr = operands(cur)[1]
+                ce = ptr
+                while isa(ce, ConstantExpr)
+                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+                        ce = operands(ce)[1]
+                    else
+                        break
+                    end
+                end
+                if isa(ce, ConstantInt)
+                    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                    typ = Base.unsafe_pointer_to_objref(ptr)
+                    if isghostty(Core.Typeof(typ))
+                        continue
+                    end
+                    badval = typ
+                    @show "illegal 2", cur, ce, typ
+                    illegal = false
+                    break
+                end
+                @show "illegal 4", cur, ce, ptr
             end
             if isa(cur, LLVM.PointerNull)
                 continue
@@ -6001,6 +6025,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     continue
                 end
             end
+            @show "illegal 1", cur
             illegal = true
             break
         end
