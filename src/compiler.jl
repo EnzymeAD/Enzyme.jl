@@ -5963,9 +5963,8 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if isghostty(Core.Typeof(typ))
                         continue
                     end
-                    badval = typ
-                    @show "illegal 3", cur, ce, typ
-                    illegal = false
+                    badval = string(typ)
+                    illegal = true
                     break
                 end
             end
@@ -5980,17 +5979,16 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     end
                 end
                 if isa(ce, ConstantInt)
-                    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                    ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
                     typ = Base.unsafe_pointer_to_objref(ptr)
-                    if isghostty(Core.Typeof(typ))
+                    TT = Core.Typeof(typ)
+                    if isghostty(TT)
                         continue
                     end
-                    badval = typ
-                    @show "illegal 2", cur, ce, typ
-                    illegal = false
+                    badval = string(typ)
+                    illegal = true
                     break
                 end
-                @show "illegal 4", cur, ce, ptr
             end
             if isa(cur, LLVM.PointerNull)
                 continue
@@ -6025,7 +6023,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     continue
                 end
             end
-            @show "illegal 1", cur
             illegal = true
             break
         end
@@ -6060,7 +6057,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             println(io, Base.unsafe_string(st))
             API.EnzymeStringFree(st)
             if badval !== nothing
-                println(io, " value="*string(badval))
+                println(io, " value="*badval)
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
