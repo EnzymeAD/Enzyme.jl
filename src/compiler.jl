@@ -5963,8 +5963,30 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if isghostty(Core.Typeof(typ))
                         continue
                     end
-                    badval = typ
-                    illegal = false
+                    badval = string(typ)
+                    illegal = true
+                    break
+                end
+            end
+            if isa(cur, LLVM.LoadInst)
+                ptr = operands(cur)[1]
+                ce = ptr
+                while isa(ce, ConstantExpr)
+                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+                        ce = operands(ce)[1]
+                    else
+                        break
+                    end
+                end
+                if isa(ce, ConstantInt)
+                    ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
+                    typ = Base.unsafe_pointer_to_objref(ptr)
+                    TT = Core.Typeof(typ)
+                    if isghostty(TT)
+                        continue
+                    end
+                    badval = string(typ)
+                    illegal = true
                     break
                 end
             end
@@ -6035,7 +6057,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             println(io, Base.unsafe_string(st))
             API.EnzymeStringFree(st)
             if badval !== nothing
-                println(io, " value="*string(badval))
+                println(io, " value="*badval)
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
