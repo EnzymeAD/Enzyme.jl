@@ -25,6 +25,8 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+include("systematic.jl")
+
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
@@ -2377,3 +2379,5 @@ end
         @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
     end
 end
+
+
