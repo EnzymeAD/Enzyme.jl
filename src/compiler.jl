@@ -335,7 +335,18 @@ end
     return DupState
 end
 
+const TypeActivityCache = Dict{DataType, ActivityState}()
+const ConstantTypes = Type[]
+
 @inline function active_reg_inner(::Type{T}, seen) where T
+    if T ∈ keys(seen)
+        return seen[T]
+    end
+    for sT in ConstantTypes
+        if T <: sT
+            return seen[T] = AnyState
+        end
+    end
     if T isa UnionAll || T isa Union || T == Union{}
         return AnyState
     end
@@ -343,9 +354,7 @@ end
     if Base.isabstracttype(T)
         return DupState
     end
-    if T ∈ keys(seen)
-        return seen[T]
-    end
+
     seen[T] = MixedState
 
     @assert !Base.isabstracttype(T)
@@ -375,17 +384,15 @@ end
 end
 
 @inline @generated function active_reg(::Type{T}) where {T}
-    seen = Dict{DataType, ActivityState}()
-    state = active_reg_inner(T, seen)
+    state = active_reg_inner(T, TypeActivityCache)
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
 end
 
 @inline @generated function active_reg_nothrow(::Type{T}) where {T}
-    seen = Dict{DataType, ActivityState}()
-    state = active_reg_inner(T, seen)
-    return state == ActiveState
+    state = active_reg_inner(T, TypeActivityCache)
+    return state
 end
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray{<:Integer}}
@@ -1268,7 +1275,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
     wrapped = Expr[]
     for i in 1:N
         expr = :(
-                 if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i]))
+                 if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i])) && active_reg_nothrow($(primtypes[i])) != AnyState
                    @assert $(primtypes[i]) !== DataType
                     if !$forwardMode && active_reg($(primtypes[i]))
                     Active($(primargs[i]))
@@ -2099,34 +2106,6 @@ end
     return RT(0)
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Integer}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array{<:Integer}}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Function}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:DataType}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Module}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractString}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Nothing}
-    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-end
-
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array}
     if haskey(seen, prev)
         return seen[prev]
@@ -2150,7 +2129,7 @@ end
 end
 
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
-    if RT isa UnionAll || RT isa Union || RT == Union{}
+    if Enzyme.Compiler.active_reg_nothrow(RT) == AnyState
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     if haskey(seen, prev)
