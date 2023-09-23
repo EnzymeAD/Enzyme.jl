@@ -67,19 +67,21 @@ isa_valid_return(::AbstractArray{<:Real}) = true
                 end
             end
         end
-        @testset "$(typeof(arg1)), $(typeof(arg2))" for (arg1, arg2) in Iterators.product(
-            possible_args, possible_args
-        )
-            return_value = try
-                F(arg1, arg2)
-            catch e
-                continue
-            end
-            if isa_valid_return(return_value)
-                test_forward_all_activities(F, arg1, arg2)
-                test_reverse_all_activities(F, arg1, arg2)
-            else
-                continue
+        @testset "Two arguments" begin
+            @testset "$(typeof(arg1)), $(typeof(arg2))" for (arg1, arg2) in Iterators.product(
+                possible_args, possible_args
+            )
+                return_value = try
+                    F(arg1, arg2)
+                catch e
+                    continue
+                end
+                if isa_valid_return(return_value)
+                    test_forward_all_activities(F, arg1, arg2)
+                    test_reverse_all_activities(F, arg1, arg2)
+                else
+                    continue
+                end
             end
         end
     end
