@@ -314,11 +314,6 @@ end
 
 @inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
 @inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
-@inline active_reg_inner(::Type{T}, seen) where {T<:Integer} = AnyState
-@inline active_reg_inner(::Type{T}, seen) where {T<:Function} = AnyState
-@inline active_reg_inner(::Type{T}, seen) where {T<:DataType} = AnyState
-@inline active_reg_inner(::Type{T}, seen) where {T<:Module} = AnyState
-@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractString} = AnyState
 # here we explicity make ref considered dup rather than active
 @inline function active_reg_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}}}, seen) where T
     state = active_reg_inner(T, seen)
@@ -342,17 +337,26 @@ const ConstantTypes = Type[]
     if T ∈ keys(seen)
         return seen[T]
     end
-    for sT in ConstantTypes
-        if T <: sT
-            return seen[T] = AnyState
-        end
+    if EnzymeRules.inactive_type(T)
+        return seen[T] = AnyState
     end
-    if T isa UnionAll || T isa Union || T == Union{}
+    if T isa UnionAll
         return AnyState
     end
     # if abstract it must be by reference
     if Base.isabstracttype(T)
         return DupState
+    end
+
+    if T isa Union
+        seen[T] = DupState
+        if active_reg_inner(T.a, seen) != AnyState
+            return
+        end
+        if active_reg_inner(T.b, seen) != AnyState
+            return
+        end
+        return seen[T] = AnyState
     end
 
     seen[T] = MixedState
@@ -363,10 +367,6 @@ const ConstantTypes = Type[]
     ty = AnyState
     for f in 1:fieldcount(T)
         subT    = fieldtype(T, f)
-
-        if subT isa UnionAll || subT isa Union || subT == Union{} || subT <: Integer
-            continue
-        end
 
         # Allocated inline so adjust first path
         sub = active_reg_inner(subT, seen)
@@ -5939,10 +5939,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 if isa(ce, ConstantInt)
                     ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
                     typ = Base.unsafe_pointer_to_objref(ptr)
-                    if isghostty(Core.Typeof(typ))
+                    TT = Core.Typeof(typ)
+                    if isghostty(TT)
                         continue
                     end
-                    badval = string(typ)
+                    badval = string(typ)*" of type"*" "string(TT)
                     illegal = true
                     break
                 end
@@ -5964,7 +5965,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if isghostty(TT)
                         continue
                     end
-                    badval = string(typ)
+                    badval = string(typ)*" of type"*" "string(TT)
                     illegal = true
                     break
                 end
