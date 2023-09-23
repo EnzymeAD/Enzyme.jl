@@ -2091,43 +2091,43 @@ end
 getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:AbstractFloat}
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
 
-@inline function make_zero(::Type{Complex{RT}}, seen::IdDict, prev::Complex{RT})::Complex{RT} where {RT<:AbstractFloat}
+@inline function make_zero(::Type{Complex{RT}}, seen::IdDict, prev::Complex{RT}, ::Val{copy_if_inactive}=Val(false))::Complex{RT} where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Integer}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Integer}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Array{<:Integer}}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array{<:Integer}}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Function}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Function}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:DataType}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:DataType}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Module}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Module}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:AbstractString}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractString}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Nothing}
-    return prev
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Nothing}
+    return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Array}
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array}
     if haskey(seen, prev)
         return seen[prev]
     end
@@ -2135,23 +2135,23 @@ end
     seen[prev] = newa
     for I in eachindex(prev)
         pv = prev[I]
-        @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv)
+        @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
     end
     return newa
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT<:Tuple}
-    return ((make_zero(a, seen, prev[i]) for (i, a) in enumerate(RT.parameters))...,)
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
+    return ((make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
 end
 
 
-@inline function make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT})::NamedTuple{A,RT} where {A,RT}
-    return NamedTuple{A,RT}(make_zero(RT, seen, RT(prev)))
+@inline function make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
+    return NamedTuple{A,RT}(make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT)::RT where {RT}
+@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
     if RT isa UnionAll || RT isa Union || RT == Union{}
-        return prev
+        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     if haskey(seen, prev)
         return seen[prev]
@@ -2166,7 +2166,7 @@ end
         for i in 1:nf
             if isdefined(prev, i)
                 xi = getfield(prev, i)
-                xi = make_zero(Core.Typeof(xi), seen, xi)
+                xi = make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
                 ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
             end
         end
@@ -2181,7 +2181,7 @@ end
     for i in 1:nf
         if isdefined(prev, i)
             xi = getfield(prev, i)
-            xi = make_zero(Core.Typeof(xi), seen, xi)
+            xi = make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
             flds[i] = xi
         else
             nf = i - 1 # rest of tail must be undefined values

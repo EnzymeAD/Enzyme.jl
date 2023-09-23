@@ -232,6 +232,24 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
+
+    a = [3.14]
+    da = [0.0]
+    sumcopy(x) = sum(copy(x))
+    autodiff(Reverse, sumcopy, Duplicated(a, da))
+    @test da[1] ≈ 1.0
+
+    da = [2.7]
+    @test autodiff(Forward, sumcopy, Duplicated(a, da))[1] ≈ 2.7
+
+    da = [0.0]
+    sumdeepcopy(x) = sum(deepcopy(x))
+    autodiff(Reverse, sumdeepcopy, Duplicated(a, da))
+    @test da[1] ≈ 1.0
+
+    da = [2.7]
+    @test autodiff(Forward, sumdeepcopy, Duplicated(a, da))[1] ≈ 2.7
+
 end
 
 @testset "Simple Exception" begin
