@@ -42,6 +42,19 @@ function cpu_features()
     end
 end
 
+import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
+
+safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
+macro safe_show(exs...)
+    blk = Expr(:block)
+    for ex in exs
+        push!(blk.args, :($safe_println($(sprint(Base.show_unquoted, ex)*" = "),
+            repr(begin local value = $(esc(ex)) end))))
+    end
+    isempty(exs) || push!(blk.args, :value)
+    return blk
+end
+
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else
@@ -351,7 +364,11 @@ end
     return state == ActiveState
 end
 
-@inline guaranteed_const(::Type{T}) where T = active_reg_nothrow(T) == AnyState
+@inline function guaranteed_const(::Type{T}) where T
+    rt = active_reg_nothrow(T)
+    res = rt == AnyState
+    return res
+end
 
 Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
 
@@ -397,18 +414,6 @@ end
 
 using .JIT
 
-import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
-
-safe_println(head, tail) =  ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring...), "%s%s\n",head, tail)
-macro safe_show(exs...)
-    blk = Expr(:block)
-    for ex in exs
-        push!(blk.args, :($safe_println($(sprint(Base.show_unquoted, ex)*" = "),
-            repr(begin local value = $(esc(ex)) end))))
-    end
-    isempty(exs) || push!(blk.args, :value)
-    return blk
-end
 
 declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])

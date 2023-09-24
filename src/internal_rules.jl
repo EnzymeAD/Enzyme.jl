@@ -100,13 +100,13 @@ function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
     return nothing
 end
 
-EnzymeRules.inactive_type(::Type{Nothing}) = true
-EnzymeRules.inactive_type(::Type{Union{}}) = true
-EnzymeRules.inactive_type(::Type{T}) where {T<:Integer} = true
-EnzymeRules.inactive_type(::Type{T}) where {T<:Function} = true
-EnzymeRules.inactive_type(::Type{T}) where {T<:DataType} = true
-EnzymeRules.inactive_type(::Type{T}) where {T<:Module} = true
-EnzymeRules.inactive_type(::Type{T}) where {T<:AbstractString} = true
+@inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
+@inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
+@inline EnzymeRules.inactive_type(v::Type{Function}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
 
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
