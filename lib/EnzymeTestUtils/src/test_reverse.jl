@@ -94,7 +94,13 @@ function test_reverse(
         else
             # if there's a shadow result, then we need to set it to our random adjoint
             if !(shadow_result === nothing)
-                map_fields_recursive(copyto!, shadow_result, ȳ)
+                if !_any_batch_duplicated(map(typeof, activities)...)
+                    map_fields_recursive(copyto!, shadow_result, ȳ)
+                else
+                    for (sr, dy) in zip(shadow_result, ȳ)
+                        map_fields_recursive(copyto!, sr, dy)
+                    end
+                end
             end
             dx_ad = only(reverse(c_act, activities..., tape))
         end
