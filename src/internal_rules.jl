@@ -228,31 +228,12 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{
 end
 
 
-function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.sync_end)}, ::Type{RT}, x::Annotation{Ty}) where {RT, Ty}
-    primal = if EnzymeRules.needs_primal(config)
-        func.val(x.val)
-    else
-        nothing
-    end
-
-    shadow = if EnzymeRules.needs_shadow(config)
-        if EnzymeRules.width(config) == 1
-            func.val(x.dval)
-        else
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                func.val(x.dval[i])
-            end
-        end
-    else
-        nothing
-    end
-
-    tape = nothing
-
+function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.put!)}, ::Type{RT}, x::Duplicated{Channel{Ty}}, y::Duplicated{M}) where {RT, Ty, M}
+    primal = func.val(x.val, y.val)
+    shadow = func.val(x.dval, y.dval)
     return EnzymeRules.AugmentedReturn(primal, shadow, tape)
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(Base.sync_end)}, ::Type{RT}, shadow, x::Annotation{Ty}) where {RT, Ty}
-    throw(AssertionError("Unimplemented reverse derivative of Task.sync_end"))
+function EnzymeRules.reverse(config, func::Const{typeof(Base.put!)}, ::Type{RT}, tape, x::Duplicated{Channel{Ty}}, y::Duplicated{M}) where {RT, Ty, M}
+    return (nothing, nothing)
 end
