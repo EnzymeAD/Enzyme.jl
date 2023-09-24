@@ -100,6 +100,13 @@ function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
     return nothing
 end
 
+@inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
+@inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
+@inline EnzymeRules.inactive_type(v::Type{Function}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
 
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
@@ -177,6 +184,9 @@ end
 
 
 @inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT<:Array}
+    if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
     if !haskey(seen, into)
         seen[into] = (into, from)
         for i in eachindex(from)
@@ -191,6 +201,16 @@ end
 @inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT<:AbstractFloat}
     if !haskey(seen, into)
         seen[into] = (into+from, RT(0))
+    end
+    return seen[into]
+end
+
+@inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
+    if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
+    if !haskey(seen, into)
+        throw(AssertionError("Unknown type to accumulate into: $RT"))
     end
     return seen[into]
 end

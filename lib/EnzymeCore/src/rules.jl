@@ -213,4 +213,11 @@ function is_inactive_noinl_from_sig(@nospecialize(TT);
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
 end
 
+"""
+    inactive_type(::Type{Ty})
+
+Mark a particular type `Ty` as always being inactive.
+"""
+inactive_type(::Type{Ty}) where Ty = false
+
 end # EnzymeRules
