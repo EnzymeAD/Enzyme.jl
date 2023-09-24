@@ -266,7 +266,7 @@ Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, 
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     ActReg = active_reg_nothrow(T)
-    if c == AnyState
+    if ActReg == AnyState
         return Const{T}
     end
     if Mode == API.DEM_ForwardMode
@@ -306,9 +306,6 @@ end
     return DupState
 end
 
-const TypeActivityCache = Dict{DataType, ActivityState}()
-const ConstantTypes = Type[]
-
 @inline function active_reg_inner(::Type{T}, seen) where T
     if T ∈ keys(seen)
         return seen[T]
@@ -316,11 +313,11 @@ const ConstantTypes = Type[]
     if EnzymeRules.inactive_type(T)
         return seen[T] = AnyState
     end
-    if T isa UnionAll
-        return AnyState
-    end
     if isghostty(T) || Core.Compiler.isconstType(T)
         return AnyState
+    end
+    if T isa UnionAll
+        return DupState
     end
     # if abstract it must be by reference
     if Base.isabstracttype(T)
@@ -362,12 +359,18 @@ const ConstantTypes = Type[]
     return ty
 end
 
-@inline @generated function active_reg(::Type{T}) where {T}
-    state = active_reg_inner(T, TypeActivityCache)
+@inline @generated function active_reg_nothrow(::Type{T}) where {T}
+    seen = Dict{DataType, ActivityState}()
+    return active_reg_inner(T, seen)
+end
+
+@inline function active_reg(::Type{T}) where {T}
+    state = active_reg_nothrow(T)
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
 end
+
 
 # User facing interface
 abstract type AbstractThunk{FA, RT, TT, Width} end
@@ -9815,7 +9818,7 @@ end
         end
         
         if !(A <: Const) && (active_reg_nothrow(rrt) == AnyState)
-            error("Return type `$rrt` not marked Const, but is ghost or const type.")
+            error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
         end
 
         if A isa UnionAll
@@ -9826,12 +9829,6 @@ end
             # @assert eltype(A) == rrt
             rt = A
         end
-
-        if rrt == Nothing && !(A <: Const)
-            error("Return of nothing must be marked Const")
-        end
-
-        # @assert isa(rrt, DataType)
 
         # We need to use primal as the key, to lookup the right method
         # but need to mixin the hash of the adjoint to avoid cache collisions
