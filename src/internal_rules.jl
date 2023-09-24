@@ -184,7 +184,7 @@ end
 
 
 @inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT<:Array}
-    if Enzyme.Compiler.active_reg_nothrow(RT) == AnyState
+    if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
     if !haskey(seen, into)
@@ -206,7 +206,7 @@ end
 end
 
 @inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
-    if Enzyme.Compiler.active_reg_nothrow(RT) == AnyState
+    if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
     if !haskey(seen, into)
