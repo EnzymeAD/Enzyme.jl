@@ -156,7 +156,20 @@ function _wrap_reverse_function(f, xs, ignores)
         @assert j == length(sigargs) + 1
         @assert length(callargs) == length(xs)
         @assert length(retargs) == count(!, ignores)
-        return (deepcopy(f)(callargs...), retargs...)
+
+        # if an arg and a return alias, do not consider the contribution from the arg as returned here,
+        # it will already be taken into account. This is implemented using the deepcopy_internal, which
+        # will add all objects inside the return into the dict `zeros`.
+        zeros = IdDict()
+        origRet = Base.deepcopy_internal(deepcopy(f)(callargs...), zeros)
+
+        # we will now explicitly zero all objects returned, and replace any of the args with this
+        # zero, if the input and output alias.
+        for k in keys(zeros)
+            zeros[k] = zero_tangent(k)
+        end
+
+        return (origRet, Base.deepcopy_internal(retargs, zeros)...)
     end
     return fnew
 end
