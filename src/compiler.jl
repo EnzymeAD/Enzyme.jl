@@ -255,52 +255,6 @@ const activefns = Set{String}((
     "jl_",
 ))
 
-
-Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
-    if T isa Union
-        if !(guess_activity(T.a, Mode) <: Const) || !(guess_activity(T.b, Mode) <: Const)
-            if Mode == API.DEM_ForwardMode
-                return DuplicatedNoNeed{T}
-            else
-                return Duplicated{T}
-            end
-        end
-    end
-    if isghostty(T) || Core.Compiler.isconstType(T) || T === DataType
-        return Const{T}
-    end
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Duplicated{T}
-    end
-end
-
-@inline function Enzyme.guess_activity(::Type{Union{}}, Mode::API.CDerivativeMode)
-    return Const{Union{}}
-end
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Integer}
-    return Const{T}
-end
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Active{T}
-    end
-end
-@inline function Enzyme.guess_activity(::Type{Complex{T}}, Mode::API.CDerivativeMode) where {T<:AbstractFloat}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{Complex{T}}
-    else
-        return Active{Complex{T}}
-    end
-end
-
 @enum ActivityState begin
     AnyState = 0
     ActiveState = 1
@@ -308,10 +262,32 @@ end
     MixedState = 3
 end
 
+Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
+
+@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
+    ActReg = active_reg_nothrow(T)
+    if c == AnyState
+        return Const{T}
+    end
+    if Mode == API.DEM_ForwardMode
+        return DuplicatedNoNeed{T}
+    else
+        if ActReg == ActiveState
+            return Active{T}
+        else
+            return Duplicated{T}
+        end
+    end
+end
+
+
 @inline function Base.:|(a1::ActivityState, a2::ActivityState)
     ActivityState(Int(a1) | Int(a2))
 end
 
+@inline active_reg_inner(::Type{Any}, seen) = DupState
+@inline active_reg_inner(::Type{Complex{Real}}, seen) = DupState
+@inline active_reg_inner(::Type{Real}, seen) = DupState
 @inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
 @inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
 # here we explicity make ref considered dup rather than active
@@ -341,6 +317,9 @@ const ConstantTypes = Type[]
         return seen[T] = AnyState
     end
     if T isa UnionAll
+        return AnyState
+    end
+    if isghostty(T) || Core.Compiler.isconstType(T)
         return AnyState
     end
     # if abstract it must be by reference
@@ -388,45 +367,6 @@ end
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
-end
-
-@inline @generated function active_reg_nothrow(::Type{T}) where {T}
-    state = active_reg_inner(T, TypeActivityCache)
-    return state
-end
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray{<:Integer}}
-    return Const{T}
-end
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Base.Ref{<:Integer}}
-    return Const{T}
-end
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:Base.RefValue{<:Integer}}
-    return Const{T}
-end
-
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T<:AbstractArray}
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
-    else
-        return Duplicated{T}
-    end
-end
-
-@inline function Enzyme.guess_activity(::Type{Real}, Mode::API.CDerivativeMode)
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{Any}
-    else
-        return Duplicated{Any}
-    end
-end
-@inline function Enzyme.guess_activity(::Type{Any}, Mode::API.CDerivativeMode)
-    if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{Any}
-    else
-        return Duplicated{Any}
-    end
 end
 
 # User facing interface
@@ -1159,7 +1099,7 @@ end
 
 function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
-    ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
+    ghos = active_reg_nothrow(FT) == AnyState
     forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
@@ -1173,7 +1113,7 @@ end
 function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {FT1, FT2, World, width, ModifiedBetween}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
-    ghos = isghostty(FT) || Core.Compiler.isconstType(FT)
+    ghos = active_reg_nothrow(FT) == AnyState
     forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
@@ -1275,7 +1215,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
     wrapped = Expr[]
     for i in 1:N
         expr = :(
-                 if ActivityTup[$i+1] && !isghostty($(primtypes[i])) && !Core.Compiler.isconstType($(primtypes[i])) && active_reg_nothrow($(primtypes[i])) != AnyState
+                 if ActivityTup[$i+1] && active_reg_nothrow($(primtypes[i])) != AnyState
                    @assert $(primtypes[i]) !== DataType
                     if !$forwardMode && active_reg($(primtypes[i]))
                     Active($(primargs[i]))
@@ -1319,7 +1259,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         dupClosure = ActivityTup[1]
         FT = Core.Typeof(f)
-        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+        if dupClosure && active_reg_nothrow(FT) == AnyState
             dupClosure = false
         end
 
@@ -1380,7 +1320,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         dupClosure = ActivityTup[1]
         FT = Core.Typeof(f)
-        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+        if dupClosure && active_reg_nothrow(rrt) == AnyState
             dupClosure = false
         end
 
@@ -1487,7 +1427,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
 
         dupClosure = ActivityTup[1]
         FT = Core.Typeof(f)
-        if dupClosure && (isghostty(FT) || Core.Compiler.isconstType(FT))
+        if dupClosure && active_reg_nothrow(FT) == AnyState
             dupClosure = false
         end
         world = codegen_world_age(FT, tt)
@@ -2129,7 +2069,7 @@ end
 end
 
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
-    if Enzyme.Compiler.active_reg_nothrow(RT) == AnyState
+    if active_reg_nothrow(RT) == AnyState
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     if haskey(seen, prev)
@@ -3315,7 +3255,7 @@ end
     width = get_width(gutils)
 
     ops = collect(operands(orig))[1:end-1]
-    dupClosure = !isghostty(funcT) && !Core.Compiler.isconstType(funcT) && !is_constant_value(gutils, ops[1])
+    dupClosure = !(active_reg_nothrow(funcT) == AnyState) && !is_constant_value(gutils, ops[1])
     pdupClosure = dupClosure
 
     subfunc = nothing
@@ -3954,7 +3894,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
     for arg in jlargs
         @assert arg.cc != RemovedParam
         if arg.cc == GPUCompiler.GHOST
-            @assert isghostty(arg.typ) || Core.Compiler.isconstType(arg.typ)
+            @assert active_reg_nothrow(arg.typ) == AnyState
             if isKWCall && arg.arg_i == 2
                 Ty = arg.typ
                 kwtup = Ty
@@ -5940,10 +5880,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
                     typ = Base.unsafe_pointer_to_objref(ptr)
                     TT = Core.Typeof(typ)
-                    if isghostty(TT)
+                    if active_reg_nothrow(RT) == AnyState
                         continue
                     end
-                    badval = string(typ)*" of type"*" "string(TT)
+                    badval = string(typ)*" of type"*" "*string(TT)
                     illegal = true
                     break
                 end
@@ -5962,10 +5902,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
                     typ = Base.unsafe_pointer_to_objref(ptr)
                     TT = Core.Typeof(typ)
-                    if isghostty(TT)
+                    if active_reg_nothrow(RT) == AnyStates
                         continue
                     end
-                    badval = string(typ)*" of type"*" "string(TT)
+                    badval = string(typ)*" of type"*" "*string(TT)
                     illegal = true
                     break
                 end
@@ -7501,7 +7441,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
     for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
-        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+        if active_reg_nothrow(source_typ) == AnyState
             if !(T <: Const)
                 error("Type of ghost or constant type "*string(T)*" is marked as differentiable.")
             end
@@ -7753,7 +7693,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     ActiveRetTypes = Type[]
     for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
-        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+        if active_reg_nothrow(source_typ) == AnyState
             @assert T <: Const
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
@@ -9874,7 +9814,7 @@ end
             error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
         end
         
-        if !(A <: Const) && (isghostty(rrt) || Core.Compiler.isconstType(rrt) || rrt === DataType)
+        if !(A <: Const) && (active_reg_nothrow(rrt) == AnyState)
             error("Return type `$rrt` not marked Const, but is ghost or const type.")
         end
 
