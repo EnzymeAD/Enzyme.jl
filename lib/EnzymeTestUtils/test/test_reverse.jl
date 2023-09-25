@@ -81,7 +81,7 @@ end
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
                     test_reverse(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
-                end broken = (VERSION < v"1.8" && Tx <: Const && T <: Complex)
+                end
             end
         end
 
@@ -121,7 +121,7 @@ end
                 atol = rtol = sqrt(eps(real(T)))
                 # https://github.com/EnzymeAD/Enzyme.jl/issues/877
                 test_broken = (
-                    (VERSION > v"1.8" && T <: Real && !(Tc <: Const && Ty <: Const)) ||
+                    (VERSION > v"1.8" && T <: Real) ||
                     (VERSION < v"1.8" && Tc <: Const)
                 )
                 if Tc <: BatchDuplicated && Ty <: BatchDuplicated
