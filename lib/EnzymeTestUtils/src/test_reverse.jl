@@ -1,7 +1,4 @@
-@inline function call_with_kwargs(fkwargs::NT, f::FT, args::Vararg{Any, N}) where {NT, FT, N}
-    Base.@_inline_meta
-    @inline f(args...; fkwargs...)
-end
+@inline call_with_kwargs(fkwargs::NT, f::FT, xs...) where {NT, FT} = f(xs...; fkwargs...)
 
 # Force evaluation to avoid problem of a tuple being created but not being SROA'd
 # Can cause some tests to unnecessarily fail without runtime activity
