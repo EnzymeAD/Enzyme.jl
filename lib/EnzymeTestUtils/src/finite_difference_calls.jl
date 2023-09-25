@@ -42,7 +42,7 @@ end
 _fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 #=
-    _fd_reverse(fdm, f, ȳ, activities)
+    _fd_reverse(fdm, f, ȳ, activities, active_return)
 
 Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `activities`.
 
@@ -51,14 +51,14 @@ Call `FiniteDifferences.j′vp` on `f` with the arguments `xs` determined by `ac
 - `f`: The function to differentiate.
 - `ȳ`: The cotangent of the primal output `y=f(xs...)`.
 - `activities`: activities that would be passed to `Enzyme.autodiff`
-
+- `active_return`: whether the return is non-constant
 # Returns
 - `x̄s`: Derivatives of output `s` w.r.t. `xs` estimated by finite differencing.
 =#
-function _fd_reverse(fdm, f, ȳ, activities)
+function _fd_reverse(fdm, f, ȳ, activities, active_return)
     xs = map(x -> x.val, activities)
     ignores = map(a -> a isa Const, activities)
-    f2 = _wrap_reverse_function(f, xs, ignores)
+    f2 = _wrap_reverse_function(active_return, f, xs, ignores)
     all(ignores) && return map(zero_tangent, xs)
     ignores = collect(ignores)
     is_batch = _any_batch_duplicated(map(typeof, activities)...)
@@ -137,7 +137,7 @@ All arguments are copied before being passed to `f`, so that `fnew` is non-mutat
 - `ignores`: Collection of `Bool`s, the same length as `xs`.
   If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
 =#
-function _wrap_reverse_function(f, xs, ignores)
+function _wrap_reverse_function(active_return, f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]
         retargs = Any[]
@@ -165,8 +165,10 @@ function _wrap_reverse_function(f, xs, ignores)
 
         # we will now explicitly zero all objects returned, and replace any of the args with this
         # zero, if the input and output alias.
-        for k in keys(zeros)
-            zeros[k] = zero_tangent(k)
+        if active_return
+            for k in keys(zeros)
+                zeros[k] = zero_tangent(k)
+            end
         end
 
         return (origRet, Base.deepcopy_internal(retargs, zeros)...)

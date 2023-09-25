@@ -82,7 +82,7 @@ function test_reverse(
             end
         end
         # call finitedifferences, avoid mutating original arguments
-        dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities)
+        dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities, !(ret_activity <: Const))
         # call autodiff, allow mutating original arguments
         c_act = Const(call_with_kwargs)
         forward, reverse = autodiff_thunk(
