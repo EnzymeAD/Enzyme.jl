@@ -1,3 +1,20 @@
+@inline function call_with_kwargs(fkwargs::NT, f::FT, args::Vararg{Any, N}) where {NT, FT, N}
+    Base.@_inline_meta
+    @inline f(args...; fkwargs...)
+end
+
+# Force evaluation to avoid problem of a tuple being created but not being SROA'd
+# Can cause some tests to unnecessarily fail without runtime activity
+for N in 1:30
+    argexprs = [Symbol(:arg, Symbol(i)) for i in 1:N]
+    eval(quote
+        function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
+            Base.@_inline_meta
+            @inline f($(argexprs...); fkwargs...)
+        end
+    end)
+end
+
 """
     test_reverse(f, Activity, args...; kwargs...)
 
@@ -43,6 +60,8 @@ end
 
 Here we test a rule for a function of an array in batch reverse-mode:
 
+
+
 ```julia
 x = randn(3)
 for Tret in (Const, Active), Tx in (Const, BatchDuplicated)
@@ -61,7 +80,7 @@ function test_reverse(
     testset_name=nothing,
 )
     call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
-    call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
+    call_with_captured_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
         testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
     end
@@ -82,15 +101,15 @@ function test_reverse(
             end
         end
         # call finitedifferences, avoid mutating original arguments
-        dx_fdm = _fd_reverse(fdm, call_with_kwargs, ȳ, activities, !(ret_activity <: Const))
+        dx_fdm = _fd_reverse(fdm, call_with_captured_kwargs, ȳ, activities, !(ret_activity <: Const))
         # call autodiff, allow mutating original arguments
         c_act = Const(call_with_kwargs)
         forward, reverse = autodiff_thunk(
-            ReverseSplitWithPrimal, typeof(c_act), ret_activity, map(typeof, activities)...
+            ReverseSplitWithPrimal, typeof(c_act), ret_activity, typeof(Const(fkwargs)), map(typeof, activities)...
         )
-        tape, y_ad, shadow_result = forward(c_act, activities...)
+        tape, y_ad, shadow_result = forward(c_act, Const(fkwargs), activities...)
         if ret_activity <: Active
-            dx_ad = only(reverse(c_act, activities..., ȳ, tape))
+            dx_ad = only(reverse(c_act, Const(fkwargs), activities..., ȳ, tape))
         else
             # if there's a shadow result, then we need to set it to our random adjoint
             if !(shadow_result === nothing)
@@ -102,8 +121,9 @@ function test_reverse(
                     end
                 end
             end
-            dx_ad = only(reverse(c_act, activities..., tape))
+            dx_ad = only(reverse(c_act, Const(fkwargs), activities..., tape))
         end
+        dx_ad = (dx_ad[1], dx_ad[3:end]...)
         test_approx(
             y_ad, y, "The return value of the rule and function must agree"; atol, rtol
         )
