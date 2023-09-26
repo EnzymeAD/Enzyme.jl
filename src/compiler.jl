@@ -8,7 +8,7 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, Bat
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
-
+import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
 using LLVM, GPUCompiler, Libdl
@@ -279,54 +279,59 @@ end
     ActivityState(Int(a1) | Int(a2))
 end
 
-@inline active_reg_inner(::Type{Any}, seen) = DupState
-@inline active_reg_inner(::Type{Complex{Real}}, seen) = DupState
-@inline active_reg_inner(::Type{Real}, seen) = DupState
-@inline active_reg_inner(::Type{Complex{T}}, seen) where {T<:AbstractFloat} = ActiveState
-@inline active_reg_inner(::Type{T}, seen) where {T<:AbstractFloat} = ActiveState
-# here we explicity make ref considered dup rather than active
-@inline function active_reg_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}}}, seen) where T
-    state = active_reg_inner(T, seen)
-    if state == AnyState
-        return AnyState
-    end
-    return DupState
-end
-@inline function active_reg_inner(PT::Type{<:Array{T}}, seen) where {T}
-    state = active_reg_inner(T, seen)
-    if state == AnyState
-        return AnyState
-    end
-    return DupState
-end
+@inline ptreltype(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}, <:Array{T}}}) where T = T
 
-@inline function active_reg_inner(::Type{T}, seen) where T
-    if T ∈ keys(seen)
-        return seen[T]
+@inline function active_reg_inner(::Type{T}, seen, world)::ActivityState where T
+
+    if T === Any
+        return DupState
     end
-    if EnzymeRules.inactive_type(T)
-        return seen[T] = AnyState
+
+    if T <: Complex
+        return active_reg_inner(eltype(T), seen, world)
     end
+
+    if T <: AbstractFloat
+        return ActiveState
+    end
+
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array
+        return active_reg_inner(ptreltype(T), seen, world)
+    end
+
+    if T <: Integer
+        return AnyType
+    end
+
     if isghostty(T) || Core.Compiler.isconstType(T)
         return AnyState
     end
+
+    if Base.invoke_in_world(world, EnzymeCore.EnzymeRules.inactive_type, T)
+        return AnyState
+    end
+
     if T isa UnionAll
         return DupState
     end
+
+    if T isa Union
+        if active_reg_inner(T.a, seen, world) != AnyState
+            return DupState
+        end
+        if active_reg_inner(T.b, seen, world) != AnyState
+            return DupState
+        end
+        return AnyState
+    end
+
     # if abstract it must be by reference
     if Base.isabstracttype(T)
         return DupState
     end
 
-    if T isa Union
-        seen[T] = DupState
-        if active_reg_inner(T.a, seen) != AnyState
-            return
-        end
-        if active_reg_inner(T.b, seen) != AnyState
-            return
-        end
-        return seen[T] = AnyState
+    if T ∈ keys(seen)
+        return seen[T]
     end
 
     seen[T] = MixedState
@@ -339,7 +344,7 @@ end
         subT    = fieldtype(T, f)
 
         # Allocated inline so adjust first path
-        sub = active_reg_inner(subT, seen)
+        sub = active_reg_inner(subT, seen, world)
         if sub == AnyState
             continue
         end
@@ -353,12 +358,12 @@ end
     return ty
 end
 
-@inline @generated function active_reg_nothrow(::Type{T}) where {T}
-    return active_reg_inner(T, IdDict())
+@inline @generated function active_reg_nothrow(::Type{T}, ::Val{world}=Val(Base.get_world_counter())) where {T, world}
+    return active_reg_inner(T, IdDict(), world)
 end
 
-@inline function active_reg(::Type{T}) where {T}
-    state = active_reg_nothrow(T)
+@inline function active_reg(::Type{T}, ::Val{world}=Val(Base.get_world_counter())) where {T, world}
+    state = active_reg_nothrow(T, Val(world))
     str = string(T)*" has mixed internal activity types"
     @assert state != MixedState str
     return state == ActiveState
@@ -366,6 +371,12 @@ end
 
 @inline function guaranteed_const(::Type{T}) where T
     rt = active_reg_nothrow(T)
+    res = rt == AnyState
+    return res
+end
+
+@inline function guaranteed_const_nongen(::Type{T}, world) where T
+    rt = active_reg_inner(T, IdDict(), world)
     res = rt == AnyState
     return res
 end
@@ -1124,7 +1135,7 @@ end
 
 function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
-    ghos = guaranteed_const(FT)
+    ghos = guaranteed_const(FT, Val(world))
     forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
@@ -1138,7 +1149,7 @@ end
 function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {FT1, FT2, World, width, ModifiedBetween}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
-    ghos = guaranteed_const(FT)
+    ghos = guaranteed_const(FT, Val(world))
     forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
@@ -3280,7 +3291,7 @@ end
     width = get_width(gutils)
 
     ops = collect(operands(orig))[1:end-1]
-    dupClosure = !guaranteed_const(funcT) && !is_constant_value(gutils, ops[1])
+    dupClosure = !guaranteed_const_nongen(funcT, world) && !is_constant_value(gutils, ops[1])
     pdupClosure = dupClosure
 
     subfunc = nothing
@@ -3303,7 +3314,7 @@ end
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if dupClosure
-            ty = active_reg_nothrow(funcT)
+            ty = active_reg_nothrow(funcT, Val(world))
             has_active = ty == MixedState || ty == ActiveState
             if has_active
                 refed = true
@@ -3897,10 +3908,12 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
+    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+
     for arg in jlargs
         @assert arg.cc != RemovedParam
         if arg.cc == GPUCompiler.GHOST
-            @assert guaranteed_const(arg.typ)
+            @assert guaranteed_const_nongen(arg.typ, world)
             if isKWCall && arg.arg_i == 2
                 Ty = arg.typ
                 kwtup = Ty
@@ -3983,7 +3996,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(arg.typ) )
+        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(arg.typ, Val(world)) )
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty)
             arty = convert(LLVMType, arg.typ; allow_boxed=true)
@@ -4065,6 +4078,8 @@ end
 function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     width = get_width(gutils)
     mode = get_mode(gutils)
+    
+    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -4086,7 +4101,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     if activep == API.DFT_CONSTANT
         RT = Const{RealRt}
 
-    elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(RealRt) )
+    elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(RealRt, Val(world)) )
         RT = Active{RealRt}
 
     elseif activep == API.DFT_DUP_ARG
@@ -5893,7 +5908,8 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
                     typ = Base.unsafe_pointer_to_objref(ptr)
                     TT = Core.Typeof(typ)
-                    if guaranteed_const(TT)
+                    world = enzyme_extract_world(LLVM.parent(IRBuilder(B)))
+                    if guaranteed_const_nongen(TT, world)
                         continue
                     end
                     badval = string(typ)*" of type"*" "*string(TT)
@@ -5915,7 +5931,8 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
                     typ = Base.unsafe_pointer_to_objref(ptr)
                     TT = Core.Typeof(typ)
-                    if guaranteed_const(TT)
+                    world = enzyme_extract_world(LLVM.parent(IRBuilder(B)))
+                    if guaranteed_const_nongen(TT, world)
                         continue
                     end
                     badval = string(typ)*" of type"*" "*string(TT)
@@ -7359,6 +7376,8 @@ function julia_activity_rule(f::LLVM.Function)
         return
     end
 
+    world = enzyme_extract_world(f)
+
     if  expectLen != length(parameters(f))
         println(string(f))
         @show expectLen, swiftself, sret, returnRoots, mi.specTypes.parameters, retRemoved, parmsRemoved
@@ -7375,7 +7394,7 @@ function julia_activity_rule(f::LLVM.Function)
 
         op_idx = arg.codegen.i
 
-        if guaranteed_const(arg.typ)
+        if guaranteed_const_nongen(arg.typ, world)
             push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzyme_inactive"))
         end
     end
@@ -7383,7 +7402,7 @@ function julia_activity_rule(f::LLVM.Function)
     if sret !== nothing
         idx = 0
         if !in(0, parmsRemoved)
-            if guaranteed_const(RT)
+            if guaranteed_const_nongen(RT, world)
                 push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_inactive"))
             end
             idx+=1
@@ -7396,7 +7415,7 @@ function julia_activity_rule(f::LLVM.Function)
     end
 
     if llRT !== nothing && LLVM.return_type(function_type(f)) != LLVM.VoidType()    
-        if guaranteed_const(RT)
+        if guaranteed_const_nongen(RT, world)
             push!(return_attributes(f), StringAttribute("enzyme_inactive"))
         end
     end
@@ -9905,7 +9924,7 @@ end
             error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
         end
         
-        if !(A <: Const) && guaranteed_const(rrt)
+        if !(A <: Const) && guaranteed_const_nongen(rrt, job.world)
             error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
         end
 
