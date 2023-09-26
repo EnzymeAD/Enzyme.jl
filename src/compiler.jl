@@ -300,7 +300,7 @@ end
     end
 
     if T <: Integer
-        return AnyType
+        return AnyState
     end
 
     if isghostty(T) || Core.Compiler.isconstType(T)
