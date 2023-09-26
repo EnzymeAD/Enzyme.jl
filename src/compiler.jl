@@ -4642,7 +4642,14 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             shadowV = extract_value!(B, res, idx)
             if get_return_info(RealRt)[2] !== nothing
                 dval = invert_pointer(gutils, operands(orig)[1], B)
-                store!(B, shadowV, dval)
+
+                for idx in 1:width
+                    to_store = (width == 1) ? shadowV : extract_value!(B, shadowV, idx-1)
+
+                    store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx-1)
+
+                    store!(B, to_store, store_ptr)
+                end
                 shadowV = C_NULL
             else
                 @assert value_type(shadowV) == shadowType
