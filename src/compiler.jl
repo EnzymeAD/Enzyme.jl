@@ -368,10 +368,7 @@ end
 
         sub = if subT == T
             AnyState
-        elseif allocatedinline(subT) 
-            active_reg_inner(subT, seen, world, justActive)
         else
-
             # if just looking for active of not
             # we do not need to consider non-inlined subtypes
             if justActive
