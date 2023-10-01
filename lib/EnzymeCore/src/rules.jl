@@ -218,6 +218,6 @@ end
 
 Mark a particular type `Ty` as always being inactive.
 """
-inactive_type(::Type{Ty}) where Ty = false
+inactive_type(::Type) = false
 
 end # EnzymeRules
