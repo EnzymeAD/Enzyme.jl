@@ -281,7 +281,48 @@ end
 
 @inline ptreltype(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}, <:Array{T}, Complex{T}}}) where T = T
 
-@inline function active_reg_inner(::Type{T}, seen, world::Union{Nothing, UInt}, justActive=false)::ActivityState where T
+struct Merger{seen,worldT}
+    world::worldT
+    justActive::Bool
+end
+
+@inline element(::Val{T}) where T = T
+
+@inline function (c::Merger{seen,worldT})(f::Int) where {seen,worldT}
+    T = element(first(seen))
+    subT = fieldtype(T, f)
+
+    sub = active_reg_inner(subT, seen, c.world, c.justActive)
+
+    if sub == AnyState
+        Val(AnyState)
+    else
+        if sub == DupState || ismutabletype(T) || !allocatedinline(subT)
+            if c.justActive
+                Val(AnyState)
+            else
+                Val(DupState)
+            end
+        else
+            Val(sub)
+        end
+    end
+end
+
+@inline forcefold(::Val{RT}) where RT = RT
+
+@inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any, N}) where {ty, sty, N}
+    if sty == AnyState || sty == ty
+        return forcefold(Val(ty), C...)
+    end
+    if ty == AnyState
+        return forcefold(Val(sty), C...)
+    else
+        return MixedState
+    end
+end
+
+@inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, justActive=false)::ActivityState where {ST,T}
 
     if T === Any
         return DupState
@@ -296,6 +337,9 @@ end
     end
 
     if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array
+        if justActive
+            return AnyState
+        end
         if active_reg_inner(ptreltype(T), seen, world, justActive) == AnyState
             return AnyState
         else
@@ -328,6 +372,9 @@ end
     end
 
     if T isa Union
+        if justActive
+            return AnyState
+        end
         if active_reg_inner(T.a, seen, world, justActive) != AnyState
             return DupState
         end
@@ -342,71 +389,39 @@ end
         return DupState
     end
 
-    shouldSet = false
-
     if ismutabletype(T)
         # if just looking for active of not
         # we know for a fact this isn't active
         if justActive
             return AnyState
         end
-
-        if T ∈ keys(seen)
-            return seen[T]
-        end
-
-        seen[T] = AnyState
-        shouldSet = true
     end
 
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
 
-    ty = AnyState
-    for f in 1:fieldcount(T)
-        subT    = fieldtype(T, f)
-
-        sub = if subT == T
-            AnyState
-        else
-            # if just looking for active of not
-            # we do not need to consider non-inlined subtypes
-            if justActive
-                AnyState
-            else        
-                seen[T] = AnyState
-                shouldSet = true
-
-                active_reg_inner(subT, seen, world, justActive)
-            end
-        end
-
-        if sub == AnyState
-            continue
-        end
-        if ismutabletype(T) || !allocatedinline(subT)
-            ty |= DupState
-        else
-            ty |= sub
-        end
+    if Val(T) ∈ seen
+        return MixedState
     end
 
-    if shouldSet
-        seen[T] = ty
-    end
+    seen = (Val(T), seen...)
+
+    fty = Merger{seen,typeof(world)}(world,justActive)
+
+    ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(T)))...)
 
     return ty
 end
 
 @inline @generated function active_reg_nothrow(::Type{T}, ::Val{world}) where {T, world}
-    return active_reg_inner(T, IdDict(), world)
+    return active_reg_inner(T, (), world)
 end
 
 @inline function active_reg(::Type{T}, world::Union{Nothing, UInt}=nothing)::Bool where {T}
-    seen = IdDict()
+    seen = ()
 
     # check if it could contain an active
-    if active_reg_inner(T, seen, world, #=justActive=#false) == ActiveState
+    if active_reg_inner(T, seen, world, #=justActive=#true) == ActiveState
         state = active_reg_inner(T, seen, world, #=justActive=#false)
         if state == ActiveState
             return true
@@ -425,7 +440,7 @@ end
 end
 
 @inline function guaranteed_const_nongen(::Type{T}, world) where T
-    rt = active_reg_inner(T, IdDict(), world)
+    rt = active_reg_inner(T, (), world)
     res = rt == AnyState
     return res
 end
@@ -2154,7 +2169,7 @@ end
 end
 
 @inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
-    if guaranteed_const(RT)
+    if guaranteed_const_nongen(RT, nothing)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     if haskey(seen, prev)
