@@ -144,6 +144,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
@@ -210,6 +211,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
     "ijl_module_parent", "jl_module_parent",
     "julia.safepoint",
@@ -335,7 +337,7 @@ end
     if T === Union{}
         return AnyState
     end
-    
+
     if T <: Complex
         return active_reg_inner(ptreltype(T), seen, world, justActive)
     end
@@ -456,7 +458,7 @@ end
 Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
-    ActReg = active_reg_nothrow(T, Val(Base.get_world_counter()))
+    ActReg = active_reg_inner(T, (), nothing)
     if ActReg == AnyState
         return Const{T}
     end
