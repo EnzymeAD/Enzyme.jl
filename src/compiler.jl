@@ -1183,6 +1183,7 @@ end
 function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
     primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
+    batchshadowargs = Vector{Union{Symbol,Expr}}[]
     primtypes = Union{Symbol,Expr}[]
     allargs = Expr[]
     typeargs = Symbol[]
@@ -1229,6 +1230,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
             end
             push!(shadows, shad)
         end
+        push!(batchshadowargs, shadows)
         if Width == 1
             push!(shadowargs, shadows[1])
         else
@@ -1254,7 +1256,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing)
             )
         push!(wrapped, expr)
     end
-    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped
+    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped, batchshadowargs
 end
 
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -1310,7 +1312,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
 
 function func_runtime_generic_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(true, N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _ = setup_macro_wraps(true, N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
@@ -1322,7 +1324,7 @@ end
 
 @generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width)-1
-    _, _, primtypes, _, _, wrapped = setup_macro_wraps(true, N, Width, :allargs)
+    _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
 
@@ -1388,7 +1390,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 end
 
 function func_runtime_generic_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _ = setup_macro_wraps(false, N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
@@ -1399,12 +1401,12 @@ function func_runtime_generic_augfwd(N, Width)
 end
 
 @generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
-    N = div(length(allargs)+2, Width)-1
-    _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
+    N = div(length(allargs)+2, Width+1)-1
+    _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 end
 
-function body_runtime_generic_rev(N, Width, wrapped, primttypes)
+function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
     outs = []
     for i in 1:N
         for w in 1:Width
@@ -1413,7 +1415,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
             else
                 :(tup[$i][$w])
             end
-            shad = Symbol("shadow_$(i)_$w")
+            shad = shadowargs[i][w]
             out = :(if $expr === nothing
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
@@ -1471,8 +1473,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes)
 end
 
 function func_runtime_generic_rev(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped = setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_rev(N, Width, wrapped, primtypes)
+    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width)
+    body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
 
     quote
         function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
@@ -1482,9 +1484,9 @@ function func_runtime_generic_rev(N, Width)
 end
 
 @generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
-    N = div(length(allargs)+2, Width)-1
-    _, _, primtypes, _, _, wrapped = setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_generic_rev(N, Width, wrapped, primtypes)
+    N = div(length(allargs)+2, Width+1)-1
+    _, _, primtypes, _, _, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
 end
 
 # Create specializations
