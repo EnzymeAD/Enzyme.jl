@@ -332,6 +332,10 @@ end
         return DupState
     end
 
+    if T === Union{}
+        return AnyState
+    end
+    
     if T <: Complex
         return active_reg_inner(ptreltype(T), seen, world, justActive)
     end
