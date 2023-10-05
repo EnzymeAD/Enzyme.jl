@@ -279,7 +279,11 @@ end
     ActivityState(Int(a1) | Int(a2))
 end
 
-@inline ptreltype(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}, Base.RefValue{T}, <:Array{T}, Complex{T}}}) where T = T
+@inline ptreltype(::Type{Ptr{T}}) where T = T
+@inline ptreltype(::Type{Core.LLVMPtr{T}}) where T = T
+@inline ptreltype(::Type{Base.RefValue{T}}) where T = T
+@inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
+@inline ptreltype(::Type{Complex{T}}) where T = T
 
 struct Merger{seen,worldT}
     world::worldT
