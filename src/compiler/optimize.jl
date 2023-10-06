@@ -723,6 +723,10 @@ function propagate_returned!(mod::LLVM.Module)
                     push!(todo, un)
                 end
                 for un in todo
+                    md = metadata(un)
+                    if !keepret && haskey(md, LLVM.MD_range)
+                        delete!(md, LLVM.MD_range)
+                    end
                     API.EnzymeSetCalledFunction(un, nfn, toremove)
                 end
                 unsafe_delete!(mod, fn)
