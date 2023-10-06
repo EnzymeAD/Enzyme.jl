@@ -2399,6 +2399,45 @@ end
     end
 end
 
+struct HarmonicAngle
+    k::Float64
+    t0::Float64
+end
+
+function harmonic_g(a, coords_i)
+    return (a.k) * a.t0
+end
+
+function harmonic_f!(inter_list, coords, inters)
+    si = 0.0
+    for (i, b) in zip(inter_list, inters)
+        si += g(b, coords[i])
+    end
+    return si
+end
+
+@testset "Decay preservation" begin
+    inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
+    inter_list = [1, 3]
+    dinters = [HarmonicAngle(0.0, 0.0), HarmonicAngle(0.0, 0.0)]
+    coords   = [(1.0, 2.0, 3.0), (1.1, 2.1, 3.1), (1.2, 2.2, 3.2)]
+    d_coords = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
+
+    autodiff(
+        Reverse,
+        harmonic_f!,
+        Const,
+        Const(inter_list),
+        Duplicated(coords, d_coords),
+        Duplicated(inters, dinters),
+    )
+
+    @test dinters[1].k ≈ 0.1 
+    @test dinters[1].t0 ≈ 1.0 
+    @test dinters[2].k ≈ 0.3 
+    @test dinters[2].t0 ≈ 2.0 
+end
+
 @testset "Statistics" begin
     f1(x) = var([x, 2.0, 3.0])
     @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5/3
