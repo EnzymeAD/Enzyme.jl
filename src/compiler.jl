@@ -7256,7 +7256,6 @@ end
 function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     inst = LLVM.Instruction(val)
 
-    @show inst
     legal, typ = abs_typeof(inst)
     @assert legal
 
