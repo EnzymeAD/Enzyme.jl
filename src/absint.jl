@@ -77,6 +77,7 @@ function absint(arg::LLVM.Value)
             end
         end
         if !isa(ce, LLVM.ConstantInt)
+            @show ce, opcode(ce)
             return (false, nothing)
         end
         ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
@@ -95,12 +96,14 @@ function absint(arg::LLVM.Value)
             end
         end
         if !isa(ce, LLVM.ConstantInt)
+            @show ce, opcode(ce)
             return (false, nothing)
         end
         ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
         typ = Base.unsafe_pointer_to_objref(ptr)
         return (true, typ)
     end
+    @show arg
     return (false, nothing)
 end
 
@@ -123,6 +126,7 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
            nm == "ijl_alloc_array_2d" ||
            nm == "jl_alloc_array_3d" ||
            nm == "ijl_alloc_array_3d" 
+            @show operands(arg)[3]
         	return absint(operands(arg)[3])
         end
 
