@@ -285,6 +285,7 @@ end
 @inline ptreltype(::Type{Core.LLVMPtr{T}}) where T = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where T = T
 @inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
+@inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
 @inline ptreltype(::Type{Complex{T}}) where T = T
 
 struct Merger{seen,worldT,justActive,UnionSret}
