@@ -101,6 +101,8 @@ end
     @assert Enzyme.Compiler.active_reg_inner(Colon, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
@@ -651,6 +653,30 @@ end
     res = autodiff(Reverse, test_f, Active(Foo2(3.0, :two)))[1][1]
     @test res.x ≈ 6.0
     @test res.y == nothing
+end
+
+@testset "Generic Active Union Return" begin
+
+    function generic_union_ret(A)
+            if 0 < length(A)
+                @inbounds A[1]
+            else
+                nothing
+                Base._InitialValue()
+            end
+    end
+
+    function outergeneric(weights::Vector{Float64})::Float64
+        v = generic_union_ret(Base.inferencebarrier(weights))
+        return v::Float64
+    end
+
+    weights = [0.2]
+    dweights = [0.0]
+
+    Enzyme.autodiff(Enzyme.Reverse, outergeneric, Enzyme.Duplicated(weights, dweights))
+
+    @test dweights[1] ≈ 1.
 end
 
 @testset "Null init union" begin

@@ -287,24 +287,32 @@ end
 @inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Complex{T}}) where T = T
 
-struct Merger{seen,worldT}
+struct Merger{seen,worldT,justActive,UnionSret}
     world::worldT
-    justActive::Bool
 end
 
 @inline element(::Val{T}) where T = T
 
-@inline function (c::Merger{seen,worldT})(f::Int) where {seen,worldT}
+@inline function (c::Merger{seen,worldT,justActive,UnionSret})(f::Int) where {seen,worldT,justActive,UnionSret}
     T = element(first(seen))
+
+    if justActive && ismutabletype(T)
+        return Val(AnyState)
+    end
+
     subT = fieldtype(T, f)
 
-    sub = active_reg_inner(subT, seen, c.world, c.justActive)
+    if justActive && !allocatedinline(subT)
+        return Val(AnyState)
+    end
+
+    sub = active_reg_inner(subT, seen, c.world, Val(justActive), Val(UnionSret))
 
     if sub == AnyState
         Val(AnyState)
     else
-        if sub == DupState || ismutabletype(T) || !allocatedinline(subT)
-            if c.justActive
+        if sub == DupState
+            if justActive
                 Val(AnyState)
             else
                 Val(DupState)
@@ -328,7 +336,7 @@ end
     end
 end
 
-@inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, justActive=false)::ActivityState where {ST,T}
+@inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
         return DupState
@@ -339,7 +347,7 @@ end
     end
 
     if T <: Complex
-        return active_reg_inner(ptreltype(T), seen, world, justActive)
+        return active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret))
     end
 
     if T <: AbstractFloat
@@ -350,7 +358,7 @@ end
         if justActive
             return AnyState
         end
-        if active_reg_inner(ptreltype(T), seen, world, justActive) == AnyState
+        if active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret)) == AnyState
             return AnyState
         else
             return DupState
@@ -382,14 +390,26 @@ end
     end
 
     if T isa Union
-        if justActive
-            return AnyState
-        end
-        if active_reg_inner(T.a, seen, world, justActive) != AnyState
-            return DupState
-        end
-        if active_reg_inner(T.b, seen, world, justActive) != AnyState
-            return DupState
+        # if sret union, the data is stored in a stack memory location and is therefore
+        # not unique'd preventing the boxing of the union in the default case
+        if UnionSret && is_sret_union(T)
+            @inline function recur(::Type{ST}) where ST
+                if ST isa Union
+                    return forcefold(Val(recur(ST.a)), Val(recur(ST.b)))
+                end
+                return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
+            end
+            return recur(T)
+        else
+            if justActive
+                return AnyState
+            end
+            if active_reg_inner(T.a, seen, world, Val(justActive), Val(UnionSret)) != AnyState
+                return DupState
+            end
+            if active_reg_inner(T.b, seen, world, Val(justActive), Val(UnionSret)) != AnyState
+                return DupState
+            end
         end
         return AnyState
     end
@@ -416,7 +436,7 @@ end
 
     seen = (Val(T), seen...)
 
-    fty = Merger{seen,typeof(world)}(world,justActive)
+    fty = Merger{seen,typeof(world),justActive, UnionSret}(world)
 
     ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(T)))...)
 
@@ -431,8 +451,8 @@ end
     seen = ()
 
     # check if it could contain an active
-    if active_reg_inner(T, seen, world, #=justActive=#true) == ActiveState
-        state = active_reg_inner(T, seen, world, #=justActive=#false)
+    if active_reg_inner(T, seen, world, #=justActive=#Val(true)) == ActiveState
+        state = active_reg_inner(T, seen, world, #=justActive=#Val(false))
         if state == ActiveState
             return true
         end
@@ -455,7 +475,7 @@ end
     return res
 end
 
-Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where T = guess_activity(T, convert(API.CDerivativeMode, mode))
+Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} = guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     ActReg = active_reg_inner(T, (), nothing)
@@ -748,83 +768,7 @@ function emit_svec!(B, args)::LLVM.Value
     call!(B, fty, fn, [LLVM.ConstantInt(sz, length(args)), args...])
 end
 
-function absint(arg::LLVM.Value)
-    if isa(arg, LLVM.CallInst)
-        fn = LLVM.called_operand(arg)
-        nm = ""
-        if isa(fn, LLVM.Function)
-            nm = LLVM.name(fn)
-        end
-        for (fname, ty) in (
-                             ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
-                             ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
-                             ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
-                             ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
-                            )
-            if nm == fname
-                v = first(operands(arg))
-                if isa(v, ConstantInt)
-                    return (true, convert(ty, v))
-                end
-            end
-        end
-        if LLVM.callconv(arg) == 37 || nm == "julia.call"
-            index = 2
-            if LLVM.callconv(arg) != 37
-                fn = first(operands(arg))
-                nm = LLVM.name(fn)
-                index = 3
-            end
-            if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
-                found = []
-                legal, Ty = absint(operands(arg)[index])
-                for sarg in operands(arg)[index+1:end-1]
-                    slegal , foundv = absint(sarg)
-                    if slegal
-                        push!(found, foundv)
-                    else
-                        legal = false
-                        break
-                    end
-                end
-
-                if legal
-                    return (true, Ty{found...})
-                end
-            end
-            if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
-                found = []
-                legal = true
-                for sarg in operands(arg)[index:end-1]
-                    slegal , foundv = absint(sarg)
-                    if slegal
-                        push!(found, foundv)
-                    else
-                        legal = false
-                        break
-                    end
-                end
-                if legal
-                    res = (found...,)
-                    return (true, res)
-                end
-            end
-        end
-    end
-    if isa(arg, ConstantExpr)
-        ce = arg
-        while isa(ce, ConstantExpr)
-            ce = operands(ce)[1]
-        end
-        if !isa(ce, LLVM.ConstantInt)
-            return (false, nothing)
-        end
-        ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-        typ = Base.unsafe_pointer_to_objref(ptr)
-        return (true, typ)
-    end
-    return (false, nothing)
-end
+include("absint.jl")
 
 function emit_apply_type!(B, Ty, args)::LLVM.Value
     curent_bb = position(B)
@@ -918,21 +862,15 @@ function emit_tuple!(B, args)::LLVM.Value
 end
 
 function emit_jltypeof!(B, arg)::LLVM.Value
+    legal, val = abs_typeof(arg)
+    if legal
+        return unsafe_to_llvm(val)
+    end
+
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    if isa(arg, ConstantExpr)
-        ce = arg
-        while isa(ce, ConstantExpr)
-            ce = operands(ce)[1]
-        end
-        if isa(ce, LLVM.ConstantInt)
-            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-            typ = Base.unsafe_pointer_to_objref(ptr)
-            return unsafe_to_llvm(Core.Typeof(typ))
-        end
-    end
 
     fn, FT = get_function!(mod, "jl_typeof") do ctx
         T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1029,12 +967,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    ce = operands(inst)[1]
-    while isa(ce, ConstantExpr)
-        ce = operands(ce)[1]
-    end
-    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-    typ = array_inner(Base.unsafe_pointer_to_objref(ptr))
+    legal, typ = abs_typeof(inst)
+    @assert legal
 
     b = LLVM.IRBuilder(B)
     orig = LLVM.Value(OrigCI)
@@ -5969,50 +5903,20 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 continue
             end
 
-            if isa(cur, ConstantExpr)
-                ce = cur
-                while isa(ce, ConstantExpr)
-                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-                        ce = operands(ce)[1]
-                    else
-                        break
-                    end
+            legal, TT = abs_typeof(cur)
+            if legal
+                world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+                if guaranteed_const_nongen(TT, world)
+                    continue
                 end
-                if isa(ce, ConstantInt)
-                    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-                    typ = Base.unsafe_pointer_to_objref(ptr)
-                    TT = Core.Typeof(typ)
-                    world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
-                    if guaranteed_const_nongen(TT, world)
-                        continue
-                    end
-                    badval = string(typ)*" of type"*" "*string(TT)
-                    illegal = true
-                    break
+                legal2, obj = absint(cur)
+                badval = if legal2
+                    string(obj)*" of type"*" "*string(TT)
+                else
+                    "Unknown object of type"*" "*string(TT)
                 end
-            end
-            if isa(cur, LLVM.LoadInst)
-                ptr = operands(cur)[1]
-                ce = ptr
-                while isa(ce, ConstantExpr)
-                    if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-                        ce = operands(ce)[1]
-                    else
-                        break
-                    end
-                end
-                if isa(ce, ConstantInt)
-                    ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
-                    typ = Base.unsafe_pointer_to_objref(ptr)
-                    TT = Core.Typeof(typ)
-                    world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
-                    if guaranteed_const_nongen(TT, world)
-                        continue
-                    end
-                    badval = string(typ)*" of type"*" "*string(TT)
-                    illegal = true
-                    break
-                end
+                illegal = true
+                break
             end
             if isa(cur, LLVM.PointerNull)
                 continue
@@ -7273,12 +7177,8 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     if API.HasFromStack(inst)
         return UInt8(false)
     end
-    ce = operands(inst)[3]
-    while isa(ce, ConstantExpr)
-        ce = operands(ce)[1]
-    end
-    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-    typ = Base.unsafe_pointer_to_objref(ptr)
+    legal, typ = abs_typeof(inst)
+    @assert legal
 
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
@@ -7327,19 +7227,15 @@ function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
         return UInt8(false)
     end
     inst = LLVM.Instruction(val)
-    ce = operands(inst)[1]
-    while isa(ce, ConstantExpr)
-        ce = operands(ce)[1]
-    end
-    if isa(ce, ConstantInt)
+
+    legal, typ = abs_typeof(inst)
+
+    if legal
         if (direction & API.DOWN) != 0
-            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-            typ = Base.unsafe_pointer_to_objref(ptr)
-            ctx = LLVM.context(LLVM.Value(val))
+            ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
-            typ2 = Core.Typeof(typ)
-            rest = typetree(typ2, ctx, dl)
-            if GPUCompiler.deserves_retbox(typ2)
+            rest = typetree(typ, ctx, dl)
+            if GPUCompiler.deserves_retbox(typ)
                 merge!(rest, TypeTree(API.DT_Pointer, ctx))
                 only!(rest, -1)
             end
@@ -7359,12 +7255,9 @@ end
 
 function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
     inst = LLVM.Instruction(val)
-    ce = operands(inst)[1]
-    while isa(ce, ConstantExpr)
-        ce = operands(ce)[1]
-    end
-    ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-    typ = Base.unsafe_pointer_to_objref(ptr)
+
+    legal, typ = abs_typeof(inst)
+    @assert legal
 
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
@@ -7596,6 +7489,15 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     return UInt8(false)
 end
 
+
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: Const = API.DFT_CONSTANT
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: Active = API.DFT_OUT_DIFF
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: Duplicated = API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicated = API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedFunc = API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: DuplicatedNoNeed = API.DFT_DUP_NONEED
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
+
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
@@ -7665,17 +7567,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
     #       The adjoint of that argument
-    if rt <: Const
-        retType = API.DFT_CONSTANT
-    elseif rt <: Active
-        retType = API.DFT_OUT_DIFF
-    elseif rt <: Duplicated || rt <: BatchDuplicated || rt<: BatchDuplicatedFunc
-        retType = API.DFT_DUP_ARG
-    elseif rt <: DuplicatedNoNeed || rt <: BatchDuplicatedNoNeed
-        retType = API.DFT_DUP_NONEED
-    else
-        error("Unhandled return type $rt")
-    end
+    retType = convert(API.CDIFFE_TYPE, rt)
 
     rules = Dict{String, API.CustomRuleType}(
         "jl_apply_generic" => @cfunction(ptr_rule,
@@ -8270,6 +8162,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
 
         if Mode == API.DEM_ReverseModePrimal
+
+            # if in split mode and the return is a union marked duplicated, upgrade floating point like shadow returns into ref{ty} since otherwise use of the value will create problems.
+            # 3 is index of shadow
+            if existed[3] != 0 && sret_union && active_reg_inner(pactualRetType, (), world, #=justActive=#Val(true), #=UnionSret=#Val(true)) == ActiveState
+                rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
+            end
             returnNum = 0
             for i in 1:3
                 if existed[i] != 0
@@ -8950,6 +8848,71 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("alwaysinline")))
         push!(function_attributes(wrapper_f), EnumAttribute("noinline"))
     end
+    
+    # Fix phinodes used exclusively in extractvalue to be separate phi nodes
+    phistofix = LLVM.PHIInst[]
+    for bb in blocks(wrapper_f)
+        for inst in instructions(bb)
+            if isa(inst, LLVM.PHIInst)
+                if !isa(value_type(inst), LLVM.StructType)
+                    continue
+                end
+                legal = true
+                for u in LLVM.uses(inst)
+                    u = LLVM.user(u)
+                    if !isa(u, LLVM.ExtractValueInst)
+                        legal = false
+                        break
+                    end
+                    if LLVM.API.LLVMGetNumIndices(u) != 1
+                        legal = false
+                        break
+                    end
+                    for op in operands(u)[2:end]
+                        if !isa(op, LLVM.ConstantInt)
+                            legal = false
+                            break
+                        end
+                    end
+                end
+                if legal
+                    push!(phistofix, inst)
+                end
+            end
+        end
+    end
+    for p in phistofix
+        nb = IRBuilder()
+        position!(nb, p)
+        st = value_type(p)::LLVM.StructType
+        phis = LLVM.PHIInst[]
+        for (i, t) in enumerate(LLVM.elements(st))
+            np = phi!(nb, t)
+            nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+            for (v, b) in LLVM.incoming(p)  
+                prevbld = IRBuilder()
+                position!(prevbld, terminator(b))
+                push!(nvs, (extract_value!(prevbld, v, i-1), b))
+            end
+            append!(LLVM.incoming(np), nvs)
+            push!(phis, np)
+        end
+
+        torem = LLVM.Instruction[]
+        for u in LLVM.uses(p)
+            u = LLVM.user(u)
+            @assert isa(u, LLVM.ExtractValueInst)
+            @assert LLVM.API.LLVMGetNumIndices(u) == 1
+            ind = unsafe_load(LLVM.API.LLVMGetIndices(u))
+            replace_uses!(u, phis[ind+1])
+            push!(torem, u)
+        end
+        for u in torem
+            LLVM.API.LLVMInstructionEraseFromParent(u)
+        end
+        LLVM.API.LLVMInstructionEraseFromParent(p)
+    end
+
     ModulePassManager() do pm
         # Kill the temporary staging function
         global_dce!(pm)
