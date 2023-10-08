@@ -194,10 +194,10 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
 
     for T in (Float64, Float32, Float16)
-        res = autodiff(Reverse, tanh, Active, Active(T(1.0)))[1][1]
+        res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
         @test res isa T
         @test res ≈ T(0.41997434161402606939)
-        res = autodiff(Forward, tanh, Duplicated(T(1.0), T(1.0)))[1]
+        res = autodiff(Forward, tanh, Duplicated(T(1), T(1)))[1]
         @test res isa T
         @test res ≈ T(0.41997434161402606939)
     end
