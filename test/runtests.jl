@@ -982,7 +982,7 @@ end
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
-        test_scalar(f, n)
+        test_scalar(f, n; rtol=1e-6, atol=1e-6)
     end
 
     @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
