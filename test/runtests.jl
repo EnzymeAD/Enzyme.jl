@@ -196,10 +196,15 @@ make3() = (1.0, 2.0, 3.0)
     for T in (Float64, Float32, Float16)
         res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
         @test res isa T
-        @test res ≈ T(0.41997434161402606939)
+        cmp = if T == Float64
+            T(0.41997434161402606939)
+        else
+            T(0.41997434161402606939f0)
+        end
+        @test res ≈ cmp
         res = autodiff(Forward, tanh, Duplicated(T(1), T(1)))[1]
         @test res isa T
-        @test res ≈ T(0.41997434161402606939)
+        @test res ≈ cmp
     end
 
     test_scalar(f1, 1.0)
