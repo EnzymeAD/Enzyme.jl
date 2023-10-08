@@ -287,6 +287,7 @@ end
 @inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
 @inline ptreltype(::Type{Complex{T}}) where T = T
+@inline ptreltype(::Type{Tuple{Vararg{T}}}) where T = T
 
 struct Merger{seen,worldT,justActive,UnionSret}
     world::worldT
@@ -355,7 +356,7 @@ end
         return ActiveState
     end
 
-    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array || isa(T, Type{Tuple{Vararg{T}}} where T)
         if justActive
             return AnyState
         end
