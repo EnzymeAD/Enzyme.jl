@@ -2411,7 +2411,7 @@ end
 function harmonic_f!(inter_list, coords, inters)
     si = 0.0
     for (i, b) in zip(inter_list, inters)
-        si += g(b, coords[i])
+        si += harmonic_g(b, coords[i])
     end
     return si
 end
@@ -2426,7 +2426,7 @@ end
     autodiff(
         Reverse,
         harmonic_f!,
-        Const,
+        Active,
         Const(inter_list),
         Duplicated(coords, d_coords),
         Duplicated(inters, dinters),
