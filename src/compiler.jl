@@ -972,6 +972,8 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     legal, typ = abs_typeof(inst)
     @assert legal
 
+    typ = eltype(typ)
+
     b = LLVM.IRBuilder(B)
     orig = LLVM.Value(OrigCI)
 
@@ -986,7 +988,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     prod = get_array_len(b, anti)
 
-    isunboxed = allocatedinline(typ)
+    isunboxed, elsz, al = Base.uniontype_layout(typ)
 
     isunion = typ isa Union
 
@@ -996,8 +998,6 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         elsz = sizeof(Ptr{Cvoid})
         al = elsz;
     else
-        elsz = sizeof(typ)
-        al = 1 # check
         elsz = LLT_ALIGN(elsz, al)
     end
 
