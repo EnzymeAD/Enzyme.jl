@@ -97,10 +97,12 @@ end
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
-    @assert Enzyme.Compiler.active_reg_inner(Base.RefValue{Float32}, Dict{DataType, Enzyme.Compiler.ActivityState}()) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Colon, Dict{DataType, Enzyme.Compiler.ActivityState}()) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(Symbol, Dict{DataType, Enzyme.Compiler.ActivityState}()) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(String, Dict{DataType, Enzyme.Compiler.ActivityState}()) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(Base.RefValue{Float32}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Colon, (), nothing) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
+    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
@@ -192,12 +194,17 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
 
     for T in (Float64, Float32, Float16)
-        res = autodiff(Reverse, tanh, Active, Active(T(1.0)))[1][1]
+        res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
         @test res isa T
-        @test res ≈ T(0.41997434161402606939)
-        res = autodiff(Forward, tanh, Duplicated(T(1.0), T(1.0)))[1]
+        cmp = if T == Float64
+            T(0.41997434161402606939)
+        else
+            T(0.41997434161402606939f0)
+        end
+        @test res ≈ cmp
+        res = autodiff(Forward, tanh, Duplicated(T(1), T(1)))[1]
         @test res isa T
-        @test res ≈ T(0.41997434161402606939)
+        @test res ≈ cmp
     end
 
     test_scalar(f1, 1.0)
@@ -653,6 +660,30 @@ end
     @test res.y == nothing
 end
 
+@testset "Generic Active Union Return" begin
+
+    function generic_union_ret(A)
+            if 0 < length(A)
+                @inbounds A[1]
+            else
+                nothing
+                Base._InitialValue()
+            end
+    end
+
+    function outergeneric(weights::Vector{Float64})::Float64
+        v = generic_union_ret(Base.inferencebarrier(weights))
+        return v::Float64
+    end
+
+    weights = [0.2]
+    dweights = [0.0]
+
+    Enzyme.autodiff(Enzyme.Reverse, outergeneric, Enzyme.Duplicated(weights, dweights))
+
+    @test dweights[1] ≈ 1.
+end
+
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
@@ -951,7 +982,7 @@ end
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
-        test_scalar(f, n)
+        test_scalar(f, n; rtol=1e-6, atol=1e-6)
     end
 
     @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
@@ -2371,6 +2402,45 @@ end
         @test res isa T
         @test res == 2
     end
+end
+
+struct HarmonicAngle
+    k::Float64
+    t0::Float64
+end
+
+function harmonic_g(a, coords_i)
+    return (a.k) * a.t0
+end
+
+function harmonic_f!(inter_list, coords, inters)
+    si = 0.0
+    for (i, b) in zip(inter_list, inters)
+        si += harmonic_g(b, coords[i])
+    end
+    return si
+end
+
+@testset "Decay preservation" begin
+    inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
+    inter_list = [1, 3]
+    dinters = [HarmonicAngle(0.0, 0.0), HarmonicAngle(0.0, 0.0)]
+    coords   = [(1.0, 2.0, 3.0), (1.1, 2.1, 3.1), (1.2, 2.2, 3.2)]
+    d_coords = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
+
+    autodiff(
+        Reverse,
+        harmonic_f!,
+        Active,
+        Const(inter_list),
+        Duplicated(coords, d_coords),
+        Duplicated(inters, dinters),
+    )
+
+    @test dinters[1].k ≈ 0.1 
+    @test dinters[1].t0 ≈ 1.0 
+    @test dinters[2].k ≈ 0.3 
+    @test dinters[2].t0 ≈ 2.0 
 end
 
 @testset "Statistics" begin

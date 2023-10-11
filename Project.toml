@@ -18,8 +18,8 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
 CEnum = "0.4, 0.5"
-EnzymeCore = "0.6.0"
-Enzyme_jll = "0.0.86"
+EnzymeCore = "0.6.1"
+Enzyme_jll = "0.0.87"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25"
 LLVM = "6.1"
 ObjectFile = "0.4"
