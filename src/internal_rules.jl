@@ -226,3 +226,14 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{
 
     return (nothing,)
 end
+
+
+function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.put!)}, ::Type{RT}, x::Duplicated{Channel{Ty}}, y::Duplicated{M}) where {RT, Ty, M}
+    primal = func.val(x.val, y.val)
+    shadow = func.val(x.dval, y.dval)
+    return EnzymeRules.AugmentedReturn(primal, shadow, tape)
+end
+
+function EnzymeRules.reverse(config, func::Const{typeof(Base.put!)}, ::Type{RT}, tape, x::Duplicated{Channel{Ty}}, y::Duplicated{M}) where {RT, Ty, M}
+    return (nothing, nothing)
+end
