@@ -227,8 +227,12 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{
     return (nothing,)
 end
 
-@inline function pmap_fwd(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
+@inline function pmap_fwd(idx, tapes::Vector, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
     @inbounds tapes[idx] = thunk(f, Const(idx), fargs...)
+end
+
+@inline function pmap_fwd(idx, tapes::Ptr, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
+    unsafe_store!(tapes, thunk(f, Const(idx), fargs...), idx)
 end
 
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
@@ -238,15 +242,22 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, 
 
     TapeType = EnzymeRules.tape_type(fwd_thunk)
 
-    tapes = Vector{TapeType}(undef, count.val)
+    tapes = if Enzyme.Compiler.any_jltypes(TapeType)
+        Vector{TapeType}(undef, count.val)
+    else
+        Base.unsafe_convert(Ptr{TapeType}, Libc.malloc(sizeof(TapeType)*count.val))
+    end
 
     Enzyme.pmap(count, pmap_fwd, tapes, fwd_thunk, body, args...)
     return AugmentedReturn(nothing, nothing, tapes)
 end
 
-@inline function pmap_rev(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
-    st = @inbounds tapes[idx]
-    thunk(f, Const(idx), fargs..., st)
+@inline function pmap_rev(idx, tapes::Vector, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
+    thunk(f, Const(idx), fargs..., @inbounds tapes[idx])
+end
+
+@inline function pmap_rev(idx, tapes::Ptr, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
+    thunk(f, Const(idx), fargs..., @inbounds tapes[idx])
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
@@ -255,6 +266,12 @@ function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Co
     fwd_thunk, rev_thunk =  autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     Enzyme.pmap(count, pmap_rev, tapes, rev_thunk, body, args...)
+
+    TapeType = EnzymeRules.tape_type(fwd_thunk)
+
+    if !Enzyme.Compiler.any_jltypes(TapeType)
+        Libc.free(tapes)
+    end
 
     return ntuple(Val(2+length(args))) do _
         Base.@_inline_meta

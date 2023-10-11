@@ -517,8 +517,11 @@ end
 
 @inline return_type(::AbstractThunk{FA, RT}) where {FA, RT} = RT
 @inline return_type(::Type{AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = RT
-@inline get_tape_type(::Type{AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
-@inline get_tape_type(::Type{AdjointThunk{PT, FA, RT, TT, Width, TapeType}}) where {PT, FA, RT, TT, Width, TapeType} = TapeType
+
+@inline EnzymeRules.tape_type(::Type{AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
+@inline EnzymeRules.tape_type(::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType}) where {PT, FA, RT, TT, Width, ReturnPrimal, TapeType} = TapeType
+@inline EnzymeRules.tape_type(::Type{AdjointThunk{PT, FA, RT, TT, Width, TapeType}}) where {PT, FA, RT, TT, Width, TapeType} = TapeType
+@inline EnzymeRules.tape_type(::AdjointThunk{PT, FA, RT, TT, Width, TapeType}) where {PT, FA, RT, TT, Width, TapeType} = TapeType
 
 using .JIT
 
@@ -3177,7 +3180,7 @@ function runtime_pfor_fwd(thunk::ThunkTy, ft::FT, threading_args...)::Cvoid wher
 end
 
 function runtime_pfor_augfwd(thunk::ThunkTy, ft::FT, ::Val{AnyJL}, ::Val{byRef}, threading_args...) where {ThunkTy, FT, AnyJL, byRef}
-    TapeType = get_tape_type(ThunkTy)
+    TapeType = EnzymeRules.tape_type(ThunkTy)
     tapes = if AnyJL
         Vector{TapeType}(undef, Base.Threads.nthreads())
     else
@@ -3555,9 +3558,9 @@ function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}}
+    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}}
 else
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}, Bool}
+    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, Bool}
 end
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
@@ -3571,7 +3574,7 @@ end
     tape = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
     debug_from_orig!(gutils, tape, orig)
 
-    if !any_jltypes(get_tape_type(thunkTy))
+    if !any_jltypes(EnzymeRules.tape_type(thunkTy))
         if value_type(tape) != convert(LLVMType, Ptr{Cvoid})
             tape = LLVM.ConstantInt(0)
             GPUCompiler.@safe_warn "Illegal calling convention for threadsfor augfwd"
@@ -3607,9 +3610,9 @@ function threadsfor_rev(B, orig, gutils, tape)
     end
 
 @static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}, STT }
+    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, STT }
 else
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(get_tape_type(thunkTy))}, Val{byRef}, STT, Bool}
+    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, STT, Bool}
 end
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
