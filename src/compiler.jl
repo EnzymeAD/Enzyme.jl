@@ -7501,7 +7501,7 @@ end
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: DuplicatedNoNeed = API.DFT_DUP_NONEED
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
 
-function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType)
+function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType, loweredArgs, boxedArgs)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     rt  = job.config.params.rt
@@ -7535,7 +7535,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             end
             continue
         end
-        isboxed = GPUCompiler.deserves_argbox(source_typ)
+        isboxed = i in boxedArgs
 
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
@@ -8583,7 +8583,7 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type)
+function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type, TT)
     entry_ft = LLVM.function_type(entry_f)
 
     RT = LLVM.return_type(entry_ft)
@@ -8626,14 +8626,32 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         push!(wrapper_types, value_type(parameters(entry_f)[1+sret+returnRoots]))
     end
 
+    boxedArgs = Set{Int}()
+    loweredArgs = Set{Int}()
+
     for arg in args
-        typ = if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
-            eltype(arg.codegen.typ)
+        typ = arg.codegen.typ
+        if GPUCompiler.deserves_argbox(arg.typ)
+            push!(boxedArgs, arg.arg_i)
+            push!(wrapper_types, typ)
+        elseif arg.cc != GPUCompiler.BITS_REF
+            push!(wrapper_types, typ)
         else
-            arg.codegen.typ
+            # bits ref, and not boxed
+            # if TT.parameters[arg.arg_i] <: Const
+            #     push!(boxedArgs, arg.arg_i)
+            #     push!(wrapper_types, typ)
+            # else
+                push!(wrapper_types, eltype(typ))
+                push!(loweredArgs, arg.arg_i)
+            # end
         end
-        push!(wrapper_types, typ)
     end
+
+    if length(loweredArgs) == 0 && !sret && !sret_union
+        return entry_f, returnRoots, boxedArgs, loweredArgs
+    end
+
     wrapper_fn = LLVM.name(entry_f)
     LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
@@ -8675,7 +8693,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
             for arg in args
                 parm = ops[arg.codegen.i]
-                if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+                if arg.arg_i in loweredArgs
                     push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
                 else
                     push!(nops, parm)
@@ -8729,7 +8747,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         for arg in args
             parm = parameters(entry_f)[arg.codegen.i]
             wrapparm = parameters(wrapper_f)[arg.codegen.i-sret-returnRoots]
-            if !GPUCompiler.deserves_argbox(arg.typ) && arg.cc == GPUCompiler.BITS_REF
+            if arg.arg_i in loweredArgs
                 # copy the argument value to a stack slot, and reference it.
                 ty = value_type(parm)
                 if !isa(ty, LLVM.PointerType)
@@ -8938,7 +8956,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         flush(stdout)
         throw(LLVM.LLVMException("broken function"))
     end
-    return wrapper_f, returnRoots
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs
 end
 
 function adim(::Array{T, N}) where {T, N}
@@ -9070,6 +9088,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
 
+    loweredArgs = Set{Int}()
+    boxedArgs = Set{Int}()
     actualRetType = nothing
     lowerConvention = true
     customDerivativeNames = String[]
@@ -9229,7 +9249,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if name == :__fd_sincos_1 || name == :sincospi
           source_sig = Base.signature_type(func, sparam_vals)
           cur = llvmfn == primalf
-          llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
+          llvmfn, _, boxedArgs, loweredArgs = lower_convention(source_sig, mod, llvmfn, k.ci.rettype, (Const, Duplicated))
           if cur
               primalf = llvmfn
               lowerConvention = false
@@ -9283,7 +9303,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     end
 
     source_sig = job.source.specTypes
-    primalf, returnRoots = lowerConvention ? lower_convention(source_sig, mod, primalf, actualRetType) : (primalf, false)
+
+
+    primalf, returnRoots = primalf, false
+
+    if lowerConvention 
+        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, TT)
+    end
+
     push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world)))
 
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
@@ -9328,7 +9355,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(jlrules, fname)
         end
 
-        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType)
+        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType, loweredArgs, boxedArgs)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)

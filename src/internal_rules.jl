@@ -227,13 +227,13 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{
     return (nothing,)
 end
 
-@inline function pmap_fwd(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, BodyTy, N}
+@inline function pmap_fwd(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
     @inbounds tapes[idx] = thunk(f, Const(idx), fargs...)
 end
 
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, width(config), overwritten(config)[2:end]}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end]}()
     fwd_thunk, rev_thunk =  EnzymeCore.autodiff_thunk(config2, BodyTy, Const, typeof(Count), map(typeof, args)...)
 
     TapeType = EnzymeRules.tape_type(fwd_thunk)
@@ -244,14 +244,14 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, 
     return AugmentedReturn(nothing, nothing, tapes)
 end
 
-@inline function pmap_rev(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, BodyTy, N}
+@inline function pmap_rev(idx, tapes, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
     st = @inbounds tapes[idx]
     thunk(f, Const(idx), fargs..., st)
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, width(config), overwritten(config)[2:end]}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end]}()
     fwd_thunk, rev_thunk =  EnzymeCore.autodiff_thunk(config2, map(typeof, args)...)
 
     Enzyme.pmap(count, pmap_rev, tapes, rev_thunk, body, args...)
