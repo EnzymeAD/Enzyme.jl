@@ -236,7 +236,7 @@ end
 end
 
 @inline function pmap_fwd(idx, tapes::Ptr, thunk::ThunkTy, f::F, fargs::Vararg{Annotation, N}) where {ThunkTy, F, N}
-    unsafe_store!(tapes, thunk(f, Const(idx), fargs...), idx)
+    unsafe_store!(tapes, thunk(f, Const(idx), fargs...)[1], idx)
 end
 
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
