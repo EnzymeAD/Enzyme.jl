@@ -101,7 +101,7 @@ function nodecayed_phis!(mod::LLVM.Module)
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
     for f in functions(mod)
-        offty = LLVM.IntType(64)
+        offty = LLVM.IntType(8*sizeof(Int))
         i8 = LLVM.IntType(8)
 
         nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
