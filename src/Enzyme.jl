@@ -524,7 +524,11 @@ result, ∂v, ∂A
         
     world = codegen_world_age(eltype(FA), tt)
     
-    @assert ReturnShadow
+    if (A <: Const)
+        @assert !ReturnShadow
+    else
+        @assert ReturnShadow
+    end
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 end
 
