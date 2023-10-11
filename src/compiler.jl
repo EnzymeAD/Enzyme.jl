@@ -282,7 +282,7 @@ end
 end
 
 @inline ptreltype(::Type{Ptr{T}}) where T = T
-@inline ptreltype(::Type{Core.LLVMPtr{T}}) where T = T
+@inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where T = T
 @inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
