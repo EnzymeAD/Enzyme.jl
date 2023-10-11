@@ -356,7 +356,8 @@ end
         return ActiveState
     end
 
-    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array || isa(T, Type{Tuple{Vararg{T}}} where T)
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue ||
+        isa(T, Type{Array{T,N}} where {T,N}) || isa(T, Type{Array{T,N} where N} where {T}) || isa(T, Type{Tuple{Vararg{T}}} where T)
         if justActive
             return AnyState
         end
