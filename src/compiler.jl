@@ -3629,8 +3629,6 @@ end
     return nothing
 end
 
-include("compiler/pmap.jl")
-
 function newtask_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -9203,19 +9201,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom("jl_threadsfor")
             end
-            continue
-        end
-        if func == Enzyme.pmap
-            source_sig = Base.signature_type(func, sparam_vals)
-            primal = llvmfn == primalf
-            llvmfn, _ = lower_convention(source_sig, mod, llvmfn, k.ci.rettype)
-            push!(function_attributes(llvmfn), StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
-            k_name = LLVM.name(llvmfn)
-            if primal
-                primalf = llvmfn
-                lowerConvention = false
-            end
-            handleCustom("jl_pmap", [], false)
             continue
         end
 
