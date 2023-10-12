@@ -88,7 +88,7 @@ end
     end
 
     function psquare0(x)
-      Enzyme.pmap(10, bf, x)
+      Enzyme.pmap(bf, 10, x)
     end
 
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
