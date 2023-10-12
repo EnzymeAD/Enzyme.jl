@@ -273,12 +273,6 @@ function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Co
         Libc.free(tapes)
     end
 
-    TapeType = EnzymeRules.tape_type(fwd_thunk)
-
-    if !Enzyme.Compiler.any_jltypes(TapeType)
-        Libc.free(tapes)
-    end
-
     return ntuple(Val(2+length(args))) do _
         Base.@_inline_meta
         nothing
