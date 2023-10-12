@@ -57,6 +57,10 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
+function to_md(tt::TypeTree, ctx)
+    return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme), LLVM.API.LLVMValueRef, (API.CTypeTreeRef,LLVM.API.LLVMContextRef), tt, ctx)))
+end
+
 function typetree(::Type{T}, ctx, dl, seen=nothing) where T <: Integer
     return TypeTree(API.DT_Integer, -1, ctx)
 end

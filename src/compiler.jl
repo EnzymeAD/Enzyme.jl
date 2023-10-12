@@ -4,7 +4,7 @@ import ..Enzyme
 import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
                BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
-               API, TypeTree, typetree, only!, shift!, data0!, merge!,
+               API, TypeTree, typetree, only!, shift!, data0!, merge!, to_md,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
@@ -8586,7 +8586,7 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type, TT)
+function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type, RetActivity, TT)
     entry_ft = LLVM.function_type(entry_f)
 
     RT = LLVM.return_type(entry_ft)
@@ -8731,9 +8731,15 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         wrapper_args = Vector{LLVM.Value}()
 
         sretPtr = nothing
+        dl = string(LLVM.datalayout(LLVM.parent(entry_f)))
         if sret
             if !in(0, parmsRemoved)
                 sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
+                ctx = LLVM.context(entry_f)
+                if RetActivity <: Const
+                    metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                end
+                metadata(sretPtr)["enzyme_type"] = to_md(typetree(Ptr{actualRetType}, ctx, dl), ctx)
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
@@ -8758,6 +8764,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 end
                 @assert isa(ty, LLVM.PointerType)
                 ptr = alloca!(builder, eltype(ty))
+                if TT.parameters[arg.arg_i] <: Const
+                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                end
+                ctx = LLVM.context(entry_f)
+                metadata(ptr)["enzyme_type"] = to_md(typetree(Ptr{arg.typ}, ctx, dl), ctx)
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
@@ -9252,7 +9263,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if name == :__fd_sincos_1 || name == :sincospi
           source_sig = Base.signature_type(func, sparam_vals)
           cur = llvmfn == primalf
-          llvmfn, _, boxedArgs, loweredArgs = lower_convention(source_sig, mod, llvmfn, k.ci.rettype, (Const, Duplicated))
+          llvmfn, _, boxedArgs, loweredArgs = lower_convention(source_sig, mod, llvmfn, k.ci.rettype, Duplicated, (Const, Duplicated))
           if cur
               primalf = llvmfn
               lowerConvention = false
@@ -9311,7 +9322,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     primalf, returnRoots = primalf, false
 
     if lowerConvention 
-        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, TT)
+        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, job.config.params.rt, TT)
     end
 
     push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world)))

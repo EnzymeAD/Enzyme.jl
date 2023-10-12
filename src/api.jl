@@ -90,6 +90,19 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
+
+Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
+	ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
+
+function Base.getindex(md::LLVM.InstructionMetadataDict, kind::String)
+	objref = ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
+    objref == C_NULL && throw(KeyError(kind))
+    return LLVM.Metadata(LLVM.MetadataAsValue(objref))
+  end
+
+Base.setindex!(md::LLVM.InstructionMetadataDict, node::LLVM.Metadata, kind::String) =
+	ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), md.inst, kind, LLVM.Value(node))
+
 @cenum(CDIFFE_TYPE,
   DFT_OUT_DIFF = 0,  # add differential to an output struct
   DFT_DUP_ARG = 1,   # duplicate the argument and store differential inside
