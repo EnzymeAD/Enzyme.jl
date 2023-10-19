@@ -615,6 +615,62 @@ end
     return TapeType
 end
 
+const tape_cache = Dict{UInt, Compiler.CompileResult}()
+
+const tape_cache_lock = ReentrantLock()
+
+@inline function tape_type(parent_job::Union{GPUCompiler.CompilerJob,Nothing}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = falses_from_args(Val(1), args...)
+    else
+        ModifiedBetween = ModifiedBetweenT
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+   
+    primal_tt = Tuple{map(eltype, args)...}
+
+    # world = codegen_world_age(eltype(FA), primal_tt)
+
+    mi = fspec(eltype(FA), TT)
+
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, API.DEM_ReverseModeGradient, width, remove_innerty(A), true, #=abiwrap=#false, ModifiedBetweenT, ReturnPrimal, #=ShadowInit=#false, UnknownTapeType, RABI)
+    job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+
+
+    key = hash(hash(job), parent_job)
+
+    # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
+    lock(tape_cache_lock)
+
+    try
+        obj = get(tape_cache, key, nothing)
+        if obj === nothing
+
+            JuliaContext() do ctx
+                _, meta = codegen(:llvm, job; optimize=false, parent_job)
+            end
+            obj = meta.TapeType
+            cache[key] = meta.TapeType
+        end
+        obj
+    finally
+        unlock(tape_cache_lock)
+    end
+end
+
 """
     autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)
 
