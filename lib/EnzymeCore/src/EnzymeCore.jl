@@ -148,9 +148,12 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
         new{T1, N}(x, dx)
     end
 end
-batch_size(::BatchDuplicated{T,N}) where {T,N} = N
-batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
-batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 
