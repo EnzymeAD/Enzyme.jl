@@ -431,8 +431,10 @@ end
         end
     end
 
+    @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
+
     @assert !Base.isabstracttype(T)
-    @assert Base.isconcretetype(T)
+    @assert Base.isconcretetype(T) || is_concrete_tuple(T)
 
     if Val(T) ∈ seen
         return MixedState
