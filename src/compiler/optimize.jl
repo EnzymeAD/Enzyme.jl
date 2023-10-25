@@ -270,10 +270,19 @@ function fix_decayaddr!(mod::LLVM.Module)
             for u in LLVM.uses(inst)
                 st = LLVM.user(u)
                 if !isa(st, LLVM.CallInst)
-                    @show f
-                    @show inst
-                    @show st
-                    throw(AssertionError("illegal decay of noncall"))
+						  bt = GPUCompiler.backtrace(st)
+						  msg = sprint() do io::IO
+							  println(io, string(f))
+							  println(io, inst)
+							  println(io, st)
+							  print(io, "Illegal decay of nonnull\n")
+							  if bt !== nothing
+								  print(io,"\nCaused by:")
+								  Base.show_backtrace(io, bt)
+								  println(io)
+							  end
+						  end
+						  throw(AssertionError(msg))
                 end
                 
                 fop = operands(st)[end]
