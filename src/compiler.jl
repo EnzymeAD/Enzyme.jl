@@ -4246,7 +4246,9 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn, args, sret, returnRoots
+        # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
+        args[i] = calling_conv_fixup(B, args[i], party)
+        # GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn, args, sret, returnRoots
         return false
     end
 
@@ -4600,8 +4602,10 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         if value_type(args[i]) == party
             continue
         end
-        GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn, args, sret, returnRoots
-        return tapeV
+        # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
+        args[i] = calling_conv_fixup(B, args[i], party)
+        # GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn, args, sret, returnRoots
+        # return tapeV
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
@@ -8052,115 +8056,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
 
         if needs_tape
-
-            function rectype(val::LLVM.Value, idxs::Vector{Cuint})
-                ty = LLVM.value_type(val)
-                for i in idxs
-                    if isa(ty, LLVM.ArrayType)
-                        ty = eltype(ty)
-                    else
-                        @assert isa(ty, LLVM.StructType)
-                        ty = elements(ty)[i+1]
-                    end
-                end
-                return ty
-            end
-            function typefix(val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value, lidxs::Vector{Cuint}, ridxs::Vector{Cuint})::LLVM.Value
-                ctype = rectype(val, lidxs)
-                if ctype == tape
-                    if length(lidxs) != 0
-                        val = API.e_extract_value!(builder, val, lidxs)
-                    end
-                    if length(ridxs) == 0
-                        return val
-                    else
-                        return API.e_insert_value!(builder, prev, val, ridxs)
-                    end
-                end
-
-                if isa(tape, LLVM.StructType)
-                    if isa(ctype, LLVM.ArrayType)
-                        @assert length(ctype) == length(elements(tape))
-                        for (i, ty) in enumerate(elements(tape))
-                            ln = copy(lidxs)
-                            push!(ln, i-1)
-                            rn = copy(ridxs)
-                            push!(rn, i-1)
-                            prev = typefix(val, ty, prev, ln, rn)
-                        end
-                        return prev
-                    end
-                    if isa(ctype, LLVM.StructType)
-                        @assert length(elements(ctype)) == length(elements(tape))
-                        for (i, ty) in enumerate(elements(tape))
-                            ln = copy(lidxs)
-                            push!(ln, i-1)
-                            rn = copy(ridxs)
-                            push!(rn, i-1)
-                            prev = typefix(val, ty, prev, ln, rn)
-                        end
-                        return prev
-                    end
-                elseif isa(tape, LLVM.ArrayType)
-                    if isa(ctype, LLVM.ArrayType)
-                        @assert length(ctype) == length(tape)
-                        for i in 1:length(tape)
-                            ln = copy(lidxs)
-                            push!(ln, i-1)
-                            rn = copy(ridxs)
-                            push!(rn, i-1)
-                            prev = typefix(val, eltype(tape), prev, ln, rn)
-                        end
-                        return prev
-                    end
-                    if isa(ctype, LLVM.StructType)
-                        @assert length(elements(ctype)) == length(tape)
-                        for i in 1:length(tape)
-                            ln = copy(lidxs)
-                            push!(ln, i-1)
-                            rn = copy(ridxs)
-                            push!(rn, i-1)
-                            prev = typefix(val, eltype(tape), prev, ln, rn)
-                        end
-                        return prev
-                    end
-                end
-
-                if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
-                    if length(lidxs) != 0
-                        val = API.e_extract_value!(builder, val, lidxs)
-                    end
-                    val = trunc!(builder, val, tape)
-                    return if length(ridxs) != 0
-                        API.e_insert_value!(builder, prev, val, ridxs)
-                    else
-                        val
-                    end
-                end
-                if isa(tape, LLVM.PointerType) && isa(ctype, LLVM.PointerType) && LLVM.addrspace(tape) == LLVM.addrspace(ctype)
-                    if length(lidxs) != 0
-                        val = API.e_extract_value!(builder, val, lidxs)
-                    end
-                    val = pointercast!(builder, val, tape)
-                    return if length(ridxs) != 0
-                        API.e_insert_value!(builder, prev, val, ridxs)
-                    else
-                        val
-                    end
-                end
-                if isa(ctype, LLVM.ArrayType) && length(ctype) == 1 && eltype(ctype) == tape
-                    lhs_n = copy(lidxs)
-                    push!(lhs_n, 0)
-                    return typefix(val, tape, prev, lhs_n, ridxs)
-                end
-                @show ctype, tape, val, prev, lidxs, ridxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true)
-                @assert false
-            end
-
             # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
             # and that Bool -> i8, not i1
             tparm = params[i]
-            tparm = typefix(tparm, tape, LLVM.UndefValue(tape), Cuint[], Cuint[])
+            tparm = calling_conv_fixup(builder, tparm, tape)
             push!(realparms, tparm)
             i += 1
         end

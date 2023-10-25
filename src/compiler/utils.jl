@@ -162,3 +162,111 @@ end
 end
 
 @inline AnonymousStruct(::Type{U}) where U<:Tuple = NamedTuple{ntuple(i->Symbol(i), Val(length(U.parameters))), U}
+
+# recursively compute the eltype type indexed by idx[0], idx[1], ...
+function recursive_eltype(val::LLVM.Value, idxs::Vector{Cuint})
+    ty = LLVM.value_type(val)
+    for i in idxs
+        if isa(ty, LLVM.ArrayType)
+            ty = eltype(ty)
+        else
+            @assert isa(ty, LLVM.StructType)
+            ty = elements(ty)[i+1]
+        end
+    end
+    return ty
+end
+
+# Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
+# and that Bool -> i8, not i1
+function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value=LLVM.UndefValue(tape), lidxs::Vector{Cuint}=Cuint[], ridxs::Vector{Cuint}=Cuint[])::LLVM.Value
+    ctype = recursive_eltype(val, lidxs)
+    if ctype == tape
+        if length(lidxs) != 0
+            val = API.e_extract_value!(builder, val, lidxs)
+        end
+        if length(ridxs) == 0
+            return val
+        else
+            return API.e_insert_value!(builder, prev, val, ridxs)
+        end
+    end
+
+    if isa(tape, LLVM.StructType)
+        if isa(ctype, LLVM.ArrayType)
+            @assert length(ctype) == length(elements(tape))
+            for (i, ty) in enumerate(elements(tape))
+                ln = copy(lidxs)
+                push!(ln, i-1)
+                rn = copy(ridxs)
+                push!(rn, i-1)
+                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn)
+            end
+            return prev
+        end
+        if isa(ctype, LLVM.StructType)
+            @assert length(elements(ctype)) == length(elements(tape))
+            for (i, ty) in enumerate(elements(tape))
+                ln = copy(lidxs)
+                push!(ln, i-1)
+                rn = copy(ridxs)
+                push!(rn, i-1)
+                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn)
+            end
+            return prev
+        end
+    elseif isa(tape, LLVM.ArrayType)
+        if isa(ctype, LLVM.ArrayType)
+            @assert length(ctype) == length(tape)
+            for i in 1:length(tape)
+                ln = copy(lidxs)
+                push!(ln, i-1)
+                rn = copy(ridxs)
+                push!(rn, i-1)
+                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn)
+            end
+            return prev
+        end
+        if isa(ctype, LLVM.StructType)
+            @assert length(elements(ctype)) == length(tape)
+            for i in 1:length(tape)
+                ln = copy(lidxs)
+                push!(ln, i-1)
+                rn = copy(ridxs)
+                push!(rn, i-1)
+                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn)
+            end
+            return prev
+        end
+    end
+
+    if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
+        if length(lidxs) != 0
+            val = API.e_extract_value!(builder, val, lidxs)
+        end
+        val = trunc!(builder, val, tape)
+        return if length(ridxs) != 0
+            API.e_insert_value!(builder, prev, val, ridxs)
+        else
+            val
+        end
+    end
+    if isa(tape, LLVM.PointerType) && isa(ctype, LLVM.PointerType) && LLVM.addrspace(tape) == LLVM.addrspace(ctype)
+        if length(lidxs) != 0
+            val = API.e_extract_value!(builder, val, lidxs)
+        end
+        val = pointercast!(builder, val, tape)
+        return if length(ridxs) != 0
+            API.e_insert_value!(builder, prev, val, ridxs)
+        else
+            val
+        end
+    end
+    if isa(ctype, LLVM.ArrayType) && length(ctype) == 1 && eltype(ctype) == tape
+        lhs_n = copy(lidxs)
+        push!(lhs_n, 0)
+        return calling_conv_fixup(builder, val, tape, prev, lhs_n, ridxs)
+    end
+    @show ctype, tape, val, prev, lidxs, ridxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true)
+    @assert false
+end
