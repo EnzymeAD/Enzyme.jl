@@ -269,7 +269,16 @@ function fix_decayaddr!(mod::LLVM.Module)
             temp = nothing
             for u in LLVM.uses(inst)
                 st = LLVM.user(u)
-                if !isa(st, LLVM.CallInst)
+					 # Storing _into_ the decay addr is okay
+					 # we just cannot store the decayed addr into
+					 # somewhere
+					 if isa(st, LLVM.StoreInst)
+					    if operands(st)[2] == inst
+							 LLVM.API.LLVMSetOperand(st, 2-1, operands(inst)[1])
+							 continue
+						 end
+					 end
+					 if !isa(st, LLVM.CallInst)
 						  bt = GPUCompiler.backtrace(st)
 						  msg = sprint() do io::IO
 							  println(io, string(f))
