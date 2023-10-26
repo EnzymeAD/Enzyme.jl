@@ -278,3 +278,139 @@ function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Co
         nothing
     end
 end
+
+
+
+# From LinearAlgebra ~/.julia/juliaup/julia-1.10.0-beta3+0.x64.apple.darwin14/share/julia/stdlib/v1.10/LinearAlgebra/src/generic.jl:1110
+@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT, BT}
+    LinearAlgebra.require_one_based_indexing(cache_A, b)
+    m, n = size(cache_A)
+
+    if m == n
+        if LinearAlgebra.istril(cache_A)
+            if LinearAlgebra.istriu(cache_A)
+                return LinearAlgebra.Diagonal(cache_A)
+            else
+                return LinearAlgebra.LowerTriangular(cache_A)
+            end
+        elseif LinearAlgebra.istriu(cache_A)
+            return LinearAlgebra.UpperTriangular(cache_A)
+        else
+            return LinearAlgebra.lu(cache_A)
+        end
+    end
+    return LinearAlgebra.qr(cache_A, ColumnNorm())
+end
+
+# y=inv(A) B
+#   dA −= z y^T  
+#   dB += z, where  z = inv(A^T) dy
+function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}, A::Annotation{AT}, b::Annotation{BT}) where {RT, AT <: Array, BT <: Array}
+    
+    cache_A = if EnzymeRules.overwritten(config)[2]
+        copy(A.val)
+    else
+        A.val
+    end
+
+    cache_A = compute_lu_cache(cache_A, b.val)
+
+    res = (cache_A \ b.val)::eltype(RT)
+
+    dres = if EnzymeRules.width(config) == 1
+        zero(res)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
+        end
+    end
+
+    retres = if EnzymeRules.needs_primal(config)
+        res
+    else
+        nothing
+    end
+
+    cache_res = if EnzymeRules.needs_primal(config)
+        copy(res)
+    else
+        res
+    end
+    
+    dAs = if EnzymeRules.width(config) == 1
+        (A.dval,)
+    else
+        A.dval
+    end
+
+    dbs = if EnzymeRules.width(config) == 1
+        (b.dval,)
+    else
+        b.dval
+    end
+
+    cache_b = if EnzymeRules.overwritten(config)[3]
+        copy(b.val)
+    else
+        nothing
+    end
+    
+@static if VERSION < v"1.8.0"
+    UT = Union{
+        LinearAlgebra.Diagonal{eltype(AT), BT},
+        LinearAlgebra.LowerTriangular{eltype(AT), AT},
+        LinearAlgebra.UpperTriangular{eltype(AT), AT},
+        LinearAlgebra.LU{eltype(AT), AT},
+        LinearAlgebra.QRCompactWY{eltype(AT), AT}
+    }
+else
+    UT = Union{
+        LinearAlgebra.Diagonal{eltype(AT), BT},
+        LinearAlgebra.LowerTriangular{eltype(AT), AT},
+        LinearAlgebra.UpperTriangular{eltype(AT), AT},
+        LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
+        LinearAlgebra.QRPivoted{eltype(AT), AT, BT, Vector{Int}}
+    }
+end
+
+    cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{typeof(res), typeof(dres), UT, typeof(cache_b)}}(
+        (cache_res, dres, cache_A, cache_b)
+    )
+
+    return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), typeof(cache)}(retres, dres, cache)
+end
+
+function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, A::Annotation{<:Array}, b::Annotation{<:Array}) where RT
+
+    y, dys, cache_A, cache_b = cache
+
+    if !EnzymeRules.overwritten(config)[3]
+        cache_b = b.val
+    end
+
+    if EnzymeRules.width(config) == 1
+        dys = (dys,)
+    end
+
+    dAs = if EnzymeRules.width(config) == 1
+        (A.dval,)
+    else
+        A.dval
+    end
+
+    dbs = if EnzymeRules.width(config) == 1
+        (b.dval,)
+    else
+        b.dval
+    end
+
+    for (dA, db, dy) in zip(dAs, dbs, dys)
+        z = transpose(cache_A) \ dy
+        dA .-= z * transpose(y)
+        db .+= z
+        dy .= eltype(dy)(0)
+    end
+
+    return (nothing,nothing)
+end
