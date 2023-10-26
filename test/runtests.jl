@@ -2508,6 +2508,6 @@ end
     z = transpose(A) \ dy
 
     y = A \ b
-    @test dA ≈ −z * transpose(y)
+    @test dA ≈ (-z * transpose(y))
     @test db ≈ z
 end

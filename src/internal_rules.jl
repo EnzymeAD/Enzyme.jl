@@ -282,13 +282,7 @@ end
 
 
 # From LinearAlgebra ~/.julia/juliaup/julia-1.10.0-beta3+0.x64.apple.darwin14/share/julia/stdlib/v1.10/LinearAlgebra/src/generic.jl:1110
-@inline function compute_lu_cache(cache_A::AT, b::BT)::Union{
-        LinearAlgebra.Diagonal{eltype(AT), BT},
-        LinearAlgebra.LowerTriangular{eltype(AT), AT},
-        LinearAlgebra.UpperTriangular{eltype(AT), AT},
-        LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
-        LinearAlgebra.QRPivoted{eltype(AT), AT, BT, Vector{Int}},
-    } where {AT, BT}
+@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT, BT}
     LinearAlgebra.require_one_based_indexing(cache_A, b)
     m, n = size(cache_A)
 
@@ -361,14 +355,28 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     else
         nothing
     end
-
-    cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{typeof(res), typeof(dres), Union{
+    
+@static if VERSION < v"1.8.0"
+    UT = Union{
+        LinearAlgebra.Diagonal{eltype(AT), BT},
+        LinearAlgebra.LowerTriangular{eltype(AT), AT},
+        LinearAlgebra.UpperTriangular{eltype(AT), AT},
+        LinearAlgebra.LU{eltype(AT), AT},
+        LinearAlgebra.QRCompactWY{eltype(AT), AT}
+    }
+else
+    UT = Union{
         LinearAlgebra.Diagonal{eltype(AT), BT},
         LinearAlgebra.LowerTriangular{eltype(AT), AT},
         LinearAlgebra.UpperTriangular{eltype(AT), AT},
         LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
-        LinearAlgebra.QRPivoted{eltype(AT), AT, BT, Vector{Int}},
-    }, typeof(cache_b)}}((cache_res, dres, cache_A, cache_b))
+        LinearAlgebra.QRPivoted{eltype(AT), AT, BT, Vector{Int}}
+    }
+end
+
+    cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{typeof(res), typeof(dres), UT, typeof(cache_b)}}(
+        (cache_res, dres, cache_A, cache_b)
+    )
 
     return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), typeof(cache)}(retres, dres, cache)
 end
