@@ -2108,8 +2108,10 @@ end
     newa = RT(undef, size(prev))
     seen[prev] = newa
     for I in eachindex(prev)
-        pv = prev[I]
-        @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
+        if isassigned(prev, I)
+            pv = prev[I]
+            @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
+        end
     end
     return newa
 end
