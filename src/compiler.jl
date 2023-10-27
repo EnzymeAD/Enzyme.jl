@@ -434,7 +434,9 @@ end
     @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
 
     @assert !Base.isabstracttype(T)
-    @assert Base.isconcretetype(T) || is_concrete_tuple(T)
+    if !(Base.isconcretetype(T) || is_concrete_tuple(T))
+        throw(AssertionError("Type $T is not concrete type or concrete tuple"))
+    end
 
     if Val(T) ∈ seen
         return MixedState
@@ -470,7 +472,7 @@ end
 end
 
 @inline function guaranteed_const(::Type{T}) where T
-    rt = active_reg_nothrow(T, Val(Base.get_world_counter()))
+    rt = active_reg_nothrow(T, Val(nothing))
     res = rt == AnyState
     return res
 end
