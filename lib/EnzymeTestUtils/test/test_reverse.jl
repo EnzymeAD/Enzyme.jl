@@ -121,8 +121,7 @@ end
                 atol = rtol = sqrt(eps(real(T)))
                 # https://github.com/EnzymeAD/Enzyme.jl/issues/877
                 test_broken = (
-                    (VERSION > v"1.8" && T <: Real) ||
-                    (VERSION < v"1.8" && Tc <: Const)
+                    (VERSION > v"1.8" && T <: Real)
                 )
                 if Tc <: BatchDuplicated && Ty <: BatchDuplicated
                     @test !fails() do
