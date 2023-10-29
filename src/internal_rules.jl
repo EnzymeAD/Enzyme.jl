@@ -500,6 +500,26 @@ function EnzymeRules.forward(
     end
 end
 
+function EnzymeRules.forward(
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
+        xs::BatchDuplicated{T, N};
+        kwargs...
+    ) where {T, N}
+    inds = sortperm(xs.val; kwargs...)
+    xs.val .= xs.val[inds]
+    for i in 1:N
+        xs.dval[i] .= xs.dval[i][inds]
+    end
+    if RT <: Const
+        return xs.val
+    elseif RT <: BatchDuplicatedNoNeed
+        return xs.dval
+    else
+        return xs
+    end
+end
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.ConfigWidth{1},
         ::Const{typeof(sort!)},
