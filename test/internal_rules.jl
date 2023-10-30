@@ -29,4 +29,58 @@ using Test
     @test autodiff(Reverse, f2, Active, Active(2.0))[1][1] == -3
 end
 
+@testset "Linear Solve" begin
+    A = Float64[2 3; 5 7]
+    dA = zero(A)
+    b = Float64[11, 13]
+    db = zero(b)
+
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Duplicated{typeof(b)})
+
+    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Duplicated(b, db))
+
+    dy = Float64[17, 19]
+    copyto!(shadow, dy)
+
+    pullback(Const(\), Duplicated(A, dA), Duplicated(b, db), tape)
+
+    z = transpose(A) \ dy
+
+    y = A \ b
+    @test dA ≈ (-z * transpose(y))
+    @test db ≈ z
+
+    db = zero(b)
+
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Const{typeof(A)}, Duplicated{typeof(b)})
+
+    tape, primal, shadow = forward(Const(\), Const(A), Duplicated(b, db))
+
+    dy = Float64[17, 19]
+    copyto!(shadow, dy)
+
+    pullback(Const(\), Const(A), Duplicated(b, db), tape)
+
+    z = transpose(A) \ dy
+
+    y = A \ b
+    @test db ≈ z
+    
+    dA = zero(A)
+
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Const{typeof(b)})
+
+    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Const(b))
+
+    dy = Float64[17, 19]
+    copyto!(shadow, dy)
+
+    pullback(Const(\), Duplicated(A, dA), Const(b), tape)
+
+    z = transpose(A) \ dy
+
+    y = A \ b
+    @test dA ≈ (-z * transpose(y))
+end
+
 end # InternalRules
