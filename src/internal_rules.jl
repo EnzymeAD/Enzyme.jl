@@ -382,13 +382,13 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     end
 
     dAs = if EnzymeRules.width(config) == 1
-        if A <: Const
+        if typeof(A) <: Const
             (nothing,)
         else
             (A.dval,)
         end
     else
-        if A <: Const
+        if typeof(A) <: Const
             ntuple(Val(EnzymeRules.width(config))) do i
                 Base.@_inline_meta
                 nothing
@@ -399,13 +399,13 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     end
 
     dbs = if EnzymeRules.width(config) == 1
-        if b <: Const
+        if typeof(b) <: Const
             (nothing,)
         else
             (b.dval,)
         end
     else
-        if b <: Const
+        if typeof(b) <: Const
             ntuple(Val(EnzymeRules.width(config))) do i
                 Base.@_inline_meta
                 nothing
@@ -417,10 +417,10 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
 
     for (dA, db, dy) in zip(dAs, dbs, dys)
         z = transpose(cache_A) \ dy
-        if !(A <: Const)
+        if !(typeof(A) <: Const)
             dA .-= z * transpose(y)
         end
-        if !(b <: Const)
+        if !(typeof(b) <: Const)
             db .+= z
         end
         dy .= eltype(dy)(0)
