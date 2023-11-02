@@ -337,18 +337,6 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     else
         res
     end
-    
-    dAs = if EnzymeRules.width(config) == 1
-        (A.dval,)
-    else
-        A.dval
-    end
-
-    dbs = if EnzymeRules.width(config) == 1
-        (b.dval,)
-    else
-        b.dval
-    end
 
     cache_b = if EnzymeRules.overwritten(config)[3]
         copy(b.val)
@@ -394,21 +382,47 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     end
 
     dAs = if EnzymeRules.width(config) == 1
-        (A.dval,)
+        if typeof(A) <: Const
+            (nothing,)
+        else
+            (A.dval,)
+        end
     else
-        A.dval
+        if typeof(A) <: Const
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                nothing
+            end
+        else
+            A.dval
+        end
     end
 
     dbs = if EnzymeRules.width(config) == 1
-        (b.dval,)
+        if typeof(b) <: Const
+            (nothing,)
+        else
+            (b.dval,)
+        end
     else
-        b.dval
+        if typeof(b) <: Const
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                nothing
+            end
+        else
+            b.dval
+        end
     end
 
     for (dA, db, dy) in zip(dAs, dbs, dys)
         z = transpose(cache_A) \ dy
-        dA .-= z * transpose(y)
-        db .+= z
+        if !(typeof(A) <: Const)
+            dA .-= z * transpose(y)
+        end
+        if !(typeof(b) <: Const)
+            db .+= z
+        end
         dy .= eltype(dy)(0)
     end
 
