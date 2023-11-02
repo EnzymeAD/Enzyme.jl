@@ -1395,7 +1395,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
             if $Width == 1
-                shadow_return = Ref(zero(resT))
+                shadow_return = Ref(make_zero(resT, IdDict(), origRet))
             else
                 shadow_return = ($(nzeros...),)
             end
