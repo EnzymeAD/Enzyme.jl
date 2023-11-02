@@ -265,10 +265,6 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 Example returning both original return and derivative:
 
 ```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
-
 f(x) = x*x
 res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
@@ -280,10 +276,6 @@ res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 Example returning just the derivative:
 
 ```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
-
 f(x) = x*x
 ∂f_∂x = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
 
