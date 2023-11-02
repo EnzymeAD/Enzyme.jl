@@ -1395,7 +1395,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
             if $Width == 1
-                shadow_return = Ref(zero(resT))
+                shadow_return = Ref(make_zero(resT, IdDict(), origRet))
             else
                 shadow_return = ($(nzeros...),)
             end
@@ -4601,15 +4601,40 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         return tapeV
     end
     
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
     for i in 1:length(args)
         party =  value_type(parameters(llvmf)[i])
+        if value_type(args[i]) != party
+            if party == T_prjlvalue
+                while true
+                    if isa(args[i], LLVM.BitCastInst)
+                        args[i] = operands(args[i])[1]
+                        continue
+                    end
+                    if isa(args[i], LLVM.AddrSpaceCastInst)
+                        args[i] = operands(args[i])[1]
+                        continue
+                    end
+                    break
+                end
+            end
+        end
+
         if value_type(args[i]) == party
             continue
         end
         # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
-        args[i] = calling_conv_fixup(B, args[i], party)
-        # GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, augprimal_TT, rev_TT, fn, args, sret, returnRoots
-        # return tapeV
+        function msg(io)
+            println(io, string(llvmf))
+            println(io, "args = ", args)
+            println(io, "i = ", i)
+            println(io, "args[i] = ", args[i])
+            println(io, "party = ", party)
+        end
+        args[i] = calling_conv_fixup(B, args[i], party, LLVM.UndefValue(party), Cuint[], Cuint[], msg)
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
