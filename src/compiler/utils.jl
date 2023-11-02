@@ -179,7 +179,7 @@ end
 
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
-function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value=LLVM.UndefValue(tape), lidxs::Vector{Cuint}=Cuint[], ridxs::Vector{Cuint}=Cuint[])::LLVM.Value
+function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value=LLVM.UndefValue(tape), lidxs::Vector{Cuint}=Cuint[], ridxs::Vector{Cuint}=Cuint[], emesg=nothing)::LLVM.Value
     ctype = recursive_eltype(val, lidxs)
     if ctype == tape
         if length(lidxs) != 0
@@ -200,7 +200,7 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
                 push!(ln, i-1)
                 rn = copy(ridxs)
                 push!(rn, i-1)
-                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn)
+                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn, emesg)
             end
             return prev
         end
@@ -211,7 +211,7 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
                 push!(ln, i-1)
                 rn = copy(ridxs)
                 push!(rn, i-1)
-                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn)
+                prev = calling_conv_fixup(builder, val, ty, prev, ln, rn, emesg)
             end
             return prev
         end
@@ -223,7 +223,7 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
                 push!(ln, i-1)
                 rn = copy(ridxs)
                 push!(rn, i-1)
-                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn)
+                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn, emesg)
             end
             return prev
         end
@@ -234,7 +234,7 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
                 push!(ln, i-1)
                 rn = copy(ridxs)
                 push!(rn, i-1)
-                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn)
+                prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn, emesg)
             end
             return prev
         end
@@ -265,8 +265,23 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
     if isa(ctype, LLVM.ArrayType) && length(ctype) == 1 && eltype(ctype) == tape
         lhs_n = copy(lidxs)
         push!(lhs_n, 0)
-        return calling_conv_fixup(builder, val, tape, prev, lhs_n, ridxs)
+        return calling_conv_fixup(builder, val, tape, prev, lhs_n, ridxs, emesg)
     end
-    @show ctype, tape, val, prev, lidxs, ridxs, tape_type(tape), convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true)
-    @assert false
+
+
+    msg2 = sprint() do io
+        println(io, "Enzyme Internal Error: Illegal calling convention fixup")
+        if  emesg !== nothing
+            emesg(io)
+        end
+        println(io, "ctype = ", ctype)
+        println(io, "tape = ", tape)
+        println(io, "val = ", val)
+        println(io, "prev = ", prev)
+        println(io, "lidxs = ", lidxs)
+        println(io, "ridxs = ", ridxs)
+        println(io, "tape_type(tape) = ", tape_type(tape))
+        println(io, "convert(LLVMType, tape_type(tape)) = ", convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true))
+    end
+    throw(AssertionError(msg2))
 end
