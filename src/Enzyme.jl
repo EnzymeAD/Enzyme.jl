@@ -5,8 +5,8 @@ import EnzymeCore
 import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
 
-import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
+import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
+export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
@@ -21,7 +21,7 @@ export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
-import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Annotation, Mode
+import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Mode
 
 import EnzymeCore: EnzymeRules
 export EnzymeRules
