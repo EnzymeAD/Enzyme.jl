@@ -128,11 +128,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                 push!(todo, inst)
                 nb = IRBuilder()
                 position!(nb, inst)
-                nphi = phi!(nb, nty)
+                nphi = phi!(nb, nty, "nodecayed." * LLVM.name(inst))
                 nextvs[inst] = nphi
                 anyV = true
 
-                goffsets[inst] = phi!(nb, offty)
+                goffsets[inst] = phi!(nb, offty, "nodecayedoff." * LLVM.name(inst))
             end
             push!(mtodo, todo)
             push!(nonphis, nonphi)
@@ -144,12 +144,23 @@ function nodecayed_phis!(mod::LLVM.Module)
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             offsets = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
+                done = false
+                for ((nv, pb0), (offset, pb1)) in zip(nvs, offsets)
+                    if pb0 == pb
+                        push!(nvs, (nv, pb))
+                        push!(offsets, (offset, pb))
+                        done = true
+                        break
+                    end
+                end
+                if done
+                    continue
+                end
                 b = IRBuilder()
                 position!(b, terminator(pb))
 
                 offset = LLVM.ConstantInt(offty, 0)
 
-                done = false
                 while true
                     if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
                         v = operands(v)[1]
