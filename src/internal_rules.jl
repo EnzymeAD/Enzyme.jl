@@ -428,3 +428,61 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
 
     return (nothing,nothing)
 end
+
+# Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
+function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
+    primal = if EnzymeRules.needs_primal(config)
+        out.val
+    else
+        nothing
+    end
+    shadow = if EnzymeRules.needs_shadow(config)
+        out.dval
+    else
+        nothing
+    end
+    func.val(out.val, inp.val)
+    
+    if EnzymeRules.width(config) == 1
+        out.dval .= 0
+    else
+        for i in 1:EnzymeRules.width(config)
+            out.dval[i] .= 0
+        end
+    end
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, _, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple} 
+    nr, nc = size(out.val,1), size(out.val,2)
+    for b in 1:EnzymeRules.width(config)
+        da = if EnzymeRules.width(config) == 1
+            out.dval
+        else
+            out.dval[b]
+        end
+        i = 1
+        j = 1
+        if (typeof(inp) <: Active)
+            dinp = ntuple(Val(length(inp.val))) do k
+                Base.@_inline_meta
+                res = da[i, j]
+                da[i, j] = 0
+                j += 1
+                if j == nc+1
+                    i += 1
+                    j = 1
+                end
+                T = BT.parameters[k]
+                if T <: AbstractFloat
+                    T(res)
+                else
+                    T(0)
+                end
+            end
+            return (nothing, dinp)::Tuple{Nothing, BT}
+        end
+    end
+    return (nothing, nothing)
+end

@@ -9294,7 +9294,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        jlrules = String[]
+        jlrules = String["enzyme_custom"]
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
             push!(jlrules, fname)
