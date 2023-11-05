@@ -429,6 +429,7 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     return (nothing,nothing)
 end
 
+@static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
     primal = if EnzymeRules.needs_primal(config)
@@ -442,15 +443,6 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill
         nothing
     end
     func.val(out.val, inp.val)
-    
-    if EnzymeRules.width(config) == 1
-        out.dval .= 0
-    else
-        for i in 1:EnzymeRules.width(config)
-            out.dval[i] .= 0
-        end
-    end
-
     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
@@ -485,4 +477,5 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
         end
     end
     return (nothing, nothing)
+end
 end
