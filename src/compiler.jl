@@ -4740,7 +4740,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
         idx = 0
         dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig)))))
-        for (v, Ty) in zip(actives, Tys)
+        Tys2 = (eltype(A) for A in activity[2+isKWCall:end] if A <: Active)
+        for (v, Ty) in zip(actives, Tys2)
             TT = typetree(Ty, ctx, dl)
             Typ = C_NULL
             ext = extract_value!(B, res, idx)
@@ -9294,7 +9295,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        jlrules = String[]
+        jlrules = String["enzyme_custom"]
         for (fname, (ftyp, mi)) in foundTys
             haskey(functions(mod), fname) || continue
             push!(jlrules, fname)
