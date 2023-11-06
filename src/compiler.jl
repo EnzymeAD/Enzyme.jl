@@ -9350,7 +9350,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 				  "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
 				   "remquo",  "tgamma",
 				  "round",      "fdim",    "logb",   "isinf", 
-				  "sqrt",        "fabs",   )
+				  "sqrt",        "fabs",   "atan2", )
 			# isinf, finite "modf",       "fmod",    "remainder", 
 			# "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",
 			#   "hypot",  "rhypot",
