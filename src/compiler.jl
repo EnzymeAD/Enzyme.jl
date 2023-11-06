@@ -9350,13 +9350,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 				  "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
 				   "remquo",  "tgamma",
 				  "round",      "fdim",    "logb",   "isinf", 
-				  "sqrt",        "fabs",   "atan2", )
+				  "sqrt",        "fabs")
 			# isinf, finite "modf",       "fmod",    "remainder", 
 			# "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",
 			#   "hypot",  "rhypot",
 			# "yn", "jn", "norm3d", "ilogb", powi
 		    # "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
-			# arg1 = ("atan2", "fmax", "pow")
+			libm_arg1 = ("atan2", "fmax", "pow")
 			for n in arg1, (T, pf, lpf) in ((LLVM.DoubleType(), "", "f64"), (LLVM.FloatType(), "f", "f32"))
 				fname = "__nv_"*n*pf
 				if !haskey(functions(mod), fname)
@@ -9366,6 +9366,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     				push!(function_attributes(wrapper_f), StringAttribute("implements", llname))
 				end
 			end
+            for n in libm_arg1, (T, pf, lpf) in ((LLVM.DoubleType(), "", "f64"), (LLVM.FloatType(), "f", "f32"))
+                fname = "__nv_"*n*pf
+                if !haskey(functions(mod), fname)
+                    FT = LLVM.FunctionType(T, [T], vararg=false)
+                    wrapper_f = LLVM.Function(mod, fname, FT)
+                    llname = n*"."*pf
+                    push!(function_attributes(wrapper_f), StringAttribute("implements", llname))
+                end
+            end
 		end
 	end
     API.EnzymeReplaceFunctionImplementation(mod)
