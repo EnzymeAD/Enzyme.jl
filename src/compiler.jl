@@ -3049,12 +3049,6 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    # 1. get the error function
-    funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[LLVM.PointerType(LLVM.Int8Type())])
-    ptr = @cfunction(throwerr, Union{}, (Cstring,))
-    ptr = convert(UInt, ptr)
-    ptr = LLVM.ConstantInt(ptr)
-    func = inttoptr!(B, ptr, LLVM.PointerType(funcT))
     if orig !== nothing
         bt = GPUCompiler.backtrace(orig)
         function printBT(io)
@@ -3063,10 +3057,13 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
         end
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
+    ct = GPUCompiler.emit_exception!(B, string, orig)
 
-    # 2. Call error function and insert unreachable
-    ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
-    LLVM.API.LLVMAddCallSiteAttribute(ct, LLVM.API.LLVMAttributeFunctionIndex, EnumAttribute("noreturn"))
+    # ct = call!(B, GPUCompiler.Runtime.get(:report_exception), LLVM.Value[globalstring_ptr!(B, string)])
+    # call!(B, GPUCompiler.Runtime.get(:signal_exception))
+
+
+    # LLVM.API.LLVMAddCallSiteAttribute(ct, LLVM.API.LLVMAttributeFunctionIndex, EnumAttribute("noreturn"))
     return ct
     # FIXME(@wsmoses): Allow for emission of new BB in this code path
     # unreachable!(B)
