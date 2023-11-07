@@ -1845,6 +1845,20 @@ end
     end
     # TODO: Add test for NoShadowException
 end
+    
+function indirectfltret(a)::DataType
+    a[] *= 2
+    return Float64
+end
+@testset "Partial return information" begin
+    d = Duplicated(Ref(3.0), Ref(0.0))
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(indirectfltret)}, Const{DataType}, typeof(d))
+
+    tape, primal, shadow = fwd(Const(indirectfltret), d)
+    @test tape == nothing
+    @test primal == Float64
+    @test shadow == nothing
+end
 
 function objective!(x, loss, R)
     for i in 1:1000

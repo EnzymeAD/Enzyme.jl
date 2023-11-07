@@ -3433,7 +3433,7 @@ end
                 v = load!(B, pllty, v)
             end
         else
-            v = makeInstanceOf(ppfuncT, ctx)
+            v = makeInstanceOf(ppfuncT)
         end
 
         if refed
@@ -7731,7 +7731,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         end
 
         if wrap
-            augmented_primalf = create_abi_wrapper(augmented_primalf, TT, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, width, returnUsed, shadow_init, world, interp)
+            augmented_primalf = create_abi_wrapper(augmented_primalf, TT, rt, actualRetType, API.DEM_ReverseModePrimal, augmented, width, returnPrimal, shadow_init, world, interp)
         end
 
         # TODOs:
@@ -7756,7 +7756,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
         if wrap
-            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnUsed, shadow_init, world, interp)
+            adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ReverseModeCombined, nothing, width, returnPrimal, shadow_init, world, interp)
         end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
@@ -7769,7 +7769,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         augmented_primalf = nothing
         if wrap
           pf = adjointf
-          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnUsed, shadow_init, world, interp)
+          adjointf = create_abi_wrapper(adjointf, TT, rt, actualRetType, API.DEM_ForwardMode, nothing, width, returnPrimal, shadow_init, world, interp)
         end
     else
         @assert "Unhandled derivative mode", mode
@@ -7804,8 +7804,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
     pactualRetType = actualRetType
     sret_union = is_sret_union(actualRetType)
+    literal_rt = eltype(rettype)
+    sret_union_rt = is_sret_union(literal_rt)
+    @assert sret_union == sret_union_rt
     if sret_union
         actualRetType = Any
+        literal_rt = Any
     end
 
     ActiveRetTypes = Type[]
@@ -7866,6 +7870,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     # API.DFT_OUT_DIFF
     if is_adjoint && rettype <: Active
         @assert !sret_union
+        if allocatedinline(actualRetType) != allocatedinline(literal_rt)
+            @show actualRetType, literal_rt, rettype
+        end
+        @assert allocatedinline(actualRetType) == allocatedinline(literal_rt)
         if !allocatedinline(actualRetType)
             @safe_show actualRetType, rettype
             @assert allocatedinline(actualRetType)
@@ -7897,18 +7905,21 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         # primal return
         if existed[2] != 0
             @assert returnPrimal
-            push!(sret_types, actualRetType)
+            push!(sret_types, literal_rt)
         else
-            @assert !returnPrimal
-            push!(sret_types, Nothing)
+            if returnPrimal
+                push!(sret_types, literal_rt)
+            else
+                push!(sret_types, Nothing)
+            end
         end
         # shadow return
         if existed[3] != 0
-            if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+            if rettype <: Duplicated || rettype <: DuplicatedNoNeed || rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed || rettype <: BatchDuplicatedFunc
                 if width == 1
-                    push!(sret_types, actualRetType)
+                    push!(sret_types, literal_rt)
                 else
-                    push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+                    push!(sret_types, AnonymousStruct(NTuple{width, literal_rt}))
                 end
             end
         else
@@ -7918,18 +7929,18 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     end
     if Mode == API.DEM_ReverseModeCombined
         if returnPrimal
-            push!(sret_types, actualRetType)
+            push!(sret_types, literal_rt)
         end
     end
     if Mode == API.DEM_ForwardMode
         if returnPrimal
-            push!(sret_types, actualRetType)
+            push!(sret_types, literal_rt)
         end
-        if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+        if !(rettype <: Const)
             if width == 1
-                push!(sret_types, actualRetType)
+                push!(sret_types, literal_rt)
             else
-                push!(sret_types, AnonymousStruct(NTuple{width, actualRetType}))
+                push!(sret_types, AnonymousStruct(NTuple{width, literal_rt}))
             end
         end
     end
@@ -8138,9 +8149,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                         end
                     end
                 elseif !isghostty(sret_types[i])
+                    ty = sret_types[i]
+                    # if primal return, we can upgrade to the full known type
+                    if i == 2
+                        ty = actualRetType
+                    end
                     @assert !(isghostty(combinedReturn) || Core.Compiler.isconstType(combinedReturn) )
-                    @assert Core.Compiler.isconstType(sret_types[i])
-                    eval = makeInstanceOf(sret_types[i])
+                    @assert Core.Compiler.isconstType(ty)
+                    eval = makeInstanceOf(ty)
                     ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                     ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
                     si = store!(builder, eval, ptr)
@@ -8150,8 +8166,16 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             @assert returnNum == numLLVMReturns
         elseif Mode == API.DEM_ForwardMode
             count_Sret = 0
-            returnUsed = !isghostty(actualRetType)
-            if returnUsed
+            count_llvm_Sret = 0
+            if !isghostty(actualRetType)
+                if returnPrimal
+                    count_llvm_Sret += 1
+                end
+                if !(rettype <: Const)
+                    count_llvm_Sret += 1
+                end
+            end
+            if !isghostty(literal_rt)
                 if returnPrimal
                     count_Sret += 1
                 end
@@ -8160,9 +8184,13 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
             end
             for returnNum in 0:(count_Sret-1)
-                eval = val
-                if count_Sret > 1
-                    eval = extract_value!(builder, val, returnNum)
+                eval = if count_llvm_Sret == 0
+                    makeInstanceOf(sret_types[returnNum+1])
+                elseif count_llvm_Sret == 1
+                    val
+                else
+                    @assert count_llvm_Sret > 1
+                    extract_value!(builder, val, returnNum)
                 end
                 ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
@@ -8174,8 +8202,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             returnNum = 0
             if Mode == API.DEM_ReverseModeCombined
                 if returnPrimal
-                    if !isghostty(actualRetType)
-                        eval = extract_value!(builder, val, returnNum)
+                    if !isghostty(literal_rt)
+                        eval = if !isghostty(actualRetType)
+                            extract_value!(builder, val, returnNum)
+                        else
+                            makeInstanceOf(sret_types[returnNum+1])
+                        end
                         store!(builder, eval, inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), length(elements(jltype))-1 )]))
                         returnNum+=1
                     end
@@ -9792,7 +9824,7 @@ end
             end
         end
         reinsert_gcmarker!(llvm_f)
-
+        
         ir = string(mod)
         fn = LLVM.name(llvm_f)
 
@@ -9910,11 +9942,11 @@ end
 
         target = Compiler.EnzymeTarget()
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
 
-        interp = GPUCompiler.get_interpreter(job)
+        interp = GPUCompiler.get_interpreter(tmp_job)
 
         # TODO check compile return here, early
         # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
@@ -9924,7 +9956,7 @@ end
             error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
         end
         
-        if !(A <: Const) && guaranteed_const_nongen(rrt, job.world)
+        if !(A <: Const) && guaranteed_const_nongen(rrt, tmp_job.world)
             error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
         end
 
@@ -9936,6 +9968,9 @@ end
             # @assert eltype(A) == rrt
             rt = A
         end
+       
+        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         # We need to use primal as the key, to lookup the right method
         # but need to mixin the hash of the adjoint to avoid cache collisions
@@ -9972,13 +10007,38 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{tt}, ::Val{rt},::Val{Mode},
-        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,tt, rt, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
+@generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{TT}, ::Val{A},::Val{Mode},
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation, TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     JuliaContext() do ctx
 
-        mi = fspec(eltype(FA), tt, World)
+        mi = fspec(eltype(FA), TT, World)
         target = EnzymeTarget()
-        params = EnzymeCompilerParams(Tuple{FA, tt.parameters...}, Mode, width, remove_innerty(rt), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+        tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        
+        sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
+        interp = GPUCompiler.get_interpreter(tmp_job)
+
+        rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
+
+        if rrt == Union{}
+            error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+        end
+        
+        if !(A <: Const) && guaranteed_const_nongen(rrt, tmp_job.world)
+            error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
+        end
+
+        if A isa UnionAll
+            rt = A{rrt}
+        else
+            @assert A isa DataType
+            # Can we relax this condition?
+            # @assert eltype(A) == rrt
+            rt = A
+        end
+        
+        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         adjoint_addr, primal_addr = get_trampoline(job)
