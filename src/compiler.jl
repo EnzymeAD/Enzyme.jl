@@ -9953,23 +9953,29 @@ end
         rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
         if rrt == Union{}
-            error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+            estr = "Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up"
+			return quote
+				error($estr)
+			end
         end
         
-        if !(A <: Const) && guaranteed_const_nongen(rrt, tmp_job.world)
-            error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
+        if !(A <: Const) && guaranteed_const_nongen(rrt, World)
+			estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
+            return quote
+				error($estr)
+			end
         end
 
-        if A isa UnionAll
-            rt = A{rrt}
+        rt2 = if A isa UnionAll
+            A{rrt}
         else
             @assert A isa DataType
             # Can we relax this condition?
             # @assert eltype(A) == rrt
-            rt = A
+            A
         end
        
-        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         # We need to use primal as the key, to lookup the right method
@@ -9982,21 +9988,24 @@ end
         compile_result = cached_compilation(job)
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             TapeType = compile_result.TapeType
-            AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-            AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
+            AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
+            AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
             return quote
+                Base.@_inline_meta
                 augmented = $AugT($(compile_result.primal))
                 adjoint  = $AdjT($(compile_result.adjoint))
                 (augmented, adjoint)
             end
         elseif Mode == API.DEM_ReverseModeCombined
-            CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
             return quote
+                Base.@_inline_meta
                 $CAdjT($(compile_result.adjoint))
             end
         elseif Mode == API.DEM_ForwardMode
-            FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
             return quote
+                Base.@_inline_meta
                 $FMT($(compile_result.adjoint))
             end
         else
@@ -10008,37 +10017,39 @@ end
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{TT}, ::Val{A},::Val{Mode},
-        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation, TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
     JuliaContext() do ctx
 
         mi = fspec(eltype(FA), TT, World)
         target = EnzymeTarget()
-        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
-        tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
-        
-        sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
-        interp = GPUCompiler.get_interpreter(tmp_job)
 
-        rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
+        rt2 = if A isa UnionAll 
+            params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+            tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+            
+            sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
+            interp = GPUCompiler.get_interpreter(tmp_job)
 
-        if rrt == Union{}
-            error("Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
-        end
-        
-        if !(A <: Const) && guaranteed_const_nongen(rrt, tmp_job.world)
-            error("Return type `$rrt` not marked Const, but type is guaranteed to be constant")
-        end
+            rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
-        if A isa UnionAll
-            rt = A{rrt}
+            # Don't error here but default to nothing return since in cuda context we don't use the device overrides
+            if rrt == Union{}
+                rrt = Nothing
+            end
+            
+            if !(A <: Const) && guaranteed_const_nongen(rrt, World)
+                estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
+                return quote
+                    error($estr)
+                end
+            end
+            A{rrt}
         else
             @assert A isa DataType
-            # Can we relax this condition?
-            # @assert eltype(A) == rrt
-            rt = A
+            A
         end
         
-        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         adjoint_addr, primal_addr = get_trampoline(job)
@@ -10053,6 +10064,7 @@ import GPUCompiler: deferred_codegen_jobs
         end
 
         quote
+            Base.@_inline_meta
             adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
             primal = if $(primal_addr !== nothing)
                 ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
