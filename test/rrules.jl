@@ -244,7 +244,6 @@ function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!
     y::Duplicated,  x::Duplicated)
     xval = tape[1] 
     p = pointer(xval)
-    @show p, seen
     @assert !in(p, seen)
     push!(seen, p)
     return (nothing, nothing)
