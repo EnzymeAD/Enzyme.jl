@@ -720,36 +720,83 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
+function error_if_active(arg)
+    # check if it could contain an active
+    for v in arg
+        seen = ()
+        T = Core.Typeof(v)
+        areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
+        if areg == ActiveState
+            throw(AssertionError("Found unhandled active variable in tuple splat, jl_apply_iterate $T"))
+        end
+    end
+end
+
 function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string(orig))
 
-    if shadowR != C_NULL
-        cal =  new_from_original(gutils, orig)
-        width = get_width(gutils)
-        if width == 1
-            shadow = cal
+    v, isiter = absint(operands(orig)[offset+1])
+    v2, istup = absint(operands(orig)[offset+2])
+
+    width = get_width(gutils)
+
+    if v && v2 && isiter == Base.iterate && istup == Base.tuple && length(operands(orig)) == offset+4
+        origops = collect(operands(orig)[1:end-1])
+        shadowin = invert_pointer(gutils, origops[offset + 3], B)
+        shadowres = if width == 1
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin])
+            newops = LLVM.Value[]
+            newvals = API.CValueType[]
+            for (i, v) in enumerate(origops)
+                if i == offset + 3
+                    push!(newops, shadowin)
+                    push!(newvals, API.VT_Shadow)
+                else
+                    push!(newops, new_from_original(gutils, origops[i]))
+                    push!(newvals, API.VT_Primal)
+                end
+            end
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+            callconv!(cal, callconv(orig))
+            cal
         else
             ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
-            for i in 1:width
-                shadow = insert_value!(B, shadow, cal, i-1)
-                if i == 1
-                    API.moveBefore(cal, shadow, B)
+            for j in 1:width
+                shadowin2 = extract_value!(B, shadowin, j-1)
+                emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
+
+                newops = LLVM.Value[]
+                newvals = API.CValueType[]
+                for (i, v) in enumerate(origops)
+                    if i == offset + 3
+                        push!(newops, shadowin2)
+                        push!(newvals, API.VT_Shadow)
+                    else
+                        push!(newops, new_from_original(gutils, origops[i]))
+                        push!(newvals, API.VT_Primal)
+                    end
                 end
+                cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+                callconv!(cal, callconv(orig))
+                shadow = insert_value!(B, shadow, cal, j-1)
             end
+            shadow
         end
-        unsafe_store!(shadowR, shadow.ref)
+
+        unsafe_store!(shadowR, shadowres.ref)
+
+        return false
     end
+
+    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+
     return false
 end
 
 function common_apply_iterate_rev(offset, B, orig, gutils, tape)
-    if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
-        emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_f__apply_iterate")
-    end
     return nothing
 end
 
