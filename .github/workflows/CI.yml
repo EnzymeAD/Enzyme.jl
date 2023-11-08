@@ -160,7 +160,9 @@ jobs:
       matrix:
         version:
           - '1.7'
+          - '1.8'
           - '1'
+          - '1.10-nightly'
           - 'nightly'
         os:
           - ubuntu-latest
