@@ -168,8 +168,8 @@ jobs:
         version:
           - '1.7'
           - '1.8'
-          - '1.9'
-          - '1.10'
+          - '1'
+          - '1.10-nightly'
           - 'nightly'
         os:
           - ubuntu-latest
