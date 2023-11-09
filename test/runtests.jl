@@ -1814,6 +1814,30 @@ end
     @test dmt2.y ≈ 2.4
 end
 
+@testset "apply iterate" begin
+    function mktup(v)
+        tup = tuple(v...)
+        return tup[1][1] * tup[3][1]
+    end
+
+    data = [[3.0], nothing, [2.0]]
+    ddata = [[0.0], nothing, [0.0]]
+
+    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
+    @test ddata[1][1] ≈ 2.0
+    @test ddata[3][1] ≈ 3.0
+
+    function mktup2(v)
+        tup = tuple(v...)
+        return (tup[1][1] * tup[3])::Float64
+    end
+
+    data = [[3.0], nothing, 2.0]
+    ddata = [[0.0], nothing, 0.0]
+
+    @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
+end
+
 @testset "BLAS" begin
     x = [2.0, 3.0]
     dx = [0.2,0.3]
