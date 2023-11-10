@@ -8,9 +8,9 @@ if isfile(preferences_file) && !isfile(test_preferences_file)
 end
 end
 
-# work around https://github.com/JuliaLang/Pkg.jl/issues/1585
-using Pkg
-Pkg.develop(PackageSpec(; path=joinpath(dirname(@__DIR__), "lib", "EnzymeTestUtils")))
+# # work around https://github.com/JuliaLang/Pkg.jl/issues/1585
+# using Pkg
+# Pkg.develop(PackageSpec(; path=joinpath(dirname(@__DIR__), "lib", "EnzymeTestUtils")))
 
 using GPUCompiler
 using Enzyme
