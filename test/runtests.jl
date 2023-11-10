@@ -16,7 +16,6 @@ using GPUCompiler
 using Enzyme
 using Test
 using FiniteDifferences
-using ForwardDiff
 using Aqua
 using Statistics
 using LinearAlgebra
@@ -219,8 +218,8 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(Base.atan, 0.9)
 
     res = autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[1]
-    @test res[1] ≈ ForwardDiff.derivative(x->Base.atan(x, 3.4), 0.9)
-    @test res[2] ≈ ForwardDiff.derivative(x->Base.atan(0.9, x), 3.4)
+    @test res[1] ≈ 3.4 / (0.9 * 0.9 + 3.4 * 3.4)
+    @test res[2] ≈ -0.9 / (0.9 * 0.9 + 3.4 * 3.4)
 
     test_scalar(cbrt, 1.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
@@ -506,15 +505,15 @@ end
 end
 
 let
-    function loadsin(xp)
+    function loadsin2(xp)
         x = @inbounds xp[1]
         @inbounds xp[1] = 0.0
         sin(x)
     end
-    global invsin
-    function invsin(xp)
+    global invsin2
+    function invsin2(xp)
         xp = Base.invokelatest(convert, Vector{Float64}, xp)
-        loadsin(xp)
+        loadsin2(xp)
     end
     x = [2.0]
 end
@@ -522,7 +521,7 @@ end
 @testset "Struct return" begin
     x = [2.0]
     dx = [0.0]
-    @test Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx)) == ((nothing,),)
+    @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
     @test dx[1] == -0.4161468365471424
 end
 
@@ -781,14 +780,14 @@ end
     x = 3.0
     fd = central_fdm(5, 1)(sin, x)
 
-    @test fd ≈ ForwardDiff.derivative(sin, x)
+    @test fd ≈ cos(x)
     @test fd ≈ first(autodiff(Reverse, sin, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, sin, Duplicated(x, 1.0)))
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
-    @test fd ≈ ForwardDiff.derivative(asin, x)
+    @test fd ≈ 1/sqrt(1-x*x)
     @test fd ≈ first(autodiff(Reverse, asin, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, asin, Duplicated(x, 1.0)))
     test_scalar(asin, x)
@@ -803,14 +802,14 @@ end
     x = 3.0
     fd = central_fdm(5, 1)(foo, x)
 
-    @test fd ≈ ForwardDiff.derivative(foo, x)
+    @test fd ≈ cos(x)/sqrt(1-(0.2+sin(x))*(0.2+sin(x)))
     @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1.0)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
-    @test fd ≈ ForwardDiff.derivative(foo, x)
+    @test fd ≈ cos(x)/sqrt(1-(0.2+sin(x))*(0.2+sin(x)))
     @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     # They do matter for duplicated, which can't be auto promoted
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
@@ -2053,7 +2052,6 @@ end
                   12.0  0.0]
 
     @test jac == Enzyme.jacobian(Forward, inout, [2.0, 3.0])
-    @test jac == ForwardDiff.jacobian(inout, [2.0, 3.0])
 
     jac = Enzyme.jacobian(Reverse, inout, [2.0, 3.0], #=n_outs=# Val(3), Val(2))
     @test size(jac) == (3, 2)
