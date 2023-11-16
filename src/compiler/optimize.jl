@@ -138,7 +138,7 @@ function nodecayed_phis!(mod::LLVM.Module)
             for idx in length(collect(parameters(f)))
                 inactiveParm = false
                 for attr in collect(parameter_attributes(f, idx))
-                    if !isa(at, LLVM.StringAttribute)
+                    if !isa(attr, LLVM.StringAttribute)
                         continue
                     end
                     if kind(attr) == "enzyme_inactive"
