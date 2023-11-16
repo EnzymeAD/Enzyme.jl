@@ -105,7 +105,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         guaranteedInactive = false
 
         for attr in collect(function_attributes(f))
-            if !isa(at, LLVM.StringAttribute)
+            if !isa(attr, LLVM.StringAttribute)
                 continue
             end
             if kind(attr) == "enzyme_inactive"
