@@ -125,7 +125,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         inactiveRet = RT == LLVM.VoidType()
 
         for attr in collect(return_attributes(f))
-            if !isa(at, LLVM.StringAttribute)
+            if !isa(attr, LLVM.StringAttribute)
                 continue
             end
             if kind(attr) == "enzyme_inactive"
