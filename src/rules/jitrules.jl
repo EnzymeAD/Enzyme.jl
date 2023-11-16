@@ -787,12 +787,12 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         end
 
         unsafe_store!(shadowR, shadowres.ref)
-
         return false
     end
 
     emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string((v, v2, isiter, istup, length(operands(orig)), offset+4)))
 
+    unsafe_store!(shadowR,UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref)
     return false
 end
 

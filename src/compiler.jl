@@ -438,15 +438,25 @@ end
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
-    if Val(T) ∈ seen
+    @static if VERSION < v"1.7.0"
+        nT = T
+    else
+        nT = if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
+            Tuple{((T2 isa Core.TypeofVararg ? Any : T2) for T2 in T.parameters)...,}
+        else
+            T
+        end
+    end
+
+    if Val(nT) ∈ seen
         return MixedState
     end
 
-    seen = (Val(T), seen...)
+    seen = (Val(nT), seen...)
 
     fty = Merger{seen,typeof(world),justActive, UnionSret}(world)
 
-    ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(T)))...)
+    ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(nT)))...)
 
     return ty
 end

@@ -1844,7 +1844,7 @@ end
     data = [[3.0]]
     ddata = [[0.0]]
 
-    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
+    Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
     @test ddata[1][1] ≈ 6.0
 end
 
