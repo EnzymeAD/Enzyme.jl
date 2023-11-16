@@ -162,6 +162,10 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
     end
     push!(seen, T)
 
+    if T === Tuple
+        return TypeTree()
+    end
+
     try
         fieldcount(T)
     catch
