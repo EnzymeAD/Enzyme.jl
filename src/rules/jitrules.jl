@@ -742,16 +742,17 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
 
     width = get_width(gutils)
 
-    if v && v2 && isiter == Base.iterate && istup == Base.tuple && length(operands(orig)) == offset+4
+    if v && v2 && isiter == Base.iterate && istup == Base.tuple && length(operands(orig)) >= offset+4
         origops = collect(operands(orig)[1:end-1])
-        shadowin = invert_pointer(gutils, origops[offset + 3], B)
+        shadowins = [ invert_pointer(gutils, origops[i], B) for i in (offset+3):length(origops) ] 
         shadowres = if width == 1
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin])
             newops = LLVM.Value[]
             newvals = API.CValueType[]
             for (i, v) in enumerate(origops)
-                if i == offset + 3
-                    push!(newops, shadowin)
+                if i >= offset + 3
+                    shadowin2 = shadowins[i-offset-3+1]
+                    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
+                    push!(newops, shadowin2)
                     push!(newvals, API.VT_Shadow)
                 else
                     push!(newops, new_from_original(gutils, origops[i]))
@@ -765,13 +766,12 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
             ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
             for j in 1:width
-                shadowin2 = extract_value!(B, shadowin, j-1)
-                emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
-
                 newops = LLVM.Value[]
                 newvals = API.CValueType[]
                 for (i, v) in enumerate(origops)
-                    if i == offset + 3
+                    if i >= offset + 3
+                        shadowin2 = extract_value!(B, shadowins[i-offset-3+1], j-1)
+                        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
                         push!(newops, shadowin2)
                         push!(newvals, API.VT_Shadow)
                     else
@@ -791,7 +791,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         return false
     end
 
-    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate")
+    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string((v, v2, isiter, istup, length(operands(orig)), offset+4)))
 
     return false
 end

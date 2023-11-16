@@ -1835,6 +1835,17 @@ end
     ddata = [[0.0], nothing, 0.0]
 
     @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
+
+    function mktup3(v)
+        tup = tuple(v..., v...)
+        return tup[1][1] * tup[1][1]
+    end
+
+    data = [[3.0]]
+    ddata = [[0.0]]
+
+    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
+    @test ddata[1][1] ≈ 6.0
 end
 
 @testset "BLAS" begin
