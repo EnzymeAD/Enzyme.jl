@@ -339,6 +339,10 @@ end
     end
 end
 
+@inline is_arrayorvararg_ty(::Type) = false
+@inline is_arrayorvararg_ty(::Type{T}) where {T<:Array} = true
+@inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where T2 = true
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -357,8 +361,7 @@ end
         return ActiveState
     end
 
-    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue ||
-        isa(T, Type{Array{T,N}} where {T,N}) || isa(T, Type{Array{T,N} where N} where {T}) || isa(T, Type{Tuple{Vararg{T}}} where T)
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || is_arrayorvararg_ty(T)
         if justActive
             return AnyState
         end
