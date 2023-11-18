@@ -340,7 +340,8 @@ end
 end
 
 @inline is_arrayorvararg_ty(::Type) = false
-@inline is_arrayorvararg_ty(::Type{T}) where {T<:Array} = true
+@inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
+@inline is_arrayorvararg_ty(::Type{Array{T, N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where T2 = true
 
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
