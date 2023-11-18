@@ -1948,8 +1948,8 @@ end
     )
     
     nt1 = Enzyme.Compiler.runtime_generic_augfwd(args...)
-    @test nt[1] == (nothing,)
-    @test nt[2] == (nothing,)
+    @test nt1[1] == (nothing,)
+    @test nt1[2] == (nothing,)
     
     args2 = (
         Val{(false, false, false)},
