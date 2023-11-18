@@ -1930,6 +1930,45 @@ end
     @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
 end
 
+struct MyFlux
+end
+
+@testset "Union i8" begin
+    args = (
+        Val{(false, false, false)},
+        Val(1),
+        Val((true, true, true)),
+        Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
+        Base.getindex,
+        nothing,
+        ((nothing,), MyFlux()),
+        ((nothing,), MyFlux()),
+        1,
+        nothing
+    )
+    
+    nt1 = Enzyme.Compiler.runtime_generic_augfwd(args...)
+    @test nt[1] == (nothing,)
+    @test nt[2] == (nothing,)
+    
+    args2 = (
+        Val{(false, false, false)},
+        Val(1),
+        Val((true, true, true)),
+        Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
+        Base.getindex,
+        nothing,
+        ((nothing,), MyFlux()),
+        ((nothing,), MyFlux()),
+        2,
+        nothing
+    )
+    
+    nt = Enzyme.Compiler.runtime_generic_augfwd(args2...)
+    @test nt[1] == MyFlux()
+    @test nt[2] == MyFlux()
+end
+
 @testset "Array push" begin
 
     function pusher(x, y)

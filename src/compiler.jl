@@ -3374,7 +3374,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     if data[i] != -1
                         eval = extract_value!(builder, val, data[i])
                     end
-                    eval = fixup_abi(returnNum+1, eval)
+                    eval = fixup_abi(i, eval)
                     ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                     ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
                     si = store!(builder, eval, ptr)
@@ -3408,7 +3408,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     @assert !(isghostty(combinedReturn) || Core.Compiler.isconstType(combinedReturn) )
                     @assert Core.Compiler.isconstType(ty)
                     eval = makeInstanceOf(ty)
-                    eval = fixup_abi(returnNum+1, eval)
+                    eval = fixup_abi(i, eval)
                     ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                     ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
                     si = store!(builder, eval, ptr)
