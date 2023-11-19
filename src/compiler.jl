@@ -282,14 +282,6 @@ end
     ActivityState(Int(a1) | Int(a2))
 end
 
-@inline ptreltype(::Type{Ptr{T}}) where T = T
-@inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
-@inline ptreltype(::Type{Base.RefValue{T}}) where T = T
-@inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
-@inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
-@inline ptreltype(::Type{Complex{T}}) where T = T
-@inline ptreltype(::Type{Tuple{Vararg{T}}}) where T = T
-
 struct Merger{seen,worldT,justActive,UnionSret}
     world::worldT
 end
@@ -339,10 +331,23 @@ end
     end
 end
 
+@inline ptreltype(::Type{Ptr{T}}) where T = T
+@inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
+@inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
+@inline ptreltype(::Type{Base.RefValue{T}}) where T = T
+@inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
+@inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
+@inline ptreltype(::Type{Complex{T}}) where T = T
+@inline ptreltype(::Type{Tuple{Vararg{T}}}) where T = T
+
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Array{T, N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where T2 = true
+@inline is_arrayorvararg_ty(::Type{Ptr{T}}) where T = T
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
+@inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where T = true
 
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
@@ -362,11 +367,12 @@ end
         return ActiveState
     end
 
-    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || is_arrayorvararg_ty(T)
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array
         if justActive
             return AnyState
         end
-        if active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret)) == AnyState
+
+        if is_arrayorvararg_ty(T) && active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret)) == AnyState
             return AnyState
         else
             return DupState
