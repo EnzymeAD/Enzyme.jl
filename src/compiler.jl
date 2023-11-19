@@ -344,7 +344,7 @@ end
 @inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Array{T, N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where T2 = true
-@inline is_arrayorvararg_ty(::Type{Ptr{T}}) where T = T
+@inline is_arrayorvararg_ty(::Type{Ptr{T}}) where T = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where T = true
