@@ -339,6 +339,8 @@ end
 @inline ptreltype(::Type{Array{T, N} where N}) where {T} = T
 @inline ptreltype(::Type{Complex{T}}) where T = T
 @inline ptreltype(::Type{Tuple{Vararg{T}}}) where T = T
+@inline ptreltype(::Type{IdDict{K, V}}) where {K, V} = V
+@inline ptreltype(::Type{IdDict{K, V} where K}) where {V} = V
 
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
@@ -348,6 +350,8 @@ end
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where T = true
+@inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
+@inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
 
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
@@ -681,7 +685,7 @@ function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     call!(B, FT, fn, [val])
 end
 
-function emit_box_int32!(B, val)::LLVM.Value
+function emit_box_int32!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -699,7 +703,7 @@ function emit_box_int32!(B, val)::LLVM.Value
     call!(B, FT, box_int32, [val])
 end
 
-function emit_box_int64!(B, val)::LLVM.Value
+function emit_box_int64!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -717,7 +721,7 @@ function emit_box_int64!(B, val)::LLVM.Value
     call!(B, FT, box_int64, [val])
 end
 
-function emit_apply_generic!(B, args)::LLVM.Value
+function emit_apply_generic!(B::LLVM.IRBuilder, args)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -750,7 +754,7 @@ function emit_apply_generic!(B, args)::LLVM.Value
     return res
 end
 
-function emit_invoke!(B, args)::LLVM.Value
+function emit_invoke!(B::LLVM.IRBuilder, args)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -801,7 +805,7 @@ end
 
 include("absint.jl")
 
-function emit_apply_type!(B, Ty, args)::LLVM.Value
+function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -892,7 +896,7 @@ function emit_tuple!(B, args)::LLVM.Value
     return tag
 end
 
-function emit_jltypeof!(B, arg)::LLVM.Value
+function emit_jltypeof!(B::LLVM.IRBuilder, arg::LLVM.Value)::LLVM.Value
     legal, val = abs_typeof(arg)
     if legal
         return unsafe_to_llvm(val)
@@ -902,16 +906,14 @@ function emit_jltypeof!(B, arg)::LLVM.Value
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-
-    fn, FT = get_function!(mod, "jl_typeof") do ctx
-        T_jlvalue = LLVM.StructType(LLVMType[])
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
-    end
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg=true)
+    fn, _ = get_function!(mod, "jl_typeof", FT)
     call!(B, FT, fn, [arg])
 end
 
-function emit_methodinstance!(B, func, args)::LLVM.Value
+function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -2714,8 +2716,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id",
-                "jl_eqtable_get", "ijl_eqtable_get")
+    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
         if haskey(fns, rfn)
             fn = fns[rfn]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
@@ -2723,10 +2724,23 @@ function annotate!(mod, mode)
     end
 
     # Key of jl_eqtable_get/put is inactive, definitionally
-    for rfn in ("jl_eqtable_get", "ijl_eqtable_get", "jl_eqtable_put", "ijl_eqtable_put")
+    for rfn in ("jl_eqtable_get", "ijl_eqtable_get")
         if haskey(fns, rfn)
             fn = fns[rfn]
             push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0))
+        end
+    end
+    # Key of jl_eqtable_get/put is inactive, definitionally
+    for rfn in ("jl_eqtable_put", "ijl_eqtable_put")
+        if haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+            push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
+            push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
+            push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
+            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0))
         end
     end
 
