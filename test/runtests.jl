@@ -96,6 +96,7 @@ end
     @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
     @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
     @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
+    @assert Enzyme.Compiler.active_reg_inner(Ptr, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Base.RefValue{Float32}, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Colon, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
@@ -1928,6 +1929,45 @@ end
     out = Ref(0.0)
     dout = Ref(1.0)
     @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
+end
+
+struct MyFlux
+end
+
+@testset "Union i8" begin
+    args = (
+        Val{(false, false, false)},
+        Val(1),
+        Val((true, true, true)),
+        Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
+        Base.getindex,
+        nothing,
+        ((nothing,), MyFlux()),
+        ((nothing,), MyFlux()),
+        1,
+        nothing
+    )
+    
+    nt1 = Enzyme.Compiler.runtime_generic_augfwd(args...)
+    @test nt1[1] == (nothing,)
+    @test nt1[2] == (nothing,)
+    
+    args2 = (
+        Val{(false, false, false)},
+        Val(1),
+        Val((true, true, true)),
+        Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
+        Base.getindex,
+        nothing,
+        ((nothing,), MyFlux()),
+        ((nothing,), MyFlux()),
+        2,
+        nothing
+    )
+    
+    nt = Enzyme.Compiler.runtime_generic_augfwd(args2...)
+    @test nt[1] == MyFlux()
+    @test nt[2] == MyFlux()
 end
 
 @testset "Array push" begin
