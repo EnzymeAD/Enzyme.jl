@@ -101,6 +101,61 @@ function nodecayed_phis!(mod::LLVM.Module)
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
     for f in functions(mod)
+
+        guaranteedInactive = false
+
+        for attr in collect(function_attributes(f))
+            if !isa(attr, LLVM.StringAttribute)
+                continue
+            end
+            if kind(attr) == "enzyme_inactive"
+                guaranteedInactive = true
+                break
+            end
+        end
+
+        if guaranteedInactive
+            continue
+        end
+
+
+        entry_ft = LLVM.function_type(f)
+
+        RT = LLVM.return_type(entry_ft)
+        inactiveRet = RT == LLVM.VoidType()
+
+        for attr in collect(return_attributes(f))
+            if !isa(attr, LLVM.StringAttribute)
+                continue
+            end
+            if kind(attr) == "enzyme_inactive"
+                inactiveRet = true
+                break
+            end
+        end
+
+        if inactiveRet
+            for idx in length(collect(parameters(f)))
+                inactiveParm = false
+                for attr in collect(parameter_attributes(f, idx))
+                    if !isa(attr, LLVM.StringAttribute)
+                        continue
+                    end
+                    if kind(attr) == "enzyme_inactive"
+                        inactiveParm = true
+                        break
+                    end
+                end
+                if !inactiveParm
+                    inactiveRet = false
+                    break
+                end
+            end
+            if inactiveRet
+                continue
+            end
+        end
+
         offty = LLVM.IntType(8*sizeof(Int))
         i8 = LLVM.IntType(8)
 
