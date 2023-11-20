@@ -367,7 +367,7 @@ end
         return ActiveState
     end
 
-    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array
+    if T <: Ptr || T <: Core.LLVMPtr || T <: Base.RefValue || T <: Array || is_arrayorvararg_ty(T)
         if justActive
             return AnyState
         end
