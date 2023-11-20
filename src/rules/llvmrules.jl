@@ -587,7 +587,7 @@ function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 
     shadowdflt = if is_constant_value(gutils, origdflt)
         shadowdflt2 = julia_error(Base.unsafe_convert(Cstring, "Mixed activity for default of jl_eqtable_get "*string(orig)*" "*string(origdflt)),
-                                 orig.ref, API.ET_MixedActivityError, C_NULL, origdflt.ref, B.ref)
+                                 orig.ref, API.ET_MixedActivityError, gutils.ref, origdflt.ref, B.ref)
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
         else
@@ -660,14 +660,13 @@ function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origh, origkey, origval, originserted = operands(orig)[1:end-1]
 
     @assert !is_constant_value(gutils, origh)
-    @assert !is_constant_value(gutils, origval)
 
     shadowh = invert_pointer(gutils, origh, B)
     shadowval = invert_pointer(gutils, origval, B)
 
     shadowval = if is_constant_value(gutils, origval)
-        shadowdflt2 = julia_error(Base.unsafe_convert(Cstring, "Mixed activity for val of jl_eqtable_put "*string(orig)*" "*string(origdflt)),
-                                 orig.ref, API.ET_MixedActivityError, C_NULL, origval.ref, B.ref)
+        shadowdflt2 = julia_error(Base.unsafe_convert(Cstring, "Mixed activity for val of jl_eqtable_put "*string(orig)*" "*string(origval)),
+                                 orig.ref, API.ET_MixedActivityError, gutils.ref, origval.ref, B.ref)
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
         else
@@ -691,7 +690,7 @@ function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     
     shadowres = if width == 1
         emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, shadowval)])
-        newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowval, LLVM.null(value_type(orig_inserted))]
+        newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowval, LLVM.null(value_type(originserted))]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
         callconv!(cal, callconv(orig))
         cal
@@ -701,7 +700,7 @@ function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         for j in 1:width
             sval2 = extract_value!(B, shadowval, j-1)
             emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, sval2)])
-            newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), sval2, LLVM.null(value_type(orig_inserted))]
+            newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), sval2, LLVM.null(value_type(originserted))]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))
             shadow = insert_value!(B, shadow, cal, j-1)
