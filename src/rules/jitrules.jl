@@ -720,7 +720,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function error_if_active(arg)
+function error_if_active_iter(arg)
     # check if it could contain an active
     for v in arg
         seen = ()
@@ -751,7 +751,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
             for (i, v) in enumerate(origops)
                 if i >= offset + 3
                     shadowin2 = shadowins[i-offset-3+1]
-                    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
+                    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active_iter), shadowin2])
                     push!(newops, shadowin2)
                     push!(newvals, API.VT_Shadow)
                 else
@@ -771,7 +771,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
                 for (i, v) in enumerate(origops)
                     if i >= offset + 3
                         shadowin2 = extract_value!(B, shadowins[i-offset-3+1], j-1)
-                        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), shadowin2])
+                        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active_iter), shadowin2])
                         push!(newops, shadowin2)
                         push!(newvals, API.VT_Shadow)
                     else

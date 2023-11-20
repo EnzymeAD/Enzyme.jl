@@ -2722,6 +2722,14 @@ function annotate!(mod, mode)
         end
     end
 
+    # Key of jl_eqtable_get/put is inactive, definitionally
+    for rfn in ("jl_eqtable_get", "ijl_eqtable_get", "jl_eqtable_put", "ijl_eqtable_put")
+        if haskey(fns, rfn)
+            fn = fns[rfn]
+            push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+        end
+    end
+
     for rfn in ("jl_in_threaded_region_", "jl_in_threaded_region")
         if haskey(fns, rfn)
             fn = fns[rfn]
