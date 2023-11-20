@@ -2450,7 +2450,7 @@ function __init__()
     API.EnzymeSetUndefinedValueForType(@cfunction(
                                             julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8)))
     register_alloc_rules()
-    register_llvm_rules()
+    @time LLVMRules.register_llvm_rules()
 end
 
 # Define EnzymeTarget
