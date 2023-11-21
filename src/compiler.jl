@@ -4609,6 +4609,32 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.optimize_module!(parent_job, mod)
     end
 
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        if !isa(inst, LLVM.CallInst)
+            continue
+        end
+        fn = LLVM.called_operand(inst)
+        if !isa(fn, LLVM.Function)
+            continue
+        end
+        if length(blocks(fn)) != 0
+            continue
+        end
+        ty = value_type(inst)
+        if ty == LLVM.VoidType()
+            continue
+        end
+
+        legal, jTy = abs_typeof(inst)
+        if !legal
+            continue
+        end
+        if !guaranteed_const_nongen(jTy, world)
+            continue
+        end        
+        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_inactive"))
+    end
+
     TapeType::Type = Cvoid
 
     if params.run_enzyme
