@@ -438,7 +438,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 
                 legal, iterlib = absint(operands(inst)[iteroff+1])
                 if legal && iterlib == Base.iterate
-                    legal, GT = abs_typeof(operands(inst)[4+1])
+                    legal, GT = abs_typeof(operands(inst)[4+1], true)
                     if legal && GT <: Vector
                         funcoff = 3
                         funclib = operands(inst)[funcoff+1]
@@ -473,7 +473,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if legal
                     tys = Type[flibty]
                     for op in collect(operands(inst))[start+1:end-1]
-                        legal, typ = abs_typeof(op)
+                        legal, typ = abs_typeof(op, true)
                         if !legal
                             typ = Any
                         end
@@ -542,7 +542,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if legal
                 tys = Type[flibty]
                 for op in collect(operands(inst))[start:end-1]
-                    legal, typ = abs_typeof(op)
+                    legal, typ = abs_typeof(op, true)
                     if !legal
                         typ = Any
                     end

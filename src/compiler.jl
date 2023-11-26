@@ -1701,7 +1701,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 continue
             end
 
-            legal, TT = abs_typeof(cur)
+            legal, TT = abs_typeof(cur, true)
             if legal
                 world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
                 if guaranteed_const_nongen(TT, world)

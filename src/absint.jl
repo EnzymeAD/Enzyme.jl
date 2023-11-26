@@ -1,7 +1,7 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-function absint(arg::LLVM.Value)
+function absint(arg::LLVM.Value, partial::Bool=false)
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
@@ -22,7 +22,7 @@ function absint(arg::LLVM.Value)
             end
         end
         if nm == "jl_typeof" || nm == "ijl_typeof"
-    		return abs_typeof(operands(arg)[1])
+    		return abs_typeof(operands(arg)[1], partial)
         end
         if LLVM.callconv(arg) == 37 || nm == "julia.call"
             index = 2
@@ -33,11 +33,16 @@ function absint(arg::LLVM.Value)
             end
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
                 found = []
-                legal, Ty = absint(operands(arg)[index])
+                legal, Ty = absint(operands(arg)[index], partial)
+                unionalls = []
                 for sarg in operands(arg)[index+1:end-1]
-                    slegal , foundv = absint(sarg)
+                    slegal , foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
+                    elseif partial
+                        foundv = TypeVar(Symbol("sarg"*string(sarg)))
+                        push!(found, foundv)
+                        push!(unionalls, foundv)
                     else
                         legal = false
                         break
@@ -45,14 +50,18 @@ function absint(arg::LLVM.Value)
                 end
 
                 if legal
-                    return (true, Ty{found...})
+                    res = Ty{found...}
+                    for u in unionalls
+                        res = UnionAll(u, res)
+                    end
+                    return (true, res)
                 end
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 found = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
-                    slegal , foundv = absint(sarg)
+                    slegal , foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
                     else
@@ -104,7 +113,7 @@ function absint(arg::LLVM.Value)
     return (false, nothing)
 end
 
-function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothing}}
+function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Type},Tuple{Bool, Nothing}}
 	if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
@@ -114,7 +123,7 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
 
     	# Type tag is arg 3
         if nm == "julia.gc_alloc_obj"
-        	return absint(operands(arg)[3])
+        	return absint(operands(arg)[3], partial)
         end
     	# Type tag is arg 1
         if nm == "jl_alloc_array_1d" ||
@@ -125,7 +134,7 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
            nm == "ijl_alloc_array_3d" ||
            nm == "jl_new_array" ||
            nm == "ijl_new_array"
-        	return absint(operands(arg)[1])
+        	return absint(operands(arg)[1], partial)
         end
 
         if nm == "julia.call"
@@ -136,12 +145,12 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
             end
 
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
-                return absint(operands(arg)[2])
+                return absint(operands(arg)[2], partial)
             end
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-        	return abs_typeof(operands(arg)[1])
+        	return abs_typeof(operands(arg)[1], partial)
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
@@ -150,7 +159,7 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
         end
     end
 
-    legal, val = absint(arg)
+    legal, val = absint(arg, partial)
 	if legal
 		return (true, Core.Typeof(val))
 	end
