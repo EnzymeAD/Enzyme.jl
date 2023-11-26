@@ -172,7 +172,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                     end
                 end
                 if legal
-                    res = Ty{found...}
+                    res = Tuple{found...}
                     for u in unionalls
                         res = UnionAll(u, res)
                     end
