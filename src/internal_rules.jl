@@ -99,6 +99,9 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.setindex!), ::IdDict{K, V}, ::K, ::V) where {K, V <:Integer}
+    return nothing
+end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
