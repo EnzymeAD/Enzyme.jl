@@ -444,6 +444,21 @@ end
         autodiff(Reverse, f2, Active, Duplicated(m, dm))
         @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
     end
+
+    function my_conv_3(x, w)
+        y = zeros(Float64, 2, 3, 4, 5)
+        for hi in axes(y, 3)
+            y[1] += w * x
+        end
+        return y
+    end
+    loss3(x, w) = sum(my_conv_3(x, w))
+    dw = zero(w);
+    x = 2.0
+    w = 3.0
+    dx, dw = Enzyme.autodiff(Reverse, loss3, Active(x), Active(w))[1]
+    @test dw ≈ 4 * x
+    @test dx ≈ 4 * w
 end
 
 @testset "Advanced array tests" begin

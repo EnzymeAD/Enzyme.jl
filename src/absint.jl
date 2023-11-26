@@ -122,7 +122,9 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
            nm == "jl_alloc_array_2d" ||
            nm == "ijl_alloc_array_2d" ||
            nm == "jl_alloc_array_3d" ||
-           nm == "ijl_alloc_array_3d" 
+           nm == "ijl_alloc_array_3d" ||
+           nm == "jl_new_array" ||
+           nm == "ijl_new_array"
         	return absint(operands(arg)[1])
         end
 
