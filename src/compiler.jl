@@ -410,6 +410,13 @@ end
         return AnyState
     end
 
+    # unknown number of fields
+    if T isa UnionAll
+        if Base.argument_datatype(T) === nothing
+            return DupState
+        end
+    end
+
     if T isa Union
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
