@@ -360,9 +360,14 @@ end
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
 
-@inline function datatype_fieldcount(::Type{t}) where t
+@inline function datatype_fieldcount(t::Type{T}) where T
     @static if VERSION < v"1.10.0"
-        if t.name === NamedTuple_typename
+        NT = @static if VERSION < v"1.9.0"
+            NamedTuple_typename
+        else
+            _NAMEDTUPLE_NAME
+        end
+        if t.name === NT
             names, types = t.parameters[1], t.parameters[2]
             if names isa Tuple
                 return length(names)
@@ -373,11 +378,11 @@ end
             return nothing
         else
             @static if VERSION < v"1.7.0"
-                if M.abstract || (M.name === Tuple.name && isvatuple(M))
+                if t.abstract || (t.name === Tuple.name && isvatuple(t))
                     return nothing
                 end
             else
-                if isabstracttype(M) || (M.name === Tuple.name && isvatuple(M))
+                if isabstracttype(t) || (t.name === Tuple.name && isvatuple(t))
                     return nothing
                 end
             end
