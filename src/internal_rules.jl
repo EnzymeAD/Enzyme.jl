@@ -481,6 +481,7 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
     end
     return (nothing, nothing)
 end
+end
 
 function EnzymeRules.forward(
         ::Const{typeof(sort!)},
