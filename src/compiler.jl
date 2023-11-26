@@ -292,7 +292,9 @@ end
 @inline function (c::Merger{seen,worldT,justActive,UnionSret})(f::Int) where {seen,worldT,justActive,UnionSret}
     T = element(first(seen))
 
-    if justActive && ismutabletype(T)
+    reftype = ismutabletype(T) || T isa UnionAll
+
+    if justActive && reftype
         return Val(AnyState)
     end
 
@@ -314,7 +316,11 @@ end
                 Val(DupState)
             end
         else
-            Val(sub)
+            if reftype
+                Val(DupState)
+            else
+                Val(sub)
+            end
         end
     end
 end
@@ -353,6 +359,42 @@ end
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where T = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
+
+@inline function datatype_fieldcount(t::Type{T}) where T
+    @static if VERSION < v"1.10.0"
+        NT = @static if VERSION < v"1.9.0"
+            Base.NamedTuple_typename
+        else
+            Base._NAMEDTUPLE_NAME
+        end
+        if t.name === NT
+            names, types = t.parameters[1], t.parameters[2]
+            if names isa Tuple
+                return length(names)
+            end
+            if types isa DataType && types <: Tuple
+                return datatype_fieldcount(types)
+            end
+            return nothing
+        else
+            @static if VERSION < v"1.7.0"
+                if t.abstract || (t.name === Tuple.name && Base.isvatuple(t))
+                    return nothing
+                end
+            else
+                if isabstracttype(t) || (t.name === Tuple.name && Base.isvatuple(t))
+                    return nothing
+                end
+            end
+        end
+        if isdefined(t, :types)
+            return length(t.types)
+        end
+        return length(t.name.names)
+    else
+        return Base.datatype_fieldcount(t)
+    end
+end
 
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
@@ -404,8 +446,15 @@ end
         return AnyState
     end
 
+    # unknown number of fields
     if T isa UnionAll
-        return DupState
+        aT = Base.argument_datatype(T)
+        if aT === nothing
+            return DupState
+        end
+        if datatype_fieldcount(aT) === nothing
+            return DupState
+        end
     end
 
     if T isa Union
@@ -449,7 +498,7 @@ end
     @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || is_concrete_tuple(T))
+    if !(Base.isconcretetype(T) || is_concrete_tuple(T) || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
@@ -4626,7 +4675,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        legal, jTy = abs_typeof(inst)
+        legal, jTy = abs_typeof(inst, true)
         if !legal
             continue
         end

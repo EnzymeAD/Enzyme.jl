@@ -25,13 +25,14 @@ function absint(arg::LLVM.Value, partial::Bool=false)
     		return abs_typeof(operands(arg)[1], partial)
         end
         if LLVM.callconv(arg) == 37 || nm == "julia.call"
-            index = 2
+            index = 1
             if LLVM.callconv(arg) != 37
                 fn = first(operands(arg))
                 nm = LLVM.name(fn)
-                index = 3
+                index += 1
             end
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
+                index += 1
                 found = []
                 legal, Ty = absint(operands(arg)[index], partial)
                 unionalls = []
@@ -58,6 +59,7 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                 end
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
+                index += 1
                 found = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
@@ -137,6 +139,48 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         	return absint(operands(arg)[1], partial)
         end
 
+
+        if LLVM.callconv(arg) == 37 || nm == "julia.call"
+            index = 1
+            if LLVM.callconv(arg) != 37
+                fn = first(operands(arg))
+                nm = LLVM.name(fn)
+                index += 1
+            end
+
+            if nm == "jl_new_structv" || nm == "ijl_new_structv"
+                @assert index == 2
+                return absint(operands(arg)[index], partial)
+            end
+
+            if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
+                index += 1
+                found = []
+                unionalls = []
+                legal = true
+                for sarg in operands(arg)[index:end-1]
+                    slegal , foundv = abs_typeof(sarg, partial)
+                    if slegal
+                        push!(found, foundv)
+                    elseif partial
+                        foundv = TypeVar(Symbol("sarg"*string(sarg)))
+                        push!(found, foundv)
+                        push!(unionalls, foundv)
+                    else
+                        legal = false
+                        break
+                    end
+                end
+                if legal
+                    res = Tuple{found...}
+                    for u in unionalls
+                        res = UnionAll(u, res)
+                    end
+                    return (true, res)
+                end
+            end
+        end
+
         if nm == "julia.call"
             fn = operands(arg)[1]
             nm = ""
@@ -144,9 +188,6 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 nm = LLVM.name(fn)
             end
 
-            if nm == "jl_new_structv" || nm == "ijl_new_structv"
-                return absint(operands(arg)[2], partial)
-            end
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
