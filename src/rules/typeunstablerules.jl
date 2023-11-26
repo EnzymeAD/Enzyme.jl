@@ -56,7 +56,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct")
+    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
     return nothing
 end
 

@@ -9,7 +9,9 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     gutils = GradientUtils(gutils)
 
     legal, typ = abs_typeof(inst)
-    @assert legal
+    if !legal
+        throw(AssertionError("Could not statically ahead-of-time determine allocation element type of "*string(inst)))
+    end
 
     typ = eltype(typ)
 

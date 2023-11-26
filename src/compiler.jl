@@ -144,6 +144,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_get_nth_field_checked", "ijl_get_nth_field_checked",
     "jl_array_del_end","ijl_array_del_end",
     "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
@@ -1700,7 +1701,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 continue
             end
 
-            legal, TT = abs_typeof(cur)
+            legal, TT = abs_typeof(cur, true)
             if legal
                 world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
                 if guaranteed_const_nongen(TT, world)

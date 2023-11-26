@@ -633,7 +633,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         if needsTape
             @assert tape != C_NULL
             sret = !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret")), collect(parameter_attributes(llvmf, 1))))
-            innerTy = value_type(parameters(llvmf)[1+(kwtup!==nothing)+sret+(RT <: Active)+(isKWCall && !isghostty(rev_TT.parameters[4]))])
+            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4]))
+            innerTy = value_type(parameters(llvmf)[tape_idx+sret+(RT <: Active)])
             if innerTy != value_type(tape)
                 llty = convert(LLVMType, TapeT; allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
@@ -644,7 +645,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 end
                 tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
             end
-            insert!(args, 1+(kwtup!==nothing)+(isKWCall && !isghostty(rev_TT.parameters[4])), tape)
+            insert!(args, tape_idx, tape)
         end
         if RT <: Active
 
@@ -675,7 +676,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
 
-            insert!(args, 1+(kwtup!==nothing)+(isKWCall && !isghostty(rev_TT.parameters[4])), al)
+            insert!(args, 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])), al)
         end
     end
 
