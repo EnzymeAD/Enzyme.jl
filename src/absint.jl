@@ -128,6 +128,18 @@ function abs_typeof(arg::LLVM.Value)::Union{Tuple{Bool, Type},Tuple{Bool, Nothin
         	return absint(operands(arg)[1])
         end
 
+        if nm == "julia.call"
+            fn = operands(arg)[1]
+            nm = ""
+            if isa(fn, LLVM.Function)
+                nm = LLVM.name(fn)
+            end
+
+            if nm == "jl_new_structv" || nm == "ijl_new_structv"
+                return absint(operands(arg)[2])
+            end
+        end
+
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
         	return abs_typeof(operands(arg)[1])
         end
