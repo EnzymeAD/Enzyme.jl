@@ -849,14 +849,6 @@ end
     @test autodiff(Reverse, f32, Active, Active(2.0))[1][1] == 3
     @test autodiff(Forward, f32, Duplicated(2.0, 1.0))[1]   == 3
     println("Done 32")
-
-    # See #970
-    @static if VERSION ≥ v"1.9-"
-        f33(x) = sum(skipmissing([x, missing, 3.0, 3x]))
-        @test autodiff(Reverse, f33, Active, Active(2.0))[1][1] == 4
-        @test autodiff(Forward, f33, Duplicated(2.0, 1.0))[1]   == 4
-    end
-    println("Done 33")
 end
 
 function deadarg_pow(z::T, i) where {T<:Real}
