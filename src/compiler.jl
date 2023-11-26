@@ -292,7 +292,9 @@ end
 @inline function (c::Merger{seen,worldT,justActive,UnionSret})(f::Int) where {seen,worldT,justActive,UnionSret}
     T = element(first(seen))
 
-    if justActive && ismutabletype(T)
+    reftype = ismutabletype(T) || T isa UnionAll
+
+    if justActive && reftype
         return Val(AnyState)
     end
 
@@ -314,7 +316,11 @@ end
                 Val(DupState)
             end
         else
-            Val(sub)
+            if reftype
+                Val(DupState)
+            else
+                Val(sub)
+            end
         end
     end
 end
@@ -404,10 +410,6 @@ end
         return AnyState
     end
 
-    if T isa UnionAll
-        return DupState
-    end
-
     if T isa Union
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
@@ -449,7 +451,7 @@ end
     @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || is_concrete_tuple(T))
+    if !(Base.isconcretetype(T) || is_concrete_tuple(T) || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
@@ -4626,7 +4628,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        legal, jTy = abs_typeof(inst)
+        legal, jTy = abs_typeof(inst, true)
         if !legal
             continue
         end
