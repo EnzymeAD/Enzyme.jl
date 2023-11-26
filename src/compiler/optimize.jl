@@ -48,6 +48,7 @@ end
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
+    """
     for f in functions(mod), bb in blocks(f)
         todo = LLVM.PHIInst[]
         nonphi = nothing
@@ -77,7 +78,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     v = operands(v)[1]
                 end
                 if value_type(v) != nty
-                    v = addrspacecast!(b, v, nty)
+                    v = addrspacecast!(b, v, nty, LLVM.name(v)*".nc11")
                 end
                 push!(nvs, (v, pb))
             end
@@ -92,11 +93,12 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
             
             position!(nb, nonphi)
-            nphi = addrspacecast!(nb, nphi, ty)
+            nphi = addrspacecast!(nb, nphi, ty, LLVM.name(inst)*".ncp11")
             replace_uses!(inst, nphi)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
     end
+    """
 
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
@@ -159,7 +161,8 @@ function nodecayed_phis!(mod::LLVM.Module)
         offty = LLVM.IntType(8*sizeof(Int))
         i8 = LLVM.IntType(8)
 
-        nty = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
+        for addr in (13, 11)
+
         nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
         mtodo = Vector{LLVM.PHIInst}[]
         goffsets = Dict{LLVM.PHIInst, LLVM.PHIInst}()
@@ -177,13 +180,18 @@ function nodecayed_phis!(mod::LLVM.Module)
                 if !isa(ty, LLVM.PointerType)
                     continue
                 end
-                if addrspace(ty) != 13
+                if addrspace(ty) != addr
                     continue
                 end
                 push!(todo, inst)
                 nb = IRBuilder()
                 position!(nb, inst)
-                nphi = phi!(nb, nty, "nodecayed." * LLVM.name(inst))
+                el_ty = if addr == 11
+                    eltype(ty)
+                else
+                    LLVM.StructType(LLVM.LLVMType[])
+                end
+                nphi = phi!(nb, LLVM.PointerType(el_ty, 10), "nodecayed." * LLVM.name(inst))
                 nextvs[inst] = nphi
                 anyV = true
 
@@ -196,6 +204,11 @@ function nodecayed_phis!(mod::LLVM.Module)
 
         for inst in todo
             ty = value_type(inst)
+            el_ty = if addr == 11
+                eltype(ty)
+            else
+                LLVM.StructType(LLVM.LLVMType[])
+            end
             nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             offsets = Tuple{LLVM.Value, LLVM.BasicBlock}[]
             for (v, pb) in LLVM.incoming(inst)
@@ -217,6 +230,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                 offset = LLVM.ConstantInt(offty, 0)
 
                 while true
+                    if addr == 11 && addrspace(value_type(v)) == 10
+                        break
+                    end
+
                     if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
                         v = operands(v)[1]
                         continue
@@ -224,7 +241,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                 
                     if isa(v, LLVM.PHIInst)
                         push!(offsets, (nuwadd!(b, offset, goffsets[v]), pb))
-                        push!(nvs, (nextvs[v], pb))
+                        nv = nextvs[v]
+                        if eltype(value_type(nv)) != el_ty
+                            nv = bitcast!(b, nv, LLVM.PointerType(el_ty, addrspace(value_type(nv))))
+                        end
+                        push!(nvs, (nv, pb))
                         done = true
                         break
                     end
@@ -241,7 +262,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     end
                     if undeforpoison
                         push!(offsets, (LLVM.ConstantInt(offty, 0), pb))
-                        push!(nvs, (LLVM.UndefValue(nty), pb))
+                        push!(nvs, (LLVM.UndefValue(LLVM.PointerType(el_ty,10)), pb))
                         done = true
                         break
                     end
@@ -253,25 +274,22 @@ function nodecayed_phis!(mod::LLVM.Module)
                     continue
                 end
                 
-                if !isa(v, LLVM.LoadInst)
-                    println(string(f))
-                    @show v, inst
+                if addr == 13
+                    if !isa(v, LLVM.LoadInst)
+                        println(string(f))
+                        @show v, inst
+                    end
+                    @assert isa(v, LLVM.LoadInst)
+                    v = operands(v)[1]
                 end
-                @assert isa(v, LLVM.LoadInst)
-                
-                v = operands(v)[1]
 
                 while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
                     v = operands(v)[1]
                 end
-                if eltype(value_type(v)) != LLVM.StructType(LLVM.LLVMType[])
-                    v = bitcast!(b, v, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), addrspace(value_type(v))))
+
+                if eltype(value_type(v)) != el_ty
+                    v = bitcast!(b, v, LLVM.PointerType(el_ty, addrspace(value_type(v))))
                 end
-                if value_type(v) != nty
-                    println(string(f))
-                    @show v, inst, nty
-                end
-                @assert value_type(v) == nty
                 push!(nvs, (v, pb))
                 push!(offsets, (offset, pb))
             end
@@ -295,11 +313,15 @@ function nodecayed_phis!(mod::LLVM.Module)
             end
 
             position!(nb, nonphi)
-            nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
-            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
-            nphi = load!(nb, ty, nphi)
+            if addr == 13
+                nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
+                nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
+                nphi = load!(nb, ty, nphi)
+            else
+                nphi = addrspacecast!(nb, nphi, ty)
+            end
             if !isa(offset, LLVM.ConstantInt) || convert(Int64, offset) != 0
-                nphi = bitcast!(nb, nphi, LLVM.PointerType(i8, 13))
+                nphi = bitcast!(nb, nphi, LLVM.PointerType(i8, addrspace(ty))) 
                 nphi = gep!(nb, i8, nphi, [offset])
                 nphi = bitcast!(nb, nphi, ty)
             end
@@ -307,6 +329,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
         for inst in todo
             LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
         end
     end
     end

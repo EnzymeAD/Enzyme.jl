@@ -2013,7 +2013,7 @@ function get_julia_inner_types(B, p, startvals...; added=[])
         if isa(ty, LLVM.PointerType)
             if any_jltypes(ty)
                 if addrspace(ty) != Tracked
-                    cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), Tracked))
+                    cur = addrspacecast!(B, cur, LLVM.PointerType(eltype(ty), Tracked), LLVM.name(cur)*".innertracked")
                     if isa(cur, LLVM.Instruction)
                         push!(added, cur.ref)
                     end
