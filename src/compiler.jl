@@ -363,9 +363,9 @@ end
 @inline function datatype_fieldcount(t::Type{T}) where T
     @static if VERSION < v"1.10.0"
         NT = @static if VERSION < v"1.9.0"
-            NamedTuple_typename
+            Base.NamedTuple_typename
         else
-            _NAMEDTUPLE_NAME
+            Base._NAMEDTUPLE_NAME
         end
         if t.name === NT
             names, types = t.parameters[1], t.parameters[2]
