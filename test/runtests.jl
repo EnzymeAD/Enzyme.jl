@@ -453,7 +453,6 @@ end
         return y
     end
     loss3(x, w) = sum(my_conv_3(x, w))
-    dw = zero(w);
     x = 2.0
     w = 3.0
     dx, dw = Enzyme.autodiff(Reverse, loss3, Active(x), Active(w))[1]

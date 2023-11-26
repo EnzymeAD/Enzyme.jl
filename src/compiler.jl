@@ -144,6 +144,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_get_nth_field_checked", "ijl_get_nth_field_checked",
     "jl_array_del_end","ijl_array_del_end",
     "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
