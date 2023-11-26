@@ -360,6 +360,37 @@ end
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
 
+@inline function datatype_fieldcount(::Type{t}) where t
+    @static if VERSION < v"1.10.0"
+        if t.name === NamedTuple_typename
+            names, types = t.parameters[1], t.parameters[2]
+            if names isa Tuple
+                return length(names)
+            end
+            if types isa DataType && types <: Tuple
+                return datatype_fieldcount(types)
+            end
+            return nothing
+        else
+            @static if VERSION < v"1.7.0"
+                if M.abstract || (M.name === Tuple.name && isvatuple(M))
+                    return nothing
+                end
+            else
+                if isabstracttype(M) || (M.name === Tuple.name && isvatuple(M))
+                    return nothing
+                end
+            end
+        end
+        if isdefined(t, :types)
+            return length(t.types)
+        end
+        return length(t.name.names)
+    else
+        return Base.datatype_fieldcount(t)
+    end
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -412,7 +443,11 @@ end
 
     # unknown number of fields
     if T isa UnionAll
-        if Base.argument_datatype(T) === nothing
+        aT = Base.argument_datatype(T)
+        if aT === nothing
+            return DupState
+        end
+        if datatype_fieldcount(aT) === nothing
             return DupState
         end
     end
