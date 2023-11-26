@@ -378,11 +378,11 @@ end
             return nothing
         else
             @static if VERSION < v"1.7.0"
-                if t.abstract || (t.name === Tuple.name && isvatuple(t))
+                if t.abstract || (t.name === Tuple.name && Base.isvatuple(t))
                     return nothing
                 end
             else
-                if isabstracttype(t) || (t.name === Tuple.name && isvatuple(t))
+                if isabstracttype(t) || (t.name === Tuple.name && Base.isvatuple(t))
                     return nothing
                 end
             end
