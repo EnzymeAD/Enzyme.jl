@@ -158,9 +158,9 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT,IdDict(),res))
+            return Ref{RT}(make_zero(res))
         else
-            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -176,9 +176,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT,IdDict(),res))
+            return Ref{RT}(make_zero(res))
         else
-            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
