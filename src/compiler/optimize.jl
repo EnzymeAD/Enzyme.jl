@@ -161,7 +161,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         offty = LLVM.IntType(8*sizeof(Int))
         i8 = LLVM.IntType(8)
 
-        for addr in (13, 11)
+        for addr in (11, 13)
 
         nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
         mtodo = Vector{LLVM.PHIInst}[]
@@ -227,33 +227,36 @@ function nodecayed_phis!(mod::LLVM.Module)
                 b = IRBuilder()
                 position!(b, terminator(pb))
 
-                offset = LLVM.ConstantInt(offty, 0)
-
-                while true
+                @inline function getparent(v, offset, hasload)
                     if addr == 11 && addrspace(value_type(v)) == 10
-                        break
+                        return v, offset, hasload
+                    end
+                    if addr == 13 && hasload && addrspace(value_type(v)) == 10
+                        return v, offset, hasload
+                    end
+                    if addr == 13 && isa(v, LLVM.LoadInst) && !hasload
+                        return getparent(operands(v)[1], offset, true)
                     end
 
-                    if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
-                        v = operands(v)[1]
-                        continue
-                    end
-                
-                    if isa(v, LLVM.PHIInst)
-                        push!(offsets, (nuwadd!(b, offset, goffsets[v]), pb))
-                        nv = nextvs[v]
-                        if eltype(value_type(nv)) != el_ty
-                            nv = bitcast!(b, nv, LLVM.PointerType(el_ty, addrspace(value_type(nv))))
+                    if isa(v, LLVM.AddrSpaceCastInst)
+                        if addrspace(value_type(operands(v)[1])) == 0
+                            v2 = addrspacecast!(b, operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
+                            return v2, offset, hasload
                         end
-                        push!(nvs, (nv, pb))
-                        done = true
-                        break
+                        return getparent(operands(v)[1], offset, hasload)
                     end
 
-                    if isa(v, LLVM.GetElementPtrInst)
+                    if isa(v, LLVM.BitCastInst)
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        return v2, offset, skipload
+                    end
+
+                    if isa(v, LLVM.GetElementPtrInst) && !hasload
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
-                        v = operands(v)[1]
-                        continue
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        return v2, offset, skipload
                     end
 
                     undeforpoison = isa(v, LLVM.UndefValue)
@@ -261,30 +264,31 @@ function nodecayed_phis!(mod::LLVM.Module)
                         undeforpoison |= isa(v, LLVM.PoisonValue)
                     end
                     if undeforpoison
-                        push!(offsets, (LLVM.ConstantInt(offty, 0), pb))
-                        push!(nvs, (LLVM.UndefValue(LLVM.PointerType(el_ty,10)), pb))
-                        done = true
-                        break
+                        return LLVM.UndefValue(LLVM.PointerType(eltype(value_type(v)),10)), offset, addr == 13
                     end
 
-                    break
+                    if isa(v, LLVM.PHIInst) && !hasload
+                        offset = nuwadd!(b, offset, goffsets[v])
+                        nv = nextvs[v]
+                        return nv, offset, addr == 13
+                    end
+
+                    if isa(v, LLVM.SelectInst)
+                        lhs_v, lhs_offset, lhs_skipload = getparent(operands(v)[2], offset, hasload)
+                        rhs_v, rhs_offset, rhs_skipload = getparent(operands(v)[3], offset, hasload)
+                        @assert lhs_skipload == rhs_skipload
+                        return select!(b, operands(v)[1], lhs_v, rhs_v), select!(b, operands(v)[1], lhs_offset, rhs_offset), lhs_skipload
+                    end
+
+                    println(string(f))
+                    @show v, offset, inst, addr, hasload
+                    @assert false
                 end
 
-                if done
-                    continue
-                end
+                v, offset, hadload = getparent(v, LLVM.ConstantInt(offty, 0), false)
                 
                 if addr == 13
-                    if !isa(v, LLVM.LoadInst)
-                        println(string(f))
-                        @show v, inst
-                    end
-                    @assert isa(v, LLVM.LoadInst)
-                    v = operands(v)[1]
-                end
-
-                while isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
-                    v = operands(v)[1]
+                    @assert hadload
                 end
 
                 if eltype(value_type(v)) != el_ty
