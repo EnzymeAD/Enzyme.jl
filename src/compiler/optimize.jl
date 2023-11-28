@@ -161,7 +161,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         offty = LLVM.IntType(8*sizeof(Int))
         i8 = LLVM.IntType(8)
 
-        for addr in (13, 11)
+        for addr in (11, 13)
 
         nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
         mtodo = Vector{LLVM.PHIInst}[]
