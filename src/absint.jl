@@ -21,6 +21,9 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                 end
             end
         end
+        if nm == "julia.pointer_from_objref"
+            return absint(operands(arg)[1], partial)
+        end
         if nm == "jl_typeof" || nm == "ijl_typeof"
     		return abs_typeof(operands(arg)[1], partial)
         end
@@ -123,6 +126,10 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             nm = LLVM.name(fn)
         end
 
+        if nm == "julia.pointer_from_objref"
+            return abs_typeof(operands(arg)[1], partial)
+        end
+        
     	# Type tag is arg 3
         if nm == "julia.gc_alloc_obj"
         	return absint(operands(arg)[3], partial)
