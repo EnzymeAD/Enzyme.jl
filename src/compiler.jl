@@ -4702,9 +4702,31 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             for b in blocks(f)
                 term = terminator(b)
                 if isa(term, LLVM.UnreachableInst)
-                    b = IRBuilder()
-                    position!(b, term)
-                    emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
+                    shouldemit = true
+                    tmp = term
+                    while true
+                        tmp = LLVM.API.LLVMGetPreviousInstruction(tmp)
+                        if tmp == C_NULL
+                            break
+                        end
+                        tmp = LLVM.Instruction(tmp)
+                        if isa(tmp, LLVM.CallInst)
+                            cf = LLVM.called_operand(tmp)
+                            if isa(cf, LLVM.Function)
+                                nm = LLVM.name(cf)
+                                if nm == "gpu_signal_exception" || nm == "gpu_report_exception"
+                                    shouldemit = false
+                                    break
+                                end
+                            end
+                        end
+                    end
+
+                    if shouldemit
+                        b = IRBuilder()
+                        position!(b, term)
+                        emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
+                    end
                 end
             end
             if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline")), collect(function_attributes(f))))
