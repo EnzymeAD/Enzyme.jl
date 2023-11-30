@@ -215,7 +215,9 @@ end
 # * Using `dret.val` and `y.dval`, we accumulate the backpropagated derivatives for `x` into its shadow `x.dval`.  
 #   Note that we have to accumulate from both `y.dval` and `dret.val`. This is because in reverse-mode AD we have to sum up the derivatives from all uses: 
 #   if `y` was read after our function, we need to consider derivatives from that use as well.
-# * Finally, we zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
+# * We zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
+# * Finally, since all derivatives are accumulated *in place* (in the shadows of the [`Duplicated`](@ref) arguments), these derivatives must not be communicated via the return value.
+#   Hence, we return `(nothing, nothing)`. If, instead, one of our arguments was annotated as [`Active`](@ref), we would have to provide its derivative at the corresponding index in the tuple returned.
 
 # Finally, let's see our reverse rule in action!
 
