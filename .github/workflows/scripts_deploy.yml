@@ -21,6 +21,8 @@ jobs:
             using Pkg
             Pkg.develop(path="lib/EnzymeCore")
             Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.develop(path="lib/EnzymeTestUtils")
+            Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
