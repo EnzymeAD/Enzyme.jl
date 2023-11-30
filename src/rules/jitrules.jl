@@ -142,7 +142,7 @@ function func_runtime_generic_fwd(N, Width)
 end
 
 @generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
-    N = div(length(allargs)+2, Width)-1
+    N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
