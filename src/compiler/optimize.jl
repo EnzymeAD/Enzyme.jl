@@ -227,6 +227,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                 b = IRBuilder()
                 position!(b, terminator(pb))
 
+                v0 = v
                 @inline function getparent(v, offset, hasload)
                     if addr == 11 && addrspace(value_type(v)) == 10
                         return v, offset, hasload
@@ -280,9 +281,15 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return select!(b, operands(v)[1], lhs_v, rhs_v), select!(b, operands(v)[1], lhs_offset, rhs_offset), lhs_skipload
                     end
 
-                    println(string(f))
-                    @show v, offset, inst, addr, hasload
-                    @assert false
+                    msg = sprint() do io
+                        println(io, "Could not analyze garbage collection behavior of")
+                        println(io, " v0: ", string(v0))
+                        println(io, " v: ", string(v))
+                        println(io, " offset: ", string(offset))
+                        println(io, " hasload: ", string(hasload))
+                    end
+                    bt = GPUCompiler.backtrace(inst)
+                    throw(EnzymeInternalError(msg, string(f), bt))
                 end
 
                 v, offset, hadload = getparent(v, LLVM.ConstantInt(offty, 0), false)
