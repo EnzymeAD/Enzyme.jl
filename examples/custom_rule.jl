@@ -1,5 +1,13 @@
 # # Enzyme custom rules tutorial
-
+#
+# !!! note "More Examples"
+#     The tutorial below focuses on a simple setting to illustrate the basic concepts of writing custom rules.
+#     For more complex custom rules beyond the scope of this tutorial, you may take inspiration from the following in-the-wild examples:
+#     - [Enzyme internal rules](https://github.com/EnzymeAD/Enzyme.jl/blob/main/src/internal_rules.jl)
+#     - [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl/blob/main/ext/EnzymeExt.jl)
+#     - [LinearSolve.jl](https://github.com/SciML/LinearSolve.jl/blob/main/ext/LinearSolveEnzymeExt.jl)
+#     - [NNlib.jl](https://github.com/FluxML/NNlib.jl/blob/master/ext/NNlibEnzymeCoreExt/NNlibEnzymeCoreExt.jl)
+#
 # The goal of this tutorial is to give a simple example of defining a custom rule with Enzyme.
 # Specifically, our goal will be to write custom rules for the following function `f`:
 
