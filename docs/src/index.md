@@ -34,30 +34,6 @@ rosenbrock_inp (generic function with 1 method)
 
 ### Reverse mode
 
-For scalar-valued functions that take in a single vector, `gradient` and its in-place variant, `gradient!`, provide a simple way to compute only the gradient of `rosenbrock` at a given point:
-
-```jldoctest rosenbrock
-julia> gradient(Reverse, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
-2-element Vector{Float64}:
- -400.0
-  200.0
-
-julia> dx = [0.0, 0.0];
-
-julia> gradient!(Reverse, dx, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
-2-element Vector{Float64}:
- -400.0
-  200.0
-
-julia> dx
-2-element Vector{Float64}:
- -400.0
-  200.0
-```
-
-For the more general case with arbitrary arguments and settings in which both the derivative and the primal result are needed, 
-[`autodiff`](@ref) can be used directly.
-
 The return value of reverse mode [`autodiff`](@ref) is a tuple that contains as a first value
 the derivative value of the active inputs and optionally the primal return value.
 
@@ -94,13 +70,6 @@ Both the inplace and "normal" variant return the gradient. The difference is tha
 
 ### Forward mode
 
-Again, for scalar-valued functions that take in a single vector, `gradient` can be used to compute the gradient of `rosenbrock` at a given point:
-    
-```jldoctest rosenbrock
-julia> gradient(Forward, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
-(-400.0, 200.0)
-```
-For more fine-grained control and arbitrary function arguments, again [`autodiff`](@ref) can be used directly.
 The return value of forward mode with a `Duplicated` return is a tuple containing as the first value
 the primal return value and as the second value the derivative.
 
@@ -158,6 +127,54 @@ julia> dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
 
 julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx_1, dx_2)))
 (400.0, (var"1" = -800.0, var"2" = 400.0))
+```
+
+### Convenience functions
+
+!!! note
+    While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
+
+Two convenient functions for common derivative computations are [`gradient`](@ref) and [`jacobian`](@ref).
+As for [`autodiff`](@ref), the mode (forward or reverse) is determined by the first argument.
+
+The function [`gradient`](@ref) computes the gradient of a scalar-valued function that takes in a single vector at a given point.
+
+```jldoctest rosenbrock
+julia> gradient(Reverse, rosenbrock_inp, [1.0, 2.0])
+2-element Vector{Float64}:
+ -400.0
+  200.0
+
+julia> # in-place variant
+       dx = [0.0, 0.0];
+       gradient!(Reverse, dx, rosenbrock_inp, [1.0, 2.0])
+2-element Vector{Float64}:
+ -400.0
+  200.0
+
+julia> dx
+2-element Vector{Float64}:
+ -400.0
+  200.0
+
+julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
+(-400.0, 200.0)
+```
+
+The function [`jacobian`](@ref) computes the Jacobian of a vector-valued function that takes in a single vector at a given point.
+
+```jldoctest rosenbrock
+julia> foo(x) = [rosenbrock_inp(x), prod(x)];
+
+julia> jacobian(Reverse, foo, [1.0, 2.0], Val(2)) # here Val(2) specifies the output size of `foo` since it cannot be statically inferred
+2×2 Matrix{Float64}:
+ -400.0  200.0
+    2.0    1.0
+
+julia> jacobian(Forward, foo, [1.0, 2.0])
+2×2 Matrix{Float64}:
+ -400.0  200.0
+    2.0    1.0
 ```
 
 ## Caveats / Known-issues
