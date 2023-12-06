@@ -338,7 +338,7 @@ autodiff(Reverse,
 # are vectors, not scalars. Let's go through and see what Enzyme did with all 
 # of those placeholders. 
 
-# First we can look at what happened to the zero vectors out_now and out_old:
+# First we can look at what happened to the zero vectors `out_now` and `out_old`:
 
 @show out_now, out_old
 
@@ -352,11 +352,12 @@ autodiff(Reverse,
 @show dstate_now 
 
 # Just a few numbers, but this is what makes AD so nice: Enzyme has exactly computed
-# the derivative of all outputs with respect to the input in_now, evaluated at
-# in_now, and acted with this gradient on what we gave as dout_now (in our case, 
-# all ones). In math language, this is just
+# the derivative of all outputs with respect to the input `state_now`, evaluated at
+# `state_now`, and acted with this gradient on what we gave as `dout_now` (in our case,
+# all ones). Using AD notation for reverse mode, this is
+
 # ```math 
-# \text{dstate now} = (\frac{\partial \text{out now}(\text{state now})}{\partial \text{state now}} + \frac{\partial \text{out old}(\text{state now})}{\partial \text{state now}}) \text{dout now} 
+# \overline{\text{state\_now}} = \frac{\partial \text{out\_now}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_now} + \frac{\partial \text{out\_old}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_old}
 # ```
 
 # We note here that had we initialized `dstate_now` and `dstate_old` as something else, our results 

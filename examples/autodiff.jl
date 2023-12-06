@@ -51,7 +51,7 @@ g = copy(bx)
 # ```math
 # \begin{aligned}
 # y &= f(x) \\
-# \dot{y} &= \nabla f(x) \cdot x
+# \dot{y} &= \nabla f(x) \cdot \dot{x}
 # \end{aligned}
 # ```
 # To obtain the first element of the gradient using the forward model we have to
