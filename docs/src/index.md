@@ -17,9 +17,10 @@ Enzyme.jl can be installed in the usual way Julia packages are installed:
 ] add Enzyme
 ```
 
-The Enzyme binary dependencies will be installed automatically via Julia's binary actifact system.
+The Enzyme binary dependencies will be installed automatically via Julia's binary artifact system.
 
 The Enzyme.jl API revolves around the function [`autodiff`](@ref), see its documentation for details and a usage example. Also see [Implementing pullbacks](@ref) on how to use Enzyme.jl to implement back-propagation for functions with non-scalar results.
+For some common operations, Enzyme additionally wraps [`autodiff`](@ref) in several convenience functions; e.g., [`gradient`](@ref) and [`jacobian`](@ref).
 
 ## Getting started
 
@@ -33,7 +34,31 @@ rosenbrock_inp (generic function with 1 method)
 
 ### Reverse mode
 
-The return value of reverse mode is a tuple that contains as a first value
+For scalar-valued functions that take in a single vector, `gradient` and its in-place variant, `gradient!`, provide a simple way to compute only the gradient of `rosenbrock` at a given point:
+
+```jldoctest rosenbrock
+julia> gradient(Reverse, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
+2-element Vector{Float64}:
+ -400.0
+  200.0
+
+julia> dx = [0.0, 0.0];
+
+julia> gradient!(Reverse, dx, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
+2-element Vector{Float64}:
+ -400.0
+  200.0
+
+julia> dx
+2-element Vector{Float64}:
+ -400.0
+  200.0
+```
+
+For the more general case with arbitrary arguments and settings in which both the derivative and the primal result are needed, 
+[`autodiff`](@ref) can be used directly.
+
+The return value of reverse mode [`autodiff`](@ref) is a tuple that contains as a first value
 the derivative value of the active inputs and optionally the primal return value.
 
 ```jldoctest rosenbrock
@@ -68,6 +93,14 @@ Both the inplace and "normal" variant return the gradient. The difference is tha
 [`Active`](@ref) the gradient is returned and with [`Duplicated`](@ref) the gradient is accumulated in place.
 
 ### Forward mode
+
+Again, for scalar-valued functions that take in a single vector, `gradient` can be used to compute the gradient of `rosenbrock` at a given point:
+    
+```jldoctest rosenbrock
+julia> gradient(Forward, x -> rosenbrock(x[1], x[2]), [1.0, 2.0])
+(-400.0, 200.0)
+```
+For more fine-grained control and arbitrary function arguments, again [`autodiff`](@ref) can be used directly.
 The return value of forward mode with a `Duplicated` return is a tuple containing as the first value
 the primal return value and as the second value the derivative.
 
