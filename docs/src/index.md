@@ -133,20 +133,30 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 
 If you pass in any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. 
 
-```julia
+```jldoctest storage
 function f(x, tmp, n)
     tmp[1] = 1
     for i in 1:n
         tmp[1] *= x
     end
     tmp[1]
-end
+end;
+```
 
-# Incorrect [ returns (0.0,) ]
-Enzyme.autodiff(f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(5))
+```jldoctest storage
+Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(5))  # Incorrect [ returns (0.0,) ]
 
-# Correct [ returns (10.367999999999999,) == 1.2^4 * 5 ]
-Enzyme.autodiff(f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(5))
+# output
+
+((0.0, nothing, nothing),)
+```
+
+```jldoctest storage
+Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(5))  # Correct [ returns (10.367999999999999,) == 1.2^4 * 5 ]
+
+# output
+
+((10.367999999999999, nothing, nothing),)
 ```
 
 ### CUDA.jl support
@@ -158,21 +168,25 @@ correctly and thus returns fundamentally wrong results.
 
 At the moment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
 
-```julia
+```jldoctest sparse
 using SparseArrays
+a = sparse([2.0])
+da1 = sparse([0.0]) # Incorrect: SparseMatrixCSC drops explicit zeros
+Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da1))
+da1
 
-a=sparse([2.0])
-f(a)=sum(a)
+# output
 
-# Incorrect: SparseMatrixCSC drops explicit zeros
-# returns 1-element SparseVector{Float64, Int64} with 0 stored entries
-da=sparse([0.0])
+1-element SparseVector{Float64, Int64} with 0 stored entries
+```
 
-# Correct: Prevent SparseMatrixCSC from dropping zeros
-# returns 1-element SparseVector{Float64, Int64} with 1 stored entry:
-#  [1]  =  0.0
-da=sparsevec([1], [0.0])
+```jldoctest sparse
+da2 = sparsevec([1], [0.0]) # Correct: Prevent SparseMatrixCSC from dropping zeros
+Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da2))
+da2
 
-Enzyme.autodiff(Reverse, f, Active, Duplicated(a, da))
-@show da
+# output
+
+1-element SparseVector{Float64, Int64} with 1 stored entry:
+  [1]  =  1.0
 ```
