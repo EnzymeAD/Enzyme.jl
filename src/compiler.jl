@@ -1232,7 +1232,8 @@ end
     for I in eachindex(prev)
         if isassigned(prev, I)
             pv = prev[I]
-            @inbounds newa[I] = EnzymeCore.make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
+            innerty = Core.Typeof(pv)
+            @inbounds newa[I] = EnzymeCore.make_zero(innerty, seen, pv, Val(copy_if_inactive))
         end
     end
     return newa
@@ -1264,7 +1265,15 @@ end
         for i in 1:nf
             if isdefined(prev, i)
                 xi = getfield(prev, i)
-                xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
+                ty = Core.Typeof(xi)
+                tup = Tuple{Type{ty}, typeof(seen), ty, Val{copy_if_inactive}}
+                xi = Core.invoke(EnzymeCore.make_zero, tup, ty, seen, xi, Val(copy_if_inactive))
+                if i == 3
+                    @show i, xi, ty, tup, Base.which(EnzymeCore.make_zero, tup)
+                    if xi != 0
+                        ccall(:jl_, Cvoid, (Any,), xi)
+                    end
+                end
                 ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
             end
         end
@@ -4912,6 +4921,7 @@ function add_one_in_place(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
         x[] += one(eltype(ty))
     elseif true
+        @assert false, "Cannot add one in place of immutable value"
         res = x+one(ty)
         @assert typeof(res) == ty
         unsafe_store!(reinterpret(Ptr{ty}, ptr), res)

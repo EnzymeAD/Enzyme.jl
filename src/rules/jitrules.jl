@@ -239,9 +239,11 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
                 else
-                  ref = shadow_ptr[$(i*(Width)+w)]
-                  ref = reinterpret(Ptr{typeof($shad)}, ref)
-                  unsafe_store!(ref, $shad+$expr)
+                  # msg2 = sprint() do io
+                  #   println(io, "Enzyme Mutability Error")
+                  #  println(io, "Cannot update in place, ", $shad, " of type", typeof($shad))
+                  # end
+                  throw(AssertionError("Enzyme Mutability Error"))
                 end
                )
             push!(outs, out)
