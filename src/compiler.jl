@@ -1248,6 +1248,39 @@ end
     return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
 end
 
+
+
+@generated function fakecopy(T, x)
+    if T <: AbstractFloat || T <: Complex
+        ty = convert(LLVMType, x)
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        llvm_f, _ = LLVM.Interop.create_function(T_prjlvalue, [ty])
+        LLVM.IRBuilder() do builder
+            entry = BasicBlock(llvm_f, "entry")
+            position!(builder, entry)
+            inp = parameters(entry)[1]
+            obj = emit_allocobj!(builder, Base.RefValue{x})
+            obj2 = bitcast!(builder, LLVM.PointerType(ty, Tracked), obj)
+            store!(builder, obj, obj2)
+            ret!(builder, obj)
+        end
+        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+        ir = string(mod)
+        fn = LLVM.name(llvm_f)
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(($ir, $fn), Any,
+                    Tuple{x}, x)
+        end
+    else
+        quote
+            Base.@_inline_meta
+            x
+        end
+    end
+end
+
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
     if guaranteed_const_nongen(RT, nothing)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
@@ -1268,6 +1301,7 @@ end
                 ty = Core.Typeof(xi)
                 tup = Tuple{Type{ty}, typeof(seen), ty, Val{copy_if_inactive}}
                 xi = Core.invoke(EnzymeCore.make_zero, tup, ty, seen, xi, Val(copy_if_inactive))
+                xi = fakecopy(Core.Typeof(xi), xi)
                 if i == 3
                     @show i, xi, ty, tup, Base.which(EnzymeCore.make_zero, tup)
                     if xi != 0
