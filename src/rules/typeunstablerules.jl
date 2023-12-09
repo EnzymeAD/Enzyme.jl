@@ -53,7 +53,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 end
 
 function common_newstructv_rev(offset, B, orig, gutils, tape)
-    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+    if is_constant_value(gutils, orig)
         return true
     end
     emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
@@ -300,7 +300,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
 end
 
 function common_jl_getfield_rev(offset, B, orig, gutils, tape)
-    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+    if is_constant_value(gutils, orig)
         return
     end
 
@@ -469,7 +469,7 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 function jl_nthfield_rev(B, orig, gutils, tape)
-    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+    if is_constant_value(gutils, orig)
         return
     end
 
