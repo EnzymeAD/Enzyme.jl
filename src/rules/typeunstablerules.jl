@@ -1,6 +1,6 @@
 
 function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     origops = collect(operands(orig))
@@ -53,7 +53,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 end
 
 function common_newstructv_rev(offset, B, orig, gutils, tape)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
@@ -101,7 +101,7 @@ function new_structv_rev(B, orig, gutils, tape)
 end
 
 function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -223,7 +223,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
 end
 
 function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -300,7 +300,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
 end
 
 function common_jl_getfield_rev(offset, B, orig, gutils, tape)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return
     end
 
@@ -351,7 +351,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 end
 
 function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     origops = collect(operands(orig))
@@ -393,7 +393,7 @@ function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -469,7 +469,7 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 function jl_nthfield_rev(B, orig, gutils, tape)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return
     end
 
