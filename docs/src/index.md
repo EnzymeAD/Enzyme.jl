@@ -167,7 +167,8 @@ julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
 julia> # in forward mode, we can also optionally pass a chunk size
        # to specify the number of derivatives computed simulateneously
        # using vector forward mode
-       gradient(Forward, rosenbrock_inp, [1.0, 2.0], Val(2))
+       chunk_size = Val(2)
+       gradient(Forward, rosenbrock_inp, [1.0, 2.0], chunk_size)
 (-400.0, 200.0)
 ```
 
@@ -176,12 +177,25 @@ The function [`jacobian`](@ref) computes the Jacobian of a function vector input
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
-julia> jacobian(Reverse, foo, [1.0, 2.0], Val(2)) # here Val(2) specifies the output size of `foo` since it cannot be statically inferred
+julia> output_size = Val(2) # here we have to provide the output size of `foo` since it cannot be statically inferred
+       jacobian(Reverse, foo, [1.0, 2.0], output_size) 
+2×2 Matrix{Float64}:
+ -400.0  200.0
+    2.0    1.0
+
+julia> chunk_size = Val(2) # By specifying the optional chunk size argument, we can use vector inverse mode to propogate derivatives of multiple outputs at once.
+       jacobian(Reverse, foo, [1.0, 2.0], output_size, chunk_size)
 2×2 Matrix{Float64}:
  -400.0  200.0
     2.0    1.0
 
 julia> jacobian(Forward, foo, [1.0, 2.0])
+2×2 Matrix{Float64}:
+ -400.0  200.0
+    2.0    1.0
+
+julia> # Again, the optinal chunk size argument allows us to use vector forward mode
+       jacobian(Forward, foo, [1.0, 2.0], chunk_size)
 2×2 Matrix{Float64}:
  -400.0  200.0
     2.0    1.0
