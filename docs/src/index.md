@@ -19,8 +19,12 @@ Enzyme.jl can be installed in the usual way Julia packages are installed:
 
 The Enzyme binary dependencies will be installed automatically via Julia's binary artifact system.
 
-The Enzyme.jl API revolves around the function [`autodiff`](@ref), see its documentation for details and a usage example. Also see [Implementing pullbacks](@ref) on how to use Enzyme.jl to implement back-propagation for functions with non-scalar results.
+The Enzyme.jl API revolves around the function [`autodiff`](@ref).
 For some common operations, Enzyme additionally wraps [`autodiff`](@ref) in several convenience functions; e.g., [`gradient`](@ref) and [`jacobian`](@ref).
+
+The tutorial below covers the basic usage of these functions.
+For a complete overview of Enzyme's functionality, see the [API](@ref) documentation.
+Also see [Implementing pullbacks](@ref) on how to implement back-propagation for functions with non-scalar results.
 
 ## Getting started
 
@@ -134,10 +138,10 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 !!! note
     While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
 
-Two convenient functions for common derivative computations are [`gradient`](@ref) and [`jacobian`](@ref).
-As for [`autodiff`](@ref), the mode (forward or reverse) is determined by the first argument.
+Key convenience functions for common derivative computations are [`gradient`](@ref) (and its inplace variant [`gradient!`](@ref)) and [`jacobian`](@ref).
+Like [`autodiff`](@ref), the mode (forward or reverse) is determined by the first argument.
 
-The function [`gradient`](@ref) computes the gradient of a scalar-valued function that takes in a single vector at a given point.
+The functions [`gradient`](@ref) and [`gradient!`](@ref) compute the gradient of function with vector input and scalar return.
 
 ```jldoctest rosenbrock
 julia> gradient(Reverse, rosenbrock_inp, [1.0, 2.0])
@@ -145,7 +149,7 @@ julia> gradient(Reverse, rosenbrock_inp, [1.0, 2.0])
  -400.0
   200.0
 
-julia> # in-place variant
+julia> # inplace variant
        dx = [0.0, 0.0];
        gradient!(Reverse, dx, rosenbrock_inp, [1.0, 2.0])
 2-element Vector{Float64}:
@@ -159,9 +163,15 @@ julia> dx
 
 julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
 (-400.0, 200.0)
+
+julia> # in forward mode, we can also optionally pass a chunk size
+       # to specify the number of derivatives computed simulateneously
+       # using vector forward mode
+       gradient(Forward, rosenbrock_inp, [1.0, 2.0], Val(2))
+(-400.0, 200.0)
 ```
 
-The function [`jacobian`](@ref) computes the Jacobian of a vector-valued function that takes in a single vector at a given point.
+The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
 
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
