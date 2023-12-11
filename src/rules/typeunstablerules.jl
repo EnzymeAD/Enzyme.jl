@@ -303,6 +303,13 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return
     end
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    if needsShadowP[] == 0
+        return
+    end
 
     ops = collect(operands(orig))[offset:end]
     width = get_width(gutils)

@@ -206,7 +206,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
 
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
     needsPrimal = needsPrimalP[] != 0
     origNeedsPrimal = needsPrimal
     _, sret, _ = get_return_info(RealRt)
