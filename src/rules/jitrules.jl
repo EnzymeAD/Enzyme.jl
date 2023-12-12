@@ -500,6 +500,10 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
     if unsafe_load(normalR) != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
     return false
 end
@@ -542,13 +546,17 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         unsafe_store!(shadowR, shadow.ref)
     end
 
+    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
+    unsafe_store!(tapeR, tape.ref)
+
     if normalR != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
-
-    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
-    unsafe_store!(tapeR, tape.ref)
     return false
 end
 
@@ -613,6 +621,10 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
     if unsafe_load(normalR) != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
 
     return false
@@ -647,13 +659,17 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
         unsafe_store!(shadowR, shadow.ref)
     end
 
+    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
+    unsafe_store!(tapeR, tape.ref)
+
     if unsafe_load(normalR) != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
-
-    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
-    unsafe_store!(tapeR, tape.ref)
     return false
 end
 
@@ -840,6 +856,10 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
     if unsafe_load(normalR) != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
 
     return false
@@ -877,13 +897,17 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         unsafe_store!(shadowR, shadow.ref)
     end
 
+    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
+    unsafe_store!(tapeR, tape.ref)
+
     if unsafe_load(normalR) != C_NULL
         normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
         unsafe_store!(normalR, normal.ref)
+    else
+        # Delete the primal code
+        ni = new_from_original(gutils, orig)
+        erase_with_placeholder(gutils, ni, orig)
     end
-
-    tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
-    unsafe_store!(tapeR, tape.ref)
 
     return false
 end
