@@ -134,29 +134,33 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 If you pass in any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. 
 
 ```jldoctest storage
-function f(x, tmp, n)
-    tmp[1] = 1
+function f(x, tmp, k, n)
+    tmp[1] = 1.0
     for i in 1:n
-        tmp[1] *= x
+        tmp[k] *= x
     end
     tmp[1]
-end;
-```
-
-```jldoctest storage
-Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(5))  # Incorrect [ returns (0.0,) ]
+end
 
 # output
 
-((0.0, nothing, nothing),)
+f (generic function with 1 method)
 ```
 
 ```jldoctest storage
-Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(5))  # Correct [ returns (10.367999999999999,) == 1.2^4 * 5 ]
+Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(1), Const(5))  # Incorrect
 
 # output
 
-((10.367999999999999, nothing, nothing),)
+((0.0, nothing, nothing, nothing),)
+```
+
+```jldoctest storage
+Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(1), Const(5))  # Correct (returns 10.367999999999999 == 1.2^4 * 5)
+
+# output
+
+((10.367999999999999, nothing, nothing, nothing),)
 ```
 
 ### CUDA.jl support
@@ -181,7 +185,7 @@ da1
 ```
 
 ```jldoctest sparse
-da2 = sparsevec([1], [0.0]) # Correct: Prevent SparseMatrixCSC from dropping zeros
+da2 = Enzyme.make_zero(a) # Correct: Prevent SparseMatrixCSC from dropping zeros
 Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da2))
 da2
 
