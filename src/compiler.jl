@@ -4386,7 +4386,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice")))
             end
         end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
+        GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded."
+        GPUCompiler.@safe_warn "We would appreciate testing and feedback for our new flag which might improve performance `Enzyme.Compiler.bitcode_replacement!(false)`."
         ModulePassManager() do pm
             global_optimizer!(pm)
             run!(pm, mod)
