@@ -265,8 +265,12 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
+    mode = if fwd
+        API.DEM_ForwardMode
+    else
+        API.DEM_ReverseModePrimal
+    end
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
     needsPrimal = needsPrimalP[] != 0
     needsShadow = needsShadowP[] != 0
     if !needsShadow
