@@ -201,7 +201,7 @@ end
 function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -399,7 +399,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
 end
 
 function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     arraycopy_fwd(B, orig, gutils, normalR, shadowR)
