@@ -31,7 +31,6 @@ steps:
     matrix:
       setup:
         version:
-          - "1.9"
           - "1.10"
     plugins:
       - JuliaCI/julia#v1:
