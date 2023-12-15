@@ -259,7 +259,7 @@ da1
 ```
 
 ```jldoctest sparse
-da2 = Enzyme.make_zero(a) # Correct: Prevent SparseMatrixCSC from dropping zeros
+da2 = sparsevec([1], [0.0]) # Correct: Prevent SparseMatrixCSC from dropping zeros
 Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da2))
 da2
 
@@ -268,3 +268,6 @@ da2
 1-element SparseVector{Float64, Int64} with 1 stored entry:
   [1]  =  1.0
 ```
+
+Sometimes, determining how to perform this zeroing can be complicated.
+That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
