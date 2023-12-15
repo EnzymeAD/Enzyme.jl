@@ -48,58 +48,6 @@ end
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
-    """
-    for f in functions(mod), bb in blocks(f)
-        todo = LLVM.PHIInst[]
-        nonphi = nothing
-        for inst in instructions(bb)
-            if !isa(inst, LLVM.PHIInst)
-                nonphi = inst
-                break
-            end
-            ty = value_type(inst)
-            if !isa(ty, LLVM.PointerType)
-                continue
-            end
-            if addrspace(ty) != 11
-                continue
-            end
-            push!(todo, inst)
-        end
-
-        for inst in todo
-            ty = value_type(inst)
-            nty = LLVM.PointerType(eltype(ty), 10)
-            nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
-            for (v, pb) in LLVM.incoming(inst)
-                b = IRBuilder()
-                position!(b, terminator(pb))
-                while isa(v, LLVM.AddrSpaceCastInst)
-                    v = operands(v)[1]
-                end
-                if value_type(v) != nty
-                    v = addrspacecast!(b, v, nty, LLVM.name(v)*".nc11")
-                end
-                push!(nvs, (v, pb))
-            end
-            nb = IRBuilder()
-            position!(nb, inst)
-            
-            if !all(x->x[1]==nvs[1][1], nvs)
-                nphi = phi!(nb, nty)
-                append!(LLVM.incoming(nphi), nvs)
-            else
-                nphi = nvs[1][1]
-            end
-            
-            position!(nb, nonphi)
-            nphi = addrspacecast!(nb, nphi, ty, LLVM.name(inst)*".ncp11")
-            replace_uses!(inst, nphi)
-            LLVM.API.LLVMInstructionEraseFromParent(inst)
-        end
-    end
-    """
-
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
     for f in functions(mod)
@@ -656,6 +604,91 @@ function propagate_returned!(mod::LLVM.Module)
                 if any(kind(attr) == kind(EnumAttribute("returned")) for attr in collect(parameter_attributes(fn, i)))
                     argn = i
                 end
+
+                # remove unused sret-like
+                if !prevent && (linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage) && any(kind(attr) == kind(EnumAttribute("nocapture")) for attr in collect(parameter_attributes(fn, i)))
+                    val = nothing
+                    illegalUse = false
+                    for u in LLVM.uses(fn)
+                        un = LLVM.user(u)
+                        if !isa(un, LLVM.CallInst)
+                            illegalUse = true
+                            break
+                        end
+                        ops = collect(operands(un))[1:end-1]
+                        bad = false
+                        for op in ops
+                            if op == fn
+                                bad = true
+                                break
+                            end
+                        end
+                        if bad
+                            illegalUse = true
+                            break
+                        end
+                        if !isa(ops[i], LLVM.AllocaInst)
+                            illegalUse = true
+                            break
+                        end
+                        seenfn = false
+                        torem = LLVM.Instruction[]
+                        todo = LLVM.Instruction[]
+                        for u2 in LLVM.uses(ops[i])
+                            un2 = LLVM.user(u2)
+                            push!(todo, un2)
+                        end
+                        while length(todo) > 0
+                            un2 = pop!(todo)
+                            if isa(un2, LLVM.BitCastInst)
+                                push!(torem, un2)
+                                for u3 in LLVM.uses(un2)
+                                    un3 = LLVM.user(u3)
+                                    push!(todo, un3)
+                                end
+                                continue
+                            end
+                            if !isa(un2, LLVM.CallInst)
+                                illegalUse = true
+                                break
+                            end
+                            ff = LLVM.called_operand(un2)
+                            if !isa(ff, LLVM.Function)
+                                illegalUse = true
+                                break
+                            end
+                            if un2 == un && !seenfn
+                                seenfn = true
+                                continue
+                            end
+                            intr = LLVM.API.LLVMGetIntrinsicID(ff)
+                            if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+                                push!(torem, un2)
+                                continue
+                            end
+                            if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+                                push!(torem, un2)
+                                continue
+                            end
+                            if LLVM.name(ff) != "llvm.enzyme.sret_use"
+                                illegalUse = true
+                                break
+                            end
+                            push!(torem, un2)
+                        end
+                        if illegalUse
+                            continue
+                        end
+                        for c in reverse(torem)
+                            unsafe_delete!(LLVM.parent(c), c)
+                        end
+                        B = IRBuilder()
+                        position!(B, first(instructions(first(blocks(fn)))))
+                        al = alloca!(B, LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i])))
+                        LLVM.replace_uses!(arg, al)
+                    end
+                end
+
                 # interprocedural const prop from callers of arg
                 if !prevent && (linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage)
                     val = nothing
@@ -1081,6 +1114,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
     func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
     rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+    sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
 
     for fn in functions(mod)
         if isempty(blocks(fn))
@@ -1098,7 +1132,26 @@ function removeDeadArgs!(mod::LLVM.Module)
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
-                    cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[2]])
+                    cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[idx]])
+                    LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
+                end
+            end
+        end
+        for idx in (1, 2)
+            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == StringAttribute("enzyme_sret")) for attr in collect(parameter_attributes(fn, idx)))
+                for u in LLVM.uses(fn)
+                    u = LLVM.user(u)
+                    if isa(u, LLVM.ConstantExpr)
+                        u = LLVM.user(only(LLVM.uses(u)))
+                    end
+                    if !isa(u, LLVM.CallInst)
+                        continue
+                    end
+                    @assert isa(u, LLVM.CallInst)
+                    B = IRBuilder()
+                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                    position!(B, nextInst)
+                    cl = call!(B, funcT, sfunc, LLVM.Value[operands(u)[idx]])
                     LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
                 end
             end
@@ -1145,6 +1198,11 @@ function removeDeadArgs!(mod::LLVM.Module)
         unsafe_delete!(LLVM.parent(u), u)
     end
     unsafe_delete!(mod, rfunc)
+    for u in LLVM.uses(sfunc)
+        u = LLVM.user(u)
+        unsafe_delete!(LLVM.parent(u), u)
+    end
+    unsafe_delete!(mod, sfunc)
     for fn in functions(mod)
         for b in blocks(fn)
             inst = first(LLVM.instructions(b))
@@ -1399,6 +1457,7 @@ function post_optimze!(mod, tm, machine=true)
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
         throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
     end
+    # println(string(mod))
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
