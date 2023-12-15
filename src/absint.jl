@@ -131,7 +131,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
         
     	# Type tag is arg 3
-        if nm == "julia.gc_alloc_obj"
+        if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
         	return absint(operands(arg)[3], partial)
         end
     	# Type tag is arg 1
