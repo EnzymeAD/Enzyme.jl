@@ -1141,6 +1141,12 @@ function removeDeadArgs!(mod::LLVM.Module)
             if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == StringAttribute("enzyme_sret")) for attr in collect(parameter_attributes(fn, idx)))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
+                    if isa(u, LLVM.ConstantExpr)
+                        u = LLVM.user(only(LLVM.uses(u)))
+                    end
+                    if !isa(u, LLVM.CallInst)
+                        continue
+                    end
                     @assert isa(u, LLVM.CallInst)
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
