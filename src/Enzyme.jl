@@ -1,10 +1,12 @@
 module Enzyme
 
+import EnzymeCore
+
 import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
 
-import EnzymeCore: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI
+import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
+export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
@@ -12,14 +14,14 @@ export BatchDuplicatedFunc
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
-import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Annotation, Mode
+import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Mode
 
 import EnzymeCore: EnzymeRules
 export EnzymeRules
@@ -263,10 +265,6 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 Example returning both original return and derivative:
 
 ```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
-
 f(x) = x*x
 res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
@@ -278,10 +276,6 @@ res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 Example returning just the derivative:
 
 ```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
-
 f(x) = x*x
 ∂f_∂x = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
 
@@ -524,7 +518,9 @@ result, ∂v, ∂A
         
     world = codegen_world_age(eltype(FA), tt)
     
-    @assert ReturnShadow
+    if !(A <: Const)
+        @assert ReturnShadow
+    end
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 end
 
@@ -615,7 +611,7 @@ end
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
     nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = Compiler.get_tape_type(typeof(nondef[1]))
+    TapeType = EnzymeRules.tape_type(nondef[1])
     return TapeType
 end
 
@@ -689,7 +685,7 @@ result, ∂v, ∂A
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
     nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = Compiler.get_tape_type(typeof(nondef[1]))
+    TapeType = EnzymeRules.tape_type(nondef[1])
     A2 = Compiler.return_type(typeof(nondef[1]))
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)

@@ -74,7 +74,7 @@ end
     out = [1.0, 2.0]
     dout = [1.0, 1.0]
 @static if VERSION < v"1.8"
-    @test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+    @test_throws AssertionError autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
 else
     res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
     @test res[1][2] ≈ 2.0
@@ -88,7 +88,7 @@ end
     end
 
     function psquare0(x)
-      Enzyme.pmap(10, bf, x)
+      Enzyme.pmap(bf, 10, x)
     end
 
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

@@ -5,7 +5,7 @@ using Adapt
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
-export DefaultABI, FFIABI
+export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
 
 function batch_size end
@@ -48,7 +48,7 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 struct Active{T} <: Annotation{T}
     val::T
     @inline Active(x::T1) where {T1} = new{T1}(x)
-    @inline Active(x::T1) where {T1 <: AbstractArray} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
+    @inline Active(x::T1) where {T1 <: Array} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
 end
 Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
@@ -148,9 +148,12 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
         new{T1, N}(x, dx)
     end
 end
-batch_size(::BatchDuplicated{T,N}) where {T,N} = N
-batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
-batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
+@inline batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
+@inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
 Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 
@@ -167,6 +170,12 @@ abstract type ABI end
 Foreign function call ABI. JIT the differentiated function, then inttoptr call the address.
 """
 struct FFIABI <: ABI end
+"""
+    struct InlineABI <: ABI
+
+Inlining function call ABI. 
+"""
+struct InlineABI <: ABI end
 const DefaultABI = FFIABI
 
 """
@@ -213,6 +222,23 @@ function autodiff end
 function autodiff_deferred end
 function autodiff_thunk end
 function autodiff_deferred_thunk end
+
+"""
+    make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
+
+    Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
+    what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
+"""
+function make_zero end
+
+"""
+    make_zero(prev::T)
+
+    Helper function to recursively make zero.
+"""
+@inline function make_zero(prev::T, ::Val{copy_if_inactive}=Val(false)) where {T, copy_if_inactive}
+    make_zero(Core.Typeof(prev), IdDict(), prev, Val(copy_if_inactive))
+end
 
 function tape_type end
 

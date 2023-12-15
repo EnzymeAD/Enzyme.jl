@@ -16,10 +16,10 @@ function unsafe_to_llvm(val)
 end
 export unsafe_to_llvm
 
-function makeInstanceOf(@nospecialize(T), ctx)
+function makeInstanceOf(@nospecialize(T))
     @assert Core.Compiler.isconstType(T)
     @assert T <: Type
-    return unsafe_to_llvm(T.parameters[1], ctx)
+    return unsafe_to_llvm(T.parameters[1])
 end
 
 export makeInstanceOf

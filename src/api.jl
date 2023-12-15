@@ -90,6 +90,19 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
+
+Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
+	ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
+
+function Base.getindex(md::LLVM.InstructionMetadataDict, kind::String)
+	objref = ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
+    objref == C_NULL && throw(KeyError(kind))
+    return LLVM.Metadata(LLVM.MetadataAsValue(objref))
+  end
+
+Base.setindex!(md::LLVM.InstructionMetadataDict, node::LLVM.Metadata, kind::String) =
+	ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), md.inst, kind, LLVM.Value(node))
+
 @cenum(CDIFFE_TYPE,
   DFT_OUT_DIFF = 0,  # add differential to an output struct
   DFT_DUP_ARG = 1,   # duplicate the argument and store differential inside
@@ -236,7 +249,7 @@ EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, size) = ccall((
 
 EnzymeGradientUtilsGetDiffeType(gutils, op, isforeign) = ccall((:EnzymeGradientUtilsGetDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, UInt8), gutils, op, isforeign)
     
-EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP) = ccall((:EnzymeGradientUtilsGetReturnDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{UInt8}, Ptr{UInt8}), gutils, orig, needsPrimalP, needsShadowP)
+EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode) = ccall((:EnzymeGradientUtilsGetReturnDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{UInt8}, Ptr{UInt8}, CDerivativeMode), gutils, orig, needsPrimalP, needsShadowP, mode)
 
 EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp) = ccall((:EnzymeGradientUtilsSubTransferHelper, libEnzyme),
 	Cvoid,
@@ -548,6 +561,8 @@ end
 function EnzymeReplaceFunctionImplementation(mod)
     ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
+
+EnzymeComputeByteOffsetOfGEP(B, V, T) = LLVM.Value(ccall((:EnzymeComputeByteOffsetOfGEP, libEnzyme), LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMTypeRef), B, V, T))
 
 EnzymeAllocaType(al) = LLVM.LLVMType(ccall((:EnzymeAllocaType, libEnzyme), LLVM.API.LLVMTypeRef, (LLVM.API.LLVMValueRef,), al))
 

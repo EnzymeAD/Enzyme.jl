@@ -3,7 +3,6 @@ steps:
     matrix:
       setup:
         version:
-          - "1.7"
           - "1.8"
           - "1.9"
           - "1.10"
@@ -32,7 +31,6 @@ steps:
     matrix:
       setup:
         version:
-          - "1.9"
           - "1.10"
     plugins:
       - JuliaCI/julia#v1:
