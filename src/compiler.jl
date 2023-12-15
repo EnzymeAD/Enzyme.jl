@@ -2247,15 +2247,19 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
     @assert false
 end
 
-function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef)
+function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef)
     V = LLVM.CallInst(V)
-    fn = LLVM.parent(LLVM.parent(V))
-    world = enzyme_extract_world(fn)
-    has, Ty = abs_typeof(V)
-    @assert has 
-    rt = active_reg_inner(Ty, (), world)
-    if rt == ActiveState || rt == MixedState
-        operands(V)[3] = unsafe_to_llvm(Base.RefValue{Ty})
+    gutils = GradientUtils(gutils)
+    mode = get_mode(gutils)
+    if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient || mode == API.DEM_ReverseModeCombined
+        fn = LLVM.parent(LLVM.parent(V))
+        world = enzyme_extract_world(fn)
+        has, Ty = abs_typeof(V)
+        @assert has 
+        rt = active_reg_inner(Ty, (), world)
+        if rt == ActiveState || rt == MixedState
+            operands(V)[3] = unsafe_to_llvm(Base.RefValue{Ty})
+        end
     end
     nothing
 end
@@ -2576,7 +2580,7 @@ function __init__()
     API.EnzymeSetUndefinedValueForType(@cfunction(
                                             julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8))) 
     API.EnzymeSetShadowAllocRewrite(@cfunction(
-                                               shadow_alloc_rewrite, Cvoid, (LLVM.API.LLVMValueRef,)))
+                                               shadow_alloc_rewrite, Cvoid, (LLVM.API.LLVMValueRef,API.EnzymeGradientUtilsRef)))
     register_alloc_rules()
     register_llvm_rules()
 end
