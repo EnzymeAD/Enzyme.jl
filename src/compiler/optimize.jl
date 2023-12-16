@@ -1125,7 +1125,7 @@ function removeDeadArgs!(mod::LLVM.Module)
         # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
         # to preserve this.
         for idx in (2, 3, 4)
-            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) || kind(attr) == StringAttribute("enzymejl_returnRoots_v")) for attr in collect(parameter_attributes(fn, idx)))
+            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) || kind(attr) == kind(StringAttribute("enzymejl_returnRoots_v"))) for attr in collect(parameter_attributes(fn, idx)))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     @assert isa(u, LLVM.CallInst)
@@ -1138,7 +1138,11 @@ function removeDeadArgs!(mod::LLVM.Module)
             end
         end
         for idx in (1, 2)
-            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == StringAttribute("enzyme_sret")) for attr in collect(parameter_attributes(fn, idx)))
+            if length(collect(parameters(fn))) < idx
+                continue
+            end
+            attrs = collect(parameter_attributes(fn, idx))
+            if any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
