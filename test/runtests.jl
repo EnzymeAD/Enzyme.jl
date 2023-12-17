@@ -76,6 +76,7 @@ include("typetree.jl")
     include("rrules.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
+    include("internal_rules.jl")
     @static if VERSION ≥ v"1.9-"
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
@@ -2613,60 +2614,6 @@ end
         @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
         @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
     end
-end
-
-@testset "Linear Solve" begin
-    A = Float64[2 3; 5 7]
-    dA = zero(A)
-    b = Float64[11, 13]
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
-    @test db ≈ z
-    
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Const{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Const(A), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Const(A), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test db ≈ z
-    
-    dA = zero(A)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Const{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Const(b))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Const(b), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
 end
 
 @static if VERSION >= v"1.7-"
