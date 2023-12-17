@@ -1298,16 +1298,10 @@ end
         for i in 1:nf
             if isdefined(prev, i)
                 xi = getfield(prev, i)
-                ty = Core.Typeof(xi)
-                tup = Tuple{Type{ty}, typeof(seen), ty, Val{copy_if_inactive}}
-                xi = Core.invoke(EnzymeCore.make_zero, tup, ty, seen, xi, Val(copy_if_inactive))
-                xi = fakecopy(Core.Typeof(xi), xi)
-                if i == 3
-                    @show i, xi, ty, tup, Base.which(EnzymeCore.make_zero, tup)
-                    if xi != 0
-                        ccall(:jl_, Cvoid, (Any,), xi)
-                    end
-                end
+                xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
+                # TODO, try this once sarah's test case is available
+                # ideally we don't need this still
+                # xi = fakecopy(Core.Typeof(xi), xi)
                 ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
             end
         end
@@ -4969,11 +4963,8 @@ function add_one_in_place(x)
     ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
         x[] += one(eltype(ty))
-    elseif true
-        @assert false, "Cannot add one in place of immutable value"
-        res = x+one(ty)
-        @assert typeof(res) == ty
-        unsafe_store!(reinterpret(Ptr{ty}, ptr), res)
+    else
+        error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end
     return nothing
 end

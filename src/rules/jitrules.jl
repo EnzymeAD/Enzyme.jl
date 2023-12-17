@@ -239,11 +239,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
                 else
-                  # msg2 = sprint() do io
-                  #   println(io, "Enzyme Mutability Error")
-                  #  println(io, "Cannot update in place, ", $shad, " of type", typeof($shad))
-                  # end
-                  throw(AssertionError("Enzyme Mutability Error"))
+                  error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
                )
             push!(outs, out)
