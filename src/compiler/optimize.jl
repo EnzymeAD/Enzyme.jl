@@ -1100,7 +1100,7 @@ function checkNoAssumeFalse(mod, shouldshow=false)
     end
 end
 
-function removeDeadArgs!(mod::LLVM.Module)
+function removeDeadArgs!(mod::LLVM.Module, tm)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
@@ -1256,7 +1256,7 @@ end
         alloc_opt_tm!(pm, tm)
         loop_idiom!(pm)
         loop_rotate!(pm)
-        lower_simdloop!(pm)
+        lower_simdloop_tm!(pm, tm)
         licm!(pm)
         if LLVM.version() >= v"15"                      
             simple_loop_unswitch_legacy!(pm)
@@ -1306,7 +1306,7 @@ end
         run!(pm, mod)
     end
 
-    removeDeadArgs!(mod)
+    removeDeadArgs!(mod, tm)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
 end
@@ -1342,7 +1342,7 @@ end
     end
 else
     function alloc_opt_tm!(pm, tm)
-        function prop_julia_addr(f)
+        function alloc_opt(f)
             @dispose pb=PassBuilder(tm) begin
                 NewPMFunctionPassManager(pb) do fpm
                     add!(fpm, AllocOptPass())
@@ -1351,6 +1351,168 @@ else
             end
         end
         add!(pm, FunctionPass("AllocOpt", alloc_opt))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function remove_ni_tm!(pm, tm)
+        remove_ni!(pm)
+    end
+else
+    function remove_ni_tm!(pm, tm)
+        function remove_ni(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, RemoveNIPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("RemoveNI", remove_ni))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function julia_licm_tm!(pm, tm)
+        julia_licm!(pm)
+    end
+else
+    function julia_licm_tm!(pm, tm)
+        function julia_licm(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, JuliaLICMPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("JuliaLICM", julia_licm))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function lower_simdloop_tm!(pm, tm)
+        lower_simdloop!(pm)
+    end
+else
+    function lower_simdloop_tm!(pm, tm)
+        function lower_simdloop(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, LowerSIMDLoopPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("LowerSIMDLoop", lower_simdloop))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function demote_float16_tm!(pm, tm)
+        demote_float16!(pm)
+    end
+else
+    function demote_float16_tm!(pm, tm)
+        function demote_float16(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, DemoteFloat16Pass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("DemoteFloat16", demote_float16))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function lower_exc_handlers_tm!(pm, tm)
+        lower_exc_handlers!(pm)
+    end
+else
+    function lower_exc_handlers_tm!(pm, tm)
+        function lower_exc_handlers(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, LowerExcHandlersPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("LowerExcHandlers", lower_exc_handlers))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function lower_ptls_tm!(pm, tm, dump_native)
+        lower_ptls!(pm, dump_native)
+    end
+else
+    function lower_ptls_tm!(pm, tm, dump_native)
+        function lower_ptls(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, LowerPTLSPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("LowerPTLS", lower_ptls))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function combine_mul_add_tm!(pm, tm)
+        combine_mul_add!(pm)
+    end
+else
+    function combine_mul_add!(pm, tm)
+        function combine_mul_add(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, CombineMulAddPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("CombineMulAdd", combine_mul_add))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function late_lower_gc_frame_tm!(pm, tm)
+        late_lower_gc_frame!(pm)
+    end
+else
+    function late_lower_gc_frame!(pm, tm)
+        function late_lower_gc_frame(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, LateLowerGCFramePass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("LateLowerGCFrame", late_lower_gc_frame))
+    end
+end
+
+@static if VERSION <= v"1.10-"
+    function final_lower_gc_tm!(pm, tm)
+        final_lower_gc!(pm)
+    end
+else
+    function final_lower_gc_tm!(pm, tm)
+        function final_lower_gc(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, FinalLowerGCFramePass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("FinalLowerGCFrame", final_lower_gc))
     end
 end
 
@@ -1403,9 +1565,9 @@ function runOptimizationPasses!(mod, tm)
         loop_idiom!(pm)
 
         # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-        lower_simdloop!(pm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+        lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
         licm!(pm)
-        julia_licm!(pm)
+        julia_licm_tm!(pm, tm)
         # Subsequent passes not stripping metadata from terminator
         instruction_combining!(pm) # TODO: createInstSimplifyLegacy
         ind_var_simplify!(pm)
@@ -1454,31 +1616,31 @@ function runOptimizationPasses!(mod, tm)
 
 end
 
-function addMachinePasses!(pm)
-    combine_mul_add!(pm)
+function addMachinePasses!(pm, tm)
+    combine_mul_add_tm!(pm, tm)
     # TODO: createDivRemPairs[]
 
-    demote_float16!(pm)
+    demote_float16_tm!(pm, tm)
     gvn!(pm)
 end
 
-function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
+function addJuliaLegalizationPasses!(pm, tm, lower_intrinsics=true)
     if lower_intrinsics
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
         # LLVM's devirtualization heuristics, which would result in the entire
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
         barrier_noop!(pm)
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
-        lower_exc_handlers!(pm)
+        lower_exc_handlers_tm!(pm, tm)
         # BUDE.jl demonstrates a bug here TODO
         gc_invariant_verifier!(pm, false)
         verifier!(pm)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12
         # due to bug in `CreateAlignmentAssumption`.
-        remove_ni!(pm)
-        late_lower_gc_frame!(pm)
-        final_lower_gc!(pm)
+        remove_ni_tm!(pm, tm)
+        late_lower_gc_frame_tm!(pm, tm)
+        final_lower_gc_tm!(pm, tm)
         # We need these two passes and the instcombine below
         # after GC lowering to let LLVM do some constant propagation on the tags.
         # and remove some unnecessary write barrier checks.
@@ -1486,19 +1648,19 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         sccp!(pm)
         # Remove dead use of ptls
         dce!(pm)
-        lower_ptls!(pm, #=dump_native=# false)
+        lower_ptls_tm!(pm, tm, #=dump_native=# false)
         instruction_combining!(pm)
         # Clean up write barrier and ptls lowering
         cfgsimplification!(pm)
     else
         barrier_noop!(pm)
-        remove_ni!(pm)
+        remove_ni_tm!(pm, tm)
     end
 end
 
 function post_optimze!(mod, tm, machine=true)
     addr13NoAlias(mod)
-    removeDeadArgs!(mod)
+    removeDeadArgs!(mod, tm)
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
     end
@@ -1516,8 +1678,8 @@ function post_optimze!(mod, tm, machine=true)
         # TODO enable validate_return_roots
         # validate_return_roots!(mod)
         LLVM.ModulePassManager() do pm
-            addJuliaLegalizationPasses!(pm, true)
-            addMachinePasses!(pm)
+            addJuliaLegalizationPasses!(pm, tm, true)
+            addMachinePasses!(pm, tm)
             run!(pm, mod)
         end
     end
