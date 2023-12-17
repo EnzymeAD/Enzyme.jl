@@ -14,8 +14,8 @@ export BatchDuplicatedFunc
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot

@@ -201,7 +201,7 @@ end
 function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -262,15 +262,17 @@ function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
-
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
     needsPrimal = needsPrimalP[] != 0
     needsShadow = needsShadowP[] != 0
     if !needsShadow
         return nothing
+    end
+
+    if !fwd
+        shadowdst = invert_pointer(gutils, orig, B)
     end
 
     # size_t len = jl_array_len(ary);
@@ -395,7 +397,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
 end
 
 function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) 
         return true
     end
     arraycopy_fwd(B, orig, gutils, normalR, shadowR)
@@ -414,7 +416,7 @@ end
 function arraycopy_rev(B, orig, gutils, tape)
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
-      arraycopy_common(#=fwd=#false, B, orig, origops[1], gutils, invert_pointer(gutils, orig, B))
+        arraycopy_common(#=fwd=#false, B, orig, origops[1], gutils, nothing)
     end
 
     return nothing
@@ -1031,14 +1033,15 @@ function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
     err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -1056,13 +1059,14 @@ function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)

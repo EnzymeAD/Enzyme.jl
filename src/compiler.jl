@@ -144,6 +144,8 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_array_ptr_copy", "jl_array_ptr_copy",
+    "ijl_array_copy", "jl_array_copy",
     "ijl_get_nth_field_checked", "ijl_get_nth_field_checked",
     "jl_array_del_end","ijl_array_del_end",
     "jl_get_world_counter", "ijl_get_world_counter",
@@ -292,7 +294,9 @@ end
 @inline function (c::Merger{seen,worldT,justActive,UnionSret})(f::Int) where {seen,worldT,justActive,UnionSret}
     T = element(first(seen))
 
-    if justActive && ismutabletype(T)
+    reftype = ismutabletype(T) || T isa UnionAll
+
+    if justActive && reftype
         return Val(AnyState)
     end
 
@@ -314,7 +318,11 @@ end
                 Val(DupState)
             end
         else
-            Val(sub)
+            if reftype
+                Val(DupState)
+            else
+                Val(sub)
+            end
         end
     end
 end
@@ -353,6 +361,42 @@ end
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where T = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
+
+@inline function datatype_fieldcount(t::Type{T}) where T
+    @static if VERSION < v"1.10.0"
+        NT = @static if VERSION < v"1.9.0"
+            Base.NamedTuple_typename
+        else
+            Base._NAMEDTUPLE_NAME
+        end
+        if t.name === NT
+            names, types = t.parameters[1], t.parameters[2]
+            if names isa Tuple
+                return length(names)
+            end
+            if types isa DataType && types <: Tuple
+                return datatype_fieldcount(types)
+            end
+            return nothing
+        else
+            @static if VERSION < v"1.7.0"
+                if t.abstract || (t.name === Tuple.name && Base.isvatuple(t))
+                    return nothing
+                end
+            else
+                if isabstracttype(t) || (t.name === Tuple.name && Base.isvatuple(t))
+                    return nothing
+                end
+            end
+        end
+        if isdefined(t, :types)
+            return length(t.types)
+        end
+        return length(t.name.names)
+    else
+        return Base.datatype_fieldcount(t)
+    end
+end
 
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
@@ -404,8 +448,15 @@ end
         return AnyState
     end
 
+    # unknown number of fields
     if T isa UnionAll
-        return DupState
+        aT = Base.argument_datatype(T)
+        if aT === nothing
+            return DupState
+        end
+        if datatype_fieldcount(aT) === nothing
+            return DupState
+        end
     end
 
     if T isa Union
@@ -449,7 +500,7 @@ end
     @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || is_concrete_tuple(T))
+    if !(Base.isconcretetype(T) || is_concrete_tuple(T) || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
@@ -1164,15 +1215,15 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
     end
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractFloat}
+@inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
 
-@inline function make_zero(::Type{Complex{RT}}, seen::IdDict, prev::Complex{RT}, ::Val{copy_if_inactive}=Val(false))::Complex{RT} where {copy_if_inactive, RT<:AbstractFloat}
+@inline function EnzymeCore.make_zero(::Type{Complex{RT}}, seen::IdDict, prev::Complex{RT}, ::Val{copy_if_inactive}=Val(false))::Complex{RT} where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array}
+@inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Array}
     if haskey(seen, prev)
         return seen[prev]
     end
@@ -1181,22 +1232,22 @@ end
     for I in eachindex(prev)
         if isassigned(prev, I)
             pv = prev[I]
-            @inbounds newa[I] = make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
+            @inbounds newa[I] = EnzymeCore.make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
         end
     end
     return newa
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
-    return ((make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
+@inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
+    return ((EnzymeCore.make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
 end
 
 
-@inline function make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
-    return NamedTuple{A,RT}(make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
+@inline function EnzymeCore.make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
+    return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
 end
 
-@inline function make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
+@inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
     if guaranteed_const_nongen(RT, nothing)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
@@ -1213,7 +1264,7 @@ end
         for i in 1:nf
             if isdefined(prev, i)
                 xi = getfield(prev, i)
-                xi = make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
+                xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
                 ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
             end
         end
@@ -1228,7 +1279,7 @@ end
     for i in 1:nf
         if isdefined(prev, i)
             xi = getfield(prev, i)
-            xi = make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
+            xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
             flds[i] = xi
         else
             nf = i - 1 # rest of tail must be undefined values
@@ -1793,6 +1844,20 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
         end
         emit_error(b, nothing, msg2)
+        return C_NULL
+    elseif errtype == API.ET_GetIndexError
+        @assert B != C_NULL
+        B = IRBuilder(B)
+        msg5 = sprint() do io::IO
+            print(io, "Enzyme internal error\n")
+            print(io,  msg, '\n')
+            if bt !== nothing
+                print(io,"\nCaused by:")
+                Base.show_backtrace(io, bt)
+                println(io)
+            end
+        end
+        emit_error(B, nothing, msg5)
         return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
@@ -3316,6 +3381,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             elseif T <: Active
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if isboxed
+                    if is_split
+                        msg = sprint() do io
+                            println(io, "Unimplemented: Had active input arg needing a box in split mode")
+                            println(io, T, " at index ", i)
+                            println(io, TT)
+                        end
+                        throw(AssertionError(msg))
+                    end
                     @assert !is_split
                     # TODO replace with better enzyme_zero
                     ptr = gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), activeNum)])
@@ -4626,7 +4699,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        legal, jTy = abs_typeof(inst)
+        legal, jTy = abs_typeof(inst, true)
         if !legal
             continue
         end
@@ -4653,9 +4726,31 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             for b in blocks(f)
                 term = terminator(b)
                 if isa(term, LLVM.UnreachableInst)
-                    b = IRBuilder()
-                    position!(b, term)
-                    emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
+                    shouldemit = true
+                    tmp = term
+                    while true
+                        tmp = LLVM.API.LLVMGetPreviousInstruction(tmp)
+                        if tmp == C_NULL
+                            break
+                        end
+                        tmp = LLVM.Instruction(tmp)
+                        if isa(tmp, LLVM.CallInst)
+                            cf = LLVM.called_operand(tmp)
+                            if isa(cf, LLVM.Function)
+                                nm = LLVM.name(cf)
+                                if nm == "gpu_signal_exception" || nm == "gpu_report_exception"
+                                    shouldemit = false
+                                    break
+                                end
+                            end
+                        end
+                    end
+
+                    if shouldemit
+                        b = IRBuilder()
+                        position!(b, term)
+                        emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
+                    end
                 end
             end
             if !any(map(k->kind(k)==kind(EnumAttribute("alwaysinline")), collect(function_attributes(f))))

@@ -1,6 +1,6 @@
 
 function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     origops = collect(operands(orig))
@@ -101,7 +101,7 @@ function new_structv_rev(B, orig, gutils, tape)
 end
 
 function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -158,9 +158,9 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT,IdDict(),res))
+            return Ref{RT}(make_zero(res))
         else
-            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -176,9 +176,9 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
-            return Ref{RT}(make_zero(RT,IdDict(),res))
+            return Ref{RT}(make_zero(res))
         else
-            return ( (Ref{RT}(make_zero(RT,IdDict(),res)) for _ in 1:(1+length(dptrs)))..., )
+            return ( (Ref{RT}(make_zero(res)) for _ in 1:(1+length(dptrs)))..., )
         end
     else
         if length(dptrs) == 0
@@ -223,7 +223,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
 end
 
 function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -303,6 +303,13 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return
     end
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    if needsShadowP[] == 0
+        return
+    end
 
     ops = collect(operands(orig))[offset:end]
     width = get_width(gutils)
@@ -351,7 +358,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 end
 
 function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     origops = collect(operands(orig))
@@ -393,7 +400,7 @@ function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 

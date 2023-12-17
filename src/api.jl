@@ -249,7 +249,7 @@ EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, size) = ccall((
 
 EnzymeGradientUtilsGetDiffeType(gutils, op, isforeign) = ccall((:EnzymeGradientUtilsGetDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, UInt8), gutils, op, isforeign)
     
-EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP) = ccall((:EnzymeGradientUtilsGetReturnDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{UInt8}, Ptr{UInt8}), gutils, orig, needsPrimalP, needsShadowP)
+EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode) = ccall((:EnzymeGradientUtilsGetReturnDiffeType, libEnzyme), CDIFFE_TYPE, (EnzymeGradientUtilsRef,LLVMValueRef, Ptr{UInt8}, Ptr{UInt8}, CDerivativeMode), gutils, orig, needsPrimalP, needsShadowP, mode)
 
 EnzymeGradientUtilsSubTransferHelper(gutils, mode, secretty, intrinsic, dstAlign, srcAlign, offset, dstConstant, origdst, srcConstant, origsrc, length, isVolatile, MTI, allowForward, shadowsLookedUp) = ccall((:EnzymeGradientUtilsSubTransferHelper, libEnzyme),
 	Cvoid,
@@ -452,7 +452,8 @@ end
   ET_InternalError = 5,
   ET_TypeDepthExceeded = 6,
   ET_MixedActivityError = 7,
-  ET_IllegalReplaceFicticiousPHIs = 8
+  ET_IllegalReplaceFicticiousPHIs = 8,
+  ET_GetIndexError = 9
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)

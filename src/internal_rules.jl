@@ -173,7 +173,7 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.deepcopy)}
 
     shadow = ntuple(Val(EnzymeRules.width(config))) do _
         Base.@_inline_meta
-        Enzyme.Compiler.make_zero(Core.Typeof(source), IdDict(), source,
+        Enzyme.make_zero(source,
             #=copy_if_inactive=#Val(!EnzymeRules.needs_primal(config))
         )
     end

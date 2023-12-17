@@ -84,10 +84,7 @@ end
                         x = TestStruct(randn(T, 5), randn(T))
                     end
                     atol = rtol = sqrt(eps(real(T)))
-                    @test !fails() do
-                        test_forward(fun, Tret, (x, Tx); atol, rtol)
-                        # https://github.com/EnzymeAD/Enzyme.jl/issues/874
-                    end broken = (TT <: TestStruct && T <: Float32 && !(Tret <: Const))
+                    test_forward(fun, Tret, (x, Tx); atol, rtol)
                 end
             end
         end

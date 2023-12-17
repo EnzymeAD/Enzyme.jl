@@ -223,6 +223,23 @@ function autodiff_deferred end
 function autodiff_thunk end
 function autodiff_deferred_thunk end
 
+"""
+    make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
+
+    Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
+    what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
+"""
+function make_zero end
+
+"""
+    make_zero(prev::T)
+
+    Helper function to recursively make zero.
+"""
+@inline function make_zero(prev::T, ::Val{copy_if_inactive}=Val(false)) where {T, copy_if_inactive}
+    make_zero(Core.Typeof(prev), IdDict(), prev, Val(copy_if_inactive))
+end
+
 function tape_type end
 
 include("rules.jl")

@@ -206,7 +206,7 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
 
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
     needsPrimal = needsPrimalP[] != 0
     origNeedsPrimal = needsPrimal
     _, sret, _ = get_return_info(RealRt)
@@ -629,12 +629,13 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
 
+    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+
     if !forward
         if needsTape
             @assert tape != C_NULL
-            sret = !isempty(parameters(llvmf)) && any(map(k->kind(k)==kind(EnumAttribute("sret")), collect(parameter_attributes(llvmf, 1))))
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4]))
-            innerTy = value_type(parameters(llvmf)[tape_idx+sret+(RT <: Active)])
+            innerTy = value_type(parameters(llvmf)[tape_idx+(sret !== nothing)+(RT <: Active)])
             if innerTy != value_type(tape)
                 llty = convert(LLVMType, TapeT; allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
@@ -684,7 +685,6 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
 
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
     if sret !== nothing
         sret = alloca!(alloctx, convert(LLVMType, eltype(sret)))
         pushfirst!(args, sret)
