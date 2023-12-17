@@ -1172,7 +1172,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         run!(pm, mod)
     end
@@ -1187,7 +1187,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         if LLVM.version().major >= 13
             API.EnzymeAddAttributorLegacyPass(pm)
@@ -1241,7 +1241,7 @@ end
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
         gvn!(pm) # Extra
         instruction_combining!(pm)
@@ -1253,7 +1253,7 @@ end
         instruction_combining!(pm)
         reassociate!(pm)
         early_cse!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         loop_idiom!(pm)
         loop_rotate!(pm)
         lower_simdloop!(pm)
@@ -1267,7 +1267,7 @@ end
         ind_var_simplify!(pm)
         loop_deletion!(pm)
         loop_unroll!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         gvn!(pm)
     
@@ -1279,7 +1279,7 @@ end
         instruction_combining!(pm)
         jump_threading!(pm)
         dead_store_elimination!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         cfgsimplification!(pm)
         loop_idiom!(pm)
         loop_deletion!(pm)
@@ -1336,6 +1336,24 @@ else
     end
 end
 
+@static if VERSION <= v"1.10-"
+    function alloc_opt_tm!(pm, tm)
+        alloc_opt!(pm)
+    end
+else
+    function alloc_opt_tm!(pm, tm)
+        function prop_julia_addr(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, AllocOptPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("AllocOpt", alloc_opt))
+    end
+end
+
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
 function runOptimizationPasses!(mod, tm)
     LLVM.ModulePassManager() do pm
@@ -1363,7 +1381,7 @@ function runOptimizationPasses!(mod, tm)
         # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
         # pass.
 
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         # consider AggressiveInstCombinePass at optlevel > 2
 
         instruction_combining!(pm)
@@ -1379,7 +1397,7 @@ function runOptimizationPasses!(mod, tm)
 
         # Load forwarding above can expose allocations that aren't actually used
         # remove those before optimizing loops.
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         loop_rotate!(pm)
         # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
         loop_idiom!(pm)
@@ -1395,7 +1413,7 @@ function runOptimizationPasses!(mod, tm)
         loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
 
         # Run our own SROA on heap objects before LLVM's
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         # Re-run SROA after loop-unrolling (useful for small loops that operate,
         # over the structure of an aggregate)
         scalar_repl_aggregates!(pm)
@@ -1415,7 +1433,7 @@ function runOptimizationPasses!(mod, tm)
 
         # More dead allocation (store) deletion before loop optimization
         # consider removing this:
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
 
         # see if all of the constant folding has exposed more loops
         # to simplification and deletion
