@@ -1229,7 +1229,7 @@ function optimize!(mod::LLVM.Module, tm)
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
-        propagate_julia_addrsp!(pm)
+        propagate_julia_addrsp_tm!(pm, tm)
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
@@ -1317,96 +1317,123 @@ function addTargetPasses!(pm, tm, trip)
     add_transform_info!(pm, tm)
 end
 
+
+@static if VERSION <= v"1.10-"
+    function propagate_julia_addrsp_tm!(pm, tm)
+        propagate_julia_addrsp!(pm)
+    end
+else
+    function propagate_julia_addrsp_tm!(pm, tm)
+        function prop_julia_addr(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, PropagateJuliaAddrspacesPass())
+                    run!(fpm, f, tm)
+                end
+            end
+        end
+        add!(pm, FunctionPass("PropagateJuliaAddrSpace", prop_julia_addr))
+    end
+end
+
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
-function addOptimizationPasses!(pm)
-    add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+function runOptimizationPasses!(mod, tm)
+    LLVM.ModulePassManager() do pm
 
-    constant_merge!(pm)
+        addTargetPasses!(pm, tm, LLVM.triple(mod))
 
-    propagate_julia_addrsp!(pm)
-    scoped_no_alias_aa!(pm)
-    type_based_alias_analysis!(pm)
-    basic_alias_analysis!(pm)
-    cfgsimplification!(pm)
-    dce!(pm)
-    scalar_repl_aggregates!(pm)
+        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
 
-    # mem_cpy_opt!(pm)
+        constant_merge!(pm)
 
-    always_inliner!(pm) # Respect always_inline
+        propagate_julia_addrsp_tm!(pm, tm)
 
-    # Running `memcpyopt` between this and `sroa` seems to give `sroa` a hard time
-    # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
-    # pass.
+        scoped_no_alias_aa!(pm)
+        type_based_alias_analysis!(pm)
+        basic_alias_analysis!(pm)
+        cfgsimplification!(pm)
+        dce!(pm)
+        scalar_repl_aggregates!(pm)
 
-    alloc_opt!(pm)
-    # consider AggressiveInstCombinePass at optlevel > 2
+        # mem_cpy_opt!(pm)
 
-    instruction_combining!(pm)
-    cfgsimplification!(pm)
-    scalar_repl_aggregates!(pm)
-    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
-    jump_threading!(pm)
-    correlated_value_propagation!(pm)
+        always_inliner!(pm) # Respect always_inline
 
-    reassociate!(pm)
+        # Running `memcpyopt` between this and `sroa` seems to give `sroa` a hard time
+        # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
+        # pass.
 
-    early_cse!(pm)
+        alloc_opt!(pm)
+        # consider AggressiveInstCombinePass at optlevel > 2
 
-    # Load forwarding above can expose allocations that aren't actually used
-    # remove those before optimizing loops.
-    alloc_opt!(pm)
-    loop_rotate!(pm)
-    # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
-    loop_idiom!(pm)
+        instruction_combining!(pm)
+        cfgsimplification!(pm)
+        scalar_repl_aggregates!(pm)
+        instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+        jump_threading!(pm)
+        correlated_value_propagation!(pm)
 
-    # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-    lower_simdloop!(pm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
-    licm!(pm)
-    julia_licm!(pm)
-    # Subsequent passes not stripping metadata from terminator
-    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
-    ind_var_simplify!(pm)
-    loop_deletion!(pm)
-    loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
+        reassociate!(pm)
 
-    # Run our own SROA on heap objects before LLVM's
-    alloc_opt!(pm)
-    # Re-run SROA after loop-unrolling (useful for small loops that operate,
-    # over the structure of an aggregate)
-    scalar_repl_aggregates!(pm)
-    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+        early_cse!(pm)
 
-    gvn!(pm)
-    mem_cpy_opt!(pm)
-    sccp!(pm)
+        # Load forwarding above can expose allocations that aren't actually used
+        # remove those before optimizing loops.
+        alloc_opt!(pm)
+        loop_rotate!(pm)
+        # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
+        loop_idiom!(pm)
 
-    # Run instcombine after redundancy elimination to exploit opportunities
-    # opened up by them.
-    # This needs to be InstCombine instead of InstSimplify to allow
-    # loops over Union-typed arrays to vectorize.
-    instruction_combining!(pm)
-    jump_threading!(pm)
-    dead_store_elimination!(pm)
+        # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
+        lower_simdloop!(pm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+        licm!(pm)
+        julia_licm!(pm)
+        # Subsequent passes not stripping metadata from terminator
+        instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+        ind_var_simplify!(pm)
+        loop_deletion!(pm)
+        loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
 
-    # More dead allocation (store) deletion before loop optimization
-    # consider removing this:
-    alloc_opt!(pm)
+        # Run our own SROA on heap objects before LLVM's
+        alloc_opt!(pm)
+        # Re-run SROA after loop-unrolling (useful for small loops that operate,
+        # over the structure of an aggregate)
+        scalar_repl_aggregates!(pm)
+        instruction_combining!(pm) # TODO: createInstSimplifyLegacy
 
-    # see if all of the constant folding has exposed more loops
-    # to simplification and deletion
-    # this helps significantly with cleaning up iteration
-    cfgsimplification!(pm)
-    loop_deletion!(pm)
-    instruction_combining!(pm)
-    loop_vectorize!(pm)
-    # TODO: createLoopLoadEliminationPass
-    cfgsimplification!(pm)
-    slpvectorize!(pm)
-    # might need this after LLVM 11:
-    # TODO: createVectorCombinePass()
+        gvn!(pm)
+        mem_cpy_opt!(pm)
+        sccp!(pm)
 
-    aggressive_dce!(pm)
+        # Run instcombine after redundancy elimination to exploit opportunities
+        # opened up by them.
+        # This needs to be InstCombine instead of InstSimplify to allow
+        # loops over Union-typed arrays to vectorize.
+        instruction_combining!(pm)
+        jump_threading!(pm)
+        dead_store_elimination!(pm)
+
+        # More dead allocation (store) deletion before loop optimization
+        # consider removing this:
+        alloc_opt!(pm)
+
+        # see if all of the constant folding has exposed more loops
+        # to simplification and deletion
+        # this helps significantly with cleaning up iteration
+        cfgsimplification!(pm)
+        loop_deletion!(pm)
+        instruction_combining!(pm)
+        loop_vectorize!(pm)
+        # TODO: createLoopLoadEliminationPass
+        cfgsimplification!(pm)
+        slpvectorize!(pm)
+        # might need this after LLVM 11:
+        # TODO: createVectorCombinePass()
+
+        aggressive_dce!(pm)
+        run!(pm, mod)
+    end
+
 end
 
 function addMachinePasses!(pm)
@@ -1465,11 +1492,8 @@ function post_optimze!(mod, tm, machine=true)
     # @safe_show "pre_post", mod
     # flush(stdout)
     # flush(stderr)
-    LLVM.ModulePassManager() do pm
-        addTargetPasses!(pm, tm, LLVM.triple(mod))
-        addOptimizationPasses!(pm)
-        run!(pm, mod)
-    end
+
+    runOptimizationPasses!(mod, tm)
     if machine
         # TODO enable validate_return_roots
         # validate_return_roots!(mod)
