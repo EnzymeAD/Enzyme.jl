@@ -1033,14 +1033,15 @@ function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
     err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -1058,13 +1059,14 @@ function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)

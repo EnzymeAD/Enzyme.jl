@@ -1845,6 +1845,20 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         emit_error(b, nothing, msg2)
         return C_NULL
+    elseif errtype == API.ET_GetIndexError
+        @assert B != C_NULL
+        B = IRBuilder(B)
+        msg5 = sprint() do io::IO
+            print(io, "Enzyme internal error\n")
+            print(io,  msg, '\n')
+            if bt !== nothing
+                print(io,"\nCaused by:")
+                Base.show_backtrace(io, bt)
+                println(io)
+            end
+        end
+        emit_error(B, nothing, msg5)
+        return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
 end
@@ -3367,6 +3381,14 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             elseif T <: Active
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if isboxed
+                    if is_split
+                        msg = sprint() do io
+                            println(io, "Unimplemented: Had active input arg needing a box in split mode")
+                            println(io, T, " at index ", i)
+                            println(io, TT)
+                        end
+                        throw(AssertionError(msg))
+                    end
                     @assert !is_split
                     # TODO replace with better enzyme_zero
                     ptr = gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), activeNum)])

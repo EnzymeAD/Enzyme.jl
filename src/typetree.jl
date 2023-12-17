@@ -53,7 +53,9 @@ end
 
 function merge!(dst::TypeTree, src::TypeTree; consume=true)
     API.EnzymeMergeTypeTree(dst, src)
-    LLVM.dispose(src)
+    if consume
+        LLVM.dispose(src)
+    end
     return nothing
 end
 
