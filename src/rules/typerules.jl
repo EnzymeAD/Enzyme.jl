@@ -28,7 +28,16 @@ function int_return_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 end
 
 function i64_box_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
-    TT = TypeTree(API.DT_Pointer, LLVM.context(LLVM.Value(val)))
+    val = LLVM.Instruction(val)
+    TT = TypeTree(API.DT_Pointer, LLVM.context(val))
+    if (direction & API.DOWN) != 0
+        sub = TypeTree(unsafe_load(args))
+        ctx = LLVM.context(val)
+        dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(val)))))
+        maxSize = div(width(value_type(operands(val)[1]))+7, 8)
+        shift!(sub, dl, 0, maxSize, 0)
+        API.EnzymeMergeTypeTree(TT, sub)
+    end
     only!(TT, -1)
     API.EnzymeMergeTypeTree(ret, TT)
     return UInt8(false)
