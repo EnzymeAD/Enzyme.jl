@@ -81,7 +81,9 @@ include("typetree.jl")
         include("ruleinvalidation.jl")
     end
 end
-include("blas.jl")
+@static if VERSION ≥ v"1.7-" || !Sys.iswindows()
+    include("blas.jl")
+end
 
 f0(x) = 1.0 + x
 function vrec(start, x)
