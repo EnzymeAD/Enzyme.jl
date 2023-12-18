@@ -4,7 +4,19 @@ using Enzyme
 using Enzyme.EnzymeRules
 using Test
 
-@testset "Internal rules" begin
+struct TPair
+    a::Float64
+    b::Float64
+end
+
+function sorterrfn(t, x)
+    function lt(a, b)
+        return a.a < b.a
+    end
+    return first(sortperm(t, lt=lt)) * x
+end
+
+@testset "Sort rules" begin
     function f1(x)
         a = [1.0, 3.0, x]
         sort!(a)
@@ -27,6 +39,17 @@ using Test
     @test autodiff(Forward, f2, Duplicated(2.0, 1.0))[1] == -3
     @test autodiff(Forward, f2, BatchDuplicated(2.0, (1.0, 2.0)))[1] == (var"1"=-3.0, var"2"=-6.0)
     @test autodiff(Reverse, f2, Active, Active(2.0))[1][1] == -3
+
+    dd = Duplicated([TPair(1, 2), TPair(2, 3), TPair(0, 1)], [TPair(0, 0), TPair(0, 0), TPair(0, 0)])
+    res = Enzyme.autodiff(Reverse, sorterrfn, dd, Active(1.0))
+    
+    @test res[1][2] ≈ 3
+    @test dd.dval[1].a ≈ 0
+    @test dd.dval[1].b ≈ 0
+    @test dd.dval[2].a ≈ 0
+    @test dd.dval[2].b ≈ 0
+    @test dd.dval[3].a ≈ 0
+    @test dd.dval[3].b ≈ 0
 end
 
 @testset "Linear Solve" begin
