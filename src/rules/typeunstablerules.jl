@@ -480,6 +480,16 @@ function jl_nthfield_rev(B, orig, gutils, tape)
         return
     end
 
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    needsPrimal = needsPrimalP[] != 0
+    needsShadow = needsShadowP[] != 0
+
+	if !needsShadow
+		return
+	end
+
     ops = collect(operands(orig))
     width = get_width(gutils)
 
