@@ -1672,6 +1672,13 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         ip = API.EnzymeTypeAnalyzerToString(data)
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
+        
+        if isa(val, LLVM.Instruction)
+            mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
+            if mi !== nothing
+                msg *= "\n" * string(mi) * "\n"
+            end
+        end
         throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
