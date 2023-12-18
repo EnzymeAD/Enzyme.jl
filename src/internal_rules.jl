@@ -486,9 +486,9 @@ end
 function EnzymeRules.forward(
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        xs::Duplicated;
+        xs::Duplicated{T};
         kwargs...
-    )
+    ) where {T <: AbstractFloat}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
@@ -506,7 +506,7 @@ function EnzymeRules.forward(
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
         xs::BatchDuplicated{T, N};
         kwargs...
-    ) where {T, N}
+    ) where {T <: AbstractFloat, N}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     for i in 1:N
@@ -521,13 +521,14 @@ function EnzymeRules.forward(
     end
 end
 
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.ConfigWidth{1},
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        xs::Duplicated;
+        xs::Duplicated{T};
         kwargs...
-    )
+    ) where {T <: AbstractFloat}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
@@ -549,9 +550,9 @@ function EnzymeRules.reverse(
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         tape,
-        xs::Duplicated;
+        xs::Duplicated{T};
         kwargs...,
-    )
+    ) where {T <: AbstractFloat}
     inds = tape
     back_inds = sortperm(inds)
     xs.dval .= xs.dval[back_inds]
