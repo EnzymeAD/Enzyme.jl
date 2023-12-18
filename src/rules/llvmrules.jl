@@ -1301,6 +1301,12 @@ end
         @fwdfunc(new_structv_fwd),
     )
     register_handler!(
+        ("jl_new_structt","ijl_new_structt"),
+        @augfunc(new_structt_augfwd),
+        @revfunc(new_structt_rev),
+        @fwdfunc(new_structt_fwd),
+    )
+    register_handler!(
         ("jl_get_binding_or_error", "ijl_get_binding_or_error"),
         @augfunc(get_binding_or_error_augfwd),
         @revfunc(get_binding_or_error_rev),
