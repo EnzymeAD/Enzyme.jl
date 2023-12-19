@@ -709,6 +709,57 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
+    
+    v, isiter = absint(operands(orig)[offset+1])
+    v2, istup = absint(operands(orig)[offset+2])
+
+    width = get_width(gutils)
+
+    if v && v2 && isiter == Base.iterate && istup == Base.tuple && length(operands(orig)) >= offset+4
+        origops = collect(operands(orig)[1:end-1])
+        shadowins = [ invert_pointer(gutils, origops[i], B) for i in (offset+3):length(origops) ] 
+        shadowres = if width == 1
+            newops = LLVM.Value[]
+            newvals = API.CValueType[]
+            for (i, v) in enumerate(origops)
+                if i >= offset + 3
+                    shadowin2 = shadowins[i-offset-3+1]
+                    push!(newops, shadowin2)
+                    push!(newvals, API.VT_Shadow)
+                else
+                    push!(newops, new_from_original(gutils, origops[i]))
+                    push!(newvals, API.VT_Primal)
+                end
+            end
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+            callconv!(cal, callconv(orig))
+            cal
+        else
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            shadow = LLVM.UndefValue(ST)
+            for j in 1:width
+                newops = LLVM.Value[]
+                newvals = API.CValueType[]
+                for (i, v) in enumerate(origops)
+                    if i >= offset + 3
+                        shadowin2 = extract_value!(B, shadowins[i-offset-3+1], j-1)
+                        push!(newops, shadowin2)
+                        push!(newvals, API.VT_Shadow)
+                    else
+                        push!(newops, new_from_original(gutils, origops[i]))
+                        push!(newvals, API.VT_Primal)
+                    end
+                end
+                cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+                callconv!(cal, callconv(orig))
+                shadow = insert_value!(B, shadow, cal, j-1)
+            end
+            shadow
+        end
+
+        unsafe_store!(shadowR, shadowres.ref)
+        return false
+    end
     emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
     if unsafe_load(shadowR) != C_NULL
         cal =  new_from_original(gutils, orig)
