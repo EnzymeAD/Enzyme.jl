@@ -254,11 +254,11 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield!(dptr, symname, cur+dret[])
+            setfield!(dptr, symname, recursive_add(cur, dret[]))
         else
-            setfield!(dptr, symname, cur+dret[1][])
+            setfield!(dptr, symname, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield!(dptrs[i], symname, cur+dret[1+i][])
+                setfield!(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
             end
         end
     end
@@ -270,11 +270,11 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield_idx(dptr, symname, cur+dret[])
+            setfield_idx(dptr, symname, recursive_add(cur, dret[]))
         else
-            setfield_idx(dptr, symname, cur+dret[1][])
+            setfield_idx(dptr, symname, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield_idx(dptrs[i], symname, cur+dret[1+i][])
+                setfield_idx(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
             end
         end
     end
