@@ -802,7 +802,7 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 """
 @inline function gradient(::ReverseMode, f, x)
     dx = zero(x)
-    autodiff(Reverse, f, Duplicated(x, dx))
+    autodiff(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
@@ -830,7 +830,7 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 """
 @inline function gradient!(::ReverseMode, dx, f, x)
     dx .= 0
-    autodiff(Reverse, f, Duplicated(x, dx))
+    autodiff(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
