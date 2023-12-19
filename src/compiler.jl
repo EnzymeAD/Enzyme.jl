@@ -4964,12 +4964,35 @@ function jl_set_typeof(v::Ptr{Cvoid}, T)
     return nothing
 end
 
+@generated function splatnew(::Type{T}, args::NTuple{N,AT}) where {T,N,AT}
+    return quote
+        Base.@_inline_meta
+        $(Expr(:splatnew, :T, :args))
+    end
+end
+
+@inline function recursive_add(x::T, y::T) where T
+    if guaranteed_const(T)
+        return x
+    end
+    splatnew(T, Val(fieldcount(T)) do i
+        Base.@_inline_meta
+        prev = getfield(x, i)
+        next = getfield(y, i)
+        recursive_add(prev, next)
+    end)
+end
+
+@inline function recursive_add(x::T, y::T) where {T<:AbstractFloat}
+    return x + y
+end
+
 function add_one_in_place(x)
     ty = typeof(x)
     # ptr = Base.pointer_from_objref(x)
     ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
-        x[] += one(eltype(ty))
+        x[] = recursive_add(x[], one(eltype(ty)))
     else
         error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end
