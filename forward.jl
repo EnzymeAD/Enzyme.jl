@@ -14,7 +14,6 @@ function EnzymeRules.forward(
     # TODO: dL is dense even when L was sparse
     dL = Matrix(fact.L * LowerTriangular(invL * A.dval * invL' * 0.5 * I))
     dfact = Cholesky(dL, 'L', 0)
-    return Duplicated(fact, dfact)
     if RT <: DuplicatedNoNeed
         return fact
     else
