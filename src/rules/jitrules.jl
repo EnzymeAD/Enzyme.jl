@@ -237,7 +237,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
             shad = shadowargs[i][w]
             out = :(if $expr === nothing
               elseif $shad isa Base.RefValue
-                  $shad[] += $expr
+                  $shad[] = recursive_add($shad[], $expr)
                 else
                   error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
