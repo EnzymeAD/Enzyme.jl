@@ -213,6 +213,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return v2, offset, skipload
                     end
 
+                    if isa(v, LLVM.GetElementPtrInst) && all(x->(isa(x, LLVM.ConstantInt) && convert(Int, x) == 0), operands(v)[2:end])
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        v2 = ((LLVM.API.LLVMIsInBounds(v) != 0) ? inbounds_gep! : gep!)(b, source_elem(v), v2, operands(v)[2:end])
+                        return v2, offset, skipload
+                    end
+
                     if isa(v, LLVM.GetElementPtrInst) && !hasload
                         v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
