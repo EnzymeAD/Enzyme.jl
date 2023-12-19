@@ -45,6 +45,9 @@ function julia_activity_rule(f::LLVM.Function)
         end
 
         op_idx = arg.codegen.i
+        
+        typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
+        @assert typ == arg.typ
 
         if guaranteed_const_nongen(arg.typ, world)
             push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzyme_inactive"))

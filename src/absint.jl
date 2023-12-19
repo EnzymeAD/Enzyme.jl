@@ -210,6 +210,72 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
     end
 
+    if isa(arg, LLVM.LoadInst)
+        arg = operands(arg)[1]
+        offset = nothing
+        error = false
+        while true
+            if isa(arg, LLVM.BitCastInst) ||
+               isa(arg, LLVM.AddrSpaceCastInst)
+               arg = operands(arg)[1]
+               continue
+            end
+            if offset === nothing && isa(arg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(arg)[2:end])
+                b = LLVM.Builder(arg)
+                offset = API.EnzymeComputeByteOffsetOfGEP(b, v, offty)
+                @assert isa(offset, LLVM.ConstantInt)
+                offset = convert(Int, offset)
+                arg = operands(arg)[1]
+                continue
+            end
+            error = true
+            break
+        end
+
+        if !error
+            if isa(arg, LLVM.Argument)
+                f = LLVM.parent(arg)
+                idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
+                typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+                if typ !== nothing && byref
+                    if offset === nothing
+                        return (true, typ)
+                    else
+                        function llsz(ty)
+                            if isa(ty, LLVM.PointerType)
+                                return sizeof(Ptr{Cvoid})
+                            elseif isa(ty, LLVM.IntegerType)
+                                return LLVM.width(ty) / 8
+                            end
+                            error("Unknown llvm type to size: "*string(ty))
+                        end
+                        @show "TODO", typ, offset
+                        @assert Base.isconcretetype(typ)
+                        for i in 1:fieldcount(typ)
+                            if fieldoffset(typ, i) == offset
+                                subT  = fieldtype(typ, i)
+                                if sizeof(subT) == llsz(value_type(arg))
+                                    return (true, subT)
+                                end
+                            end
+                        end
+                        @show "not found", typ, offset, [fieldoffset(typ, i) for i in 1:fieldcount(typ)]
+                    end
+                end
+            end
+        end
+        
+    end
+
+    if isa(arg, LLVM.Argument)
+        f = LLVM.parent(arg)
+        idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
+        typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+        if typ !== nothing && !byref
+            return (true, typ)
+        end
+    end
+
     legal, val = absint(arg, partial)
 	if legal
 		return (true, Core.Typeof(val))
