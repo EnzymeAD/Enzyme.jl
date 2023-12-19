@@ -4950,7 +4950,7 @@ end
     if guaranteed_const(T)
         return x
     end
-    splatnew(T, Val(fieldcount(T)) do i
+    splatnew(T, ntuple(Val(fieldcount(T))) do i
         Base.@_inline_meta
         prev = getfield(x, i)
         next = getfield(y, i)
