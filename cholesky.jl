@@ -1,6 +1,4 @@
 using Enzyme
-import .EnzymeRules: forward, reverse, augmented_primal
-using .EnzymeRules
 using LinearAlgebra
 using Random
 using SparseArrays
@@ -9,7 +7,6 @@ using FiniteDifferences
 
 include("utils.jl")
 include("utils_check.jl")
-include("forward.jl")
 
 function symmetric_definite(n :: Int=10; FC=Float64)
   α = FC <: Complex ? FC(im) : one(FC)
