@@ -584,7 +584,7 @@ function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origh, origkey, origdflt = operands(orig)[1:end-1]
 
     if is_constant_value(gutils, origh)
-        emit_error(B, orig, "Enzyme: Not yet implemented constant table in jl_eqtable_get "*string(origh)*" "*string(orig))
+        emit_error(B, orig, "Enzyme: Not yet implemented constant table in jl_eqtable_get "*string(origh)*" "*string(orig)*" "*string(absint(orig))*" "*string(abs_typeof(orig, true))*" "*string(absint(origh))*" "*string(abs_typeof(origh, true)))
     end
     
     shadowh = invert_pointer(gutils, origh, B)
