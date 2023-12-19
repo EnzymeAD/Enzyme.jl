@@ -1232,7 +1232,8 @@ end
     for I in eachindex(prev)
         if isassigned(prev, I)
             pv = prev[I]
-            @inbounds newa[I] = EnzymeCore.make_zero(Core.Typeof(pv), seen, pv, Val(copy_if_inactive))
+            innerty = Core.Typeof(pv)
+            @inbounds newa[I] = EnzymeCore.make_zero(innerty, seen, pv, Val(copy_if_inactive))
         end
     end
     return newa
@@ -1245,6 +1246,39 @@ end
 
 @inline function EnzymeCore.make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
     return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
+end
+
+
+
+@generated function fakecopy(T, x)
+    if T <: AbstractFloat || T <: Complex
+        ty = convert(LLVMType, x)
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        llvm_f, _ = LLVM.Interop.create_function(T_prjlvalue, [ty])
+        LLVM.IRBuilder() do builder
+            entry = BasicBlock(llvm_f, "entry")
+            position!(builder, entry)
+            inp = parameters(entry)[1]
+            obj = emit_allocobj!(builder, Base.RefValue{x})
+            obj2 = bitcast!(builder, LLVM.PointerType(ty, Tracked), obj)
+            store!(builder, obj, obj2)
+            ret!(builder, obj)
+        end
+        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+        ir = string(mod)
+        fn = LLVM.name(llvm_f)
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(($ir, $fn), Any,
+                    Tuple{x}, x)
+        end
+    else
+        quote
+            Base.@_inline_meta
+            x
+        end
+    end
 end
 
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT}
@@ -1265,6 +1299,9 @@ end
             if isdefined(prev, i)
                 xi = getfield(prev, i)
                 xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
+                # TODO, try this once sarah's test case is available
+                # ideally we don't need this still
+                # xi = fakecopy(Core.Typeof(xi), xi)
                 ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
             end
         end
@@ -2211,6 +2248,23 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
     @assert false
 end
 
+function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef)
+    V = LLVM.CallInst(V)
+    gutils = GradientUtils(gutils)
+    mode = get_mode(gutils)
+    if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient || mode == API.DEM_ReverseModeCombined
+        fn = LLVM.parent(LLVM.parent(V))
+        world = enzyme_extract_world(fn)
+        has, Ty = abs_typeof(V)
+        @assert has 
+        rt = active_reg_inner(Ty, (), world)
+        if rt == ActiveState || rt == MixedState
+            operands(V)[3] = unsafe_to_llvm(Base.RefValue{Ty})
+        end
+    end
+    nothing
+end
+
 function julia_allocator(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, Count::LLVM.API.LLVMValueRef, AlignedSize::LLVM.API.LLVMValueRef, IsDefault::UInt8, ZI)
     B = LLVM.IRBuilder(B)
     Count = LLVM.Value(Count)
@@ -2506,30 +2560,28 @@ include("rules/llvmrules.jl")
 function __init__()
     API.EnzymeSetHandler(@cfunction(julia_error, LLVM.API.LLVMValueRef, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
-    if API.EnzymeHasCustomInactiveSupport()
-      API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
-    end
-    if API.EnzymeHasCustomAllocatorSupport()
-        API.EnzymeSetDefaultTapeType(@cfunction(
-                                                julia_default_tape_type, LLVM.API.LLVMTypeRef, (LLVM.API.LLVMContextRef,)))
-        API.EnzymeSetCustomAllocator(@cfunction(
-            julia_allocator, LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, UInt8, Ptr{LLVM.API.LLVMValueRef})))
-        API.EnzymeSetCustomDeallocator(@cfunction(
-            julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
-        API.EnzymeSetPostCacheStore(@cfunction(
-             julia_post_cache_store, Ptr{LLVM.API.LLVMValueRef},
-            (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, Ptr{UInt64})))
+    API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetDefaultTapeType(@cfunction(
+                                            julia_default_tape_type, LLVM.API.LLVMTypeRef, (LLVM.API.LLVMContextRef,)))
+    API.EnzymeSetCustomAllocator(@cfunction(
+        julia_allocator, LLVM.API.LLVMValueRef,
+        (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, UInt8, Ptr{LLVM.API.LLVMValueRef})))
+    API.EnzymeSetCustomDeallocator(@cfunction(
+        julia_deallocator, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
+    API.EnzymeSetPostCacheStore(@cfunction(
+         julia_post_cache_store, Ptr{LLVM.API.LLVMValueRef},
+        (LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, Ptr{UInt64})))
 
-        API.EnzymeSetCustomZero(@cfunction(
-            zero_allocation, Cvoid,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, UInt8)))
-        API.EnzymeSetFixupReturn(@cfunction(
-            fixup_return, LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
-    end
+    API.EnzymeSetCustomZero(@cfunction(
+        zero_allocation, Cvoid,
+        (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMTypeRef, LLVM.API.LLVMValueRef, UInt8)))
+    API.EnzymeSetFixupReturn(@cfunction(
+        fixup_return, LLVM.API.LLVMValueRef,
+        (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
     API.EnzymeSetUndefinedValueForType(@cfunction(
-                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8)))
+                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8))) 
+    API.EnzymeSetShadowAllocRewrite(@cfunction(
+                                               shadow_alloc_rewrite, Cvoid, (LLVM.API.LLVMValueRef,API.EnzymeGradientUtilsRef)))
     register_alloc_rules()
     register_llvm_rules()
 end
@@ -4918,10 +4970,8 @@ function add_one_in_place(x)
     ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
         x[] += one(eltype(ty))
-    elseif true
-        res = x+one(ty)
-        @assert typeof(res) == ty
-        unsafe_store!(reinterpret(Ptr{ty}, ptr), res)
+    else
+        error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end
     return nothing
 end

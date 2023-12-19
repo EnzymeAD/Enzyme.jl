@@ -503,14 +503,14 @@ function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     TT = tape_type(flt)
 
     if width == 1
-        obj = emit_allocobj!(B, TT)
+        obj = emit_allocobj!(B, Base.RefValue{TT})
         o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
         store!(B, ConstantFP(flt, 0.0), o2)
         shadowres = obj
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
         for idx in 1:width
-            obj = emit_allocobj!(B, TT)
+            obj = emit_allocobj!(B, Base.RefValue{TT})
             o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
             store!(B, ConstantFP(flt, 0.0), o2)
             shadowres = insert_value!(B, shadowres, obj, idx-1)

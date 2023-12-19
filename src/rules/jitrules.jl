@@ -239,9 +239,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
               elseif $shad isa Base.RefValue
                   $shad[] += $expr
                 else
-                  ref = shadow_ptr[$(i*(Width)+w)]
-                  ref = reinterpret(Ptr{typeof($shad)}, ref)
-                  unsafe_store!(ref, $shad+$expr)
+                  error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
                )
             push!(outs, out)
