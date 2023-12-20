@@ -565,7 +565,6 @@ function EnzymeRules.forward(
     A::Union{Const, Duplicated};
     kwargs...
 )
-    @assert issymmetric(A.val)
     fact = cholesky(A.val; kwargs...)
     if RT <: Const
         return fact
@@ -630,11 +629,11 @@ function EnzymeRules.augmented_primal(
     fact = cholesky(A.val; kwargs...)
     dA = similar(fact.factors)
     # dfact would be a dense matrix, prepare buffer
-    dfact = deepcopy(fact)
+    dfact = Cholesky(Matrix(fact), 'L', 0)
     if EnzymeRules.needs_primal(config)
-        return EnzymeRules.AugmentedReturn(fact, dfact, (fact, dfact, dA))
+        return EnzymeRules.AugmentedReturn(fact, dfact, (Ref(dfact),))
     else
-        return EnzymeRules.AugmentedReturn(nothing, (bx, bstats), (fact,))
+        return EnzymeRules.AugmentedReturn(nothing, dfact, (Ref(dfact),))
     end
 end
 
@@ -647,31 +646,26 @@ function EnzymeRules.augmented_primal(
 )
     x = copy(B.val)
     ldiv!(fact.val, x)
-    dx = similar(x)
+    dx = zeros(size(B.val))
     if EnzymeRules.needs_primal(config)
-        return EnzymeRules.AugmentedReturn(x, dx, (x,dx))
+        return EnzymeRules.AugmentedReturn(x, dx, (x, Ref(dx)))
     else
-        return EnzymeRules.AugmentedReturn(nothing, dx, (x,dx))
+        return EnzymeRules.AugmentedReturn(nothing, dx, (x, Ref(dx)))
     end
 end
 
 function EnzymeRules.reverse(
     config,
-    ::Const{typeof(Cholesky)},
+    ::Const{typeof(cholesky)},
     dret,
     cache,
     A;
     kwargs...
 )
-    println("Custom Cholesky reverse rule")
-    (fact, dfact, dA) = cache
-    mul!(dA, fact.L', dret.L)
-    ldiv!(dA, fact.L)
-    rdiv!(fact.L', dA)
-    idx = diagind(dA)
-    @views dA[idx] .= 0.5 .* dA[idx]
-    dA = Matrix(dA)
-    return (nothing, nothing)
+    (_dfact,) = cache
+    dfact = _dfact[]
+    copyto!(A.dval, dfact.factors)
+    return (nothing,)
 end
 
 function EnzymeRules.reverse(
@@ -683,14 +677,8 @@ function EnzymeRules.reverse(
     kwargs...
 )
 
-    (x,dx) = cache
-    @show typeof(dret)
-    copyto!(B.dval, dx)
-    ldiv!(fact.val, B.dval)
-    # TODO: Can't go anywhere. This is a dense matrix.
-    dA = -x .* B.dval'
-    # TODO: Cannot store an assymmetric matrix as a Cholesky factorization
-    @assert issymmetric(dA)
-    dL .= LowerTriangular(dA)
-    fact.dval = Cholesky(dL, 'L', 0)
+    (x, dx) = cache
+    B.dval .= fact.val\dx[]
+    fact.dval.factors .= -x .* B.dval'
+    return (nothing, nothing)
 end
