@@ -306,10 +306,10 @@ end
 end
 
 # y=inv(A) B
-#   dA −= z y^T  
+#   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
 function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}, A::Annotation{AT}, b::Annotation{BT}) where {RT, AT <: Array, BT <: Array}
-    
+
     cache_A = if EnzymeRules.overwritten(config)[2]
         copy(A.val)
     else
@@ -346,7 +346,7 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     else
         nothing
     end
-    
+
 @static if VERSION < v"1.8.0"
     UT = Union{
         LinearAlgebra.Diagonal{eltype(AT), BT},
@@ -449,7 +449,7 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill
     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, _, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple} 
+function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, _, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
     nr, nc = size(out.val,1), size(out.val,2)
     for b in 1:EnzymeRules.width(config)
         da = if EnzymeRules.width(config) == 1
@@ -574,6 +574,7 @@ function EnzymeRules.forward(
     invL = inv(fact.L)
     # TODO: dL is dense even when L was sparse
     dL = Matrix(fact.L * LowerTriangular(invL * A.dval * invL' * 0.5 * I))
+    # TODO: Stored as Cholesky, although it isn't a Cholesky factorization
     dfact = Cholesky(dL, 'L', 0)
     if RT <: DuplicatedNoNeed
         return dfact
@@ -622,68 +623,74 @@ end
 function EnzymeRules.augmented_primal(
     config,
     func::Const{typeof(cholesky)},
-    ::Type{RT}, A, kwargs...) where RT
-
-    primal = func.val(A.val; kwargs...)
-    
-    shadow = ntuple(Val(EnzymeRules.width(config))) do _
-        Base.@_inline_meta
-        Enzyme.make_zero(primal,
-			 #=copy_if_inactive=#Val(true))
-    end
-
-    primal = if EnzymeRules.needs_primal(config)
-        primal
+    RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+    A::Union{Const, Duplicated};
+    kwargs...
+)
+    fact = cholesky(A.val; kwargs...)
+    dA = similar(fact.factors)
+    # dfact would be a dense matrix, prepare buffer
+    dfact = deepcopy(fact)
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.AugmentedReturn(fact, dfact, (fact, dfact, dA))
     else
-        nothing
+        return EnzymeRules.AugmentedReturn(nothing, (bx, bstats), (fact,))
     end
+end
 
-    @assert !(typeof(A) <: Active)
-
-    if EnzymeRules.width(config) == 1
-	shadow = shadow[1]
-    end
-
-    cache_A = if EnzymeRules.overwritten(config)[2]
-        copy(A.val)
+function EnzymeRules.augmented_primal(
+        config,
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+        kwargs...
+)
+    x = copy(B.val)
+    ldiv!(fact.val, x)
+    dx = similar(x)
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.AugmentedReturn(x, dx, (x,dx))
     else
-        nothing
+        return EnzymeRules.AugmentedReturn(nothing, dx, (x,dx))
     end
-    return EnzymeRules.AugmentedReturn(primal, shadow, (cacheA, shadow))
 end
 
 function EnzymeRules.reverse(
     config,
-    ::Const{typeof(cholesky)},
-    ::Type{RT},
+    ::Const{typeof(Cholesky)},
+    dret,
     cache,
     A;
     kwargs...
-) where RT
-    cache_A, shadows = cache
-    if !EnzymeRules.overwritten(config)[2]
-	cache_A = A.val
-    end
-    if EnzymeRules.width(config) == 1
-	shadows = (shadows,)
-    end
-    dAs = if EnzymeRules.width(config) == 1
-	(A.dval,)
-    else
-	A.dval
-    end
-
-    fact = func.val(cache_A; kwargs...)
-
-    for (dA, dfact) in zip(dAs, shadows)
-	    println("Custom Cholesky reverse rule")
-	    #  michel whatever is the rule here
-	    # either way it should read from dfact
-	    # += into dA
-	    # then zero dfact
-	    error("unimplemented")
-	    dfact.L .= 0
-    end
-
+)
+    println("Custom Cholesky reverse rule")
+    (fact, dfact, dA) = cache
+    mul!(dA, fact.L', dret.L)
+    ldiv!(dA, fact.L)
+    rdiv!(fact.L', dA)
+    idx = diagind(dA)
+    @views dA[idx] .= 0.5 .* dA[idx]
+    dA = Matrix(dA)
     return (nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config,
+    ::Const{typeof(\)},
+    dret,
+    cache,
+    fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+    kwargs...
+)
+
+    (x,dx) = cache
+    @show typeof(dret)
+    copyto!(B.dval, dx)
+    ldiv!(fact.val, B.dval)
+    # TODO: Can't go anywhere. This is a dense matrix.
+    dA = -x .* B.dval'
+    # TODO: Cannot store an assymmetric matrix as a Cholesky factorization
+    @assert issymmetric(dA)
+    dL .= LowerTriangular(dA)
+    fact.dval = Cholesky(dL, 'L', 0)
 end
