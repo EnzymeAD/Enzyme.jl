@@ -15,19 +15,17 @@ function symmetric_definite(n :: Int=10; FC=Float64)
   return A, b
 end
 
-
 function b_one(b)
     driver(A,b)
 end
 
 function driver(A, b)
     fact = cholesky(A)
-    # rdiv!(b', fact)
     fact\b
 end
 
 # Test forward
-function adJdxdb(A, b)
+function fwdJdxdb(A, b)
     adJ = zeros(size(A))
     ddA = Duplicated(A, zeros(size(A)))
     ddb = Duplicated(b, zeros(length(b)))
@@ -39,6 +37,28 @@ function adJdxdb(A, b)
         ddb.dval[i] = 1.0
         grad = Enzyme.autodiff(
             Forward,
+            driver,
+            ddA,
+            ddb
+        )
+        adJ[i, :] = grad[1]
+    end
+    return adJ
+end
+
+# Test reverse
+function revJdxdb(A, b)
+    adJ = zeros(size(A))
+    ddA = Duplicated(A, zeros(size(A)))
+    ddb = Duplicated(b, zeros(length(b)))
+    for i in 1:length(b)
+        copyto!(ddA.val, A)
+        copyto!(ddb.val, b)
+        fill!(ddA.dval, 0.0)
+        fill!(ddb.dval, 0.0)
+        ddb.dval[i] = 1.0
+        grad = Enzyme.autodiff(
+            Reverse,
             driver,
             ddA,
             ddb
