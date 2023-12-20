@@ -4939,7 +4939,7 @@ function jl_set_typeof(v::Ptr{Cvoid}, T)
     return nothing
 end
 
-@generated function splatnew(::Type{T}, args::NTuple{N,AT}) where {T,N,AT}
+@generated function splatnew(::Type{T}, args::TT) where {T,TT <: Tuple}
     return quote
         Base.@_inline_meta
         $(Expr(:splatnew, :T, :args))
