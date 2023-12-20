@@ -199,6 +199,18 @@ function nodecayed_phis!(mod::LLVM.Module)
                         end
                     end
 
+                    if addr == 11 && isa(v, LLVM.ConstantExpr)
+                        if opcode(v) == LLVM.API.LLVMAddrSpaceCast
+                            v2 = operands(v)[1]
+                            if addrspace(value_type(v2)) == 0
+                                if addr == 11 && isa(v, LLVM.ConstantExpr)
+                                    v2 = const_addrspacecast(operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
+                                    return v2, offset, hasload
+                                end
+                            end
+                        end
+                    end
+
                     if isa(v, LLVM.AddrSpaceCastInst)
                         if addrspace(value_type(operands(v)[1])) == 0
                             v2 = addrspacecast!(b, operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
@@ -210,6 +222,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if isa(v, LLVM.BitCastInst)
                         v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
+                        return v2, offset, skipload
+                    end
+
+                    if isa(v, LLVM.GetElementPtrInst) && all(x->(isa(x, LLVM.ConstantInt) && convert(Int, x) == 0), operands(v)[2:end])
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
                         return v2, offset, skipload
                     end
 
@@ -217,6 +237,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
                         v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
                         return v2, offset, skipload
                     end
 
