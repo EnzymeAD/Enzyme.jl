@@ -1362,13 +1362,13 @@ else
     function remove_ni_tm!(pm, tm)
         function remove_ni(f)
             @dispose pb=PassBuilder(tm) begin
-                NewPMFunctionPassManager(pb) do fpm
+                NewPMModulePassManager(pb) do fpm
                     add!(fpm, RemoveNIPass())
                     run!(fpm, f, tm)
                 end
             end
         end
-        add!(pm, FunctionPass("RemoveNI", remove_ni))
+        add!(pm, ModulePass("RemoveNI", remove_ni))
     end
 end
 
@@ -1380,13 +1380,13 @@ else
     function julia_licm_tm!(pm, tm)
         function julia_licm(f)
             @dispose pb=PassBuilder(tm) begin
-                NewPMFunctionPassManager(pb) do fpm
+                NewPMLoopPassManager(pb) do fpm
                     add!(fpm, JuliaLICMPass())
                     run!(fpm, f, tm)
                 end
             end
         end
-        add!(pm, FunctionPass("JuliaLICM", julia_licm))
+        add!(pm, LoopPass("JuliaLICM", julia_licm))
     end
 end
 
@@ -1398,13 +1398,13 @@ else
     function lower_simdloop_tm!(pm, tm)
         function lower_simdloop(f)
             @dispose pb=PassBuilder(tm) begin
-                NewPMFunctionPassManager(pb) do fpm
+                NewPMLoopPassManager(pb) do fpm
                     add!(fpm, LowerSIMDLoopPass())
                     run!(fpm, f, tm)
                 end
             end
         end
-        add!(pm, FunctionPass("LowerSIMDLoop", lower_simdloop))
+        add!(pm, LoopPass("LowerSIMDLoop", lower_simdloop))
     end
 end
 
@@ -1452,13 +1452,13 @@ else
     function lower_ptls_tm!(pm, tm, dump_native)
         function lower_ptls(f)
             @dispose pb=PassBuilder(tm) begin
-                NewPMFunctionPassManager(pb) do fpm
+                NewPMModulePassManager(pb) do fpm
                     add!(fpm, LowerPTLSPass())
                     run!(fpm, f, tm)
                 end
             end
         end
-        add!(pm, FunctionPass("LowerPTLS", lower_ptls))
+        add!(pm, ModulePass("LowerPTLS", lower_ptls))
     end
 end
 
