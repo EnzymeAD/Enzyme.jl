@@ -583,6 +583,29 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.forward(
+    ::Const{typeof(cholesky)},
+    RT::Type{<:Union{BatchDuplicatedNoNeed, BatchDuplicated}},
+    A::Union{BatchDuplicatedNoNeed{T,N}, BatchDuplicated{T,N}};
+    kwargs...
+) where {T,N}
+    fact = cholesky(A.val; kwargs...)
+    if RT <: Const
+        return fact
+    end
+    invL = inv(fact.L)
+    dfact = ntuple(
+        i-> Cholesky(
+            Matrix(fact.L * LowerTriangular(invL * A.dval[i] * invL' * 0.5 * I)), 'L', 0
+        ), Val(N)
+    )
+    if RT <: BatchDuplicatedNoNeed
+        return dfact
+    else
+        return BatchDuplicated(fact, dfact)
+    end
+end
+
+function EnzymeRules.forward(
         ::Const{typeof(\)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
@@ -592,13 +615,13 @@ function EnzymeRules.forward(
     ldiv!(fact.val, retval)
     retdval = []
     if isa(fact, Duplicated) && isa(B, Duplicated)
-        retdval = similar(retval)
+        retdval = zeros(length(retval))
         mul!(retdval, fact.dval.U, retval)
         mul!(retdval, fact.dval.L, retdval)
         retdval .= B.dval .- retdval
         ldiv!(fact.val, retdval)
     elseif isa(fact, Duplicated) && isa(B, Const)
-        retdval = similar(retval)
+        retdval = zeros(length(retval))
         mul!(retdval, A, B.val)
         mul!(retdval, -1, retdval)
         ldiv!(fact.val, retdval)
@@ -608,22 +631,64 @@ function EnzymeRules.forward(
     elseif isa(fact, Const) && isa(B, Const)
         nothing
     else
-        error("Error in forward \\ Enzyme rule $(typeof(fact)) $(typeof(x)).")
+        error("Error in forward \\ Enzyme rule $(typeof(fact)) $(typeof(B)).")
     end
     if RT <: Const
         return retval
-    elseif RT <: DuplicatedNoNeed
+    elseif (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
         return retdval
     else
         return Duplicated(retval, retdval)
     end
 end
 
+function EnzymeRules.forward(
+        ::Const{typeof(\)},
+        RT::Type{<:Union{BatchDuplicatedNoNeed, BatchDuplicated}},
+        fact::Union{Const, BatchDuplicated{T1,N}}, B::Union{Const, BatchDuplicated{T2,N}};
+        kwargs...
+) where {T1,T2,N}
+    retval = copy(B.val)
+    ldiv!(fact.val, retval)
+    bretdval = []
+    for b in 1:N
+        if isa(fact, BatchDuplicated) && isa(B, BatchDuplicated)
+            retdval = zeros(length(retval))
+            mul!(retdval, fact.dval[b].U, retval)
+            mul!(retdval, fact.dval[b].L, retdval)
+            retdval .= B.dval[b] .- retdval
+            ldiv!(fact.val, retdval)
+            push!(bretdval, retdval)
+        elseif isa(fact, BatchDuplicated) && isa(B, Const)
+            retdval = zeros(length(retval))
+            mul!(retdval, A, B.val)
+            mul!(retdval, -1, retdval)
+            ldiv!(fact.val, retdval)
+            push!(bretdval, retdval)
+        elseif isa(fact, Const) && isa(B, BatchDuplicated)
+            retdval = copy(B.dval)
+            ldiv!(fact.val, retdval)
+            push!(bretdval, retdval)
+        elseif isa(fact, Const) && isa(B, Const)
+            nothing
+        else
+            error("Error in forward \\ Enzyme rule $(typeof(fact)) $(typeof(B)).")
+        end
+    end
+    if RT <: Const
+        return retval
+    elseif (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
+        return retdval
+    else
+        return BatchDuplicated(retval, ntuple(i -> bretdval[i], Val(N)))
+    end
+end
+
 function EnzymeRules.augmented_primal(
     config,
     func::Const{typeof(cholesky)},
-    RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-    A::Union{Const, Duplicated};
+    RT::Type{<:Union{Const, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+    A::Union{Const, Duplicated, BatchDuplicated};
     kwargs...
 )
     fact = if EnzymeRules.needs_primal(config)
@@ -652,16 +717,29 @@ function EnzymeRules.reverse(
     kwargs...
 )
     (_dfact,) = cache
-    dfact = _dfact
-    A.dval .+= dfact.factors
+    for b in 1:EnzymeRules.width(config)
+        dA = if EnzymeRules.width(config) == 1
+            A.dval
+        else
+            A.dval[b]
+        end
+        dfact = if EnzymeRules.width(config) == 1
+            _dfact
+        else
+            _dfact[b]
+        end
+        dA .+= dfact.factors
+    end
     return (nothing,)
 end
 
 function EnzymeRules.augmented_primal(
         config,
         func::Const{typeof(\)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+
+        fact::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated},
+        B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
         kwargs...
 )
     x = copy(B.val)
@@ -690,14 +768,37 @@ function EnzymeRules.reverse(
     ::Const{typeof(\)},
     dret,
     cache,
-    fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+    _fact::Union{Const, Duplicated, BatchDuplicated},
+    _B::Union{Const, Duplicated, BatchDuplicated};
     kwargs...
 )
 
-    (x, dx, buffer) = cache
-    buffer .= fact.val\dx
-    B.dval .+= buffer
-    buffer = reshape(buffer, size(B.val,2), size(B.val,1))
-    fact.dval.factors .+= -x .* buffer
+    (x, _dx, _buffer) = cache
+    for b in 1:EnzymeRules.width(config)
+        dx = if EnzymeRules.width(config) == 1
+            _dx
+        else
+            _dx[b]
+        end
+        buffer = if EnzymeRules.width(config) == 1
+            _buffer
+        else
+            _buffer[b]
+        end
+        dfact = if EnzymeRules.width(config) == 1
+            _fact.dval
+        else
+            _fact.dval[b]
+        end
+        dB = if EnzymeRules.width(config) == 1
+            _B.dval
+        else
+            _B.dval[b]
+        end
+        buffer .= _fact.val\dx
+        dB .+= buffer
+        buffer = reshape(buffer, size(buffer,2), size(buffer,1))
+        dfact.factors .+= -x .* buffer
+    end
     return (nothing, nothing)
 end

@@ -106,10 +106,10 @@ end
     @test dA ≈ (-z * transpose(y))
 end
 @testset "Cholesky" begin
-    function symmetric_definite(n :: Int=10; FC=Float64)
-    α = FC <: Complex ? FC(im) : one(FC)
-    A = spdiagm(-1 => α * ones(FC, n-1), 0 => 4 * ones(FC, n), 1 => conj(α) * ones(FC, n-1))
-    b = A * FC[1:n;]
+    function symmetric_definite(n :: Int=10)
+    α = one(Float64)
+    A = spdiagm(-1 => α * ones(n-1), 0 => 4 * ones(n), 1 => conj(α) * ones(n-1))
+    b = A * Float64[1:n;]
     return A, b
     end
 
@@ -149,6 +149,29 @@ end
         end
         return adJ
     end
+    function batchedfwdJdxdb(A, b)
+        n = length(b)
+        function seed(i)
+            x = zeros(n)
+            x[i] = 1.0
+            return x
+        end
+        adJ = zeros(size(A))
+        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
+        db = BatchDuplicated(b, ntuple(i -> seed(i), n))
+        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> zeros(length(b)), n))
+        Enzyme.autodiff(
+            Forward,
+            driver,
+            dx,
+            dA,
+            db
+        )
+        for i in 1:n
+            adJ[i, :] = dx.dval[i]
+        end
+        return adJ
+    end
 
     # Test reverse
     function revJdxdb(A, b)
@@ -171,6 +194,30 @@ end
                 db
             )
             adJ[i, :] = db.dval
+        end
+        return adJ
+    end
+
+    function batchedrevJdxdb(A, b)
+        n = length(b)
+        function seed(i)
+            x = zeros(n)
+            x[i] = 1.0
+            return x
+        end
+        adJ = zeros(size(A))
+        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
+        db = BatchDuplicated(b, ntuple(i -> zeros(length(b)), n))
+        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> seed(i), n))
+            Enzyme.autodiff(
+                Reverse,
+                driver,
+                dx,
+                dA,
+                db
+            )
+        for i in 1:n
+            adJ[i, :] .= db.dval[i]
         end
         return adJ
     end
@@ -201,7 +248,7 @@ end
         return J
     end
 
-    A, b = symmetric_definite(10, FC=Float64)
+    A, b = symmetric_definite(10)
     A = Matrix(A)
     x = zeros(length(b))
     x = driver(x, A, b)
@@ -209,9 +256,13 @@ end
     fdJ = FiniteDifferences.jacobian(fdm, b_one, copy(b))[1]
     fwdJ = fwdJdxdb(A, b)
     revJ = revJdxdb(A, b)
+    batchedrevJ = batchedrevJdxdb(A, b)
+    batchedfwdJ = batchedfwdJdxdb(A, b)
     J = Jdxdb(A, b)
 
     @test isapprox(fwdJ, J)
     @test isapprox(fwdJ, fdJ)
     @test isapprox(fwdJ, revJ)
+    @test isapprox(fwdJ, batchedrevJ)
+    @test isapprox(fwdJ, batchedfwdJ)
 end # InternalRules
