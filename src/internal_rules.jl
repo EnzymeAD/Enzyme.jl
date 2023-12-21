@@ -650,7 +650,6 @@ function EnzymeRules.forward(
 ) where {T1,T2,N}
     retval = copy(B.val)
     ldiv!(fact.val, retval)
-    bretdval = []
     bretdval = ntuple(Val(N)) do b
         if isa(fact, BatchDuplicated) && isa(B, BatchDuplicated)
             retdval = zeros(length(retval))
