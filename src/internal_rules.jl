@@ -651,29 +651,27 @@ function EnzymeRules.forward(
     retval = copy(B.val)
     ldiv!(fact.val, retval)
     bretdval = []
-    for b in 1:N
+    bretdval = ntuple(Val(N)) do b
         if isa(fact, BatchDuplicated) && isa(B, BatchDuplicated)
             retdval = zeros(length(retval))
             mul!(retdval, fact.dval[b].U, retval)
             mul!(retdval, fact.dval[b].L, retdval)
             retdval .= B.dval[b] .- retdval
             ldiv!(fact.val, retdval)
-            push!(bretdval, retdval)
         elseif isa(fact, BatchDuplicated) && isa(B, Const)
             retdval = zeros(length(retval))
             mul!(retdval, A, B.val)
             mul!(retdval, -1, retdval)
             ldiv!(fact.val, retdval)
-            push!(bretdval, retdval)
         elseif isa(fact, Const) && isa(B, BatchDuplicated)
             retdval = copy(B.dval)
             ldiv!(fact.val, retdval)
-            push!(bretdval, retdval)
         elseif isa(fact, Const) && isa(B, Const)
             nothing
         else
             error("Error in forward \\ Enzyme rule $(typeof(fact)) $(typeof(B)).")
         end
+        retdval
     end
     if RT <: Const
         return retval
