@@ -626,32 +626,21 @@ function EnzymeRules.augmented_primal(
     A::Union{Const, Duplicated};
     kwargs...
 )
-    fact = cholesky(A.val; kwargs...)
-    dA = similar(fact.factors)
+    fact = if EnzymeRules.needs_primal(config)
+        cholesky(A.val; kwargs...)
+    else
+        nothing
+    end
     # dfact would be a dense matrix, prepare buffer
-    dfact = Cholesky(Matrix(fact), 'L', 0)
-    if EnzymeRules.needs_primal(config)
-        return EnzymeRules.AugmentedReturn(fact, dfact, (Ref(dfact),))
+    dfact = if EnzymeRules.width(config) == 1
+        Cholesky(Matrix(fact), 'L', 0)
     else
-        return EnzymeRules.AugmentedReturn(nothing, dfact, (Ref(dfact),))
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            Cholesky(Matrix(fact), 'L', 0)
+        end
     end
-end
-
-function EnzymeRules.augmented_primal(
-        config,
-        func::Const{typeof(\)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
-        kwargs...
-)
-    x = copy(B.val)
-    ldiv!(fact.val, x)
-    dx = zeros(size(B.val))
-    if EnzymeRules.needs_primal(config)
-        return EnzymeRules.AugmentedReturn(x, dx, (x, Ref(dx)))
-    else
-        return EnzymeRules.AugmentedReturn(nothing, dx, (x, Ref(dx)))
-    end
+    return EnzymeRules.AugmentedReturn(fact, dfact, (dfact,))
 end
 
 function EnzymeRules.reverse(
@@ -663,9 +652,37 @@ function EnzymeRules.reverse(
     kwargs...
 )
     (_dfact,) = cache
-    dfact = _dfact[]
-    copyto!(A.dval, dfact.factors)
+    dfact = _dfact
+    A.dval .+= dfact.factors
     return (nothing,)
+end
+
+function EnzymeRules.augmented_primal(
+        config,
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+        kwargs...
+)
+    x = copy(B.val)
+    primal = if EnzymeRules.needs_primal(config)
+        x
+    else
+        nothing
+    end
+    ldiv!(fact.val, x)
+    nobatched = EnzymeRules.width(config) == 1 ? true : false
+    shadow = nobatched ? zeros(size(B.val)) :
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zeros(size(B.val))
+        end
+    buffer = nobatched ? zeros(size(B.val)) :
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zeros(size(B.val))
+        end
+    return EnzymeRules.AugmentedReturn(primal, shadow, (x, shadow, buffer))
 end
 
 function EnzymeRules.reverse(
@@ -677,8 +694,10 @@ function EnzymeRules.reverse(
     kwargs...
 )
 
-    (x, dx) = cache
-    B.dval .= fact.val\dx[]
-    fact.dval.factors .= -x .* B.dval'
+    (x, dx, buffer) = cache
+    buffer .= fact.val\dx
+    B.dval .+= buffer
+    buffer = reshape(buffer, size(B.val,2), size(B.val,1))
+    fact.dval.factors .+= -x .* buffer
     return (nothing, nothing)
 end
