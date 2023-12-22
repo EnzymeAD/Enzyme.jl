@@ -272,6 +272,7 @@ end
         batchedfwdJ = batchedfwdJdxdb(A, b)
         J = Jdxdb(A, b)
 
+        # Subtract seeds for inplace ldiv!
         if op == :ldiv!
             revJ .-= I(n)
             batchedrevJ .-= I(n)
