@@ -607,10 +607,21 @@ end
 
 function EnzymeRules.forward(
         func::Const{typeof(\)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Annotation{<:Cholesky}, B::Union{Const, Duplicated};
+        RT::Type{<:Union{Const}},
+        fact::Annotation{C}, B::Union{Const};
         kwargs...
-)
+) where {C <: Cholesky}
+    retval = copy(B.val)
+    ldiv!(fact.val, retval)
+    return retval
+end
+
+function EnzymeRules.forward(
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        fact::Annotation{C}, B::Union{Const, Duplicated};
+        kwargs...
+) where {C <: Cholesky}
     retval = copy(B.val)
     ldiv!(fact.val, retval)
     retdval = []
@@ -645,9 +656,9 @@ end
 function EnzymeRules.forward(
         func::Const{typeof(\)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
-        fact::Annotation{<:Cholesky}, B::Union{Const, BatchDuplicated{T,N}};
+        fact::Annotation{C}, B::Union{Const, BatchDuplicated{T,N}};
         kwargs...
-) where {T,N}
+) where {C <: Cholesky, T <: AbstractArray{<:AbstractFloat}, N}
     retval = copy(B.val)
     ldiv!(fact.val, retval)
     bretdval = ntuple(Val(N)) do b
@@ -683,10 +694,19 @@ end
 
 function EnzymeRules.forward(
         func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Annotation{<:Cholesky}, B::Union{Const, Duplicated};
+        RT::Type{<:Union{Const,}},
+        fact::Annotation{C}, B::Union{Const};
         kwargs...
-)
+) where {C <: Cholesky}
+    return ldiv!(fact.val, retval)
+end
+
+function EnzymeRules.forward(
+        func::Const{typeof(ldiv!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        fact::Annotation{C}, B::Union{Const, Duplicated};
+        kwargs...
+) where {C <: Cholesky}
     retval = B.val
     ldiv!(fact.val, retval)
     retdval = []
@@ -727,9 +747,9 @@ end
 function EnzymeRules.forward(
         func::Const{typeof(ldiv!)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
-        fact::Annotation{<:Cholesky}, B::Union{Const, BatchDuplicated{T,N}};
+        fact::Annotation{C}, B::Union{Const, BatchDuplicated{T,N}};
         kwargs...
-) where {T,N}
+) where {C <: Cholesky, T <: AbstractArray{<:AbstractFloat}, N}
     retval = B.val
     retval = ldiv!(fact.val, retval)
     for b in 1:N
@@ -823,10 +843,10 @@ function EnzymeRules.augmented_primal(
         func::Const{typeof(\)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
 
-        fact::Annotation{<:Cholesky},
+        fact::Annotation{C},
         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
         kwargs...
-)
+) where {C <: Cholesky}
     x = copy(B.val)
     primal = if EnzymeRules.needs_primal(config)
         x
@@ -853,10 +873,10 @@ function EnzymeRules.reverse(
     func::Union{Const{typeof(\)}},
     dret,
     cache,
-    _fact::Annotation{<:Cholesky},
+    _fact::Annotation{C},
     _B::Annotation;
     kwargs...
-)
+) where {C <: Cholesky}
 
     (x, _dx, _buffer) = cache
     for b in 1:EnzymeRules.width(config)
@@ -893,10 +913,10 @@ function EnzymeRules.augmented_primal(
         func::Const{typeof(ldiv!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
 
-        fact::Annotation{<:Cholesky},
+        fact::Annotation{C},
         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
         kwargs...
-)
+) where {C <: Cholesky}
     x = B.val
     primal = if EnzymeRules.needs_primal(config)
         x
@@ -919,10 +939,10 @@ function EnzymeRules.reverse(
     func::Const{typeof(ldiv!)},
     dret,
     cache,
-    _fact::Annotation{<:Cholesky},
+    _fact::Annotation{C},
     _B::Annotation;
     kwargs...
-)
+) where {C <: Cholesky}
 
     (x, _dx, _buffer) = cache
     for b in 1:EnzymeRules.width(config)
