@@ -659,7 +659,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
     job    = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel=false))
 
 
-    key = hash((job, parent_job))
+    key = hash(parent_job, hash(job))
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(tape_cache_lock)
