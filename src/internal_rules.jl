@@ -608,7 +608,7 @@ end
 function EnzymeRules.forward(
         ::Const{typeof(\)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Union{Const, Duplicated}, B::Union{Const, Duplicated};
+        fact::Annotation{<:Cholesky}, B::Union{Const, Duplicated};
         kwargs...
 )
     retval = copy(B.val)
@@ -645,9 +645,9 @@ end
 function EnzymeRules.forward(
         ::Const{typeof(\)},
         RT::Type{<:Union{BatchDuplicatedNoNeed, BatchDuplicated}},
-        fact::Union{Const, BatchDuplicated{T1,N}}, B::Union{Const, BatchDuplicated{T2,N}};
+        fact::Annotation{<:Cholesky}, B::Union{Const, BatchDuplicated{T,N}};
         kwargs...
-) where {T1,T2,N}
+) where {T,N}
     retval = copy(B.val)
     ldiv!(fact.val, retval)
     bretdval = ntuple(Val(N)) do b
@@ -735,7 +735,7 @@ function EnzymeRules.augmented_primal(
         func::Const{typeof(\)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
 
-        fact::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated},
+        fact::Annotation{<:Cholesky},
         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
         kwargs...
 )
@@ -765,8 +765,8 @@ function EnzymeRules.reverse(
     ::Const{typeof(\)},
     dret,
     cache,
-    _fact::Union{Const, Duplicated, BatchDuplicated},
-    _B::Union{Const, Duplicated, BatchDuplicated};
+    _fact::Annotation{<:Cholesky},
+    _B::Annotation;
     kwargs...
 )
 
