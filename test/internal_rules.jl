@@ -42,7 +42,7 @@ end
 
     dd = Duplicated([TPair(1, 2), TPair(2, 3), TPair(0, 1)], [TPair(0, 0), TPair(0, 0), TPair(0, 0)])
     res = Enzyme.autodiff(Reverse, sorterrfn, dd, Active(1.0))
-    
+
     @test res[1][2] ≈ 3
     @test dd.dval[1].a ≈ 0
     @test dd.dval[1].b ≈ 0
@@ -121,7 +121,13 @@ end
 
     function driver(x, A, b)
         fact = cholesky(A)
-        x .= fact\b
+        if op == :\
+            res = fact\b
+            x .= res
+        elseif op == :ldiv!
+            ldiv!(fact,b)
+            x .= b
+        end
         return nothing
     end
 
@@ -247,22 +253,35 @@ end
         end
         return J
     end
+    op = []
+    A = []
+    b = []
+    @testset "Testing $_op" for _op in (:\, :ldiv!)
+        op = _op
+        A, b = symmetric_definite(10)
+        n = length(b)
+        A = Matrix(A)
+        x = zeros(n)
+        x = driver(x, A, b)
+        fdm = forward_fdm(2, 1);
 
-    A, b = symmetric_definite(10)
-    A = Matrix(A)
-    x = zeros(length(b))
-    x = driver(x, A, b)
-    fdm = forward_fdm(2, 1);
-    fdJ = FiniteDifferences.jacobian(fdm, b_one, copy(b))[1]
-    fwdJ = fwdJdxdb(A, b)
-    revJ = revJdxdb(A, b)
-    batchedrevJ = batchedrevJdxdb(A, b)
-    batchedfwdJ = batchedfwdJdxdb(A, b)
-    J = Jdxdb(A, b)
+        fdJ = op==:\ ? FiniteDifferences.jacobian(fdm, b_one, copy(b))[1] : nothing
+        fwdJ = fwdJdxdb(A, b)
+        revJ = revJdxdb(A, b)
+        batchedrevJ = batchedrevJdxdb(A, b)
+        batchedfwdJ = batchedfwdJdxdb(A, b)
+        J = Jdxdb(A, b)
 
-    @test isapprox(fwdJ, J)
-    @test isapprox(fwdJ, fdJ)
-    @test isapprox(fwdJ, revJ)
-    @test isapprox(fwdJ, batchedrevJ)
-    @test isapprox(fwdJ, batchedfwdJ)
+        if op == :ldiv!
+            revJ .-= I(n)
+            batchedrevJ .-= I(n)
+        end
+        if op == :\
+            @test isapprox(fwdJ, fdJ)
+        end
+
+        @test isapprox(fwdJ, revJ)
+        @test isapprox(fwdJ, batchedrevJ)
+        @test isapprox(fwdJ, batchedfwdJ)
+    end
 end # InternalRules
