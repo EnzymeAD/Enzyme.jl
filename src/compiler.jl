@@ -5399,10 +5399,8 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicated}) = Duplicated
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 
-@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+@inline function thunkbase(mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
     JuliaContext() do ctx
-        mi = fspec(eltype(FA), TT, World)
-
         target = Compiler.EnzymeTarget()
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
         tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
@@ -5453,28 +5451,32 @@ end
             TapeType = compile_result.TapeType
             AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
             AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
-            return quote
-                Base.@_inline_meta
-                augmented = $AugT($(compile_result.primal))
-                adjoint  = $AdjT($(compile_result.adjoint))
-                (augmented, adjoint)
-            end
+            augmented = AugT((compile_result.primal))
+            adjoint  = AdjT((compile_result.adjoint))
+            return (augmented, adjoint)
         elseif Mode == API.DEM_ReverseModeCombined
             CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-            return quote
-                Base.@_inline_meta
-                $CAdjT($(compile_result.adjoint))
-            end
+            return CAdjT(compile_result.adjoint)
         elseif Mode == API.DEM_ForwardMode
             FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
-            return quote
-                Base.@_inline_meta
-                $FMT($(compile_result.adjoint))
-            end
+            return FMT(compile_result.adjoint)
         else
             @assert false
         end
     end
+end
+
+@inline function thunk(mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+  return thunkbase(mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+end
+
+@inline @generated function thunk(::Nothing, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+  mi = fspec(eltype(FA), TT, World)
+  res = thunkbase(mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+  return quote
+    Base.@_inline_meta
+    return $(res)
+  end
 end
 
 import GPUCompiler: deferred_codegen_jobs

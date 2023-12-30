@@ -111,7 +111,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
 
-        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+	forward = thunk(mi, Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
@@ -135,13 +135,13 @@ function func_runtime_generic_fwd(N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_fwd(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {MI, ActivityTup, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+@generated function runtime_generic_fwd(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {MI, ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -172,7 +172,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         world = codegen_world_age(FT, Tuple{$(ElTypes...)})
 
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
+        forward, adjoint = thunk(mi, Val(world), (dupClosure ? Duplicated : Const){FT},
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
@@ -213,13 +213,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {MI, ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {MI, ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -276,7 +276,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
         end
         world = codegen_world_age(FT, tt)
 
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+        forward, adjoint = thunk(mi, Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
@@ -294,13 +294,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
 
     quote
-        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_generic_rev(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {MI, ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(mi::MI, activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {MI, ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
@@ -313,7 +313,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_generic_rev(N, Width))
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
+function generic_setup(orig, func, mi::Union{LLVM.Value, Nothing}, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
     width = get_width(gutils)
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -434,6 +434,11 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         @assert length(collect(LLVM.uses(etup0))) == 1
     end
     pushfirst!(vals, etup)
+    if mi === nothing
+	    pushfirst!(vals, unsafe_to_llvm(nothing))
+    else
+	    pushfirst!(vals, mi)
+    end
 
     @static if VERSION < v"1.7.0-" || true
     else
@@ -477,7 +482,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     width = get_width(gutils)
 
-    sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int(width)), gutils, #=start=#offset, B, false)
+    sret = generic_setup(orig, runtime_generic_fwd, nothing, AnyArray(1+Int(width)), gutils, #=start=#offset, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 1+Int(width))
     if unsafe_load(shadowR) != C_NULL
         if width == 1
@@ -525,7 +530,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     end
 
     width = get_width(gutils)
-    sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset, B, false)
+    sret = generic_setup(orig, runtime_generic_augfwd, nothing, AnyArray(2+Int(width)), gutils, #=start=#offset, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
 
      if unsafe_load(shadowR) != C_NULL
@@ -572,7 +577,7 @@ function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
 
         @assert tape !== C_NULL
         width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset, B, true; tape)
+        generic_setup(orig, runtime_generic_rev, nothing, Nothing, gutils, #=start=#offset, B, true; tape)
     end
     return nothing
 end
@@ -598,7 +603,7 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     width = get_width(gutils)
     AT = LLVM.ArrayType(T_prjlvalue, 1+Int(width))
-    sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int(width)), gutils, #=start=#offset+1, B, false)
+    sret = generic_setup(orig, runtime_generic_fwd, nothing, AnyArray(1+Int(width)), gutils, #=start=#offset+1, B, false)
 
     if unsafe_load(shadowR) != C_NULL
         if width == 1
@@ -639,7 +644,7 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
     width = get_width(gutils)
     AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
     # sret = generic_setup(orig, runtime_apply_latest_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset+1, ctx, B, false)
-    sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset+1, B, false)
+    sret = generic_setup(orig, runtime_generic_augfwd, nothing, AnyArray(2+Int(width)), gutils, #=start=#offset+1, B, false)
 
     if unsafe_load(shadowR) != C_NULL
         if width == 1
@@ -674,7 +679,7 @@ end
 function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
         width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, B, true; tape)
+        generic_setup(orig, runtime_generic_rev, nothing, Nothing, gutils, #=start=#offset+1, B, true; tape)
     end
 
     return nothing
@@ -883,7 +888,8 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     width = get_width(gutils)
-    sret = generic_setup(orig, runtime_generic_fwd, AnyArray(1+Int(width)), gutils, #=start=#offset+1, B, false)
+    mi = operands(orig)[offset]
+    sret = generic_setup(orig, runtime_generic_fwd, mi, AnyArray(1+Int(width)), gutils, #=start=#offset+1, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 1+Int(width))
 
     if unsafe_load(shadowR) != C_NULL
@@ -927,7 +933,8 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     conv = LLVM.callconv(orig)
 
     width = get_width(gutils)
-    sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset+1, B, false)
+    mi = operands(orig)[offset]
+    sret = generic_setup(orig, runtime_generic_augfwd, mi, AnyArray(2+Int(width)), gutils, #=start=#offset+1, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
 
     if unsafe_load(shadowR) != C_NULL
@@ -964,7 +971,8 @@ end
 function common_invoke_rev(offset, B, orig, gutils, tape)
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
         width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, B, true; tape)
+        mi = operands(orig)[offset]
+        generic_setup(orig, runtime_generic_rev, mi, Nothing, gutils, #=start=#offset+1, B, true; tape)
     end
 
     return nothing
