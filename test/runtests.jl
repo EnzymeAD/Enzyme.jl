@@ -720,6 +720,29 @@ end
     @test dweights[1] ≈ 1.
 end
 
+function Valuation1(z,Ls1)
+    @inbounds Ls1[1] = sum(Base.inferencebarrier(z))
+    return nothing
+end
+@testset "Active setindex!" begin
+    v=ones(5)
+    dv=zero(v)
+
+    DV1=Float32[0]
+    DV2=Float32[1]
+
+    Enzyme.autodiff(Reverse,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test dv[1] ≈ 1.
+    
+    DV1=Float32[0]
+    DV2=Float32[1]
+    v=ones(5)
+    dv=zero(v)
+    dv[1] = 1.    
+    Enzyme.autodiff(Forward,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test DV2[1] ≈ 1.
+end
+
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
