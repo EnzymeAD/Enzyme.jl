@@ -294,13 +294,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
 
     quote
-        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, shadow_ptr, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
@@ -335,14 +335,6 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
 
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
-    if tape !== nothing
-        NT = NTuple{length(ops)*Int(width), Ptr{Nothing}}
-        SNT = convert(LLVMType, NT)
-        shadow_ptr = emit_allocobj!(B, NT)
-        shadow = addrspacecast!(B, shadow_ptr, LLVM.PointerType(T_jlvalue, Derived))
-        shadow = bitcast!(B, shadow, LLVM.PointerType(SNT, Derived))
-    end
 
     if firstconst
         val = new_from_original(gutils, operands(orig)[start])
@@ -396,19 +388,11 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             end
 
             push!(vals, ev)
-            if tape !== nothing
-                idx = LLVM.Value[LLVM.ConstantInt(0), LLVM.ConstantInt((i-1)*Int(width) + w-1)]
-                ev = addrspacecast!(B, ev, is_opaque(value_type(ev)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(ev)), Derived))
-                ev = emit_pointerfromobjref!(B, ev)
-                ev = ptrtoint!(B, ev, convert(LLVMType, Int))
-                LLVM.store!(B, ev, LLVM.inbounds_gep!(B, SNT, shadow, idx))
-            end
         end
     end
     @assert length(ActivityList) == length(ops)
 
     if tape !== nothing
-        pushfirst!(vals, shadow_ptr)
         pushfirst!(vals, tape)
     else
         pushfirst!(vals, unsafe_to_llvm(Val(ReturnType)))
