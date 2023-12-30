@@ -9,9 +9,9 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
-        if VERSION >= v"1.7"
+        @static if VERSION >= v"1.7"
             function __init__()
-                if VERSION > v"1.8"
+                @static if VERSION > v"1.8"
                   global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
                 else
                   global blas_handle = Libdl.dlopen(BLAS.libblas)
@@ -223,8 +223,10 @@ end
     return has_method(sig, mt.world, nothing)
 end
 
+@static if VERSION >= v"1.7"
 @inline function has_method(sig, world::UInt, mt::Core.Compiler.OverlayMethodTable)
     return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
+end
 end
 
 @inline function is_inactive(tys, world::UInt, mt)
@@ -535,7 +537,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
 
             if length(frames) >= 1
-                if VERSION >= v"1.4.0-DEV.123"
+                @static if VERSION >= v"1.4.0-DEV.123"
                     fn, file, line, linfo, fromC, inlined = last(frames)
                 else
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
