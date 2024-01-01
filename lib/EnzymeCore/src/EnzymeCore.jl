@@ -1,7 +1,5 @@
 module EnzymeCore
 
-using Adapt
-
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
@@ -28,7 +26,6 @@ Enzyme will not auto-differentiate in respect `Const` arguments.
 struct Const{T} <: Annotation{T}
     val::T
 end
-Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
 Const(::Type{T}) where T = Const{Type{T}}(T)
@@ -50,7 +47,6 @@ struct Active{T} <: Annotation{T}
     @inline Active(x::T1) where {T1} = new{T1}(x)
     @inline Active(x::T1) where {T1 <: Array} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
 end
-Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 Active(i::Integer) = Active(float(i))
 
@@ -75,7 +71,6 @@ struct Duplicated{T} <: Annotation{T}
         new{T1}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
@@ -96,7 +91,6 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
         new{T1}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
     BatchDuplicated(x, ∂f_∂xs)
@@ -119,7 +113,6 @@ struct BatchDuplicated{T,N} <: Annotation{T}
         new{T1, N}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
 struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
     val::T
@@ -154,7 +147,6 @@ end
 @inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
-Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 
 """
