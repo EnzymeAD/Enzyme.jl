@@ -131,6 +131,21 @@ function nodecayed_phis!(mod::LLVM.Module)
                 if addrspace(ty) != addr
                     continue
                 end
+                if addr == 11
+                    all_args = true
+                    for (v, _) in LLVM.incoming(inst)
+                        base = get_base_object(v)
+                        if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
+                            continue
+                        end
+                        all_args = false
+                        break
+                    end
+                    if all_args
+                        continue
+                    end
+                end
+                
                 push!(todo, inst)
                 nb = IRBuilder()
                 position!(nb, inst)
@@ -249,7 +264,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return LLVM.UndefValue(LLVM.PointerType(eltype(value_type(v)),10)), offset, addr == 13
                     end
 
-                    if isa(v, LLVM.PHIInst) && !hasload
+                    if isa(v, LLVM.PHIInst) && !hasload && haskey(goffsets, v)
                         offset = nuwadd!(b, offset, goffsets[v])
                         nv = nextvs[v]
                         return nv, offset, addr == 13
@@ -266,6 +281,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                     msg = sprint() do io
                         println(io, "Could not analyze garbage collection behavior of")
+                        println(io, " inst: ", string(inst))
                         println(io, " v0: ", string(v0))
                         println(io, " v: ", string(v))
                         println(io, " offset: ", string(offset))
