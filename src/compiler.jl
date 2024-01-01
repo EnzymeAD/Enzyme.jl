@@ -2459,16 +2459,15 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         end
 
         T_size_t = convert(LLVM.LLVMType, Int)
-        if value_type(Size) != T_size_t
-            Size = trunc!(B, Size, T_size_t)
+        allocSize = if value_type(Size) != T_size_t
+            trunc!(B, Size, T_size_t)
+        else
+            Size
         end
 
-        obj = emit_allocobj!(B, tag, Size, needs_dynamic_size_workaround)
+        obj = emit_allocobj!(B, tag, allocSize, needs_dynamic_size_workaround)
 
         if ZI != C_NULL
-            if value_type(AlignedSize) != T_size_t
-                AlignedSize = trunc!(B, AlignedSize, T_size_t)
-            end
             unsafe_store!(ZI, zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, #=ZeroAll=#false))
         end
         AS = Tracked
