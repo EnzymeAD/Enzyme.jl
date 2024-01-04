@@ -821,18 +821,19 @@ function EnzymeRules.reverse(
     A;
     kwargs...
 )
-    (_dfact,) = cache
-    for b in 1:EnzymeRules.width(config)
-        dA = if EnzymeRules.width(config) == 1
-            A.dval
-        else
-            A.dval[b]
-        end
-        dfact = if EnzymeRules.width(config) == 1
-            _dfact
-        else
-            _dfact[b]
-        end
+    (dfact,) = cache
+    dAs = if EnzymeRules.width(config) == 1
+        (A.dval,)
+    else
+        A.dval
+    end
+    dfacts = if EnzymeRules.width(config) == 1
+        (dfact,)
+    else
+        dfact
+    end
+
+    for (dA, dfact) in zip(dAs, dfacts)
         dA .+= dfact.factors
     end
     return (nothing,)
@@ -873,34 +874,34 @@ function EnzymeRules.reverse(
     func::Union{Const{typeof(\)}},
     dret,
     cache,
-    _fact::Annotation{C},
-    _B::Annotation;
+    fact::Annotation{C},
+    B::Annotation;
     kwargs...
 ) where {C <: Cholesky}
 
-    (x, _dx, _buffer) = cache
-    for b in 1:EnzymeRules.width(config)
-        dx = if EnzymeRules.width(config) == 1
-            _dx
-        else
-            _dx[b]
-        end
-        buffer = if EnzymeRules.width(config) == 1
-            _buffer
-        else
-            _buffer[b]
-        end
-        dfact = if EnzymeRules.width(config) == 1
-            _fact.dval
-        else
-            _fact.dval[b]
-        end
-        dB = if EnzymeRules.width(config) == 1
-            _B.dval
-        else
-            _B.dval[b]
-        end
-        buffer .= _fact.val\dx
+    (x, dx, buffer) = cache
+    dxs = if EnzymeRules.width(config) == 1
+        (dx,)
+    else
+        dx
+    end
+    buffers = if EnzymeRules.width(config) == 1
+        (buffer,)
+    else
+        buffer
+    end
+    dfacts = if EnzymeRules.width(config) == 1
+        (fact.dval,)
+    else
+        fact.dval
+    end
+    dBs = if EnzymeRules.width(config) == 1
+        (B.dval,)
+    else
+        B.dval
+    end
+    for (dx, buffer, dfact, dB) in zip(dxs, buffers, dfacts, dBs)
+        buffer .= fact.val\dx
         dB .+= buffer
         buffer = reshape(buffer, size(buffer,2), size(buffer,1))
         dfact.factors .+= -x .* buffer
