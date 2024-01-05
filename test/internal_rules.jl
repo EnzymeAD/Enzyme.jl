@@ -285,4 +285,5 @@ end
         @test isapprox(fwdJ, batchedrevJ)
         @test isapprox(fwdJ, batchedfwdJ)
     end
+end
 end # InternalRules

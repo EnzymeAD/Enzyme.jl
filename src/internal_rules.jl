@@ -111,6 +111,11 @@ end
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
 
+@inline width(::Duplicated) = 1
+@inline width(::BatchDuplicated{T, N}) where {T, N} = N
+@inline width(::DuplicatedNoNeed) = 1
+@inline width(::BatchDuplicatedNoNeed{T, N}) where {T, N} = N
+
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
 function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
@@ -607,79 +612,43 @@ end
 
 function EnzymeRules.forward(
         func::Const{typeof(\)},
-        RT::Type{<:Union{Const}},
-        fact::Annotation{C}, B::Union{Const};
+        RT::Type{<:Union{Const, Duplicated, DuplicatedNoNeed, BatchDuplicatedNoNeed, BatchDuplicated}},
+        fact::Annotation{C},
+        B::Union{Const, Duplicated, BatchDuplicated};
         kwargs...
 ) where {C <: Cholesky}
     retval = copy(B.val)
     ldiv!(fact.val, retval)
-    return retval
-end
-
-function EnzymeRules.forward(
-        func::Const{typeof(\)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Annotation{C}, B::Union{Const, Duplicated};
-        kwargs...
-) where {C <: Cholesky}
-    retval = copy(B.val)
-    ldiv!(fact.val, retval)
-    retdval = []
-    if isa(fact, Duplicated) && isa(B, Duplicated)
-        retdval = zeros(length(retval))
-        mul!(retdval, fact.dval.U, retval)
-        mul!(retdval, fact.dval.L, retdval)
-        retdval .= B.dval .- retdval
-        ldiv!(fact.val, retdval)
-    elseif isa(fact, Duplicated) && isa(B, Const)
-        retdval = zeros(length(retval))
-        mul!(retdval, A, B.val)
-        mul!(retdval, -1, retdval)
-        ldiv!(fact.val, retdval)
-    elseif isa(fact, Const) && isa(B, Duplicated)
-        retdval = copy(B.dval)
-        ldiv!(fact.val, retdval)
-    elseif isa(fact, Const) && isa(B, Const)
-        nothing
+    N = RT <: BatchDuplicated ? RT.parameters[2] : 1
+    dfact = if RT <: BatchDuplicated
+        fact.dval
     else
-        error("Error in forward $(typeof(func)) Enzyme rule $(typeof(fact)) $(typeof(B)).")
+        (fact.dval,)
     end
-    if RT <: Const
-        return retval
-    elseif (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
-        return retdval
+    dB = if RT <: BatchDuplicated
+        B.dval
     else
-        return Duplicated(retval, retdval)
+        (B.dval,)
     end
-end
-
-function EnzymeRules.forward(
-        func::Const{typeof(\)},
-        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
-        fact::Annotation{C}, B::Union{Const, BatchDuplicated{T,N}};
-        kwargs...
-) where {C <: Cholesky, T <: AbstractArray{<:AbstractFloat}, N}
-    retval = copy(B.val)
-    ldiv!(fact.val, retval)
     bretdval = ntuple(Val(N)) do b
-        if isa(fact, BatchDuplicated) && isa(B, BatchDuplicated)
-            retdval = zeros(length(retval))
-            mul!(retdval, fact.dval[b].U, retval)
-            mul!(retdval, fact.dval[b].L, retdval)
-            retdval .= B.dval[b] .- retdval
-            ldiv!(fact.val, retdval)
-        elseif isa(fact, BatchDuplicated) && isa(B, Const)
+        if isa(fact, Const) && isa(B, Const)
+            nothing
+        elseif isa(B, Const)
             retdval = zeros(length(retval))
             mul!(retdval, A, B.val)
             mul!(retdval, -1, retdval)
             ldiv!(fact.val, retdval)
-        elseif isa(fact, Const) && isa(B, BatchDuplicated)
+        elseif isa(fact, Const)
             retdval = copy(B.dval)
             ldiv!(fact.val, retdval)
-        elseif isa(fact, Const) && isa(B, Const)
-            nothing
         else
-            error("Error in forward \\ Enzyme rule $(typeof(fact)) $(typeof(B)).")
+            retdval = zeros(length(retval))
+            # mul!(retdval, fact.dval[b].U, retval)
+            # mul!(retdval, fact.dval[b].L, retdval)
+            mul!(retdval, dfact[b].U, retval)
+            mul!(retdval, dfact[b].L, retdval)
+            retdval .= dB[b] .- retdval
+            ldiv!(fact.val, retdval)
         end
         retdval
     end
@@ -687,6 +656,8 @@ function EnzymeRules.forward(
         return retval
     elseif (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
         return retdval
+    elseif RT <: Duplicated
+        return Duplicated(retval, bretdval[1])
     else
         return BatchDuplicated(retval, ntuple(i -> bretdval[i], Val(N)))
     end
@@ -694,89 +665,39 @@ end
 
 function EnzymeRules.forward(
         func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const,}},
-        fact::Annotation{C}, B::Union{Const};
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+        fact::Annotation{C},
+        B::Union{Const, Duplicated, BatchDuplicated};
         kwargs...
 ) where {C <: Cholesky}
-    return ldiv!(fact.val, retval)
-end
-
-function EnzymeRules.forward(
-        func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
-        fact::Annotation{C}, B::Union{Const, Duplicated};
-        kwargs...
-) where {C <: Cholesky}
-    retval = B.val
-    ldiv!(fact.val, retval)
-    retdval = []
-    if isa(fact, Duplicated) && isa(B, Duplicated)
-        retdval = zeros(length(retval))
-        mul!(retdval, fact.dval.U, retval)
-        mul!(retdval, fact.dval.L, retdval)
-        retdval .= B.dval .- retdval
-        ldiv!(fact.val, retdval)
-        B.val  .= retval
-        B.dval .= retdval
-    elseif isa(fact, Duplicated) && isa(B, Const)
-        retdval = zeros(length(retval))
-        mul!(retdval, A, B.val)
-        mul!(retdval, -1, retdval)
-        ldiv!(fact.val, retdval)
-        B.val  .= retval
-        B.dval .= retdval
-    elseif isa(fact, Const) && isa(B, Duplicated)
-        retdval = copy(B.dval)
-        ldiv!(fact.val, retdval)
-        B.val  .= retval
-        B.dval .= retdval
-    elseif isa(fact, Const) && isa(B, Const)
-        nothing
-    else
-        error("Error in forward ldiv! Enzyme rule $(typeof(fact)) $(typeof(B)).")
-    end
-    if RT <: Const
-        return retval
-    elseif (RT <: DuplicatedNoNeed)
-        return retdval
-    else
-        return Duplicated(retval, retdval)
-    end
-end
-
-function EnzymeRules.forward(
-        func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
-        fact::Annotation{C}, B::Union{Const, BatchDuplicated{T,N}};
-        kwargs...
-) where {C <: Cholesky, T <: AbstractArray{<:AbstractFloat}, N}
     retval = B.val
     retval = ldiv!(fact.val, retval)
+    dfact = width(fact) == 1 ? (fact.dval,) : fact.dval
+    dB = width(B) == 1 ? (B.dval,) : B.dval
+    N = max(width(fact), width(B))
     for b in 1:N
-        if isa(fact, BatchDuplicated) && isa(B, BatchDuplicated)
-            retdval = zeros(length(retval))
-            mul!(retdval, fact.dval[b].U, retval)
-            mul!(retdval, fact.dval[b].L, retdval)
-            retdval .= B.dval[b] .- retdval
-            ldiv!(fact.val, retdval)
-            B.val     .= retval
-            B.dval[b] .= retdval
-        elseif isa(fact, BatchDuplicated) && isa(B, Const)
+        if isa(fact, Const) && isa(B, Const)
+            nothing
+        elseif isa(B, Const)
             retdval = zeros(length(retval))
             mul!(retdval, A, B.val)
             mul!(retdval, -1, retdval)
             ldiv!(fact.val, retdval)
             B.val     .= retval
-            B.dval[b] .= retdval
-        elseif isa(fact, Const) && isa(B, BatchDuplicated)
+            dB[b] .= retdval
+        elseif isa(fact, Const)
             retdval = copy(B.dval)
             ldiv!(fact.val, retdval)
             B.val     .= retval
-            B.dval[b] .= retdval
-        elseif isa(fact, Const) && isa(B, Const)
-            nothing
+            dB[b] .= retdval
         else
-            error("Error in forward ldiv! Enzyme rule $(typeof(fact)) $(typeof(B)).")
+            retdval = zeros(length(retval))
+            mul!(retdval, dfact[b].U, retval)
+            mul!(retdval, dfact[b].L, retdval)
+            retdval .= dB[b] .- retdval
+            ldiv!(fact.val, retdval)
+            B.val     .= retval
+            dB[b] .= retdval
         end
         retdval
     end
@@ -784,8 +705,10 @@ function EnzymeRules.forward(
         return retval
     elseif (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
         return retdval
+    elseif RT <: Duplicated
+        return Duplicated(retval, dB[1])
     else
-        return BatchDuplicated(retval, ntuple(i -> bretdval[i], Val(N)))
+        return BatchDuplicated(retval, ntuple(i -> dB[i], Val(N)))
     end
 end
 
@@ -822,16 +745,8 @@ function EnzymeRules.reverse(
     kwargs...
 )
     (dfact,) = cache
-    dAs = if EnzymeRules.width(config) == 1
-        (A.dval,)
-    else
-        A.dval
-    end
-    dfacts = if EnzymeRules.width(config) == 1
-        (dfact,)
-    else
-        dfact
-    end
+    dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
+    dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
 
     for (dA, dfact) in zip(dAs, dfacts)
         dA .+= dfact.factors
@@ -880,26 +795,12 @@ function EnzymeRules.reverse(
 ) where {C <: Cholesky}
 
     (x, dx, buffer) = cache
-    dxs = if EnzymeRules.width(config) == 1
-        (dx,)
-    else
-        dx
-    end
-    buffers = if EnzymeRules.width(config) == 1
-        (buffer,)
-    else
-        buffer
-    end
-    dfacts = if EnzymeRules.width(config) == 1
-        (fact.dval,)
-    else
-        fact.dval
-    end
-    dBs = if EnzymeRules.width(config) == 1
-        (B.dval,)
-    else
-        B.dval
-    end
+
+    dxs = EnzymeRules.width(config) == 1 ? (dx,) : dx
+    buffers = EnzymeRules.width(config) == 1 ? (buffer,) : buffer
+    dfacts = EnzymeRules.width(config) == 1 ? (fact.dval,) : fact.dval
+    dBs = EnzymeRules.width(config) == 1 ? (B.dval,) : B.dval
+
     for (dx, buffer, dfact, dB) in zip(dxs, buffers, dfacts, dBs)
         buffer .= fact.val\dx
         dB .+= buffer
@@ -947,27 +848,11 @@ function EnzymeRules.reverse(
 
     (x, _dx, _buffer) = cache
     for b in 1:EnzymeRules.width(config)
-        dx = if EnzymeRules.width(config) == 1
-            _B.dval
-        else
-            _B.dval[b]
-        end
-        buffer = if EnzymeRules.width(config) == 1
-            _buffer
-        else
-            _buffer[b]
-        end
-        dfact = if EnzymeRules.width(config) == 1
-            _fact.dval
-        else
-            _fact.dval[b]
-        end
-        dB = if EnzymeRules.width(config) == 1
-            _B.dval
-        else
-            _B.dval[b]
-        end
-        buffer .= _fact.val\dx
+        buffer = EnzymeRules.width(config) == 1 ? _buffer : _buffer[b]
+        dfact = EnzymeRules.width(config) == 1 ? _fact.dval : _fact.dval[b]
+        dB = EnzymeRules.width(config) == 1 ? _B.dval : _B.dval[b]
+
+        buffer .= _fact.val\dB
         dB .+= buffer
         buffer = reshape(buffer, size(buffer,2), size(buffer,1))
         dfact.factors .+= -x .* buffer
