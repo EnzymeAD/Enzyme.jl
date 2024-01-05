@@ -2,6 +2,9 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
+using FiniteDifferences
+using LinearAlgebra
+using SparseArrays
 using Test
 
 struct TPair
