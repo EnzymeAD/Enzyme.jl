@@ -273,9 +273,23 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if isa(v, LLVM.SelectInst)
                         lhs_v, lhs_offset, lhs_skipload = getparent(operands(v)[2], offset, hasload)
                         rhs_v, rhs_offset, rhs_skipload = getparent(operands(v)[3], offset, hasload)
-                        @assert lhs_skipload == rhs_skipload
-                        @assert value_type(lhs_v) == value_type(rhs_v)
-                        @assert value_type(lhs_offset) == value_type(rhs_offset)
+                        if value_type(lhs_v) != value_type(rhs_v) || value_type(lhs_offset) != value_type(rhs_offset) || lhs_skipload != rhs_skipload
+                            msg = sprint() do io
+                                println(io, "Could not analyze [select] garbage collection behavior of")
+                                println(io, " v0: ", string(v0))
+                                println(io, " v: ", string(v))
+                                println(io, " offset: ", string(offset))
+                                println(io, " hasload: ", string(hasload))
+                                println(io, " lhs_v", lhs_v)
+                                println(io, " rhs_v", rhs_v)
+                                println(io, " lhs_offset", lhs_offset)
+                                println(io, " rhs_offset", rhs_offset)
+                                println(io, " lhs_skipload", lhs_skipload)
+                                println(io, " rhs_skipload", rhs_skipload)
+                            end
+                            bt = GPUCompiler.backtrace(inst)
+                            throw(EnzymeInternalError(msg, string(f), bt))
+                        end
                         return select!(b, operands(v)[1], lhs_v, rhs_v), select!(b, operands(v)[1], lhs_offset, rhs_offset), lhs_skipload
                     end
 
