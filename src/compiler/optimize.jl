@@ -231,7 +231,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                             v2 = addrspacecast!(b, operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
                             return v2, offset, hasload
                         end
-                        return getparent(operands(v)[1], offset, hasload)
+                        nv, noffset, nhasload = getparent(operands(v)[1], offset, hasload)
+                        if eltype(value_type(nv)) != eltype(value_type(v))
+                            nv = bitcast!(b, nv, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(nv))))
+                        end
+                        return nv, noffset, nhasload
                     end
 
                     if isa(v, LLVM.BitCastInst)
