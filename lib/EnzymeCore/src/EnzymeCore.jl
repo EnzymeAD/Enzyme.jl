@@ -234,6 +234,8 @@ end
 
 function tape_type end
 
+const GlobalInlinedLoads = Set{Any}(())
+
 include("rules.jl")
 
 end # module EnzymeCore
