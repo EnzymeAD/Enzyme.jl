@@ -117,6 +117,7 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
@@ -124,6 +125,7 @@ jobs:
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
