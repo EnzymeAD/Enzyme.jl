@@ -132,21 +132,21 @@ jobs:
           SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
-        if: steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
-        if: steps.buildpkg.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
-        if: steps.run_tests.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
       - uses: codecov/codecov-action@v1
-        if: steps.run_tests.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           file: lcov.info
   enzymetestutils:
@@ -186,6 +186,7 @@ jobs:
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
         id: setup_testutils
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         run: |
           using Pkg
           Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])
@@ -193,7 +194,7 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
-        if: steps.setup_testutils.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
         shell: julia --color=yes {0}
@@ -201,11 +202,11 @@ jobs:
           using Pkg
           Pkg.test("EnzymeTestUtils"; coverage=true)
       - uses: julia-actions/julia-processcoverage@v1
-        if: steps.run_tests.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
       - uses: codecov/codecov-action@v2
-        if: steps.run_tests.outcome == 'success'
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
   docs:
