@@ -133,10 +133,23 @@ function nodecayed_phis!(mod::LLVM.Module)
                 end
                 if addr == 11
                     all_args = true
-                    for (v, _) in LLVM.incoming(inst)
+                    addrtodo = Value[inst]
+
+                    while length(addrtodo) != 0
+                        v = pop!(addrtodo)
                         base = get_base_object(v)
+                        seen = Set{LLVM.Value}()
+                        if in(base, seen)
+                            continue
+                        end
+                        push!(seen, base)
                         if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
                             continue
+                        end
+                        if isa(v, LLVM.PHIInst)
+                            for (v, _) in LLVM.incoming(inst)
+                                push!(addrtodo, v)
+                            end
                         end
                         all_args = false
                         break
