@@ -150,6 +150,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             for (v, _) in LLVM.incoming(inst)
                                 push!(addrtodo, v)
                             end
+                            continue
                         end
                         all_args = false
                         break
