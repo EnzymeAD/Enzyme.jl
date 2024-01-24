@@ -678,7 +678,6 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
     finally
         unlock(tape_cache_lock)
     end
-    return obj
 end
 
 """
