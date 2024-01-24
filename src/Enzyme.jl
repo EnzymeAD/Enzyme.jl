@@ -669,10 +669,10 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
         if obj === nothing
 
             Compiler.JuliaContext() do ctx
-                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job)
+                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job) 
+                obj = meta.TapeType
+                tape_cache[key] = meta.TapeType
             end
-            obj = meta.TapeType
-            tape_cache[key] = meta.TapeType
         end
         obj
     finally
