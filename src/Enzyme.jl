@@ -615,7 +615,7 @@ end
     return TapeType
 end
 
-const tape_cache = Dict{UInt, Compiler.CompileResult}()
+const tape_cache = Dict{UInt, Type}()
 
 const tape_cache_lock = ReentrantLock()
 
@@ -671,14 +671,14 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
             Compiler.JuliaContext() do ctx
                 _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job) 
                 obj = meta.TapeType
-                tape_cache[key] = meta.TapeType
+                tape_cache[key] = obj
             end
         end
         obj
     finally
         unlock(tape_cache_lock)
     end
-    return meta.TapeType
+    return obj
 end
 
 """
