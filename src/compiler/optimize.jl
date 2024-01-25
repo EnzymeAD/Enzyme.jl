@@ -1,3 +1,29 @@
+mutable struct PipelineConfig
+    Speedup::Cint
+    Size::Cint
+    lower_intrinsics::Cint
+    dump_native::Cint
+    external_use::Cint
+    llvm_only::Cint
+    always_inline::Cint
+    enable_early_simplifications::Cint
+    enable_early_optimizations::Cint
+    enable_scalar_optimizations::Cint
+    enable_loop_optimizations::Cint
+    enable_vector_pipeline::Cint
+    remove_ni::Cint
+    cleanup::Cint
+end
+
+function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enalbe_early_simplifications=true,
+       enable_scalar_optimizations=true,
+       enable_loop_optimizations=true,
+       enable_vector_pipeline=true,
+       remove_ni=true,
+       cleanup=true, Size=0, Speedup=3)
+    return PipelineConfig(Speedup, Size, lower_intrinsics, dump_native, external_use, llvm_only, always_inline, enable_early_simplifications, enable_early_optimizations, enable_scalar_optimizations, enable_loop_optimizations, enable_vector_pipeline, remove_ni, cleanup)
+end
+
 function addNA(inst, node::LLVM.Metadata, MD)
     md = metadata(inst)
     next = nothing 
