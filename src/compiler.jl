@@ -2740,7 +2740,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("jl_f_getfield","ijl_f_getfield","jl_get_nth_field_checked","ijl_get_nth_field_checked")
+    for fname in ("jl_f_getfield","ijl_f_getfield","jl_get_nth_field_checked","ijl_get_nth_field_checked", "jl_f__svec_ref", "ijl_f__svec_ref")
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
