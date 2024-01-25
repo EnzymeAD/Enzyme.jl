@@ -2032,6 +2032,19 @@ end
     @test nt[2] == MyFlux()
 end
 
+@testset "Batched inactive" begin
+    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(2), Val((true, true, true)),
+                                                    Val(Enzyme.Compiler.AnyArray(2+Int(2))),
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
+
+    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(2), Val((true, true, true)), augres[end],
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
+end
+
 @testset "Array push" begin
 
     function pusher(x, y)

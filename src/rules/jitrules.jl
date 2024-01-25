@@ -235,7 +235,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
                 :(tup[$i][$w])
             end
             shad = shadowargs[i][w]
-            out = :(if $expr === nothing
+            out = :(if tup[$i] === nothing
               elseif $shad isa Base.RefValue
                   $shad[] = recursive_add($shad[], $expr)
                 else
