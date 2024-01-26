@@ -116,26 +116,22 @@ end
     return A, b
     end
 
-    function b_one(b)
-        _x = zeros(length(b))
-        driver(_x,A,b)
-        return _x
-    end
-
-    function driver(x, A, b)
+    function divdriver(x, A, b)
         fact = cholesky(A)
-        if op == :\
-            res = fact\b
-            x .= res
-        elseif op == :ldiv!
-            ldiv!(fact,b)
-            x .= b
-        end
+        res = fact\b
+        x .= res
+        return nothing
+    end
+    
+    function ldivdriver(x, A, b)
+        fact = cholesky(A)
+        ldiv!(fact,b)
+        x .= b
         return nothing
     end
 
     # Test forward
-    function fwdJdxdb(A, b)
+    function fwdJdxdb(driver, A, b)
         adJ = zeros(size(A))
         dA = Duplicated(A, zeros(size(A)))
         db = Duplicated(b, zeros(length(b)))
@@ -158,7 +154,7 @@ end
         end
         return adJ
     end
-    function batchedfwdJdxdb(A, b)
+    function batchedfwdJdxdb(driver, A, b)
         n = length(b)
         function seed(i)
             x = zeros(n)
@@ -183,7 +179,7 @@ end
     end
 
     # Test reverse
-    function revJdxdb(A, b)
+    function revJdxdb(driver, A, b)
         adJ = zeros(size(A))
         dA = Duplicated(A, zeros(size(A)))
         db = Duplicated(b, zeros(length(b)))
@@ -207,7 +203,7 @@ end
         return adJ
     end
 
-    function batchedrevJdxdb(A, b)
+    function batchedrevJdxdb(driver, A, b)
         n = length(b)
         function seed(i)
             x = zeros(n)
@@ -231,7 +227,7 @@ end
         return adJ
     end
 
-    function Jdxdb(A, b)
+    function Jdxdb(driver, A, b)
         x = A\b
         dA = zeros(size(A))
         db = zeros(length(b))
@@ -245,7 +241,7 @@ end
         return J
     end
 
-    function JdxdA(A, b)
+    function JdxdA(driver, A, b)
         db = zeros(length(b))
         J = zeros(length(b), length(b))
         for i in 1:length(b)
@@ -256,11 +252,8 @@ end
         end
         return J
     end
-    op = []
-    A = []
-    b = []
-    @testset "Testing $_op" for _op in (:\, :ldiv!)
-        op = _op
+    
+    @testset "Testing $op" for (op, driver) in ((:\, divdriver), (:ldiv!, ldivdriver))
         A, b = symmetric_definite(10)
         n = length(b)
         A = Matrix(A)
@@ -268,12 +261,18 @@ end
         x = driver(x, A, b)
         fdm = forward_fdm(2, 1);
 
+        function b_one(b)
+            _x = zeros(length(b))
+            driver(_x,A,b)
+            return _x
+        end
+
         fdJ = op==:\ ? FiniteDifferences.jacobian(fdm, b_one, copy(b))[1] : nothing
-        fwdJ = fwdJdxdb(A, b)
-        revJ = revJdxdb(A, b)
-        batchedrevJ = batchedrevJdxdb(A, b)
-        batchedfwdJ = batchedfwdJdxdb(A, b)
-        J = Jdxdb(A, b)
+        fwdJ = fwdJdxdb(driver, A, b)
+        revJ = revJdxdb(driver, A, b)
+        batchedrevJ = batchedrevJdxdb(driver, A, b)
+        batchedfwdJ = batchedfwdJdxdb(driver, A, b)
+        J = Jdxdb(driver, A, b)
 
         # Subtract seeds for inplace ldiv!
         if op == :ldiv!
