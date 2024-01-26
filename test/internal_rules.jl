@@ -110,24 +110,32 @@ end
 end
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
-    α = one(Float64)
-    A = spdiagm(-1 => α * ones(n-1), 0 => 4 * ones(n), 1 => conj(α) * ones(n-1))
-    b = A * Float64[1:n;]
-    return A, b
+        α = one(Float64)
+        A = spdiagm(-1 => α * ones(n-1), 0 => 4 * ones(n), 1 => conj(α) * ones(n-1))
+        b = A * Float64[1:n;]
+        return A, b
     end
 
-    function divdriver(x, A, b)
-        fact = cholesky(A)
+    function divdriver_NC(x, fact, b)
         res = fact\b
         x .= res
         return nothing
     end
     
-    function ldivdriver(x, A, b)
-        fact = cholesky(A)
+    function ldivdriver_NC(x, fact, b)
         ldiv!(fact,b)
         x .= b
         return nothing
+    end
+
+    function divdriver(x, A, b)
+        fact = cholesky(A)
+        divdriver_NC(x, fact, b)
+    end
+    
+    function ldivdriver(x, A, b)
+        fact = cholesky(A)
+        ldivdriver_NC(x, fact, b)
     end
 
     # Test forward
@@ -154,6 +162,28 @@ end
         end
         return adJ
     end
+
+    function const_fwdJdxdb(driver, A, b)
+        adJ = zeros(length(b), length(b))
+        db = Duplicated(b, zeros(length(b)))
+        dx = Duplicated(zeros(length(b)), zeros(length(b)))
+        for i in 1:length(b)
+            copyto!(db.val, b)
+            fill!(db.dval, 0.0)
+            fill!(dx.dval, 0.0)
+            db.dval[i] = 1.0
+            Enzyme.autodiff(
+                Forward,
+                driver,
+                dx,
+                A,
+                db
+            )
+            adJ[i, :] = dx.dval
+        end
+        return adJ
+    end
+
     function batchedfwdJdxdb(driver, A, b)
         n = length(b)
         function seed(i)
@@ -196,6 +226,27 @@ end
                 driver,
                 dx,
                 dA,
+                db
+            )
+            adJ[i, :] = db.dval
+        end
+        return adJ
+    end
+
+    function const_revJdxdb(driver, A, b)
+        adJ = zeros(length(b), length(b))
+        db = Duplicated(b, zeros(length(b)))
+        dx = Duplicated(zeros(length(b)), zeros(length(b)))
+        for i in 1:length(b)
+            copyto!(db.val, b)
+            fill!(db.dval, 0.0)
+            fill!(dx.dval, 0.0)
+            dx.dval[i] = 1.0
+            Enzyme.autodiff(
+                Reverse,
+                driver,
+                dx,
+                A,
                 db
             )
             adJ[i, :] = db.dval
@@ -253,7 +304,7 @@ end
         return J
     end
     
-    @testset "Testing $op" for (op, driver) in ((:\, divdriver), (:ldiv!, ldivdriver))
+    @testset "Testing $op" for (op, driver, driver_NC) in ((:\, divdriver, divdriver_NC), (:ldiv!, ldivdriver, ldivdriver_NC))
         A, b = symmetric_definite(10)
         n = length(b)
         A = Matrix(A)
@@ -286,6 +337,13 @@ end
         @test isapprox(fwdJ, revJ)
         @test isapprox(fwdJ, batchedrevJ)
         @test isapprox(fwdJ, batchedfwdJ)
+
+        fwdJ = const_fwdJdxdb(driver_NC, cholesky(A), b)
+        revJ = const_revJdxdb(driver_NC, cholesky(A), b)
+        if op == :\
+            @test isapprox(fwdJ, fdJ)
+        end
+        @test isapprox(fwdJ, revJ)
     end
 end
 end # InternalRules
