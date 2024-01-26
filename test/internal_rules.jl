@@ -108,6 +108,7 @@ end
     y = A \ b
     @test dA ≈ (-z * transpose(y))
 end
+
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
         α = one(Float64)
@@ -325,11 +326,6 @@ end
         batchedfwdJ = batchedfwdJdxdb(driver, A, b)
         J = Jdxdb(driver, A, b)
 
-        # Subtract seeds for inplace ldiv!
-        if op == :ldiv!
-            revJ .-= I(n)
-            batchedrevJ .-= I(n)
-        end
         if op == :\
             @test isapprox(fwdJ, fdJ)
         end
