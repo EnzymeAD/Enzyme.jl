@@ -2,6 +2,9 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
+using FiniteDifferences
+using LinearAlgebra
+using SparseArrays
 using Test
 
 struct TPair
@@ -42,7 +45,7 @@ end
 
     dd = Duplicated([TPair(1, 2), TPair(2, 3), TPair(0, 1)], [TPair(0, 0), TPair(0, 0), TPair(0, 0)])
     res = Enzyme.autodiff(Reverse, sorterrfn, dd, Active(1.0))
-    
+
     @test res[1][2] ≈ 3
     @test dd.dval[1].a ≈ 0
     @test dd.dval[1].b ≈ 0
@@ -88,7 +91,7 @@ end
 
     y = A \ b
     @test db ≈ z
-    
+
     dA = zero(A)
 
     forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Const{typeof(b)})
@@ -105,5 +108,184 @@ end
     y = A \ b
     @test dA ≈ (-z * transpose(y))
 end
+@testset "Cholesky" begin
+    function symmetric_definite(n :: Int=10)
+    α = one(Float64)
+    A = spdiagm(-1 => α * ones(n-1), 0 => 4 * ones(n), 1 => conj(α) * ones(n-1))
+    b = A * Float64[1:n;]
+    return A, b
+    end
 
+    function divdriver(x, A, b)
+        fact = cholesky(A)
+        res = fact\b
+        x .= res
+        return nothing
+    end
+    
+    function ldivdriver(x, A, b)
+        fact = cholesky(A)
+        ldiv!(fact,b)
+        x .= b
+        return nothing
+    end
+
+    # Test forward
+    function fwdJdxdb(driver, A, b)
+        adJ = zeros(size(A))
+        dA = Duplicated(A, zeros(size(A)))
+        db = Duplicated(b, zeros(length(b)))
+        dx = Duplicated(zeros(length(b)), zeros(length(b)))
+        for i in 1:length(b)
+            copyto!(dA.val, A)
+            copyto!(db.val, b)
+            fill!(dA.dval, 0.0)
+            fill!(db.dval, 0.0)
+            fill!(dx.dval, 0.0)
+            db.dval[i] = 1.0
+            Enzyme.autodiff(
+                Forward,
+                driver,
+                dx,
+                dA,
+                db
+            )
+            adJ[i, :] = dx.dval
+        end
+        return adJ
+    end
+    function batchedfwdJdxdb(driver, A, b)
+        n = length(b)
+        function seed(i)
+            x = zeros(n)
+            x[i] = 1.0
+            return x
+        end
+        adJ = zeros(size(A))
+        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
+        db = BatchDuplicated(b, ntuple(i -> seed(i), n))
+        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> zeros(length(b)), n))
+        Enzyme.autodiff(
+            Forward,
+            driver,
+            dx,
+            dA,
+            db
+        )
+        for i in 1:n
+            adJ[i, :] = dx.dval[i]
+        end
+        return adJ
+    end
+
+    # Test reverse
+    function revJdxdb(driver, A, b)
+        adJ = zeros(size(A))
+        dA = Duplicated(A, zeros(size(A)))
+        db = Duplicated(b, zeros(length(b)))
+        dx = Duplicated(zeros(length(b)), zeros(length(b)))
+        for i in 1:length(b)
+            copyto!(dA.val, A)
+            copyto!(db.val, b)
+            fill!(dA.dval, 0.0)
+            fill!(db.dval, 0.0)
+            fill!(dx.dval, 0.0)
+            dx.dval[i] = 1.0
+            Enzyme.autodiff(
+                Reverse,
+                driver,
+                dx,
+                dA,
+                db
+            )
+            adJ[i, :] = db.dval
+        end
+        return adJ
+    end
+
+    function batchedrevJdxdb(driver, A, b)
+        n = length(b)
+        function seed(i)
+            x = zeros(n)
+            x[i] = 1.0
+            return x
+        end
+        adJ = zeros(size(A))
+        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
+        db = BatchDuplicated(b, ntuple(i -> zeros(length(b)), n))
+        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> seed(i), n))
+            Enzyme.autodiff(
+                Reverse,
+                driver,
+                dx,
+                dA,
+                db
+            )
+        for i in 1:n
+            adJ[i, :] .= db.dval[i]
+        end
+        return adJ
+    end
+
+    function Jdxdb(driver, A, b)
+        x = A\b
+        dA = zeros(size(A))
+        db = zeros(length(b))
+        J = zeros(length(b), length(b))
+        for i in 1:length(b)
+            db[i] = 1.0
+            dx = A\db
+            db[i] = 0.0
+            J[i, :] = dx
+        end
+        return J
+    end
+
+    function JdxdA(driver, A, b)
+        db = zeros(length(b))
+        J = zeros(length(b), length(b))
+        for i in 1:length(b)
+            db[i] = 1.0
+            dx = A\db
+            db[i] = 0.0
+            J[i, :] = dx
+        end
+        return J
+    end
+    
+    @testset "Testing $op" for (op, driver) in ((:\, divdriver), (:ldiv!, ldivdriver))
+        A, b = symmetric_definite(10)
+        n = length(b)
+        A = Matrix(A)
+        x = zeros(n)
+        x = driver(x, A, b)
+        fdm = forward_fdm(2, 1);
+
+        function b_one(b)
+            _x = zeros(length(b))
+            driver(_x,A,b)
+            return _x
+        end
+
+        fdJ = op==:\ ? FiniteDifferences.jacobian(fdm, b_one, copy(b))[1] : nothing
+        fwdJ = fwdJdxdb(driver, A, b)
+        revJ = revJdxdb(driver, A, b)
+        batchedrevJ = batchedrevJdxdb(driver, A, b)
+        batchedfwdJ = batchedfwdJdxdb(driver, A, b)
+        J = Jdxdb(driver, A, b)
+
+        # Subtract seeds for inplace ldiv!
+        if op == :ldiv!
+            revJ .-= I(n)
+            batchedrevJ .-= I(n)
+        end
+        if op == :\
+            @test isapprox(fwdJ, fdJ)
+        end
+
+        @test isapprox(fwdJ, revJ)
+        @test isapprox(fwdJ, batchedrevJ)
+        @test isapprox(fwdJ, batchedfwdJ)
+    end
+end
 end # InternalRules
