@@ -10,7 +10,6 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
@@ -19,7 +18,7 @@ jobs:
           - '1.7'
           - '1.8'
           - '1.9'
-          - '1.10-nightly'
+          - '1.10'
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -56,9 +55,9 @@ jobs:
             version: '1.9'
             assertions: false
           - os: ubuntu-20.04
-            arch: x64
+            arch: x86
             libEnzyme: packaged
-            version: '1.10-nightly'
+            version: '1.10'
             assertions: false
           - os: ubuntu-20.04
             arch: x64
@@ -78,7 +77,7 @@ jobs:
           - os: ubuntu-20.04
             arch: x64
             libEnzyme: packaged
-            version: '1.10-nightly'
+            version: '1.10'
             assertions: true
     steps:
       - uses: actions/checkout@v2
@@ -118,24 +117,36 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: build_libenzyme
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
           julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: build_libenzyme_mac
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
           SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
+        if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
+        if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: run_tests
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
       - uses: codecov/codecov-action@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           file: lcov.info
   enzymetestutils:
@@ -174,6 +185,8 @@ jobs:
             ${{ runner.os }}-
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
+        id: setup_testutils
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         run: |
           using Pkg
           Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])
@@ -181,14 +194,19 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
+        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: run_tests
         shell: julia --color=yes {0}
         run: |
           using Pkg
           Pkg.test("EnzymeTestUtils"; coverage=true)
       - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
       - uses: codecov/codecov-action@v2
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
   docs:

@@ -21,6 +21,15 @@ end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
+@inline function get_base_object(v)
+    if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+        return get_base_object(operands(v)[1])
+    end
+    if isa(v, LLVM.GetElementPtrInst)
+        return get_base_object(operands(v)[1])
+    end
+    return v
+end
 
 if VERSION < v"1.7.0-DEV.1205"
 

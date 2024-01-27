@@ -397,7 +397,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
 end
 
 function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) 
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
     arraycopy_fwd(B, orig, gutils, normalR, shadowR)
@@ -503,14 +503,14 @@ function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     TT = tape_type(flt)
 
     if width == 1
-        obj = emit_allocobj!(B, TT)
+        obj = emit_allocobj!(B, Base.RefValue{TT})
         o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
         store!(B, ConstantFP(flt, 0.0), o2)
         shadowres = obj
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
         for idx in 1:width
-            obj = emit_allocobj!(B, TT)
+            obj = emit_allocobj!(B, Base.RefValue{TT})
             o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
             store!(B, ConstantFP(flt, 0.0), o2)
             shadowres = insert_value!(B, shadowres, obj, idx-1)
@@ -584,7 +584,7 @@ function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origh, origkey, origdflt = operands(orig)[1:end-1]
 
     if is_constant_value(gutils, origh)
-        emit_error(B, orig, "Enzyme: Not yet implemented constant table in jl_eqtable_get "*string(origh)*" "*string(orig))
+        emit_error(B, orig, "Enzyme: Not yet implemented constant table in jl_eqtable_get "*string(origh)*" "*string(orig)*" result: "*string(absint(orig))*" "*string(abs_typeof(orig, true))*" dict: "*string(absint(origh))*" "*string(abs_typeof(origh, true))*" key "*string(absint(origkey))*" "*string(abs_typeof(origkey, true))*" dflt "*string(absint(origdflt))*" "*string(abs_typeof(origdflt, true)))
     end
     
     shadowh = invert_pointer(gutils, origh, B)
@@ -1033,14 +1033,15 @@ function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
     err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -1058,13 +1059,14 @@ function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_get_binding_or_error")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
+    if unsafe_load(shadowR) != C_NULL
+    	valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
+		args = [new_from_original(gutils, operands(orig)[1]), new_from_original(gutils, operands(orig)[2])]
+        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, #=lookup=#false)
         width = get_width(gutils)
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))))
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx-1)
@@ -1297,6 +1299,12 @@ end
         @augfunc(new_structv_augfwd),
         @revfunc(new_structv_rev),
         @fwdfunc(new_structv_fwd),
+    )
+    register_handler!(
+        ("jl_new_structt","ijl_new_structt"),
+        @augfunc(new_structt_augfwd),
+        @revfunc(new_structt_rev),
+        @fwdfunc(new_structt_fwd),
     )
     register_handler!(
         ("jl_get_binding_or_error", "ijl_get_binding_or_error"),

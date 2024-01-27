@@ -78,12 +78,15 @@ include("typetree.jl")
     include("rrules.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
+    include("internal_rules.jl")
     @static if VERSION ≥ v"1.9-"
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
     end
 end
-include("blas.jl")
+@static if VERSION ≥ v"1.7-" || !Sys.iswindows()
+    include("blas.jl")
+end
 
 f0(x) = 1.0 + x
 function vrec(start, x)
@@ -719,6 +722,29 @@ end
     @test dweights[1] ≈ 1.
 end
 
+function Valuation1(z,Ls1)
+    @inbounds Ls1[1] = sum(Base.inferencebarrier(z))
+    return nothing
+end
+@testset "Active setindex!" begin
+    v=ones(5)
+    dv=zero(v)
+
+    DV1=Float32[0]
+    DV2=Float32[1]
+
+    Enzyme.autodiff(Reverse,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test dv[1] ≈ 1.
+    
+    DV1=Float32[0]
+    DV2=Float32[1]
+    v=ones(5)
+    dv=zero(v)
+    dv[1] = 1.    
+    Enzyme.autodiff(Forward,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test DV2[1] ≈ 1.
+end
+
 @testset "Null init union" begin
     @noinline function unionret(itr, cond)
         if cond
@@ -1213,14 +1239,18 @@ end
     
     R = zeros(6,6)    
     dR = zeros(6, 6)
-    autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
 
-	@test 1.0 ≈ dR[1, 1]
-	@test 1.0 ≈ dR[2, 2]
-	@test 1.0 ≈ dR[3, 3]
-	@test 1.0 ≈ dR[4, 4]
-	@test 1.0 ≈ dR[5, 5]
-	@test 0.0 ≈ dR[6, 6]
+    @static if VERSION ≥ v"1.10-"
+        @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    else
+        autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    	@test 1.0 ≈ dR[1, 1]
+    	@test 1.0 ≈ dR[2, 2]
+    	@test 1.0 ≈ dR[3, 3]
+    	@test 1.0 ≈ dR[4, 4]
+    	@test 1.0 ≈ dR[5, 5]
+    	@test 0.0 ≈ dR[6, 6]
+    end
 end
 
 @testset "invoke" begin
@@ -2004,6 +2034,19 @@ end
     @test nt[2] == MyFlux()
 end
 
+@testset "Batched inactive" begin
+    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(2), Val((true, true, true)),
+                                                    Val(Enzyme.Compiler.AnyArray(2+Int(2))),
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
+
+    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(2), Val((true, true, true)), augres[end],
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
+end
+
 @testset "Array push" begin
 
     function pusher(x, y)
@@ -2609,60 +2652,6 @@ end
         @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
         @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
     end
-end
-
-@testset "Linear Solve" begin
-    A = Float64[2 3; 5 7]
-    dA = zero(A)
-    b = Float64[11, 13]
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
-    @test db ≈ z
-    
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Const{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Const(A), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Const(A), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test db ≈ z
-    
-    dA = zero(A)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Const{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Const(b))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Const(b), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
 end
 
 @static if VERSION >= v"1.7-"

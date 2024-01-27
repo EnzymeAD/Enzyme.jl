@@ -9,9 +9,9 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
-        if VERSION >= v"1.7"
+        @static if VERSION >= v"1.7"
             function __init__()
-                if VERSION > v"1.8"
+                @static if VERSION > v"1.8"
                   global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
                 else
                   global blas_handle = Libdl.dlopen(BLAS.libblas)
@@ -214,6 +214,30 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 # List of methods to location of arg which is the mi/function, then start of args
 const generic_method_offsets = Dict{String, Tuple{Int,Int}}(("jl_f__apply_latest" => (2,3), "ijl_f__apply_latest" => (2,3), "jl_f__call_latest" => (2,3), "ijl_f__call_latest" => (2,3), "jl_f_invoke" => (2,3), "jl_invoke" => (1,3), "jl_apply_generic" => (1,2), "ijl_f_invoke" => (2,3), "ijl_invoke" => (1,3), "ijl_apply_generic" => (1,2)))
+
+@inline function has_method(sig, world::UInt, mt::Union{Nothing,Core.MethodTable})
+    return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
+end
+
+@inline function has_method(sig, world::UInt, mt::Core.Compiler.InternalMethodTable)
+    return has_method(sig, mt.world, nothing)
+end
+
+@static if VERSION >= v"1.7"
+@inline function has_method(sig, world::UInt, mt::Core.Compiler.OverlayMethodTable)
+    return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
+end
+end
+
+@inline function is_inactive(tys, world::UInt, mt)
+    if has_method(Tuple{typeof(EnzymeRules.inactive), tys...}, world, mt)
+        return true
+    end
+    if has_method(Tuple{typeof(EnzymeRules.inactive_noinl), tys...}, world, mt)
+        return true
+    end
+    return false
+end
 
 import GPUCompiler: DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
@@ -449,7 +473,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, funclib))
                             funclib = Base.unsafe_pointer_to_objref(rep)
                             tys = [typeof(funclib), Vararg{Any}]
-                            if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
+                            if is_inactive(tys, world, method_table)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                 LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                                 nofree = LLVM.EnumAttribute("nofree")
@@ -486,7 +510,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table)
+                    if is_inactive(tys, world, method_table)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeFunctionIndex, inactive)
                         nofree = LLVM.EnumAttribute("nofree")
@@ -513,7 +537,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
 
             if length(frames) >= 1
-                if VERSION >= v"1.4.0-DEV.123"
+                @static if VERSION >= v"1.4.0-DEV.123"
                     fn, file, line, linfo, fromC, inlined = last(frames)
                 else
                     fn, file, line, linfo, fromC, inlined, ip = last(frames)
@@ -558,7 +582,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     end
                     tys = flib.specTypes.parameters
                 end
-                if EnzymeRules.is_inactive_from_sig(Tuple{tys...}; world, method_table) || EnzymeRules.is_inactive_noinl_from_sig(Tuple{tys...}; world, method_table) 
+                if is_inactive(tys, world, method_table)
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     inactive = LLVM.StringAttribute("enzyme_inactive", "")

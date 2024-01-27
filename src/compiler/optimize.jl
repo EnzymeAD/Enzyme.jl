@@ -1,3 +1,29 @@
+mutable struct PipelineConfig
+    Speedup::Cint
+    Size::Cint
+    lower_intrinsics::Cint
+    dump_native::Cint
+    external_use::Cint
+    llvm_only::Cint
+    always_inline::Cint
+    enable_early_simplifications::Cint
+    enable_early_optimizations::Cint
+    enable_scalar_optimizations::Cint
+    enable_loop_optimizations::Cint
+    enable_vector_pipeline::Cint
+    remove_ni::Cint
+    cleanup::Cint
+end
+
+function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enalbe_early_simplifications=true,
+       enable_scalar_optimizations=true,
+       enable_loop_optimizations=true,
+       enable_vector_pipeline=true,
+       remove_ni=true,
+       cleanup=true, Size=0, Speedup=3)
+    return PipelineConfig(Speedup, Size, lower_intrinsics, dump_native, external_use, llvm_only, always_inline, enable_early_simplifications, enable_early_optimizations, enable_scalar_optimizations, enable_loop_optimizations, enable_vector_pipeline, remove_ni, cleanup)
+end
+
 function addNA(inst, node::LLVM.Metadata, MD)
     md = metadata(inst)
     next = nothing 
@@ -131,6 +157,35 @@ function nodecayed_phis!(mod::LLVM.Module)
                 if addrspace(ty) != addr
                     continue
                 end
+                if addr == 11
+                    all_args = true
+                    addrtodo = Value[inst]
+                    seen = Set{LLVM.Value}()
+
+                    while length(addrtodo) != 0
+                        v = pop!(addrtodo)
+                        base = get_base_object(v)
+                        if in(base, seen)
+                            continue
+                        end
+                        push!(seen, base)
+                        if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
+                            continue
+                        end
+                        if isa(base, LLVM.PHIInst)
+                            for (v, _) in LLVM.incoming(base)
+                                push!(addrtodo, v)
+                            end
+                            continue
+                        end
+                        all_args = false
+                        break
+                    end
+                    if all_args
+                        continue
+                    end
+                end
+                
                 push!(todo, inst)
                 nb = IRBuilder()
                 position!(nb, inst)
@@ -199,17 +254,41 @@ function nodecayed_phis!(mod::LLVM.Module)
                         end
                     end
 
+                    if addr == 11 && isa(v, LLVM.ConstantExpr)
+                        if opcode(v) == LLVM.API.LLVMAddrSpaceCast
+                            v2 = operands(v)[1]
+                            if addrspace(value_type(v2)) == 0
+                                if addr == 11 && isa(v, LLVM.ConstantExpr)
+                                    v2 = const_addrspacecast(operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
+                                    return v2, offset, hasload
+                                end
+                            end
+                        end
+                    end
+
                     if isa(v, LLVM.AddrSpaceCastInst)
                         if addrspace(value_type(operands(v)[1])) == 0
                             v2 = addrspacecast!(b, operands(v)[1], LLVM.PointerType(eltype(value_type(v)), 10))
                             return v2, offset, hasload
                         end
-                        return getparent(operands(v)[1], offset, hasload)
+                        nv, noffset, nhasload = getparent(operands(v)[1], offset, hasload)
+                        if eltype(value_type(nv)) != eltype(value_type(v))
+                            nv = bitcast!(b, nv, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(nv))))
+                        end
+                        return nv, noffset, nhasload
                     end
 
                     if isa(v, LLVM.BitCastInst)
                         v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
+                        return v2, offset, skipload
+                    end
+
+                    if isa(v, LLVM.GetElementPtrInst) && all(x->(isa(x, LLVM.ConstantInt) && convert(Int, x) == 0), operands(v)[2:end])
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
                         return v2, offset, skipload
                     end
 
@@ -217,6 +296,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
                         offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
                         v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
                         return v2, offset, skipload
                     end
 
@@ -228,7 +308,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return LLVM.UndefValue(LLVM.PointerType(eltype(value_type(v)),10)), offset, addr == 13
                     end
 
-                    if isa(v, LLVM.PHIInst) && !hasload
+                    if isa(v, LLVM.PHIInst) && !hasload && haskey(goffsets, v)
                         offset = nuwadd!(b, offset, goffsets[v])
                         nv = nextvs[v]
                         return nv, offset, addr == 13
@@ -237,12 +317,29 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if isa(v, LLVM.SelectInst)
                         lhs_v, lhs_offset, lhs_skipload = getparent(operands(v)[2], offset, hasload)
                         rhs_v, rhs_offset, rhs_skipload = getparent(operands(v)[3], offset, hasload)
-                        @assert lhs_skipload == rhs_skipload
+                        if value_type(lhs_v) != value_type(rhs_v) || value_type(lhs_offset) != value_type(rhs_offset) || lhs_skipload != rhs_skipload
+                            msg = sprint() do io
+                                println(io, "Could not analyze [select] garbage collection behavior of")
+                                println(io, " v0: ", string(v0))
+                                println(io, " v: ", string(v))
+                                println(io, " offset: ", string(offset))
+                                println(io, " hasload: ", string(hasload))
+                                println(io, " lhs_v", lhs_v)
+                                println(io, " rhs_v", rhs_v)
+                                println(io, " lhs_offset", lhs_offset)
+                                println(io, " rhs_offset", rhs_offset)
+                                println(io, " lhs_skipload", lhs_skipload)
+                                println(io, " rhs_skipload", rhs_skipload)
+                            end
+                            bt = GPUCompiler.backtrace(inst)
+                            throw(EnzymeInternalError(msg, string(f), bt))
+                        end
                         return select!(b, operands(v)[1], lhs_v, rhs_v), select!(b, operands(v)[1], lhs_offset, rhs_offset), lhs_skipload
                     end
 
                     msg = sprint() do io
                         println(io, "Could not analyze garbage collection behavior of")
+                        println(io, " inst: ", string(inst))
                         println(io, " v0: ", string(v0))
                         println(io, " v: ", string(v))
                         println(io, " offset: ", string(offset))
@@ -1125,7 +1222,7 @@ function removeDeadArgs!(mod::LLVM.Module)
         # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
         # to preserve this.
         for idx in (2, 3, 4)
-            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) || kind(attr) == StringAttribute("enzymejl_returnRoots_v")) for attr in collect(parameter_attributes(fn, idx)))
+            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) || kind(attr) == kind(StringAttribute("enzymejl_returnRoots_v"))) for attr in collect(parameter_attributes(fn, idx)))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     @assert isa(u, LLVM.CallInst)
@@ -1138,7 +1235,11 @@ function removeDeadArgs!(mod::LLVM.Module)
             end
         end
         for idx in (1, 2)
-            if length(collect(parameters(fn))) >= idx && any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == StringAttribute("enzyme_sret")) for attr in collect(parameter_attributes(fn, idx)))
+            if length(collect(parameters(fn))) < idx
+                continue
+            end
+            attrs = collect(parameter_attributes(fn, idx))
+            if any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)

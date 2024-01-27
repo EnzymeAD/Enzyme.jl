@@ -56,6 +56,15 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return true
     end
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    needsPrimal = needsPrimalP[] != 0
+    needsShadow = needsShadowP[] != 0
+
+	if !needsShadow
+		return
+	end
     emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
     return nothing
 end
@@ -97,6 +106,56 @@ end
 
 function new_structv_rev(B, orig, gutils, tape)
     common_apply_latest_rev(1, B, orig, gutils, tape)
+    return nothing
+end
+
+function new_structt_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+    origops = collect(operands(orig))
+    width = get_width(gutils)
+
+    @assert is_constant_value(gutils, origops[1])
+    if is_constant_value(gutils, origops[2])
+        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct_t"*string(orig))
+    end
+
+    shadowsin = invert_pointer(gutils, origops[2], B)
+    if width == 1
+        vals = [new_from_original(gutils, origops[1]), shadowsin]
+        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
+        callconv!(shadowres, callconv(orig))
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx in 1:width
+            vals = [new_from_original(gutils, origops[1]), extract_value!(B, shadowsin, idx-1)]
+            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+            callconv!(tmp, callconv(orig))
+            shadowres = insert_value!(B, shadowres, tmp, idx-1)
+        end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+    return false
+end
+function new_structt_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    new_structt_fwd(B, orig, gutils, normalR, shadowR)
+end
+
+function new_structt_rev(B, orig, gutils, tape)
+    if is_constant_value(gutils, orig)
+        return true
+    end
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    needsPrimal = needsPrimalP[] != 0
+    needsShadow = needsShadowP[] != 0
+
+	if !needsShadow
+		return
+	end
+    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_structt "*string(orig))
     return nothing
 end
 
@@ -195,11 +254,11 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield!(dptr, symname, cur+dret[])
+            setfield!(dptr, symname, recursive_add(cur, dret[]))
         else
-            setfield!(dptr, symname, cur+dret[1][])
+            setfield!(dptr, symname, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield!(dptrs[i], symname, cur+dret[1+i][])
+                setfield!(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
             end
         end
     end
@@ -211,11 +270,11 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield_idx(dptr, symname, cur+dret[])
+            setfield_idx(dptr, symname, recursive_add(cur, dret[]))
         else
-            setfield_idx(dptr, symname, cur+dret[1][])
+            setfield_idx(dptr, symname, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield_idx(dptrs[i], symname, cur+dret[1+i][])
+                setfield_idx(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
             end
         end
     end
@@ -480,6 +539,16 @@ function jl_nthfield_rev(B, orig, gutils, tape)
         return
     end
 
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+    needsPrimal = needsPrimalP[] != 0
+    needsShadow = needsShadowP[] != 0
+
+	if !needsShadow
+		return
+	end
+
     ops = collect(operands(orig))
     width = get_width(gutils)
 
@@ -633,24 +702,73 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
+function error_if_differentiable(::Type{T}) where T
+    seen = ()
+    areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
+    if areg != AnyState
+        throw(AssertionError("Found unhandled differentiable variable in jl_f_svec_ref $T"))
+    end
+    nothing
+end
+
 function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__svec_ref")
 
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+    width = get_width(gutils)
+
+    origmi, origh, origkey = operands(orig)[offset:end-1]
+
+    shadowh = invert_pointer(gutils, origh, B)
+        
+    newvals = API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal]
+
+    if offset != 1
+        pushfirst!(newvals, API.VT_Primal)
     end
+        
+    errfn = if is_constant_value(gutils, origh)
+        error_if_differentiable
+    else
+        error_if_active
+    end
+    
+    mi = new_from_original(gutils, origmi)
+
+    shadowres = if width == 1
+        newops = LLVM.Value[mi, shadowh, new_from_original(gutils, origkey)]
+        if offset != 1
+            pushfirst!(newops, operands(orig)[1])
+        end
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+        callconv!(cal, callconv(orig))
+   
+    
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(errfn), emit_jltypeof!(B, cal)])
+        cal
+    else
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        shadow = LLVM.UndefValue(ST)
+        for j in 1:width
+            newops = LLVM.Value[mi, extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey)]
+            if offset != 1
+                pushfirst!(newops, operands(orig)[1])
+            end
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+            callconv!(cal, callconv(orig))
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(errfn), emit_jltypeof!(B, cal)])
+            shadow = insert_value!(B, shadow, cal, j-1)
+        end
+        shadow
+    end
+
+    unsafe_store!(shadowR, shadowres.ref)
 
     return false
 end
 
 function common_f_svec_ref_rev(offset, B, orig, gutils, tape)
-    if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
-        emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_f__svec_ref")
-    end
     return nothing
 end
 

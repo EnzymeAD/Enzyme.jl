@@ -452,7 +452,8 @@ end
   ET_InternalError = 5,
   ET_TypeDepthExceeded = 6,
   ET_MixedActivityError = 7,
-  ET_IllegalReplaceFicticiousPHIs = 8
+  ET_IllegalReplaceFicticiousPHIs = 8,
+  ET_GetIndexError = 9
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
@@ -490,6 +491,10 @@ function EnzymeSetPostCacheStore(handler)
 end
 function EnzymeSetUndefinedValueForType(handler)
     ptr = cglobal((:EnzymeUndefinedValueForType, libEnzyme), Ptr{Ptr{Cvoid}})
+    unsafe_store!(ptr, handler)
+end
+function EnzymeSetShadowAllocRewrite(handler)
+    ptr = cglobal((:EnzymeShadowAllocRewrite, libEnzyme), Ptr{Ptr{Cvoid}})
     unsafe_store!(ptr, handler)
 end
 function EnzymeSetDefaultTapeType(handler)
