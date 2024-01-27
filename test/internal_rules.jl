@@ -109,6 +109,7 @@ end
     @test dA ≈ (-z * transpose(y))
 end
 
+@static if VERSION > v"1.8"
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
         α = one(Float64)
@@ -341,5 +342,6 @@ end
         end
         @test isapprox(fwdJ, revJ)
     end
+end
 end
 end # InternalRules
