@@ -144,6 +144,7 @@ const known_ops = Dict(
 end
 
 const nofreefns = Set{String}((
+    "ijl_tagged_gensym", "jl_tagged_gensym",
     "ijl_array_ptr_copy", "jl_array_ptr_copy",
     "ijl_array_copy", "jl_array_copy",
     "ijl_get_nth_field_checked", "ijl_get_nth_field_checked",
@@ -215,6 +216,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_tagged_gensym", "jl_tagged_gensym",
     "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
     "ijl_module_parent", "jl_module_parent",
