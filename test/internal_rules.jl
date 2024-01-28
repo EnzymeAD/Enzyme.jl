@@ -341,6 +341,22 @@ end
             @test isapprox(fwdJ, fdJ)
         end
         @test isapprox(fwdJ, revJ)
+
+        function h(A, b)
+            C = cholesky(A)
+            b2 = copy(b)
+            ldiv!(C, b2)
+            @inbounds b2[1]
+        end
+
+        A = [1.3 0.5; 0.5 1.5]
+        b = [1., 2.]
+        V = [1.0 0.0; 0.0 0.0]
+        dA = zero(A)
+        Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
+
+        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
+        @test isapprox(dA, dA_sym)
     end
 end
 end
