@@ -620,20 +620,20 @@ end
 function EnzymeRules.forward(
         func::Const{typeof(ldiv!)},
         RT::Type,
-        fact::Annotation{C},
-        B,
+        fact::Annotation{<:Cholesky},
+        B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
         kwargs...
-) where {C <: Union{Cholesky,Array}}
+)
     if isa(B, Const)
         @assert (RT <: Const)
-        return func.val(fact.val, B.val; kwargs...)
+        return ldiv!(fact.val, B.val; kwargs...)
     else
         N = width(B)
 
         @assert !isa(B, Const)
 
         retval = if !isa(fact, Const) || (RT <: Const) || (RT <: Duplicated) || (RT <: BatchDuplicated)
-            func.val(fact.val, B.val; kwargs...)
+            ldiv!(fact.val, B.val; kwargs...)
         else
             nothing
         end
@@ -655,16 +655,8 @@ function EnzymeRules.forward(
                     fact.dval[b]
                 end
                 
-                if C <: Array
-                    mul!(dB, dfact, retval, -1, 1)
-                else
-                    tmp = dfact.U * retval
-
-                    dB .-= dfact.L * tmp
-
-                    # if mul! was implemented for LU, this would be faster
-                    # mul!(dB, dfact.L, tmp, -1, 1)
-                end
+                tmp = dfact.U * retval
+                mul!(dB, dfact.L, tmp, -1, 1)
             end
 
             ldiv!(fact.val, dB; kwargs...)
@@ -749,11 +741,10 @@ function EnzymeRules.augmented_primal(
         func::Const{typeof(ldiv!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
 
-        A::Annotation{AType},
-        B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
+        A::Annotation{<:Cholesky},
+        B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
         kwargs...
-) where {AType <: Union{Cholesky, Array}}
-
+)
     ldiv!(A.val, B.val; kwargs...)
 
     cache_Bout = if !isa(A, Const) && !isa(B, Const)
@@ -796,11 +787,10 @@ function EnzymeRules.reverse(
     func::Const{typeof(ldiv!)},
     dret,
     cache,
-    A::Annotation{AType},
-    B;
+    A::Annotation{<:Cholesky},
+    B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
     kwargs...
-) where {AType <: Union{Cholesky,Array}}
-
+)
     if !isa(B, Const)
 
         (cache_A, cache_Bout) = cache
@@ -812,16 +802,11 @@ function EnzymeRules.reverse(
             #   dB = z, where  z = inv(A^T) dB
             #   dA −= z B(out)^T
 
-            func.val(cache_A, dB, kwargs...)
+            ldiv!(cache_A, dB; kwargs...)
 
             if !isa(A, Const)
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-
-                if AType <: Array
-                    mul!(dA, dB, transpose(cache_Bout), 1, -1)
-                else
-                    mul!(dA.factors, dB, transpose(cache_Bout), 1, -1)
-                end
+                mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
             end
         end
     end
