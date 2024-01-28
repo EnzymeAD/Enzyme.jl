@@ -627,14 +627,14 @@ function EnzymeRules.forward(
 )
     if isa(B, Const)
         @assert (RT <: Const)
-        return ldiv!(fact.val, B.val; kwargs...)
+        return func.val(fact.val, B.val; kwargs...)
     else
         N = width(B)
 
         @assert !isa(B, Const)
 
         retval = if !isa(fact, Const) || (RT <: Const) || (RT <: Duplicated) || (RT <: BatchDuplicated)
-            ldiv!(fact.val, B.val; kwargs...)
+            func.val(fact.val, B.val; kwargs...)
         else
             nothing
         end
@@ -660,7 +660,7 @@ function EnzymeRules.forward(
                 mul!(dB, dfact.L, tmp, -1, 1)
             end
 
-            ldiv!(fact.val, dB; kwargs...)
+            func.val(fact.val, dB; kwargs...)
         end
 
         if RT <: Const
@@ -746,7 +746,7 @@ function EnzymeRules.augmented_primal(
         B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
         kwargs...
 )
-    ldiv!(A.val, B.val; kwargs...)
+    func.val(A.val, B.val; kwargs...)
 
     cache_Bout = if !isa(A, Const) && !isa(B, Const)
         if EnzymeRules.overwritten(config)[3]
@@ -803,7 +803,7 @@ function EnzymeRules.reverse(
             #   dB = z, where  z = inv(A^T) dB
             #   dA −= z B(out)^T
 
-            ldiv!(cache_A, dB; kwargs...)
+            func.val(cache_A, dB; kwargs...)
             if !isa(A, Const)
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
                 mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
