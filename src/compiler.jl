@@ -4762,6 +4762,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(jlrules, fname)
         end
 
+        memcpy_alloca_to_loadstore(mod)
+
         adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType, loweredArgs, boxedArgs)
         toremove = []
         # Inline the wrapper

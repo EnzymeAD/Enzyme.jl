@@ -70,6 +70,122 @@ function source_elem(v)
     end
 end
 
+
+## given code like
+#  % a = alloca
+#  ...
+#  memref(cast(%a), %b, constant size == sizeof(a))
+#   
+#  turn this into load/store, as this is more
+#  amenable to caching analysis infrastructure
+function memcpy_alloca_to_loadstore(mod)
+    dl = datalayout(mod) 
+    for f in functions(mod)
+        if length(blocks(f)) != 0
+            bb = first(blocks(f))
+            todel = Set{LLVM.Instruction}()
+            for alloca in instructions(bb)
+                if !isa(alloca, LLVM.AllocaInst)
+                    continue
+                end
+                todo = Tuple{LLVM.Instruction, LLVM.Value}[(alloca, alloca)]
+                copy = nothing
+                legal = true
+                elty = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(alloca))
+                lifetimestarts = LLVM.Instruction[]
+                while length(todo) > 0
+                    cur, prev = pop!(todo)
+                    if isa(cur, LLVM.AllocaInst) || isa(cur, LLVM.AddrSpaceCastInst) || isa(cur, LLVM.BitCastInst)
+                        for u in LLVM.uses(cur)
+                            u = LLVM.user(u)
+                            push!(todo, (u, cur))
+                        end
+                        continue
+                    end
+                    if isa(cur, LLVM.CallInst) && isa(LLVM.called_operand(cur), LLVM.Function)
+                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
+                        if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+                            push!(lifetimestarts, cur)
+                            continue
+                        end
+                        if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+                            continue
+                        end
+                        if intr == LLVM.Intrinsic("llvm.memcpy").id
+                            sz = operands(cur)[3]
+                            if operands(cur)[1] == prev && isa(sz, LLVM.ConstantInt) && convert(Int, sz) == sizeof(dl, elty)
+                                if copy === nothing || copy == cur
+                                    copy = cur
+                                    continue
+                                end
+                            end
+                        end
+                    end
+
+                    # read only insts of arg, don't matter
+                    if isa(cur, LLVM.LoadInst)
+                        continue
+                    end
+                    if isa(cur, LLVM.CallInst) && isa(LLVM.called_operand(cur), LLVM.Function) 
+                        legalc = true
+                        for (i, ci) in enumerate(operands(cur)[1:end-1])
+                            if ci == prev
+                                nocapture = false
+                                readonly = false
+                                for a in collect(parameter_attributes(LLVM.called_operand(cur), i))
+                                    if kind(a) == kind(EnumAttribute("readonly"))
+                                        readonly = true
+                                    end
+                                    if kind(a) == kind(EnumAttribute("readnone"))
+                                        readonly = true
+                                    end
+                                    if kind(a) == kind(EnumAttribute("nocapture"))
+                                        nocapture = true
+                                    end
+                                end
+                                if !nocapture || !readonly
+                                    legalc = false
+                                    break
+                                end
+                            end
+                        end
+                        if legalc
+                            continue
+                        end
+                    end
+
+                    legal = false
+                    break
+                end
+                
+                if legal && copy !== nothing
+                    B = LLVM.IRBuilder()
+                    position!(B, copy)
+                    dst = operands(copy)[1]
+                    src = operands(copy)[2]
+                    dst0 = bitcast!(B, dst, LLVM.PointerType(LLVM.IntType(8), addrspace(value_type(dst))))
+
+                    dst = bitcast!(B, dst, LLVM.PointerType(elty, addrspace(value_type(dst))))
+                    src = bitcast!(B, src, LLVM.PointerType(elty, addrspace(value_type(src))))
+
+                    src = load!(B, elty, src)
+                    FT = LLVM.FunctionType(LLVM.VoidType(), [LLVM.IntType(64), value_type(dst0)])
+                    lifetimestart, _ = get_function!(mod, "llvm.lifetime.start.p0i8", FT)
+                    call!(B, FT, lifetimestart, LLVM.Value[LLVM.ConstantInt(Int64(sizeof(dl, elty))), dst0])
+                    store!(B, src, dst)
+                    push!(todel, copy)
+                end
+                for lt in lifetimestarts
+                    push!(todel, lt)
+                end
+            end
+            for inst in todel
+                unsafe_delete!(LLVM.parent(inst), inst)
+            end
+        end
+    end
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)

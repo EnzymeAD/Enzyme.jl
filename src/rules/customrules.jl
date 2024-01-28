@@ -490,6 +490,12 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
+    needsShadowJL = if RT <: Active
+        false
+    else
+        needsShadow
+    end
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
@@ -497,7 +503,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
     
     mode = get_mode(gutils)
 
@@ -774,7 +780,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         if width != 1
             ShadT = NTuple{Int(width), RealRt}
         end
-        ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, TapeT}
+        ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, TapeT}
         if aug_RT != ST
             if aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
                 if convert(LLVMType, EnzymeRules.shadow_type(aug_RT); allow_boxed=true) !=
@@ -782,11 +788,11 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                     emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " flex shadow ABI return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
                     return tapeV
                 end
-                ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadow ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
+                ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadowJL ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
             end
         end
         if aug_RT != ST
-            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, Any}
+            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
             emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
             return tapeV
         end
@@ -805,24 +811,26 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             idx+=1
         end
         if needsShadow
-            @assert !isghostty(RealRt)
-            shadowV = extract_value!(B, res, idx)
-            if get_return_info(RealRt)[2] !== nothing
-                dval = invert_pointer(gutils, operands(orig)[1], B)
+            if needsShadowJL
+                @assert !isghostty(RealRt)
+                shadowV = extract_value!(B, res, idx)
+                if get_return_info(RealRt)[2] !== nothing
+                    dval = invert_pointer(gutils, operands(orig)[1], B)
 
-                for idx in 1:width
-                    to_store = (width == 1) ? shadowV : extract_value!(B, shadowV, idx-1)
+                    for idx in 1:width
+                        to_store = (width == 1) ? shadowV : extract_value!(B, shadowV, idx-1)
 
-                    store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx-1)
+                        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx-1)
 
-                    store!(B, to_store, store_ptr)
+                        store!(B, to_store, store_ptr)
+                    end
+                    shadowV = C_NULL
+                else
+                    @assert value_type(shadowV) == shadowType
+                    shadowV = shadowV.ref
                 end
-                shadowV = C_NULL
-            else
-                @assert value_type(shadowV) == shadowType
-                shadowV = shadowV.ref
+                idx+=1
             end
-            idx+=1
         end
         if needsTape
             tapeV = extract_value!(B, res, idx).ref
