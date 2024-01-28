@@ -109,6 +109,7 @@ end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
+@inline EnzymeRules.inactive_type(v::Type{Char}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
 @inline EnzymeRules.inactive_type(v::Type{Function}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
@@ -138,7 +139,7 @@ function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDupli
 end
 
 # Deepcopy preserving the primal if runtime inactive
-@inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: Integer}
+@inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: Union{Integer, Char}}
     return Base.deepcopy_internal(shadow, seen)
 end
 @inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: AbstractFloat}
@@ -684,7 +685,7 @@ function EnzymeRules.forward(
     end
 end
 
-function EnzymeRules.augmented_primal(config, func::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
+function EnzymeRules.augmented_primal(config, func::Const{typeof(cholesky)}, RT::Type, A::Annotation{AT}; kwargs...) where {AT <: Array}
     fact = if EnzymeRules.needs_primal(config)
         cholesky(A.val; kwargs...)
     else
@@ -696,11 +697,11 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(cholesky)}, RT:
         nothing
     else
         if EnzymeRules.width(config) == 1
-            Cholesky(Matrix(fact), 'L', 0)
+            Enzyme.make_zero(fact)
         else
             ntuple(Val(EnzymeRules.width(config))) do i
                 Base.@_inline_meta
-                Cholesky(Matrix(fact), 'L', 0)
+                Enzyme.make_zero(fact)
             end
         end
     end
@@ -718,8 +719,8 @@ function EnzymeRules.reverse(
     ::Const{typeof(cholesky)},
     RT::Type,
     dfact,
-    A;
-    kwargs...)
+    A::Annotation{AT};
+    kwargs...) where {AT <: Array}
 
     if !(RT <: Const) && !isa(A, Const)
         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
@@ -813,14 +814,13 @@ function EnzymeRules.reverse(
             #   dA −= z B(out)^T
 
             func.val(cache_A, dB, kwargs...)
-
             if !isa(A, Const)
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
 
                 if AType <: Array
-                    mul!(dA, dB, transpose(cache_Bout), 1, -1)
+                    mul!(dA, dB, transpose(cache_Bout), -1, 1)
                 else
-                    mul!(dA.factors, dB, transpose(cache_Bout), 1, -1)
+                    mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
                 end
             end
         end
