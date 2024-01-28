@@ -109,6 +109,7 @@ end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
+@inline EnzymeRules.inactive_type(v::Type{Char}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
 @inline EnzymeRules.inactive_type(v::Type{Function}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
@@ -138,7 +139,7 @@ function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDupli
 end
 
 # Deepcopy preserving the primal if runtime inactive
-@inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: Integer}
+@inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: Union{Integer, Char}}
     return Base.deepcopy_internal(shadow, seen)
 end
 @inline function deepcopy_rtact(copied::RT, primal::RT, seen::IdDict, shadow::RT) where {RT <: AbstractFloat}
