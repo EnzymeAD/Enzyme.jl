@@ -743,7 +743,7 @@ function EnzymeRules.augmented_primal(
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
 
         A::Annotation{<:Cholesky},
-        B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
+        B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
         kwargs...
 )
     func.val(A.val, B.val; kwargs...)
@@ -789,7 +789,7 @@ function EnzymeRules.reverse(
     dret,
     cache,
     A::Annotation{<:Cholesky},
-    B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
+    B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
     kwargs...
 )
     if !isa(B, Const)
