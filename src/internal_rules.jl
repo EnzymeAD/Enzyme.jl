@@ -622,7 +622,7 @@ function EnzymeRules.forward(
         func::Const{typeof(ldiv!)},
         RT::Type,
         fact::Annotation{<:Cholesky},
-        B::Union{Const{<:AbstractVecOrMat}, DuplicatedNoNeed{<:AbstractVecOrMat}, Duplicated{<:AbstractVecOrMat}, BatchDuplicatedNoNeed{<:AbstractVecOrMat}, BatchDuplicated{<:AbstractVecOrMat}};
+        B;
         kwargs...
 )
     if isa(B, Const)
