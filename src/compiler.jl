@@ -2221,8 +2221,7 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
         end
         return ConstantStruct(ty, vals).ref
     end
-    @safe_show "Unknown type to val", Ty
-    @assert false
+    throw(AssertionError("Unknown type to val: $(Ty)"))
 end
 
 function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef)
@@ -3252,12 +3251,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     if is_adjoint && rettype <: Active
         @assert !sret_union
         if allocatedinline(actualRetType) != allocatedinline(literal_rt)
-            @safe_show actualRetType, literal_rt, rettype
+            throw(AssertionError("Base.allocatedinline(actualRetType) != Base.allocatedinline(literal_rt): actualRetType = $(actualRetType), literal_rt = $(literal_rt), rettype = $(rettype)"))
         end
-        @assert allocatedinline(actualRetType) == allocatedinline(literal_rt)
         if !allocatedinline(actualRetType)
-            @safe_show actualRetType, rettype
-            @assert allocatedinline(actualRetType)
+            throw(AssertionError("Base.allocatedinline(actualRetType) returns false: actualRetType = $(actualRetType), rettype = $(rettype)"))
         end
         dretTy = LLVM.LLVMType(API.EnzymeGetShadowType(width, convert(LLVMType, actualRetType)))
         push!(T_wrapperargs, dretTy)
@@ -4128,9 +4125,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 # copy the argument value to a stack slot, and reference it.
                 ty = value_type(parm)
                 if !isa(ty, LLVM.PointerType)
-                    @safe_show entry_f, args, parm, ty
+                    throw(AssertionError("ty is not a LLVM.PointerType: entry_f = $(entry_f), args = $(args), parm = $(parm), ty = $(ty)"))
                 end
-                @assert isa(ty, LLVM.PointerType)
                 ptr = alloca!(builder, eltype(ty))
                 if TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
