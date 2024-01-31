@@ -3252,7 +3252,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     if is_adjoint && rettype <: Active
         @assert !sret_union
         if allocatedinline(actualRetType) != allocatedinline(literal_rt)
-            @show actualRetType, literal_rt, rettype
+            @safe_show actualRetType, literal_rt, rettype
         end
         @assert allocatedinline(actualRetType) == allocatedinline(literal_rt)
         if !allocatedinline(actualRetType)
