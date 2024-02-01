@@ -447,6 +447,99 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     return (nothing,nothing)
 end
 
+
+function EnzymeRules.augmented_primal(
+    config,
+    func::Const{typeof(\)},
+    ::Type{RT},
+    A::Annotation{AT},
+    b::Annotation{BT}
+) where {RT, AT <: Union{UpperTriangular, LowerTriangular}, BT <: Array}
+    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    cache_A = compute_lu_cache(cache_A, b.val)
+    res = (cache_A \ b.val)::eltype(RT)
+    dres = if EnzymeRules.width(config) == 1
+        zero(res)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
+        end
+    end
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    cache_res = EnzymeRules.needs_primal(config) ? copy(res) : res
+    cache_b = EnzymeRules.overwritten(config)[3] ? copy(b.val) : nothing
+    cache = NamedTuple{
+        (Symbol("1"), Symbol("2"), Symbol("3"), Symbol("4")),
+        Tuple{typeof(res), typeof(dres), typeof(cache_A), typeof(cache_b)}
+    }((cache_res, dres, cache_A, cache_b))
+    return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), Any}(retres, dres, cache)
+end
+
+function EnzymeRules.reverse(
+    config,
+    func::Const{typeof(\)},
+    ::Type{RT},
+    cache,
+    A::Annotation{AT},
+    b::Annotation{BT}
+) where {RT, AT <: Union{UpperTriangular, LowerTriangular}, BT <: Array}
+    y, dys, cache_A, cache_b = cache
+
+    if !EnzymeRules.overwritten(config)[3]
+        cache_b = b.val
+    end
+
+    if EnzymeRules.width(config) == 1
+        dys = (dys,)
+    end
+
+    dAs = if EnzymeRules.width(config) == 1
+        typeof(A) <: Const ? (nothing,) : (A.dval,)
+    else
+        if typeof(A) <: Const
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                nothing
+            end
+        else
+            A.dval
+        end
+    end
+
+    dbs = if EnzymeRules.width(config) == 1
+        if typeof(b) <: Const
+            (nothing,)
+        else
+            (b.dval,)
+        end
+    else
+        if typeof(b) <: Const
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                nothing
+            end
+        else
+            b.dval
+        end
+    end
+
+    for (dA, db, dy) in zip(dAs, dbs, dys)
+        z = transpose(cache_A) \ dy
+        if !(typeof(A) <: Const)
+            @show dA.data
+            dA.data .-= AT(z * transpose(y))
+            @show dA.data
+        end
+        if !(typeof(b) <: Const)
+            db .+= z
+        end
+        dy .= eltype(dy)(0)
+    end
+
+    return (nothing,nothing)
+end
+
 @static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
