@@ -386,5 +386,32 @@ end
         @test isapprox(dA, dA_sym)
     end
 end
+
+@testset "Triangular matrices" begin
+    h(A, B) = sum(A \ B)
+    M = rand(3, 3)
+    δ = rand(3, 3)
+    B = rand(3, 3)
+    ϵ = 1e-9
+    for T in (UpperTriangular, LowerTriangular)
+        A = T(M)
+        @testset "using hand-made FD" begin
+            Y = A \ B
+            @test A * Y ≈ B
+            dM = Enzyme.make_zero(A)
+            dB = Enzyme.make_zero(B)
+            Enzyme.autodiff(Reverse, h, Duplicated(A, dM), Duplicated(B, dB))
+            V = T(δ)
+            @test (h(A + ϵ*V, B) - h(A, B)) / ϵ ≈ tr(V' * dM) rtol = 1e-5
+            V = δ
+            @test (h(A, B + ϵ*V) - h(A, B)) / ϵ ≈ tr(V' * dB) rtol = 1e-5
+        end
+        @testset "using EnzymeTestUtils" begin
+            for Tret in (Const, Active), TA in (Const, Duplicated), TB in (Const, Duplicated)
+                test_reverse(h, Tret, (A, TA), (B, TB); rtol = 1e-2, atol = 1e-2)
+            end
+        end
+    end
+end
 end
 end # InternalRules
