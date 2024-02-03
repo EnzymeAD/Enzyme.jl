@@ -533,7 +533,7 @@ function EnzymeRules.reverse(
     for (dA, db, dy) in zip(dAs, dbs, dys)
         z = transpose(cache_A) \ dy
         if !(typeof(A) <: Const)
-            dA.data .-= _zero_unused_elements(AT(z * transpose(y)))
+            dA.data .-= _zero_unused_elements!(AT(z * transpose(y)))
         end
         if !(typeof(b) <: Const)
             db .+= z
@@ -544,10 +544,10 @@ function EnzymeRules.reverse(
     return (nothing,nothing)
 end
 
-_zero_unused_elements(A::UpperTriangular) = triu!(A.data)
-_zero_unused_elements(A::LowerTriangular) = tril!(A.data)
-_zero_unused_elements(A::UnitUpperTriangular) = triu!(A.data, 1)
-_zero_unused_elements(A::UnitLowerTriangular) = tril!(A.data, -1)
+_zero_unused_elements!(A::UpperTriangular) = triu!(A.data)
+_zero_unused_elements!(A::LowerTriangular) = tril!(A.data)
+_zero_unused_elements!(A::UnitUpperTriangular) = triu!(A.data, 1)
+_zero_unused_elements!(A::UnitLowerTriangular) = tril!(A.data, -1)
 
 @static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)

@@ -401,6 +401,7 @@ end
             _rand_tangent(A::UpperTriangular) = UpperTriangular(rand(size(A)...))
             _rand_tangent(A::LowerTriangular) = LowerTriangular(rand(size(A)...))
             _rand_tangent(A::UnitUpperTriangular) = UpperTriangular(triu!(rand(size(A)...), 1))
+            _rand_tangent(A::UnitLowerTriangular) = LowerTriangular(tril!(rand(size(A)...), -1))
             Y = A \ B
             @test A * Y ≈ B
             dA = Enzyme.make_zero(A)
@@ -412,8 +413,10 @@ end
             @test (h(A, B + ϵ*W) - h(A, B)) / ϵ ≈ tr(W' * dB) rtol = 1e-5
         end
         @testset "test against EnzymeTestUtils" begin
-            for Tret in (Const, Active), TA in (Const, Duplicated), TB in (Const, Duplicated)
-                test_reverse(h, Tret, (A, TA), (B, TB); rtol = 1e-2, atol = 1e-2)
+            for Tret in (Const, Active), TB in (Const, Duplicated)
+                test_reverse(h, Tret, (A, Const), (B, TB); rtol = 1e-2, atol = 1e-2)
+                dA = T(Enzyme._zero_unused_elements!(EnzymeTestUtils.rand_tangent(A)))
+                test_reverse(h, Tret, Duplicated(A, dA), (B, TB); rtol = 1e-2, atol = 1e-2)
             end
         end
     end
