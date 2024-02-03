@@ -447,6 +447,12 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     return (nothing,nothing)
 end
 
+const EnzymeTriangulars = Union{
+    UpperTriangular,
+    LowerTriangular,
+    UnitUpperTriangular,
+    UnitLowerTriangular
+}
 
 function EnzymeRules.augmented_primal(
     config,
@@ -454,7 +460,7 @@ function EnzymeRules.augmented_primal(
     ::Type{RT},
     A::Annotation{AT},
     b::Annotation{BT}
-) where {RT, AT <: Union{UpperTriangular, LowerTriangular}, BT <: Array}
+) where {RT, AT <: EnzymeTriangulars, BT <: Array}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     cache_A = compute_lu_cache(cache_A, b.val)
     res = (cache_A \ b.val)::eltype(RT)
@@ -483,7 +489,7 @@ function EnzymeRules.reverse(
     cache,
     A::Annotation{AT},
     b::Annotation{BT}
-) where {RT, AT <: Union{UpperTriangular, LowerTriangular}, BT <: Array}
+) where {RT, AT <: EnzymeTriangulars, BT <: Array}
     y, dys, cache_A, cache_b = cache
 
     if !EnzymeRules.overwritten(config)[3]
@@ -527,9 +533,7 @@ function EnzymeRules.reverse(
     for (dA, db, dy) in zip(dAs, dbs, dys)
         z = transpose(cache_A) \ dy
         if !(typeof(A) <: Const)
-            @show dA.data
-            dA.data .-= AT(z * transpose(y))
-            @show dA.data
+            dA.data .-= _zero_unused_elements(AT(z * transpose(y)))
         end
         if !(typeof(b) <: Const)
             db .+= z
@@ -539,6 +543,11 @@ function EnzymeRules.reverse(
 
     return (nothing,nothing)
 end
+
+_zero_unused_elements(A::UpperTriangular) = triu!(A.data)
+_zero_unused_elements(A::LowerTriangular) = tril!(A.data)
+_zero_unused_elements(A::UnitUpperTriangular) = triu!(A.data, 1)
+_zero_unused_elements(A::UnitLowerTriangular) = tril!(A.data, -1)
 
 @static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)

@@ -387,29 +387,44 @@ end
     end
 end
 
-@testset "Triangular matrices" begin
+@testset "Linear solve for triangular matrices" begin
     h(A, B) = sum(A \ B)
     M = rand(3, 3)
-    δ = rand(3, 3)
     B = rand(3, 3)
     ϵ = 1e-9
-    for T in (UpperTriangular, LowerTriangular)
+    @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular)
         A = T(M)
-        @testset "using hand-made FD" begin
+        @testset "test against hand-rolled FD" begin
+            # Custom tangent for triangular matrices
+            # EnzymeTestUtils.rand_tangent is not in the tangent space for `Unit...Triangular`
+            # matrices
+            _rand_tangent(A::UpperTriangular) = UpperTriangular(rand(size(A)...))
+            _rand_tangent(A::LowerTriangular) = LowerTriangular(rand(size(A)...))
+            _rand_tangent(A::UnitUpperTriangular) = UpperTriangular(triu!(rand(size(A)...), 1))
             Y = A \ B
             @test A * Y ≈ B
-            dM = Enzyme.make_zero(A)
+            dA = Enzyme.make_zero(A)
             dB = Enzyme.make_zero(B)
-            Enzyme.autodiff(Reverse, h, Duplicated(A, dM), Duplicated(B, dB))
-            V = T(δ)
-            @test (h(A + ϵ*V, B) - h(A, B)) / ϵ ≈ tr(V' * dM) rtol = 1e-5
-            V = δ
-            @test (h(A, B + ϵ*V) - h(A, B)) / ϵ ≈ tr(V' * dB) rtol = 1e-5
+            V = _rand_tangent(A)
+            W = rand(3, 3)
+            Enzyme.autodiff(Reverse, h, Duplicated(A, dA), Duplicated(B, dB))
+            @test (h(A + ϵ*V, B) - h(A, B)) / ϵ ≈ tr(V' * dA) rtol = 1e-5
+            @test (h(A, B + ϵ*W) - h(A, B)) / ϵ ≈ tr(W' * dB) rtol = 1e-5
         end
-        @testset "using EnzymeTestUtils" begin
+        @testset "test against EnzymeTestUtils" begin
             for Tret in (Const, Active), TA in (Const, Duplicated), TB in (Const, Duplicated)
                 test_reverse(h, Tret, (A, TA), (B, TB); rtol = 1e-2, atol = 1e-2)
             end
+        end
+    end
+    @testset "test against EnzymeTestUtils through constructor" begin
+        hUT(A, B) = h(UpperTriangular(A), B)
+        hLT(A, B) = h(LowerTriangular(A), B)
+        hUUT(A, B) = h(UnitUpperTriangular(A), B)
+        hULT(A, B) = h(UnitLowerTriangular(A), B)
+        for f in (hUT, hLT, hUUT, hULT),
+            Tret in (Const, Active), TA in (Const, Duplicated), TB in (Const, Duplicated)
+            test_reverse(f, Tret, (M, TA), (B, TB); rtol = 1e-2, atol = 1e-2)
         end
     end
 end
