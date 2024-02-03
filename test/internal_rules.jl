@@ -2,6 +2,7 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
+using EnzymeTestUtils
 using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
