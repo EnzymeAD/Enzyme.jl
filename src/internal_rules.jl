@@ -531,14 +531,14 @@ function EnzymeRules.reverse(
     end
 
     for (dA, db, dy) in zip(dAs, dbs, dys)
-        z = transpose(cache_A) \ dy
+        z = adjoint(cache_A) \ dy
         if !(typeof(A) <: Const)
-            dA.data .-= _zero_unused_elements!(AT(z * transpose(y)))
+            dA.data .-= _zero_unused_elements!(AT(z * adjoint(y)))
         end
         if !(typeof(b) <: Const)
             db .+= z
         end
-        dy .= eltype(dy)(0)
+        dy .= zero(eltype(dy))
     end
 
     return (nothing,nothing)
