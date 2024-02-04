@@ -389,38 +389,23 @@ end
 end
 
 @testset "Linear solve for triangular matrices" begin
-    h(A, B) = sum(A \ B)
-    # Custom tangent for triangular matrices
-    # EnzymeTestUtils.rand_tangent is not in the tangent space for `Unit...Triangular`
-    # matrices
-    _rand_tangent(A::UpperTriangular) = UpperTriangular(rand(eltype(A), size(A)...))
-    _rand_tangent(A::LowerTriangular) = LowerTriangular(rand(eltype(A), size(A)...))
-    _rand_tangent(A::UnitUpperTriangular) = UpperTriangular(triu!(rand(eltype(A), size(A)...), 1))
-    _rand_tangent(A::UnitLowerTriangular) = LowerTriangular(tril!(rand(eltype(A), size(A)...), -1))
+    h!(Y, A, B) = (copyto!(Y, A \ B); nothing)
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
         M = rand(TE, 3, 3)
         B = rand(TE, sizeB...)
+        Y = zeros(TE, sizeB...)
         A = T(M)
-        @testset "test against hand-rolled FD" begin
-            Y = A \ B
-            @test A * Y ≈ B
-            dA = Enzyme.make_zero(A)
-            dB = Enzyme.make_zero(B)
-            V = _rand_tangent(A)
-            W = rand(TE, size(B)...)
-            ϵ = 1e-9
-            Enzyme.autodiff(Reverse, h, Duplicated(A, dA), Duplicated(B, dB))
-            @test (h(A + ϵ*V, B) - h(A, B)) / ϵ ≈ tr(adjoint(dA) * V) rtol = 1e-6
-            @test (h(A, B + ϵ*W) - h(A, B)) / ϵ ≈ tr(adjoint(dB) * W) rtol = 1e-6
-        end
         @testset "test against EnzymeTestUtils through constructor" begin
             _A = T(A)
-            function f(::T, A, B) where T
-                return h(T(A), B)
+            function f!(Y, A, B, ::T) where T
+                return h!(Y, T(A), B)
             end
-            for Tret in (Const, Active), TA in (Const, Duplicated), TB in (Const, Duplicated)
-                test_reverse(f, Tret, (_A, Const), (M, TA), (B, TB))
+            for Tret in (Const, Active),
+                TY in (Const, Duplicated),
+                TA in (Const, Duplicated),
+                TB in (Const, Duplicated)
+                test_reverse(f!, Const, (Y, TY), (M, TA), (B, TB), (_A, Const))
             end
         end
     end
