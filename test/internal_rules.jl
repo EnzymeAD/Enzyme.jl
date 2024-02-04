@@ -398,9 +398,9 @@ end
     _rand_tangent(A::UnitUpperTriangular) = UpperTriangular(triu!(rand(eltype(A), size(A)...), 1))
     _rand_tangent(A::UnitLowerTriangular) = LowerTriangular(tril!(rand(eltype(A), size(A)...), -1))
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
-        TE in (Float64, ComplexF64)
+        TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
         M = rand(TE, 3, 3)
-        B = rand(TE, 3, 3)
+        B = rand(TE, sizeB...)
         A = T(M)
         @testset "test against hand-rolled FD" begin
             Y = A \ B
@@ -408,7 +408,7 @@ end
             dA = Enzyme.make_zero(A)
             dB = Enzyme.make_zero(B)
             V = _rand_tangent(A)
-            W = rand(TE, 3, 3)
+            W = rand(TE, size(B)...)
             ϵ = 1e-9
             Enzyme.autodiff(Reverse, h, Duplicated(A, dA), Duplicated(B, dB))
             @test (h(A + ϵ*V, B) - h(A, B)) / ϵ ≈ tr(adjoint(dA) * V) rtol = 1e-6
