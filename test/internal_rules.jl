@@ -389,7 +389,6 @@ end
 end
 
 @testset "Linear solve for triangular matrices" begin
-    h!(Y, A, B) = (copyto!(Y, A \ B); nothing)
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
         M = rand(TE, 3, 3)
@@ -399,7 +398,7 @@ end
         @testset "test against EnzymeTestUtils through constructor" begin
             _A = T(A)
             function f!(Y, A, B, ::T) where T
-                return h!(Y, T(A), B)
+                return ldiv!(Y, T(A), B)
             end
             for Tret in (Const, Active),
                 TY in (Const, Duplicated),

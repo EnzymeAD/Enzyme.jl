@@ -456,92 +456,48 @@ const EnzymeTriangulars = Union{
 
 function EnzymeRules.augmented_primal(
     config,
-    func::Const{typeof(\)},
+    func::Const{typeof(ldiv!)},
     ::Type{RT},
+    Y::Annotation{YT},
     A::Annotation{AT},
-    b::Annotation{BT}
-) where {RT, AT <: EnzymeTriangulars, BT <: Array}
+    B::Annotation{BT}
+) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
+    cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
-    cache_A = compute_lu_cache(cache_A, b.val)
-    res = (cache_A \ b.val)::eltype(RT)
-    dres = if EnzymeRules.width(config) == 1
-        zero(res)
-    else
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            zero(res)
-        end
-    end
-    retres = EnzymeRules.needs_primal(config) ? res : nothing
-    cache_res = EnzymeRules.needs_primal(config) ? copy(res) : res
-    cache_b = EnzymeRules.overwritten(config)[3] ? copy(b.val) : nothing
-    cache = NamedTuple{
-        (Symbol("1"), Symbol("2"), Symbol("3"), Symbol("4")),
-        Tuple{typeof(res), typeof(dres), typeof(cache_A), typeof(cache_b)}
-    }((cache_res, dres, cache_A, cache_b))
-    return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), Any}(retres, dres, cache)
+    cache_A = compute_lu_cache(cache_A, B.val)
+    cache_B = EnzymeRules.overwritten(config)[3] ? copy(B.val) : nothing
+    primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
+    return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
+        primal, shadow, (cache_Y, cache_A, cache_B))
 end
 
 function EnzymeRules.reverse(
     config,
-    func::Const{typeof(\)},
+    func::Const{typeof(ldiv!)},
     ::Type{RT},
     cache,
+    Y::Annotation{YT},
     A::Annotation{AT},
-    b::Annotation{BT}
-) where {RT, AT <: EnzymeTriangulars, BT <: Array}
-    y, dys, cache_A, cache_b = cache
-
-    if !EnzymeRules.overwritten(config)[3]
-        cache_b = b.val
-    end
-
-    if EnzymeRules.width(config) == 1
-        dys = (dys,)
-    end
-
-    dAs = if EnzymeRules.width(config) == 1
-        typeof(A) <: Const ? (nothing,) : (A.dval,)
-    else
-        if typeof(A) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
+    B::Annotation{BT}
+) where {YT <: Array, RT, AT <: EnzymeTriangulars, BT <: Array}
+    if !isa(Y, Const)
+        (cache_Yout, cache_A, cache_B) = cache
+        for b in 1:EnzymeRules.width(config)
+            dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
+            z = adjoint(cache_A) \ dY
+            if !isa(B, Const)
+                dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
+                dB .+= z
             end
-        else
-            A.dval
-        end
-    end
-
-    dbs = if EnzymeRules.width(config) == 1
-        if typeof(b) <: Const
-            (nothing,)
-        else
-            (b.dval,)
-        end
-    else
-        if typeof(b) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
+            if !isa(A, Const)
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+                dA.data .-= _zero_unused_elements!(AT(z * adjoint(cache_Yout)))
             end
-        else
-            b.dval
+            dY .= zero(eltype(dY))
         end
     end
-
-    for (dA, db, dy) in zip(dAs, dbs, dys)
-        z = adjoint(cache_A) \ dy
-        if !(typeof(A) <: Const)
-            dA.data .-= _zero_unused_elements!(AT(z * adjoint(y)))
-        end
-        if !(typeof(b) <: Const)
-            db .+= z
-        end
-        dy .= zero(eltype(dy))
-    end
-
-    return (nothing,nothing)
+    return (nothing, nothing, nothing)
 end
 
 _zero_unused_elements!(A::UpperTriangular) = triu!(A.data)
