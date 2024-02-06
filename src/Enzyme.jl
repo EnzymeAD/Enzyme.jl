@@ -725,7 +725,8 @@ result, ∂v, ∂A
 """
 @inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
     @assert RABI == FFIABI
-    args′  = annotate(args...)
+    # args′  = annotate(args...)
+    args′  = args
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
