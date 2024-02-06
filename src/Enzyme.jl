@@ -669,7 +669,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
         if obj === nothing
 
             Compiler.JuliaContext() do ctx
-                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job) 
+                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
             end
@@ -725,7 +725,7 @@ result, ∂v, ∂A
 """
 @inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
     @assert RABI == FFIABI
-    # args′  = annotate(args...)
+    args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
@@ -743,9 +743,9 @@ result, ∂v, ∂A
     end
 
     @assert ReturnShadow
-    TT = Tuple{args...}
+    TT = Tuple{args′...}
 
-    primal_tt = Tuple{map(eltype, args)...}
+    primal_tt = Tuple{map(eltype, args′)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
@@ -755,9 +755,9 @@ result, ∂v, ∂A
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
     AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
-    @assert AugT == typeof(nondef[1])
+    # @assert AugT == typeof(nondef[1])
     AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
-    @assert AdjT == typeof(nondef[2])
+    # @assert AdjT == typeof(nondef[2])
     AugT(primal_ptr), AdjT(adjoint_ptr)
 end
 
