@@ -66,81 +66,45 @@ include("gradientutils.jl")
 include("compiler/utils.jl")
 
 # Julia function to LLVM stem and arity
-@static if VERSION < v"1.8.0"
-const known_ops = Dict(
-    Base.cbrt => (:cbrt, 1),
-    Base.rem2pi => (:jl_rem2pi, 2),
-    Base.sqrt => (:sqrt, 1),
-    Base.sin => (:sin, 1),
-    Base.sinc => (:sincn, 1),
-    Base.sincos => (:__fd_sincos_1, 1),
-    Base.sincospi => (:sincospi, 1),
-    Base.sinpi => (:sinpi, 1),
-    Base.cospi => (:cospi, 1),
-    Base.:^ => (:pow, 2),
-    Base.rem => (:fmod, 2),
-    Base.cos => (:cos, 1),
-    Base.tan => (:tan, 1),
-    Base.exp => (:exp, 1),
-    Base.exp2 => (:exp2, 1),
-    Base.expm1 => (:expm1, 1),
-    Base.exp10 => (:exp10, 1),
-    Base.FastMath.exp_fast => (:exp, 1),
-    Base.log => (:log, 1),
-    Base.FastMath.log => (:log, 1),
-    Base.log1p => (:log1p, 1),
-    Base.log2 => (:log2, 1),
-    Base.log10 => (:log10, 1),
-    Base.asin => (:asin, 1),
-    Base.acos => (:acos, 1),
-    Base.atan => (:atan, 1),
-    Base.atan => (:atan2, 2),
-    Base.sinh => (:sinh, 1),
-    Base.FastMath.sinh_fast => (:sinh, 1),
-    Base.cosh => (:cosh, 1),
-    Base.FastMath.cosh_fast => (:cosh, 1),
-    Base.tanh => (:tanh, 1),
-    Base.ldexp => (:ldexp, 2),
-    Base.FastMath.tanh_fast => (:tanh, 1)
+const known_ops =
+Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
+    typeof(Base.cbrt) => (:cbrt, 1, nothing),
+    typeof(Base.rem2pi) => (:jl_rem2pi, 2, nothing),
+    typeof(Base.sqrt) => (:sqrt, 1, nothing),
+    typeof(Base.sin) => (:sin, 1, nothing),
+    typeof(Base.sinc) => (:sincn, 1, nothing),
+    typeof(Base.sincos) => (:__fd_sincos_1, 1, nothing),
+    typeof(Base.sincospi) => (:sincospi, 1, nothing),
+    typeof(Base.sinpi) => (:sinpi, 1, nothing),
+    typeof(Base.cospi) => (:cospi, 1, nothing),
+    typeof(Base.:^) => (:pow, 2, nothing),
+    typeof(Base.rem) => (:fmod, 2, nothing),
+    typeof(Base.cos) => (:cos, 1, nothing),
+    typeof(Base.tan) => (:tan, 1, nothing),
+    typeof(Base.exp) => (:exp, 1, nothing),
+    typeof(Base.exp2) => (:exp2, 1, nothing),
+    typeof(Base.expm1) => (:expm1, 1, nothing),
+    typeof(Base.exp10) => (:exp10, 1, nothing),
+    typeof(Base.FastMath.exp_fast) => (:exp, 1, nothing),
+    typeof(Base.log) => (:log, 1, nothing),
+    typeof(Base.FastMath.log) => (:log, 1, nothing),
+    typeof(Base.log1p) => (:log1p, 1, nothing),
+    typeof(Base.log2) => (:log2, 1, nothing),
+    typeof(Base.log10) => (:log10, 1, nothing),
+    typeof(Base.asin) => (:asin, 1, nothing),
+    typeof(Base.acos) => (:acos, 1, nothing),
+    typeof(Base.atan) => (:atan, 1, nothing),
+    typeof(Base.atan) => (:atan2, 2, nothing),
+    typeof(Base.sinh) => (:sinh, 1, nothing),
+    typeof(Base.FastMath.sinh_fast) => (:sinh, 1, nothing),
+    typeof(Base.cosh) => (:cosh, 1, nothing),
+    typeof(Base.FastMath.cosh_fast) => (:cosh, 1, nothing),
+    typeof(Base.tanh) => (:tanh, 1, nothing),
+    typeof(Base.ldexp) => (:ldexp, 2, nothing),
+    typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing)
 )
-else
-const known_ops = Dict(
-    Base.fma_emulated => (:fma, 3),
-    Base.cbrt => (:cbrt, 1),
-    Base.rem2pi => (:jl_rem2pi, 2),
-    Base.sqrt => (:sqrt, 1),
-    Base.sin => (:sin, 1),
-    Base.sinc => (:sincn, 1),
-    Base.sincos => (:__fd_sincos_1, 1),
-    Base.sincospi => (:sincospi, 1),
-    Base.sinpi => (:sinpi, 1),
-    Base.cospi => (:cospi, 1),
-    Base.:^ => (:pow, 2),
-    Base.rem => (:fmod, 2),
-    Base.cos => (:cos, 1),
-    Base.tan => (:tan, 1),
-    Base.exp => (:exp, 1),
-    Base.exp2 => (:exp2, 1),
-    Base.expm1 => (:expm1, 1),
-    Base.exp10 => (:exp10, 1),
-    Base.FastMath.exp_fast => (:exp, 1),
-    Base.log => (:log, 1),
-    Base.FastMath.log => (:log, 1),
-    Base.log1p => (:log1p, 1),
-    Base.log2 => (:log2, 1),
-    Base.log10 => (:log10, 1),
-    Base.asin => (:asin, 1),
-    Base.acos => (:acos, 1),
-    Base.atan => (:atan, 1),
-    Base.atan => (:atan2, 2),
-    Base.sinh => (:sinh, 1),
-    Base.FastMath.sinh_fast => (:sinh, 1),
-    Base.cosh => (:cosh, 1),
-    Base.FastMath.cosh_fast => (:cosh, 1),
-    Base.tanh => (:tanh, 1),
-    Base.ldexp => (:ldexp, 2),
-    Base.FastMath.tanh_fast => (:tanh, 1)
-)
+@static if VERSION >= v"1.8.0"
+    known_ops[typeof(Base.fma_emulated)] = (:fma, 3, nothing)
 end
 
 const nofreefns = Set{String}((
@@ -2541,6 +2505,7 @@ include("rules/allocrules.jl")
 include("rules/llvmrules.jl")
 
 function __init__()
+    API.memmove_warning!(false)
     API.EnzymeSetHandler(@cfunction(julia_error, LLVM.API.LLVMValueRef, (Cstring, LLVM.API.LLVMValueRef, API.ErrorType, Ptr{Cvoid}, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef)))
     API.EnzymeSetSanitizeDerivatives(@cfunction(julia_sanitize, LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)));
     API.EnzymeSetRuntimeInactiveError(@cfunction(emit_inacterror, Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)))
@@ -4470,6 +4435,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     actualRetType = nothing
     lowerConvention = true
     customDerivativeNames = String[]
+    fnsToInject = Tuple{Symbol, Type}[]
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
         has_custom_rule = false
@@ -4526,11 +4492,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        Base.isbindingresolved(jlmod, name) && isdefined(jlmod, name) || continue
-        func = getfield(jlmod, name)
+        func = mi.specTypes.parameters[1]
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
-        if func == Base.eps || func == Base.nextfloat || func == Base.prevfloat
+        if func == typeof(Base.eps) || func == typeof(Base.nextfloat) || func == typeof(Base.prevfloat)
             handleCustom("jl_inactive_inout", [StringAttribute("enzyme_inactive"),
                                       EnumAttribute("readnone", 0),
                                       EnumAttribute("speculatable", 0),
@@ -4538,7 +4503,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                                       ])
             continue
         end
-        if func == Base.to_tuple_type
+        if func == typeof(Base.to_tuple_type)
             handleCustom("jl_to_tuple_type",
                    [EnumAttribute("readonly", 0),
                     EnumAttribute("inaccessiblememonly", 0),
@@ -4548,8 +4513,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                   ])
             continue
         end
-        if func == Base.Threads.threadid || func == Base.Threads.nthreads
-            name = (func == Base.Threads.threadid) ? "jl_threadid" : "jl_nthreads"
+        if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
+            name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
             handleCustom(name,
                    [EnumAttribute("readonly", 0),
                     EnumAttribute("inaccessiblememonly", 0),
@@ -4563,7 +4528,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # in a way accessible by the function. Ideally the attributor should actually
         # handle this and similar not impacting the read/write behavior of the calling
         # fn, but it doesn't presently so for now we will ensure this by hand
-        if func == Base.Checked.throw_overflowerr_binaryop
+        if func == typeof(Base.Checked.throw_overflowerr_binaryop)
             llvmfn = functions(mod)[k.specfunc]
             handleCustom("enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly")])
             continue
@@ -4584,17 +4549,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
             continue
         end
-        if func == Base.enq_work && length(sparam_vals) == 1 && first(sparam_vals) <: Task
+        if func == typeof(Base.enq_work) && length(sparam_vals) == 1 && first(sparam_vals) <: Task
             handleCustom("jl_enq_work")
             continue
         end
-        if func == Base.wait || func == Base._wait
+        if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
                 handleCustom("jl_wait")
             end
             continue
         end
-        if func == Base.Threads.threading_run
+        if func == typeof(Base.Threads.threading_run)
             if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom("jl_threadsfor")
             end
@@ -4602,9 +4567,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
 
         func ∈ keys(known_ops) || continue
-        name, arity = known_ops[func]
+        name, arity, toinject = known_ops[func]
         length(sparam_vals) == arity || continue
-
         T = first(sparam_vals)
         isfloat = T ∈ (Float32, Float64)
         if !isfloat
@@ -4623,10 +4587,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
            all(==(T), sparam_vals) || continue
         end
 
-        if name == :__fd_sincos_1 || name == :sincospi
-          source_sig = Base.signature_type(func, sparam_vals)
+        if toinject !== nothing
+            push!(fnsToInject, toinject)
+        end
+
+        # If sret, force lower of primitive math fn
+        sret = get_return_info(k.ci.rettype)[2] !== nothing
+        if sret
           cur = llvmfn == primalf
-          llvmfn, _, boxedArgs, loweredArgs = lower_convention(source_sig, mod, llvmfn, k.ci.rettype, Duplicated, (Const, Duplicated))
+          llvmfn, _, boxedArgs, loweredArgs = lower_convention(mi.specTypes, mod, llvmfn, k.ci.rettype, Duplicated, (Const, Duplicated))
           if cur
               primalf = llvmfn
               lowerConvention = false
@@ -4849,6 +4818,16 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 			end
 		end
 	end
+    for (name, fnty) in fnsToInject
+		for (T, JT, pf) in ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
+            fname = String(name)*pf
+            if haskey(functions(mod), fname)
+                funcspec = GPUCompiler.methodinstance(fnty, Tuple{JT}, world)
+                llvmf = nested_codegen!(mode, mod, funcspec, world)
+                push!(function_attributes(llvmf), StringAttribute("implements", fname))
+            end
+		end
+    end
     API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom

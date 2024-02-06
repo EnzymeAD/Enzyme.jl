@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.11.14"
+version = "0.11.15"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -25,3 +25,9 @@ LLVM = "6.1"
 ObjectFile = "0.4"
 Preferences = "1.4"
 julia = "1.6"
+
+[weakdeps]
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+
+[extensions]
+EnzymeSpecialFunctionsExt = "SpecialFunctions"

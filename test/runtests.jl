@@ -85,6 +85,14 @@ end
 @static if VERSION ≥ v"1.7-" || !Sys.iswindows()
     include("blas.jl")
 end
+@static if VERSION ≥ v"1.9-"
+    using SpecialFunctions
+    @testset "SpecialFunctions ext" begin
+        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+        test_scalar(lgabsg, 1.0)
+        test_scalar(lgabsg, 1.0f0)
+    end
+end
 
 f0(x) = 1.0 + x
 function vrec(start, x)
