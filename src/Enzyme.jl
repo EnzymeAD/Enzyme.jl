@@ -751,8 +751,11 @@ result, ∂v, ∂A
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
     nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = EnzymeRules.tape_type(nondef[1])
-    A2 = Compiler.return_type(typeof(nondef[1]))
+    # @show TapeType = EnzymeRules.tape_type(nondef[1])
+    # @show A2 = Compiler.return_type(typeof(nondef[1]))
+    A2 = Const{Nothing}
+    TapeType = Float64
+    # TapeType = CuArray{Float64, 1, CUDA.Mem.DeviceBuffer}
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
     AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
