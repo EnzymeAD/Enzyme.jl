@@ -724,8 +724,8 @@ function EnzymeRules.reverse(
         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
 
         for (dA, dfact) in zip(dAs, dfacts)
-            if dA !== dfact.factors
-                _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
+            _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
+            if _dA !== dfact.factors
                 _dA .+= dfact.factors
                 dfact.factors .= 0
             end
