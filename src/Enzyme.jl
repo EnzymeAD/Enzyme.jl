@@ -750,7 +750,8 @@ result, ∂v, ∂A
     world = codegen_world_age(eltype(FA), primal_tt)
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    # XXX: Calling thunk from autodiff_deferred_thunk is invalid.
+    # nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     # @show TapeType = EnzymeRules.tape_type(nondef[1])
     # @show A2 = Compiler.return_type(typeof(nondef[1]))
     A2 = Const{Nothing}
