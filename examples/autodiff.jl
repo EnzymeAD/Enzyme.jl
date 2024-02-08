@@ -116,9 +116,9 @@ dbx[2] == 1.0
 # (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
 # ```math
 # \begin{aligned}
-# \b{x} = \bar{x} + \bar{y} \cdot \nabla f(x) \\
-# \bar{y} = 0
-# \begin{end}
+# \bar{x} &= \bar{x} + \bar{y} \cdot \nabla f(x) \\
+# \bar{y} &= 0
+# \end{aligned}
 # ```
 function grad(x, dx, y, dy)
   Enzyme.autodiff_deferred(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
