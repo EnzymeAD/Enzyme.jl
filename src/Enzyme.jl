@@ -723,10 +723,12 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+@inline function autodiff_deferred_thunk(
+    ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
+    ::Type{FA}, ::Type{A}, args...
+) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
     @assert RABI == FFIABI
     # args′  = annotate(args...)
-    args′  = args
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
@@ -744,19 +746,54 @@ result, ∂v, ∂A
     end
 
     @assert ReturnShadow
-    TT = Tuple{args′...}
+    TT = Tuple{args...}
 
-    primal_tt = Tuple{map(eltype, args′)...}
+    primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
     # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
     # XXX: Calling thunk from autodiff_deferred_thunk is invalid.
-    # nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    # @show TapeType = EnzymeRules.tape_type(nondef[1])
-    # @show A2 = Compiler.return_type(typeof(nondef[1]))
-    A2 = Const{Nothing}
-    TapeType = Float64
-    # TapeType = CuArray{Float64, 1, CUDA.Mem.DeviceBuffer}
+    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    TapeType = EnzymeRules.tape_type(nondef[1])
+    A2 = Compiler.return_type(typeof(nondef[1]))
+
+
+    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
+    # @assert AugT == typeof(nondef[1])
+    AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
+    # @assert AdjT == typeof(nondef[2])
+    AugT(primal_ptr), AdjT(adjoint_ptr)
+end
+
+@inline function autodiff_deferred_thunk(
+    ::Type{TapeType}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
+    ::Type{FA}, ::Type{A}, ::Type{A2}, args...
+) where {FA<:Annotation, A<:Annotation, A2, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+# ) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    @assert RABI == FFIABI
+    # args′  = annotate(args...)
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+
+    primal_tt = Tuple{map(eltype, args)...}
+    world = codegen_world_age(eltype(FA), primal_tt)
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
     AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
