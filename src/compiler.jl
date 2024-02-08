@@ -5230,7 +5230,6 @@ end
         push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
 
         mod = LLVM.parent(llvm_f)
-        i64 = LLVM.IntType(64)
         LLVM.IRBuilder() do builder
             entry = BasicBlock(llvm_f, "entry")
             position!(builder, entry)
@@ -5302,6 +5301,7 @@ end
 
         if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
             return quote
+                @show $PT, fptr
                 Base.@_inline_meta
                 Base.llvmcall(($ir, $fn), $combinedReturn,
                         Tuple{$PT, $(types...)},

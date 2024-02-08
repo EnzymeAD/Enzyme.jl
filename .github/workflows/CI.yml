@@ -15,70 +15,13 @@ jobs:
       matrix:
         version:
           - '1.6'
-          - '1.7'
-          - '1.8'
-          - '1.9'
-          - '1.10'
-          - 'nightly'
         os:
           - ubuntu-20.04
-          - macOS-latest
-          - windows-latest
         arch:
-          - x64
+          - x86
         assertions:
           - false
-        libEnzyme: [local, packaged]
-        exclude:
-          - os: windows-latest
-            arch: x64
-            libEnzyme: local
-        include:
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.6'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.7'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.8'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.9'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.7'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.8'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.9'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: true
+        libEnzyme: [packaged]
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
