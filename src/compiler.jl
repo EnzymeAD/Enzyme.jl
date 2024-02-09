@@ -5326,6 +5326,7 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
     if job.config.params.ABI <: InlineABI
         return CompileResult(Val((Symbol(mod), Symbol(adjoint_name))), Val((Symbol(mod), Symbol(primal_name))), TapeType)
     end
+    println(string(mod))
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
