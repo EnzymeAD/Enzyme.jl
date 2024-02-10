@@ -1811,17 +1811,18 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            ttval = val
-            if isa(ttval, LLVM.StoreInst)
-                ttval = operands(ttval)[1]
-            end
-	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
-            st = API.EnzymeTypeTreeToString(tt)
-            print(io, "Type tree: ")
-            println(io, Base.unsafe_string(st))
-            API.EnzymeStringFree(st)
             if badval !== nothing
                 println(io, " value="*badval)
+            else
+                ttval = val
+                if isa(ttval, LLVM.StoreInst)
+                    ttval = operands(ttval)[1]
+                end
+                tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
+                st = API.EnzymeTypeTreeToString(tt)
+                print(io, "Type tree: ")
+                println(io, Base.unsafe_string(st))
+                API.EnzymeStringFree(st)
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
