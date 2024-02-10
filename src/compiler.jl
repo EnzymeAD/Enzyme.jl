@@ -2884,7 +2884,7 @@ function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error=true)
                 ty = Base.unsafe_pointer_to_objref(ptr)
             end
             if kind(fattr) == "enzymejl_parmtype_ref"
-                byref = parse(UInt, LLVM.value(fattr)) != 0
+                byref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(fattr)))
             end
         end
     end
@@ -3741,17 +3741,32 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
             continue
         end
         codegen_typ = codegen_types[codegen_i]
-        if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
-            push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ, arg_i=source_i,
+
+        if codegen_typ isa LLVM.PointerType
+            llvm_source_typ = convert(LLVMType, source_typ; allow_boxed=true)
+            # pointers are used for multiple kinds of arguments
+            # - literal pointer values
+            if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                @assert llvm_source_typ == codegen_typ
+            	push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
-        elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
-               !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
-            push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ, arg_i=source_i,
+            # - boxed values
+            #   XXX: use `deserves_retbox` instead?
+            elseif llvm_source_typ isa LLVM.PointerType
+                @assert llvm_source_typ == codegen_typ
+            	push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
+            # - references to aggregates
+            else
+                @assert llvm_source_typ != codegen_typ
+            	push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ, arg_i=source_i,
+                         codegen=(typ=codegen_typ, i=codegen_i)))
+            end
         else
             push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
         end
+
         codegen_i += 1
         orig_i += 1
     end
@@ -4469,7 +4484,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # Unsupported calling conv
         # also wouldn't have any type info for this [would for earlier args though]
         if mi.specTypes.parameters[end] === Vararg{Any}
-            return
+            continue
         end
 
         world = enzyme_extract_world(f)
@@ -4489,9 +4504,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 continue
             end
             push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
-        
-            ref = GPUCompiler.deserves_argbox(arg.typ) || arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF
-            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype_ref", string(Int(ref))))
+            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
         end
     end
 

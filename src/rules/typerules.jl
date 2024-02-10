@@ -75,20 +75,19 @@ function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
             ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
             rest = typetree(typ, ctx, dl)
-            if GPUCompiler.deserves_retbox(typ)
-                merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                only!(rest, -1)
-            end
-            API.EnzymeMergeTypeTree(ret, rest)
+            changed, legal = API.EnzymeCheckedMergeTypeTree(ret, rest)
+            @assert legal
         end
         return UInt8(false)
     end
 
     if (direction & API.UP) != 0
-        API.EnzymeMergeTypeTree(unsafe_load(args), ret)
+        changed, legal = API.EnzymeCheckedMergeTypeTree(unsafe_load(args), ret)
+        @assert legal
     end
     if (direction & API.DOWN) != 0
-        API.EnzymeMergeTypeTree(ret, unsafe_load(args))
+        changed, legal = API.EnzymeCheckedMergeTypeTree(ret, unsafe_load(args))
+        @assert legal
     end
     return UInt8(false)
 end
@@ -155,8 +154,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         
         op_idx = arg.codegen.i
         rest = typetree(arg.typ, ctx, dl)
-        @assert (args.cc == GPUCompiler.BITS_REF) == byref
-        if byref
+        @assert arg.cc == byref
+        if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF 
             # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
             # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
             # aka the next field after this in the bigger object isn't guaranteed to also be the same.

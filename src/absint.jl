@@ -221,8 +221,10 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                continue
             end
             if offset === nothing && isa(arg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(arg)[2:end])
-                b = LLVM.Builder(arg)
-                offset = API.EnzymeComputeByteOffsetOfGEP(b, v, offty)
+                b = LLVM.IRBuilder() 
+                position!(b, arg)
+                offty = LLVM.IntType(64)
+                offset = API.EnzymeComputeByteOffsetOfGEP(b, arg, offty)
                 @assert isa(offset, LLVM.ConstantInt)
                 offset = convert(Int, offset)
                 arg = operands(arg)[1]
@@ -237,7 +239,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
                 idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
                 typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
-                if typ !== nothing && byref
+                if typ !== nothing && byref == GPUCompiler.BITS_REF
                     if offset === nothing
                         return (true, typ)
                     else
@@ -271,7 +273,10 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
         typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
-        if typ !== nothing && !byref
+        if typ !== nothing
+            if byref == GPUCompiler.BITS_REF
+                typ = Ptr{typ}
+            end
             return (true, typ)
         end
     end
