@@ -130,6 +130,17 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             return abs_typeof(operands(arg)[1], partial)
         end
         
+        for (fname, ty) in (
+                             ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
+                             ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
+                             ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
+                             ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                            )
+            if nm == fname
+                return (true, ty)
+            end
+        end
+        
     	# Type tag is arg 3
         if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
         	return absint(operands(arg)[3], partial)
