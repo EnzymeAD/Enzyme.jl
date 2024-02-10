@@ -211,33 +211,36 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
     end
 
     if isa(arg, LLVM.LoadInst)
-        arg = operands(arg)[1]
+        larg = operands(arg)[1]
         offset = nothing
         error = false
         while true
-            if isa(arg, LLVM.BitCastInst) ||
-               isa(arg, LLVM.AddrSpaceCastInst)
-               arg = operands(arg)[1]
+            if isa(larg, LLVM.BitCastInst) ||
+               isa(larg, LLVM.AddrSpaceCastInst)
+               larg = operands(larg)[1]
                continue
             end
-            if offset === nothing && isa(arg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(arg)[2:end])
+            if offset === nothing && isa(larg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(larg)[2:end])
                 b = LLVM.IRBuilder() 
-                position!(b, arg)
+                position!(b, larg)
                 offty = LLVM.IntType(64)
-                offset = API.EnzymeComputeByteOffsetOfGEP(b, arg, offty)
+                offset = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
                 @assert isa(offset, LLVM.ConstantInt)
                 offset = convert(Int, offset)
-                arg = operands(arg)[1]
+                larg = operands(larg)[1]
                 continue
+            end
+            if isa(larg, LLVM.Argument)
+                break
             end
             error = true
             break
         end
 
         if !error
-            if isa(arg, LLVM.Argument)
-                f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
-                idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
+            if isa(larg, LLVM.Argument)
+                f = LLVM.Function(LLVM.API.LLVMGetParamParent(larg))
+                idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == larg])
                 typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
                 if typ !== nothing && byref == GPUCompiler.BITS_REF
                     if offset === nothing
@@ -251,17 +254,21 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                             end
                             error("Unknown llvm type to size: "*string(ty))
                         end
-                        @show "TODO", typ, offset
                         @assert Base.isconcretetype(typ)
                         for i in 1:fieldcount(typ)
                             if fieldoffset(typ, i) == offset
                                 subT  = fieldtype(typ, i)
-                                if sizeof(subT) == llsz(value_type(arg))
+                                fsize = if i == fieldcount(typ)
+                                    sizeof(typ)
+                                else
+                                    fieldoffset(typ, i+1)
+                                end - offset
+                                if fsize == llsz(value_type(larg))
                                     return (true, subT)
                                 end
                             end
                         end
-                        @show "not found", typ, offset, [fieldoffset(typ, i) for i in 1:fieldcount(typ)]
+                        # @show "not found", typ, offset, [fieldoffset(typ, i) for i in 1:fieldcount(typ)]
                     end
                 end
             end
