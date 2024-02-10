@@ -221,6 +221,84 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
     end
 
+    if isa(arg, LLVM.LoadInst)
+        larg = operands(arg)[1]
+        offset = nothing
+        error = false
+        while true
+            if isa(larg, LLVM.BitCastInst) ||
+               isa(larg, LLVM.AddrSpaceCastInst)
+               larg = operands(larg)[1]
+               continue
+            end
+            if offset === nothing && isa(larg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+                b = LLVM.IRBuilder() 
+                position!(b, larg)
+                offty = LLVM.IntType(64)
+                offset = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+                @assert isa(offset, LLVM.ConstantInt)
+                offset = convert(Int, offset)
+                larg = operands(larg)[1]
+                continue
+            end
+            if isa(larg, LLVM.Argument)
+                break
+            end
+            error = true
+            break
+        end
+
+        if !error
+            if isa(larg, LLVM.Argument)
+                f = LLVM.Function(LLVM.API.LLVMGetParamParent(larg))
+                idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == larg])
+                typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+                if typ !== nothing && byref == GPUCompiler.BITS_REF
+                    if offset === nothing
+                        return (true, typ)
+                    else
+                        function llsz(ty)
+                            if isa(ty, LLVM.PointerType)
+                                return sizeof(Ptr{Cvoid})
+                            elseif isa(ty, LLVM.IntegerType)
+                                return LLVM.width(ty) / 8
+                            end
+                            error("Unknown llvm type to size: "*string(ty))
+                        end
+                        @assert Base.isconcretetype(typ)
+                        for i in 1:fieldcount(typ)
+                            if fieldoffset(typ, i) == offset
+                                subT  = fieldtype(typ, i)
+                                fsize = if i == fieldcount(typ)
+                                    sizeof(typ)
+                                else
+                                    fieldoffset(typ, i+1)
+                                end - offset
+                                if fsize == llsz(value_type(larg))
+                                    return (true, subT)
+                                end
+                            end
+                        end
+                        # @show "not found", typ, offset, [fieldoffset(typ, i) for i in 1:fieldcount(typ)]
+                    end
+                end
+            end
+        end
+        
+    end
+
+    if isa(arg, LLVM.Argument)
+        f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
+        idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
+        typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+        if typ !== nothing
+            if byref == GPUCompiler.BITS_REF
+                typ = Ptr{typ}
+            end
+            return (true, typ)
+        end
+    end
+
     legal, val = absint(arg, partial)
 	if legal
 		return (true, Core.Typeof(val))

@@ -1811,17 +1811,18 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            ttval = val
-            if isa(ttval, LLVM.StoreInst)
-                ttval = operands(ttval)[1]
-            end
-	        tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
-            st = API.EnzymeTypeTreeToString(tt)
-            print(io, "Type tree: ")
-            println(io, Base.unsafe_string(st))
-            API.EnzymeStringFree(st)
             if badval !== nothing
                 println(io, " value="*badval)
+            else
+                ttval = val
+                if isa(ttval, LLVM.StoreInst)
+                    ttval = operands(ttval)[1]
+                end
+                tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
+                st = API.EnzymeTypeTreeToString(tt)
+                print(io, "Type tree: ")
+                println(io, Base.unsafe_string(st))
+                API.EnzymeStringFree(st)
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
@@ -2874,6 +2875,25 @@ function enzyme_custom_extract_mi(orig::LLVM.Function, error=true)
     return mi, RT
 end
 
+function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error=true)
+    ty = nothing
+    byref = nothing
+    for fattr in collect(parameter_attributes(fn, idx))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_parmtype"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                ty = Base.unsafe_pointer_to_objref(ptr)
+            end
+            if kind(fattr) == "enzymejl_parmtype_ref"
+                byref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(fattr)))
+            end
+        end
+    end
+    if error && (byref === nothing || ty === nothing)
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find parm type at index", idx, fn 
+    end
+    return ty, byref
+end
 
 include("rules/typerules.jl")
 include("rules/activityrules.jl")
@@ -3722,17 +3742,32 @@ function classify_arguments(source_sig::Type, codegen_ft::LLVM.FunctionType, has
             continue
         end
         codegen_typ = codegen_types[codegen_i]
-        if codegen_typ isa LLVM.PointerType && !issized(eltype(codegen_typ))
-            push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ, arg_i=source_i,
+
+        if codegen_typ isa LLVM.PointerType
+            llvm_source_typ = convert(LLVMType, source_typ; allow_boxed=true)
+            # pointers are used for multiple kinds of arguments
+            # - literal pointer values
+            if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                @assert llvm_source_typ == codegen_typ
+            	push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
-        elseif codegen_typ isa LLVM.PointerType && issized(eltype(codegen_typ)) &&
-               !(source_typ <: Ptr) && !(source_typ <: Core.LLVMPtr)
-            push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ, arg_i=source_i,
+            # - boxed values
+            #   XXX: use `deserves_retbox` instead?
+            elseif llvm_source_typ isa LLVM.PointerType
+                @assert llvm_source_typ == codegen_typ
+            	push!(args, (cc=GPUCompiler.MUT_REF, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
+            # - references to aggregates
+            else
+                @assert llvm_source_typ != codegen_typ
+            	push!(args, (cc=GPUCompiler.BITS_REF, typ=source_typ, arg_i=source_i,
+                         codegen=(typ=codegen_typ, i=codegen_i)))
+            end
         else
             push!(args, (cc=GPUCompiler.BITS_VALUE, typ=source_typ, arg_i=source_i,
                          codegen=(typ=codegen_typ, i=codegen_i)))
         end
+
         codegen_i += 1
         orig_i += 1
     end
@@ -4420,6 +4455,60 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             run!(pm, mod)
         end
     end
+    
+    for f in functions(mod)
+        mi, RT = enzyme_custom_extract_mi(f, false)
+        if mi === nothing
+            continue
+        end
+
+        llRT, sret, returnRoots =  get_return_info(RT)
+        retRemoved, parmsRemoved = removed_ret_parms(f)
+        
+        dl = string(LLVM.datalayout(LLVM.parent(f)))
+
+        expectLen = (sret !== nothing) + (returnRoots !== nothing)
+        for source_typ in mi.specTypes.parameters
+            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+                continue
+            end
+            expectLen+=1
+        end
+        expectLen -= length(parmsRemoved)
+
+        swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(f, i)))) for i in 1:length(collect(parameters(f))))
+
+        if swiftself
+            expectLen += 1
+        end
+
+        # Unsupported calling conv
+        # also wouldn't have any type info for this [would for earlier args though]
+        if mi.specTypes.parameters[end] === Vararg{Any}
+            continue
+        end
+
+        world = enzyme_extract_world(f)
+
+        if expectLen != length(parameters(f))
+            println(string(f))
+            @show expectLen, swiftself, sret, returnRoots, mi.specTypes.parameters, retRemoved, parmsRemoved
+        end
+        # TODO fix the attributor inlining such that this can assert always true
+        @assert expectLen == length(parameters(f))
+
+
+        jlargs = classify_arguments(mi.specTypes, function_type(f), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
+
+        for arg in jlargs
+            if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                continue
+            end
+            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
+            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
+        end
+    end
+
 
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
@@ -4656,9 +4745,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if lowerConvention 
         primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, job.config.params.rt, TT)
     end
-
+    
     push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world)))
-
+    
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()
     else

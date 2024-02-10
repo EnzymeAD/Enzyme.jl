@@ -74,21 +74,23 @@ function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
         if (direction & API.DOWN) != 0
             ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
-            rest = typetree(typ, ctx, dl)
             if GPUCompiler.deserves_retbox(typ)
-                merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                only!(rest, -1)
+                typ = Ptr{typ}
             end
-            API.EnzymeMergeTypeTree(ret, rest)
+            rest = typetree(typ, ctx, dl)
+            changed, legal = API.EnzymeCheckedMergeTypeTree(ret, rest)
+            @assert legal
         end
         return UInt8(false)
     end
 
     if (direction & API.UP) != 0
-        API.EnzymeMergeTypeTree(unsafe_load(args), ret)
+        changed, legal = API.EnzymeCheckedMergeTypeTree(unsafe_load(args), ret)
+        @assert legal
     end
     if (direction & API.DOWN) != 0
-        API.EnzymeMergeTypeTree(ret, unsafe_load(args))
+        changed, legal = API.EnzymeCheckedMergeTypeTree(ret, unsafe_load(args))
+        @assert legal
     end
     return UInt8(false)
 end
@@ -140,8 +142,8 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen == length(ops)
 
-    cv = LLVM.called_operand(inst)
-    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(cv, i)))) for i in 1:length(collect(parameters(cv))))
+    f = LLVM.called_operand(inst)
+    swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(f, i)))) for i in 1:length(collect(parameters(f))))
     jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
 
@@ -150,9 +152,13 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
             continue
         end
 
+        typ, byref = enzyme_extract_parm_type(f, arg.codegen.i)
+        @assert typ == arg.typ
+        
         op_idx = arg.codegen.i
         rest = typetree(arg.typ, ctx, dl)
-        if arg.cc == GPUCompiler.BITS_REF
+        @assert arg.cc == byref
+        if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF 
             # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
             # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
             # aka the next field after this in the bigger object isn't guaranteed to also be the same.
