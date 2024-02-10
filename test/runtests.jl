@@ -85,7 +85,7 @@ end
 @static if VERSION ≥ v"1.7-" || !Sys.iswindows()
     include("blas.jl")
 end
-using Enzyme.API.printall!(true)
+
 @static if VERSION ≥ v"1.9-"
     using SpecialFunctions
     @testset "SpecialFunctions ext" begin
@@ -94,7 +94,6 @@ using Enzyme.API.printall!(true)
         test_scalar(lgabsg, 1.0f0)
     end
 end
-using Enzyme.API.printall!(false)
 
 f0(x) = 1.0 + x
 function vrec(start, x)
