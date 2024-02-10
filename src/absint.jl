@@ -234,7 +234,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
 
         if !error
             if isa(arg, LLVM.Argument)
-                f = LLVM.parent(arg)
+                f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
                 idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
                 typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
                 if typ !== nothing && byref
@@ -268,7 +268,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
     end
 
     if isa(arg, LLVM.Argument)
-        f = LLVM.parent(arg)
+        f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
         typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
         if typ !== nothing && !byref
