@@ -134,9 +134,29 @@ end
         fact = cholesky(A)
         divdriver_NC(x, fact, b)
     end
+
+    function divdriver_herm(x, A, b)
+        fact = cholesky(Hermitian(A))
+        divdriver_NC(x, fact, b)
+    end
+
+    function divdriver_sym(x, A, b)
+        fact = cholesky(Symmetric(A))
+        divdriver_NC(x, fact, b)
+    end
     
     function ldivdriver(x, A, b)
         fact = cholesky(A)
+        ldivdriver_NC(x, fact, b)
+    end
+
+    function ldivdriver_herm(x, A, b)
+        fact = cholesky(Hermitian(A))
+        ldivdriver_NC(x, fact, b)
+    end
+
+    function ldivdriver_sym(x, A, b)
+        fact = cholesky(Symmetric(A))
         ldivdriver_NC(x, fact, b)
     end
 
@@ -306,7 +326,14 @@ end
         return J
     end
     
-    @testset "Testing $op" for (op, driver, driver_NC) in ((:\, divdriver, divdriver_NC), (:ldiv!, ldivdriver, ldivdriver_NC))
+    @testset "Testing $op" for (op, driver, driver_NC) in (
+        (:\, divdriver, divdriver_NC),
+        (:\, divdriver_herm, divdriver_NC),
+        (:\, divdriver_sym, divdriver_NC),
+        (:ldiv!, ldivdriver, ldivdriver_NC),
+        (:ldiv!, ldivdriver_herm, ldivdriver_NC),
+        (:ldiv!, ldivdriver_sym, ldivdriver_NC)
+    )
         A, b = symmetric_definite(10)
         n = length(b)
         A = Matrix(A)

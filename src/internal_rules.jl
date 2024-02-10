@@ -677,7 +677,12 @@ function EnzymeRules.forward(
     end
 end
 
-function EnzymeRules.augmented_primal(config, func::Const{typeof(cholesky)}, RT::Type, A::Annotation{AT}; kwargs...) where {AT <: Array}
+function EnzymeRules.augmented_primal(
+    config,
+    func::Const{typeof(cholesky)},
+    RT::Type,
+    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
+    kwargs...)
     fact = if EnzymeRules.needs_primal(config)
         cholesky(A.val; kwargs...)
     else
@@ -711,16 +716,17 @@ function EnzymeRules.reverse(
     ::Const{typeof(cholesky)},
     RT::Type,
     dfact,
-    A::Annotation{AT};
-    kwargs...) where {AT <: Array}
+    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
+    kwargs...)
 
     if !(RT <: Const) && !isa(A, Const)
         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
 
         for (dA, dfact) in zip(dAs, dfacts)
-            if dA !== dfact.factors
-                dA .+= dfact.factors
+            _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
+            if _dA !== dfact.factors
+                _dA .+= dfact.factors
                 dfact.factors .= 0
             end
         end
