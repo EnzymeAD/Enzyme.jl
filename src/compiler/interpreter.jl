@@ -45,6 +45,7 @@ end
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
 Core.Compiler.get_world_counter(interp::EnzymeInterpreter) = interp.world
+Core.Compiler.get_inference_world(interp::EnzymeInterpreter) = interp.world
 Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
 Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.global_cache, interp.world)
 
