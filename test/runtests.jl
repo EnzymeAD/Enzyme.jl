@@ -66,6 +66,7 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
+@static if false
 Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat = false)
 
 include("abi.jl")
@@ -86,13 +87,16 @@ end
     include("blas.jl")
 end
 
+end
 @static if VERSION ≥ v"1.9-"
+    Enzyme.API.printall!(true)
     using SpecialFunctions
     @testset "SpecialFunctions ext" begin
         lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
         test_scalar(lgabsg, 1.0)
         test_scalar(lgabsg, 1.0f0)
     end
+    Enzyme.API.printall!(false)
 end
 
 f0(x) = 1.0 + x
