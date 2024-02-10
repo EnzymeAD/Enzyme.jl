@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.11.14"
+version = "0.11.15"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -15,6 +15,12 @@ ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[weakdeps]
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+
+[extensions]
+EnzymeSpecialFunctionsExt = "SpecialFunctions"
 
 [compat]
 CEnum = "0.4, 0.5"

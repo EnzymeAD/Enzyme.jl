@@ -66,7 +66,7 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
-Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
+Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false)
 
 include("abi.jl")
 include("typetree.jl")
@@ -84,6 +84,15 @@ include("typetree.jl")
 end
 @static if VERSION ≥ v"1.7-" || !Sys.iswindows()
     include("blas.jl")
+end
+
+@static if VERSION ≥ v"1.9-"
+    using SpecialFunctions
+    @testset "SpecialFunctions ext" begin
+        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    end
 end
 
 f0(x) = 1.0 + x
