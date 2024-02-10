@@ -4566,14 +4566,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        @show func
         func ∈ keys(known_ops) || continue
         name, arity, toinject = known_ops[func]
-        @show name, arity, toinject, sparam_vals
         length(sparam_vals) == arity || continue
         T = first(sparam_vals)
         isfloat = T ∈ (Float32, Float64)
-        @show isfloat
         if !isfloat
             continue
         end
@@ -4590,7 +4587,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
            all(==(T), sparam_vals) || continue
         end
 
-        @show toinject
         if toinject !== nothing
             push!(fnsToInject, toinject)
         end
