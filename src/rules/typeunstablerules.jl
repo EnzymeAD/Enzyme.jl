@@ -6,8 +6,24 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
 
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+
     @assert is_constant_value(gutils, origops[offset])
     icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+    abs = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
+
+    legal = true
+    for (icv, (found, typ)) in zip(icvs, abs)
+        if icv
+            if found
+                if guaranteed_const_nongen(typ, world)
+                    continue
+                end
+            end
+            legal = false
+        end
+    end
+
     # if all(icvs)
     #     shadowres = new_from_original(gutils, orig)
     #     if width != 1
@@ -20,8 +36,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     #     unsafe_store!(shadowR, shadowres.ref)
     #     return false
     # end
-    if any(icvs)
-        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig))
+    if !legal
+        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig)*" "*string(abs)*" "*string([v for v in origops[offset+1:end-1]]))
     end
 
     shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:end-1] ]
