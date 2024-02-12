@@ -4380,12 +4380,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     check_ir(job, mod)
 
     disableFallback = String[]
-    # Tablegen BLAS does not support runtime activity, nor forward mode yet
+    # Tablegen BLAS does not support forward mode yet
     if mode != API.DEM_ForwardMode
-        blas_types = ("s", "d")
-        blas_readonly = ("dot","gemm","gemv","axpy","copy","scal")
         for ty in ("s", "d")
-            for func in ("dot",)
+            for func in ("dot","gemm","gemv","axpy","copy","scal")
                 for prefix in ("cblas_")
                 #for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
