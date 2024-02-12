@@ -9,7 +9,10 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
         return UInt8(false)
     end
     legal, typ = abs_typeof(inst)
-    @assert legal
+    if !legal
+        return UInt8(false)
+        throw(AssertionError("Cannot deduce type of alloc obj, $(string(inst)) of $(string(LLVM.parent(LLVM.parent(inst))))"))
+    end
 
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
