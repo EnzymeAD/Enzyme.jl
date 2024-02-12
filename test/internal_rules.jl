@@ -413,9 +413,9 @@ end
                 return ldiv!(Y, T(A), B)
             end
             for Tret in (Const, Active),
-                TY in (Const, Duplicated),
-                TA in (Const, Duplicated),
-                TB in (Const, Duplicated)
+                TY in (Const, Duplicated, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated),
+                TB in (Const, Duplicated, BatchDuplicated)
                 test_reverse(f!, Const, (Y, TY), (M, TA), (B, TB), (_A, Const))
             end
         end
