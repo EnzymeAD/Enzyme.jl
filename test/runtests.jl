@@ -2328,6 +2328,37 @@ end
 	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
 end
 
+
+struct DensePE
+    n_inp::Int
+    W::Matrix{Float64}
+end
+
+struct NNPE
+    layers::Tuple{DensePE, DensePE}
+end
+
+
+function set_paramsPE(nn, params)
+    i = 1
+    for l in nn.layers
+        W = l.W # nn.layers[1].W
+        Base.copyto!(W, reshape(view(params,i:(i+length(W)-1)), size(W)))
+    end
+end
+
+@testset "Illegal phi erasure" begin
+    # just check that it compiles
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(set_paramsPE)}, Const, Duplicated{NNPE}, Duplicated{Vector{Float64}})
+    @test fwd !== nothing
+    @test rev !== nothing
+    nn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
+    dnn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
+    l = Vector{Float64}(undef, 32)
+    dl = Vector{Float64}(undef, 32)
+    fwd(Const(set_paramsPE), Duplicated(nn, dnn), Duplicated(l, dl))
+end
+
 @testset "Copy Broadcast arg" begin
 	x = Float32[3]
 	w = Float32[1]
