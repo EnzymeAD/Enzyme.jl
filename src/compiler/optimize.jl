@@ -593,6 +593,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                     end
 
                     for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(operands(st))-1)]...]
+                        idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                         count = LLVM.API.LLVMGetCallSiteAttributeCount(st, idx);
                         
                         Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
