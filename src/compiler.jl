@@ -4491,12 +4491,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         world = enzyme_extract_world(f)
 
         if expectLen != length(parameters(f))
-            println(string(f))
-            @show expectLen, swiftself, sret, returnRoots, mi.specTypes.parameters, retRemoved, parmsRemoved
+            continue
+            throw(AssertionError("Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved"))
         end
-        # TODO fix the attributor inlining such that this can assert always true
-        @assert expectLen == length(parameters(f))
-
 
         jlargs = classify_arguments(mi.specTypes, function_type(f), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
