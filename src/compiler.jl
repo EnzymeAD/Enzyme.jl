@@ -4384,8 +4384,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if mode != API.DEM_ForwardMode
         for ty in ("s", "d")
             for func in ("dot","gemm","gemv","axpy","copy","scal")
-                for prefix in ("cblas_")
-                #for prefix in ("", "cblas_")
+                for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end

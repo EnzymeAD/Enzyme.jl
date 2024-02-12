@@ -234,7 +234,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             if offset === nothing && isa(larg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(larg)[2:end])
                 b = LLVM.IRBuilder() 
                 position!(b, larg)
-                offty = LLVM.IntType(64)
+                offty = LLVM.IntType(8*sizeof(Int))
                 offset = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
                 @assert isa(offset, LLVM.ConstantInt)
                 offset = convert(Int, offset)
