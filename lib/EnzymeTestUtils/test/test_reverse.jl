@@ -10,6 +10,11 @@ end
 
 f_kwargs_rev(x; a=3.0, kwargs...) = a .* x .^ 2
 
+function f_kwargs_rev!(x; kwargs...)
+    copyto!(x, f_kwargs_rev(x; kwargs...))
+    return nothing
+end
+
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.ConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
@@ -157,6 +162,19 @@ end
             fkwargs = (; a, incorrect_primal=true)
             @test fails() do
                 test_reverse(f_kwargs_rev, Duplicated, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect mutated argument detected" begin
+        @testset for Tx in (Const, Duplicated)
+            x = randn(3)
+            a = randn()
+
+            test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs=(; a))
+            fkwargs = (; a, incorrect_primal=true)
+            @test fails() do
+                test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs)
             end
         end
     end
