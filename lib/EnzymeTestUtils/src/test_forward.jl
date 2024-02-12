@@ -70,7 +70,9 @@ function test_forward(
         activities = map(auto_activity, (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
-        y = call_with_copy(primals...)
+        fcopy = deepcopy(first(primals))
+        args_copy = deepcopy(Base.tail(primals))
+        y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # call finitedifferences, avoid mutating original arguments
         dy_fdm = _fd_forward(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
@@ -98,6 +100,22 @@ function test_forward(
             dy_ad = ()
         else
             throw(ArgumentError("Unsupported return activity type: $ret_activity"))
+        end
+        test_approx(
+            first(activities).val,
+            fcopy,
+            "The rule must mutate the callable the same way as the function";
+            atol,
+            rtol,
+        )
+        for (i, (act_i, arg_i)) in enumerate(zip(Base.tail(activities), args_copy))
+            test_approx(
+                act_i.val,
+                arg_i,
+                "The rule must mutate argument $i the same way as the function";
+                atol,
+                rtol,
+            )
         end
         if y isa Tuple
             @assert length(dy_ad) == length(dy_fdm)
