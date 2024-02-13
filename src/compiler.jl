@@ -4380,14 +4380,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     check_ir(job, mod)
 
     disableFallback = String[]
-    # Tablegen BLAS does not support runtime activity, nor forward mode yet
+    # Tablegen BLAS does not support forward mode yet
     if mode != API.DEM_ForwardMode
-        blas_types = ("s", "d")
-        blas_readonly = ("dot","gemm","gemv","axpy","copy","scal")
         for ty in ("s", "d")
-            for func in ("dot",)
-                for prefix in ("cblas_")
-                #for prefix in ("", "cblas_")
+            for func in ("dot","gemm","gemv","axpy","copy","scal")
+                for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end
@@ -4395,7 +4392,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
     end
-    if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
+    found = String[]
+    if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
             run!(pm, mod)
@@ -4449,7 +4447,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice")))
             end
         end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
+        GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
         ModulePassManager() do pm
             global_optimizer!(pm)
             run!(pm, mod)

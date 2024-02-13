@@ -124,18 +124,15 @@ end
                 y = randn(T, n)
 
                 atol = rtol = sqrt(eps(real(T)))
-                # https://github.com/EnzymeAD/Enzyme.jl/issues/877
-                test_broken = (
-                    (VERSION > v"1.8" && T <: Real)
-                )
+
                 if Tc <: BatchDuplicated && Ty <: BatchDuplicated
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
-                    end skip = test_broken
+                    end
                 else
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
-                    end broken = test_broken
+                    end
                 end
             end
         end
