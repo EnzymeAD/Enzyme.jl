@@ -319,6 +319,7 @@ end
     @test first(autodiff(Forward, g, Duplicated(3.0, 1.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
+    test_scalar(Base.inv, 3.0 + 4.0im)
 end
 
 @testset "Base functions" begin
