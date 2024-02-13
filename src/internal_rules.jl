@@ -462,13 +462,13 @@ function EnzymeRules.augmented_primal(
     A::Annotation{AT},
     B::Annotation{BT}
 ) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
-    func.val(Y.val, A.val, B.val)
     cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     cache_A = compute_lu_cache(cache_A, B.val)
     cache_B = EnzymeRules.overwritten(config)[3] ? copy(B.val) : nothing
     primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
+    func.val(Y.val, A.val, B.val)
     return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
         primal, shadow, (cache_Y, cache_A, cache_B))
 end
