@@ -1438,31 +1438,6 @@ function Base.showerror(io::IO, ece::NoDerivativeException)
     end
 end
 
-struct NoShadowException <: CompilationException
-    msg::String
-    sval::String
-    ir::Union{Nothing, String}
-    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
-end
-
-function Base.showerror(io::IO, ece::NoShadowException)
-    print(io, "Enzyme compilation failed due missing shadow.\n")
-    if ece.ir !== nothing
-        print(io, "Current scope: \n")
-        print(io, ece.ir)
-    end
-    if length(ece.sval) != 0
-        print(io, "\n Inverted pointers: \n")
-        write(io, ece.sval)
-    end
-    print(io, '\n', ece.msg, '\n')
-    if ece.bt !== nothing
-        print(io,"\nCaused by:")
-        Base.show_backtrace(io, ece.bt)
-        println(io)
-    end
-end
-
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
     sval::String
@@ -1635,16 +1610,31 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(exc)
     elseif errtype == API.ET_NoShadow
         data = GradientUtils(API.EnzymeGradientUtilsRef(data))
-        sval = ""
-        if isa(val, LLVM.Argument)
-            fn = parent_scope(val)
-            ir = string(LLVM.name(fn))*string(function_type(fn))
-        else
-            ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
-            sval = Base.unsafe_string(ip)
-            API.EnzymeStringFree(ip)
+
+        msgN = sprint() do io::IO
+            print(io, "Enzyme could not find shadow for value\n")
+            if isa(val, LLVM.Argument)
+                fn = parent_scope(val)
+                ir = string(LLVM.name(fn))*string(function_type(fn))
+                print(io, "Current scope: \n")
+                print(io, ir)
+            end
+            if !isa(val, LLVM.Argument)
+                print(io, "\n Inverted pointers: \n")
+                ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+                sval = Base.unsafe_string(ip)
+                write(io, sval)
+                API.EnzymeStringFree(ip)
+            end
+            print(io, '\n', msg, '\n')
+            if bt !== nothing
+                print(io,"\nCaused by:")
+                Base.show_backtrace(io, bt)
+                println(io)
+            end
         end
-        throw(NoShadowException(msg, sval, ir, bt))
+        emit_error(B, nothing, msgN)
+        return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
         ip = API.EnzymeTypeAnalyzerToString(data)
