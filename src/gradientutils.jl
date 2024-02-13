@@ -14,6 +14,14 @@ end
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
 get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
 
+function get_shadow_type(gutils::GradientUtils, T::LLVM.Type)
+    w = get_width(gutils)
+    if w == 1
+        return T
+    else
+        return LLVM.ArrayType(T, Int(w))
+    end
+end
 function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)    
     uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig)))-1)
     API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable))
