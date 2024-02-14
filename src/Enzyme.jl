@@ -760,9 +760,9 @@ result, ∂v, ∂A
 
     adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
     AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
-    # @assert AugT == typeof(nondef[1])
+    @assert AugT == typeof(nondef[1])
     AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
-    # @assert AdjT == typeof(nondef[2])
+    @assert AdjT == typeof(nondef[2])
     AugT(primal_ptr), AdjT(adjoint_ptr)
 end
 
