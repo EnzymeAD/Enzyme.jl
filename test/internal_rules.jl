@@ -410,10 +410,10 @@ end
         @testset "test against EnzymeTestUtils through constructor" begin
             _A = T(A)
             function f!(Y, A, B, ::T) where T
-                return ldiv!(Y, T(A), B)
+                ldiv!(Y, T(A), B)
+                return nothing
             end
-            for Tret in (Const, Active),
-                TY in (Const, Duplicated, BatchDuplicated),
+            for TY in (Const, Duplicated, BatchDuplicated),
                 TA in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 test_reverse(f!, Const, (Y, TY), (M, TA), (B, TB), (_A, Const))
