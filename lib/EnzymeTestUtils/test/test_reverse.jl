@@ -10,6 +10,11 @@ end
 
 f_kwargs_rev(x; a=3.0, kwargs...) = a .* x .^ 2
 
+function f_kwargs_rev!(x; kwargs...)
+    copyto!(x, f_kwargs_rev(x; kwargs...))
+    return nothing
+end
+
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.ConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
@@ -119,18 +124,15 @@ end
                 y = randn(T, n)
 
                 atol = rtol = sqrt(eps(real(T)))
-                # https://github.com/EnzymeAD/Enzyme.jl/issues/877
-                test_broken = (
-                    (VERSION > v"1.8" && T <: Real)
-                )
+
                 if Tc <: BatchDuplicated && Ty <: BatchDuplicated
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
-                    end skip = test_broken
+                    end
                 else
                     @test !fails() do
                         test_reverse((c, Tc), Tret, (y, Ty); atol, rtol)
-                    end broken = test_broken
+                    end
                 end
             end
         end
@@ -157,6 +159,19 @@ end
             fkwargs = (; a, incorrect_primal=true)
             @test fails() do
                 test_reverse(f_kwargs_rev, Duplicated, (x, Tx); fkwargs)
+            end
+        end
+    end
+
+    @testset "incorrect mutated argument detected" begin
+        @testset for Tx in (Const, Duplicated)
+            x = randn(3)
+            a = randn()
+
+            test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs=(; a))
+            fkwargs = (; a, incorrect_primal=true)
+            @test fails() do
+                test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs)
             end
         end
     end

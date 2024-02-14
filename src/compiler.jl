@@ -66,6 +66,10 @@ include("gradientutils.jl")
 include("compiler/utils.jl")
 
 # Julia function to LLVM stem and arity
+const cmplx_known_ops =
+Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
+    typeof(Base.inv) => (:cmplx_inv, 1, nothing),
+   )
 const known_ops =
 Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
     typeof(Base.cbrt) => (:cbrt, 1, nothing),
@@ -1438,31 +1442,6 @@ function Base.showerror(io::IO, ece::NoDerivativeException)
     end
 end
 
-struct NoShadowException <: CompilationException
-    msg::String
-    sval::String
-    ir::Union{Nothing, String}
-    bt::Union{Nothing, Vector{StackTraces.StackFrame}}
-end
-
-function Base.showerror(io::IO, ece::NoShadowException)
-    print(io, "Enzyme compilation failed due missing shadow.\n")
-    if ece.ir !== nothing
-        print(io, "Current scope: \n")
-        print(io, ece.ir)
-    end
-    if length(ece.sval) != 0
-        print(io, "\n Inverted pointers: \n")
-        write(io, ece.sval)
-    end
-    print(io, '\n', ece.msg, '\n')
-    if ece.bt !== nothing
-        print(io,"\nCaused by:")
-        Base.show_backtrace(io, ece.bt)
-        println(io)
-    end
-end
-
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
     sval::String
@@ -1635,16 +1614,31 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         throw(exc)
     elseif errtype == API.ET_NoShadow
         data = GradientUtils(API.EnzymeGradientUtilsRef(data))
-        sval = ""
-        if isa(val, LLVM.Argument)
-            fn = parent_scope(val)
-            ir = string(LLVM.name(fn))*string(function_type(fn))
-        else
-            ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
-            sval = Base.unsafe_string(ip)
-            API.EnzymeStringFree(ip)
+
+        msgN = sprint() do io::IO
+            print(io, "Enzyme could not find shadow for value\n")
+            if isa(val, LLVM.Argument)
+                fn = parent_scope(val)
+                ir = string(LLVM.name(fn))*string(function_type(fn))
+                print(io, "Current scope: \n")
+                print(io, ir)
+            end
+            if !isa(val, LLVM.Argument)
+                print(io, "\n Inverted pointers: \n")
+                ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+                sval = Base.unsafe_string(ip)
+                write(io, sval)
+                API.EnzymeStringFree(ip)
+            end
+            print(io, '\n', msg, '\n')
+            if bt !== nothing
+                print(io,"\nCaused by:")
+                Base.show_backtrace(io, bt)
+                println(io)
+            end
         end
-        throw(NoShadowException(msg, sval, ir, bt))
+        emit_error(B, nothing, msgN)
+        return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
         ip = API.EnzymeTypeAnalyzerToString(data)
@@ -4128,7 +4122,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                     throw(AssertionError("ty is not a LLVM.PointerType: entry_f = $(entry_f), args = $(args), parm = $(parm), ty = $(ty)"))
                 end
                 ptr = alloca!(builder, eltype(ty))
-                if TT.parameters[arg.arg_i] <: Const
+                if TT !== nothing && TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
                 ctx = LLVM.context(entry_f)
@@ -4380,14 +4374,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     check_ir(job, mod)
 
     disableFallback = String[]
-    # Tablegen BLAS does not support runtime activity, nor forward mode yet
+    # Tablegen BLAS does not support forward mode yet
     if mode != API.DEM_ForwardMode
-        blas_types = ("s", "d")
-        blas_readonly = ("dot","gemm","gemv","axpy","copy","scal")
         for ty in ("s", "d")
-            for func in ("dot",)
-                for prefix in ("cblas_")
-                #for prefix in ("", "cblas_")
+            for func in ("dot","gemm","gemv","axpy","copy","scal")
+                for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
                     end
@@ -4395,7 +4386,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
     end
-    if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback) != 0
+    found = String[]
+    if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
             run!(pm, mod)
@@ -4449,7 +4441,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice")))
             end
         end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements, performance may be degraded"
+        GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
         ModulePassManager() do pm
             global_optimizer!(pm)
             run!(pm, mod)
@@ -4652,11 +4644,24 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        func ∈ keys(known_ops) || continue
-        name, arity, toinject = known_ops[func]
+        name = nothing
+        arity = nothing
+        toinject = nothing
+        Tys = nothing
+
+        if func ∈ keys(known_ops)
+            name, arity, toinject = known_ops[func]
+            Tys = (Float32, Float64)
+        elseif func ∈ keys(cmplx_known_ops)
+            name, arity, toinject = cmplx_known_ops[func]
+            Tys = (Complex{Float32}, Complex{Float64})
+        else
+            continue
+        end
+
         length(sparam_vals) == arity || continue
         T = first(sparam_vals)
-        isfloat = T ∈ (Float32, Float64)
+        isfloat = T ∈ Tys
         if !isfloat
             continue
         end
@@ -4681,7 +4686,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         sret = get_return_info(k.ci.rettype)[2] !== nothing
         if sret
           cur = llvmfn == primalf
-          llvmfn, _, boxedArgs, loweredArgs = lower_convention(mi.specTypes, mod, llvmfn, k.ci.rettype, Duplicated, (Const, Duplicated))
+          llvmfn, _, boxedArgs, loweredArgs = lower_convention(mi.specTypes, mod, llvmfn, k.ci.rettype, Duplicated, nothing)
           if cur
               primalf = llvmfn
               lowerConvention = false

@@ -81,7 +81,6 @@ function test_reverse(
     atol::Real=1e-9,
     testset_name=nothing,
 )
-    call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
     call_with_captured_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
         testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
@@ -91,7 +90,9 @@ function test_reverse(
         activities = map(auto_activity, (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
-        y = call_with_copy(primals...)
+        fcopy = deepcopy(first(primals))
+        args_copy = deepcopy(Base.tail(primals))
+        y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # generate tangent for output
         if !_any_batch_duplicated(map(typeof, activities)...)
             ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
@@ -110,6 +111,25 @@ function test_reverse(
             ReverseSplitWithPrimal, typeof(c_act), ret_activity, typeof(Const(fkwargs)), map(typeof, activities)...
         )
         tape, y_ad, shadow_result = forward(c_act, Const(fkwargs), activities...)
+        test_approx(
+            y_ad, y, "The return value of the rule and function must agree"; atol, rtol,
+        )
+        test_approx(
+            first(activities).val,
+            fcopy,
+            "The rule must mutate the callable the same way as the function";
+            atol,
+            rtol,
+        )
+        for (i, (act_i, arg_i)) in enumerate(zip(Base.tail(activities), args_copy))
+            test_approx(
+                act_i.val,
+                arg_i,
+                "The rule must mutate argument $i the same way as the function";
+                atol,
+                rtol,
+            )
+        end
         if ret_activity <: Active
             dx_ad = only(reverse(c_act, Const(fkwargs), activities..., ȳ, tape))
         else
@@ -126,9 +146,6 @@ function test_reverse(
             dx_ad = only(reverse(c_act, Const(fkwargs), activities..., tape))
         end
         dx_ad = (dx_ad[1], dx_ad[3:end]...)
-        test_approx(
-            y_ad, y, "The return value of the rule and function must agree"; atol, rtol
-        )
         @test length(dx_ad) == length(dx_fdm) == length(activities)
         # check all returned derivatives against FiniteDifferences
         for (i, (act_i, dx_ad_i, dx_fdm_i)) in enumerate(zip(activities, dx_ad, dx_fdm))

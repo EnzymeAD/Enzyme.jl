@@ -13,6 +13,11 @@ end
 
 f_kwargs_fwd(x; a=3.0, kwargs...) = a .* x .^ 2
 
+function f_kwargs_fwd!(x; kwargs...)
+    copyto!(x, f_kwargs_fwd(x; kwargs...))
+    return nothing
+end
+
 function EnzymeRules.forward(
     func::Const{typeof(f_kwargs_fwd)},
     RT::Type{
@@ -149,6 +154,19 @@ end
                 end skip = (VERSION < v"1.8" && T <: Complex)
             end
             Enzyme.API.runtimeActivity!(false)
+        end
+
+        @testset "incorrect mutated argument detected" begin
+            @testset for Tx in (Const, Duplicated)
+                x = randn(3)
+                a = randn()
+
+                test_reverse(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_primal=true)
+                @test fails() do
+                    test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
+                end
+            end
         end
 
         @testset "mutated callable" begin

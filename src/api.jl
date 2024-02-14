@@ -51,8 +51,21 @@ end
   VT_Both = 3
 )
 
-function EnzymeBitcodeReplacement(mod, NotToReplace) 
-    res = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef, Ptr{Cstring}, Csize_t), mod, NotToReplace, length(NotToReplace))
+function EnzymeBitcodeReplacement(mod, NotToReplace, found) 
+    foundSize = Ref{Csize_t}(0)
+    foundP = Ref{Ptr{Cstring}}(C_NULL)
+    res = ccall((:EnzymeBitcodeReplacement, libEnzymeBCLoad), UInt8, (LLVM.API.LLVMModuleRef, Ptr{Cstring}, Csize_t, Ptr{Ptr{Cstring}}, Ptr{Csize_t}), mod, NotToReplace, length(NotToReplace), foundP, foundSize)
+    foundNum = foundSize[]
+    if foundNum != 0
+        foundP = foundP[]
+        for i in 1:foundNum
+            str = unsafe_load(foundP, i)
+            push!(found, Base.unsafe_string(str))
+            Libc.free(str)
+
+        end
+        Libc.free(foundP)
+    end
     return res 
 end
 
