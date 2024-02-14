@@ -414,9 +414,9 @@ end
                 return nothing
             end
             for TY in (Const, Duplicated, BatchDuplicated),
-                TA in (Const, Duplicated, BatchDuplicated),
+                TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
-                test_reverse(f!, Const, (Y, TY), (M, TA), (B, TB), (_A, Const))
+                test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
     end
