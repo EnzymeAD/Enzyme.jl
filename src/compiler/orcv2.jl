@@ -198,8 +198,18 @@ function get_trampoline(job)
         GPUCompiler.JuliaContext() do ctx
             mod, adjoint_name, primal_name = Compiler._thunk(job)
             func_name = use_primal ? primal_name : adjoint_name
+            other_name = !use_primal ? primal_name : adjoint_name
+
             func = functions(mod)[func_name]
             LLVM.name!(func, sym)
+
+            if other_name !== nothing
+                # Otherwise MR will complain -- we could claim responsibilty,
+                # but it would be nicer if _thunk just codegen'd the half
+                # we need.
+                other_func = functions(mod)[other_name]
+                LLVM.unsafe_delete!(mod, other_func)
+            end
 
             tsm = move_to_threadsafe(mod)
 
