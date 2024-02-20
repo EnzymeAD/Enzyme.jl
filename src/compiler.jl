@@ -2902,7 +2902,7 @@ include("rules/activityrules.jl")
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: DuplicatedNoNeed = API.DFT_DUP_NONEED
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
 
-function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, jlrules,expectedTapeType, loweredArgs, boxedArgs)
+function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     rt  = job.config.params.rt
@@ -3051,11 +3051,6 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
     )
-    for jl in jlrules
-        rules[jl] = @cfunction(julia_type_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef))
-    end
 
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
@@ -4494,20 +4489,61 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         jlargs = classify_arguments(mi.specTypes, function_type(f), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
+		ctx = LLVM.context(f)
+
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
                 continue
             end
             push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
             push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
+
+            byref  = arg.cc
+
+            rest = typetree(arg.typ, ctx, dl)
+
+			if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF 
+				# adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+				# object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+				# aka the next field after this in the bigger object isn't guaranteed to also be the same.
+				if allocatedinline(arg.typ)
+					shift!(rest, dl, 0, sizeof(arg.typ), 0)
+				end
+				merge!(rest, TypeTree(API.DT_Pointer, ctx))
+				only!(rest, -1)
+			else
+				# canonicalize wrt size
+			end
+            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzyme_type", string(rest)))
         end
+
+	    if sret !== nothing
+			idx = 0
+			if !in(0, parmsRemoved)
+				rest = typetree(sret, ctx, dl)
+            	push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_type", string(rest)))
+				idx+=1
+			end
+			if returnRoots !== nothing
+				if !in(1, parmsRemoved)
+					rest = TypeTree(API.DT_Pointer, -1, ctx)
+					push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_type", string(rest)))
+				end
+			end
+		end
+		
+		if llRT !== nothing && LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
+			@assert !retRemoved
+			rest = typetree(llRT, ctx, dl)
+			push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
+		end
+			
+        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
     end
 
 
     custom = Dict{String, LLVM.API.LLVMLinkage}()
     must_wrap = false
-
-    foundTys = Dict{String, Tuple{LLVM.FunctionType, Core.MethodInstance}}()
 
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
@@ -4569,7 +4605,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
 
         julia_activity_rule(llvmfn)
-        foundTys[k_name] = (LLVM.function_type(llvmfn), mi)
         if has_custom_rule
             handleCustom("enzyme_custom", [StringAttribute("enzyme_preserve_primal", "*")])
             continue
@@ -4817,15 +4852,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     if params.run_enzyme
         # Generate the adjoint
-        jlrules = String["enzyme_custom"]
-        for (fname, (ftyp, mi)) in foundTys
-            haskey(functions(mod), fname) || continue
-            push!(jlrules, fname)
-        end
-
         memcpy_alloca_to_loadstore(mod)
 
-        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, jlrules, expectedTapeType, loweredArgs, boxedArgs)
+        adjointf, augmented_primalf, TapeType = enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, abiwrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
         toremove = []
         # Inline the wrapper
         for f in functions(mod)
