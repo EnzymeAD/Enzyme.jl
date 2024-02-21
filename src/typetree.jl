@@ -12,11 +12,11 @@ LLVM.dispose(tt::TypeTree) = API.EnzymeFreeTypeTree(tt)
 
 TypeTree() = TypeTree(API.EnzymeNewTypeTree())
 TypeTree(CT, ctx) = TypeTree(API.EnzymeNewTypeTreeCT(CT, ctx))
-# function typetree_inner(CT, idx, ctx)
-#     tt = TypeTree(CT, ctx)
-#     only!(tt, idx)
-#     return tt
-# end
+function TypeTree(CT, idx, ctx)
+    tt = TypeTree(CT, ctx)
+    only!(tt, idx)
+    return tt
+end
 Base.copy(tt::TypeTree) = TypeTree(API.EnzymeNewTypeTreeTR(tt))
 Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
 
@@ -76,7 +76,8 @@ function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
     else
         seen[T] = nothing # place recursion marker
         tree = typetree_inner(T, ctx, dl, seen)
-        seen[T] = tree 
+        seen[T] = tree
+        return tree::TypeTree
     end
 end
 
