@@ -1155,7 +1155,7 @@ macro fwdfunc(f)
     ))
 end
 
-@inline function register_llvm_rules()
+@noinline function register_llvm_rules()
     register_handler!(
         ("julia.call",),
         @augfunc(jlcall_augfwd),
@@ -1361,3 +1361,5 @@ end
         @fwdfunc(jl_unhandled_fwd),
     )
 end
+
+precompile(register_llvm_rules, ())
