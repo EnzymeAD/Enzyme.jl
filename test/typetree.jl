@@ -21,6 +21,16 @@ struct Composite
     y::Atom
 end
 
+struct LList2{T}
+  next::Union{Nothing, LList2{T}}
+  v::T
+end
+
+struct Sibling
+  a::LList2{Float64}
+  b::LList2{Float64}
+end
+
 @testset "TypeTree" begin
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
@@ -38,4 +48,7 @@ end
     @test at2.y == 0.0
     @test at2.z == 0.0
     @test at2.type == 4
+
+    @test tt(LList2{Float64}) == "{[8]:Float@double}"
+    @test tt(Sibling) == "{[-1]:Pointer, [-1,8]:Float@double}"
 end
