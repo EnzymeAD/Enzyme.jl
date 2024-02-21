@@ -17,7 +17,7 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = copy(typetree(typ, ctx, dl))
+    rest = typetree(typ, ctx, dl) # copy unecessary since only user of `rest`
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
     return UInt8(false)
@@ -107,7 +107,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = copy(typetree(typ, ctx, dl))
+    rest = typetree(typ, ctx, dl) # copy unecessary since only user of `rest`
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
 
@@ -149,6 +149,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(f, i)))) for i in 1:length(collect(parameters(f))))
     jlargs = classify_arguments(mi.specTypes, called_type(inst), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
+    seen = TypeTreeTable()
 
     for arg in jlargs
         if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
@@ -159,7 +160,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         @assert typ == arg.typ
         
         op_idx = arg.codegen.i
-        rest = typetree(arg.typ, ctx, dl)
+        rest = typetree(arg.typ, ctx, dl, seen)
         @assert arg.cc == byref
         if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF 
             rest = copy(rest)
@@ -202,13 +203,13 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
     if sret !== nothing
         idx = 0
         if !in(0, parmsRemoved)
-            API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(sret, ctx, dl))
+            API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(sret, ctx, dl, seen))
             idx+=1
         end
         if returnRoots !== nothing
             if !in(1, parmsRemoved)
                 allpointer = TypeTree(API.DT_Pointer, -1, ctx)
-                API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(returnRoots, ctx, dl))
+                API.EnzymeMergeTypeTree(unsafe_load(args, idx+1), typetree(returnRoots, ctx, dl, seen))
             end
         end
     end
@@ -217,7 +218,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
 
     if llRT !== nothing && value_type(inst) != LLVM.VoidType()
         @assert !retRemoved
-        API.EnzymeMergeTypeTree(ret, typetree(llRT, ctx, dl))
+        API.EnzymeMergeTypeTree(ret, typetree(llRT, ctx, dl, seen))
     end
 
     return UInt8(false)

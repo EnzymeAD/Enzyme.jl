@@ -65,6 +65,15 @@ end
 
 const TypeTreeTable = IdDict{Any, Union{Nothing, TypeTree}}
 
+"""
+    function typetree(T, ctx, dl, seen=TypeTreeTable())
+
+Construct a Enzyme typetree from a Julia type.
+
+!!! warning
+    When using a memoized lookup by providing `seen` across multiple calls to typtree
+    the user must call `copy` on the returned value before mutating it.
+"""
 function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
     if haskey(seen, T)
         tree = seen[T]
