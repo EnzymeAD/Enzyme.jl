@@ -217,6 +217,7 @@ function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
+            # FIXME: Handle union
             continue
         end
 
