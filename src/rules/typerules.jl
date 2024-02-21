@@ -17,7 +17,7 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = typetree(typ, ctx, dl)
+    rest = copy(typetree(typ, ctx, dl))
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
     return UInt8(false)
@@ -107,7 +107,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = typetree(typ, ctx, dl)
+    rest = copy(typetree(typ, ctx, dl))
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
 
@@ -162,6 +162,7 @@ function julia_type_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.C
         rest = typetree(arg.typ, ctx, dl)
         @assert arg.cc == byref
         if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF 
+            rest = copy(rest)
             # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
             # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
             # aka the next field after this in the bigger object isn't guaranteed to also be the same.

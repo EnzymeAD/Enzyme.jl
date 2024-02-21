@@ -63,22 +63,20 @@ function to_md(tt::TypeTree, ctx)
     return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme), LLVM.API.LLVMValueRef, (API.CTypeTreeRef,LLVM.API.LLVMContextRef), tt, ctx)))
 end
 
-const TypeTreeTable = IdDict{DataType, Union{Nothing, TypeTree}}
+const TypeTreeTable = IdDict{Any, Union{Nothing, TypeTree}}
 
 function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
     if haskey(seen, T)
         tree = seen[T]
         if tree === nothing
             return TypeTree() # stop recursion, but don't cache
-        else
-            return tree::TypeTree
         end
     else
         seen[T] = nothing # place recursion marker
         tree = typetree_inner(T, ctx, dl, seen)
         seen[T] = tree
-        return tree::TypeTree
     end
+    return tree::TypeTree
 end
 
 function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where T <: Integer

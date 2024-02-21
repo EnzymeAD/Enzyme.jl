@@ -2955,6 +2955,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         end
         typeTree = typetree(source_typ, ctx, dl)
         if isboxed
+            typetree = copy(typetree)
             merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
             only!(typeTree, -1)
         end
