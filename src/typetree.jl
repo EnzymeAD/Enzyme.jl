@@ -12,11 +12,11 @@ LLVM.dispose(tt::TypeTree) = API.EnzymeFreeTypeTree(tt)
 
 TypeTree() = TypeTree(API.EnzymeNewTypeTree())
 TypeTree(CT, ctx) = TypeTree(API.EnzymeNewTypeTreeCT(CT, ctx))
-function typetree_inner(CT, idx, ctx)
-    tt = TypeTree(CT, ctx)
-    only!(tt, idx)
-    return tt
-end
+# function typetree_inner(CT, idx, ctx)
+#     tt = TypeTree(CT, ctx)
+#     only!(tt, idx)
+#     return tt
+# end
 Base.copy(tt::TypeTree) = TypeTree(API.EnzymeNewTypeTreeTR(tt))
 Base.copy!(dst::TypeTree, src::TypeTree) = API.EnzymeSetTypeTree(dst, src)
 
