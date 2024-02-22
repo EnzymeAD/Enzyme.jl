@@ -391,7 +391,8 @@ end
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
-        M = rand(TE, 3, 3)
+        n = sizeB[1]
+        M = rand(TE, n, n)
         B = rand(TE, sizeB...)
         Y = zeros(TE, sizeB...)
         A = T(M)
