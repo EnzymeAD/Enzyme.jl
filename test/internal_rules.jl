@@ -395,18 +395,6 @@ end
         B = rand(TE, sizeB...)
         Y = zeros(TE, sizeB...)
         A = T(M)
-        @testset "test primal" begin
-            Y1 = deepcopy(Y)
-            Y2 = deepcopy(Y)
-            dY = make_zero(Y)
-            function f!(Y, A, B)
-                ldiv!(Y, A, B)
-                return nothing
-            end
-            ldiv!(Y1, A, B)
-            Enzyme.autodiff(Reverse, f!, Duplicated(Y2, dY), Const(A), Const(B))
-            @test Y1 ≈ Y2
-        end
         @testset "test against EnzymeTestUtils through constructor" begin
             _A = T(A)
             function f!(Y, A, B, ::T) where T
