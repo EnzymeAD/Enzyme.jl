@@ -112,6 +112,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "julia.call", "julia.call2",
     "ijl_tagged_gensym", "jl_tagged_gensym",
     "ijl_array_ptr_copy", "jl_array_ptr_copy",
     "ijl_array_copy", "jl_array_copy",
