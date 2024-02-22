@@ -356,6 +356,7 @@ code, as well as high-order differentiation.
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
 
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    @assert primal_ptr === nothing
     thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
@@ -726,7 +727,6 @@ result, ∂v, ∂A
     ::Type{FA}, ::Type{A}, args...
 ) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
     @assert RABI == FFIABI
-    # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
@@ -769,9 +769,7 @@ end
     ::Type{TapeType}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
     ::Type{FA}, ::Type{A}, ::Type{A2}, args...
 ) where {FA<:Annotation, A<:Annotation, A2, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
-# ) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
     @assert RABI == FFIABI
-    # args′  = annotate(args...)
     width = if Width == 0
         w = same_or_one(args...)
         if w == 0
