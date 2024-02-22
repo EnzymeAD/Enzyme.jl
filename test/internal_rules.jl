@@ -416,6 +416,7 @@ end
             for TY in (Const, Duplicated, BatchDuplicated),
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
+                are_activities_compatible(Const, TY, TA, TB) || continue
                 test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
