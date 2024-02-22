@@ -356,7 +356,6 @@ code, as well as high-order differentiation.
     ModifiedBetween = Val(falses_from_args(Val(1), args...))
     
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
-    @assert primal_ptr === nothing
     thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
         args′ = (args′..., one(eltype(rt)))
@@ -422,7 +421,6 @@ code, as well as high-order differentiation.
 
     
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    @assert primal_ptr === nothing
     thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
     thunk(f, args′...)
 end
