@@ -764,6 +764,13 @@ result, ∂v, ∂A
     AugT(primal_ptr), AdjT(adjoint_ptr)
 end
 
+"""
+    autodiff_deferred_thunk(::TT, ::ReverseModeSplit, ftype, Activity, RT, argtypes...)
+
+Same as `autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)` but with a specified tape type `TT`.
+with additional specified return type `RT` and tape type `TT`.
+
+"""
 @inline function autodiff_deferred_thunk(
     ::Type{TapeType}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
     ::Type{FA}, ::Type{A}, ::Type{A2}, args...
