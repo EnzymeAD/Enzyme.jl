@@ -290,6 +290,39 @@ make3() = (1.0, 2.0, 3.0)
 
 end
 
+@testset "Deferred and deferred thunk" begin
+    function square!(A)
+        A .*= A
+        return nothing
+    end
+    dA = ones(64)
+    A = Float64.(1:1:64)
+    thunk_dA, def_dA = copy(dA), copy(dA)
+    def_A, thunk_A = copy(A), copy(A)
+    Enzyme.autodiff(ReverseWithPrimal, square!, Duplicated(A, dA))
+    Enzyme.autodiff_deferred(ReverseWithPrimal, square!, Duplicated(def_A, def_dA))
+
+    dup = Duplicated(thunk_A, thunk_dA)
+    TapeType = Enzyme.EnzymeCore.tape_type(
+        ReverseSplitWithPrimal,
+        Const{typeof(square!)}, Const, Duplicated{typeof(thunk_A)}
+    )
+    fwd, rev = Enzyme.autodiff_deferred_thunk(
+        TapeType,
+        ReverseSplitWithPrimal,
+        Const{typeof(square!)},
+        Const,
+        Const{Nothing},
+        Duplicated{typeof(thunk_A)}
+    )
+    tape, _, _  = fwd(Const(square!), dup)
+    rev(Const(square!), dup, tape)
+    @test all(A .== def_A)
+    @test all(dA .== def_dA)
+    @test all(A .== thunk_A)
+    @test all(dA .== thunk_dA)
+end
+
 @testset "Simple Exception" begin
     f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
