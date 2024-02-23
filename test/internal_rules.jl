@@ -2,6 +2,7 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
+using EnzymeTestUtils
 using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
@@ -384,6 +385,30 @@ end
 
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
         @test isapprox(dA, dA_sym)
+    end
+end
+
+@testset "Linear solve for triangular matrices" begin
+    @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
+        TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
+        n = sizeB[1]
+        M = rand(TE, n, n)
+        B = rand(TE, sizeB...)
+        Y = zeros(TE, sizeB...)
+        A = T(M)
+        @testset "test against EnzymeTestUtils through constructor" begin
+            _A = T(A)
+            function f!(Y, A, B, ::T) where T
+                ldiv!(Y, T(A), B)
+                return nothing
+            end
+            for TY in (Const, Duplicated, BatchDuplicated),
+                TM in (Const, Duplicated, BatchDuplicated),
+                TB in (Const, Duplicated, BatchDuplicated)
+                are_activities_compatible(Const, TY, TM, TB) || continue
+                test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
+            end
+        end
     end
 end
 end
