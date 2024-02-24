@@ -396,7 +396,7 @@ end
         B = rand(TE, sizeB...)
         Y = zeros(TE, sizeB...)
         A = T(M)
-        @testset "test against EnzymeTestUtils through constructor" begin
+        @testset "test through constructor" begin
             _A = T(A)
             function f!(Y, A, B, ::T) where T
                 ldiv!(Y, T(A), B)
@@ -407,6 +407,19 @@ end
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
                 test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
+            end
+        end
+        @testset "test without constructor" for A in (T(M),)
+            function f!(Y, A, B)
+                ldiv!(Y, A, B)
+                return nothing
+            end
+            A = T(M)
+            for TY in (Const, Duplicated, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated),
+                TB in (Const, Duplicated, BatchDuplicated)
+                are_activities_compatible(Const, TY, TA, TB) || continue
+                test_reverse(f!, Const, (Y, TY), (A, TA), (B, TB))
             end
         end
     end
