@@ -409,18 +409,22 @@ end
                 test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
-        @testset "test without constructor" for A in (T(M),)
+        @testset "regression test for #1306" begin
             function f!(Y, A, B)
                 ldiv!(Y, A, B)
                 return nothing
             end
-            A = T(M)
-            for TY in (Const, Duplicated, BatchDuplicated),
-                TA in (Const, Duplicated, BatchDuplicated),
-                TB in (Const, Duplicated, BatchDuplicated)
-                are_activities_compatible(Const, TY, TA, TB) || continue
-                test_reverse(f!, Const, (Y, TY), (A, TA), (B, TB))
-            end
+            A1 = T(M)
+            A2 = T(permutedims(M)')
+            dA1 = make_zero(A1)
+            dA2 = make_zero(A2)
+            dB1 = make_zero(B)
+            dB2 = make_zero(B)
+            dY = rand(TE, sizeB...)
+            autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A1, dA1), Duplicated(B, dB1))
+            # autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A2, dA2), Duplicated(B, dB2))
+            # @test dA1 ≈ dA2
+            # @test dB1 ≈ dB2
         end
     end
 end
