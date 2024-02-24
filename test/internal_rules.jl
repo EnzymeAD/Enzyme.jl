@@ -422,7 +422,7 @@ end
             dB2 = make_zero(B)
             dY = rand(TE, sizeB...)
             autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A1, dA1), Duplicated(B, dB1))
-            # autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A2, dA2), Duplicated(B, dB2))
+            autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A2, dA2), Duplicated(B, dB2))
             # @test dA1 ≈ dA2
             # @test dB1 ≈ dB2
         end
