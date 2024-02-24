@@ -415,16 +415,17 @@ end
                 return nothing
             end
             A1 = T(M)
-            A2 = T(permutedims(M)')
+            A2 = T(conj(permutedims(M))')
             dA1 = make_zero(A1)
             dA2 = make_zero(A2)
             dB1 = make_zero(B)
             dB2 = make_zero(B)
-            dY = rand(TE, sizeB...)
-            autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A1, dA1), Duplicated(B, dB1))
-            autodiff(Reverse, f!, Duplicated(Y, dY), Duplicated(A2, dA2), Duplicated(B, dB2))
-            # @test dA1 ≈ dA2
-            # @test dB1 ≈ dB2
+            dY1 = rand(TE, sizeB...)
+            dY2 = copy(dY1)
+            autodiff(Reverse, f!, Duplicated(Y, dY1), Duplicated(A1, dA1), Duplicated(B, dB1))
+            autodiff(Reverse, f!, Duplicated(Y, dY2), Duplicated(A2, dA2), Duplicated(B, dB2))
+            @test dA1.data ≈ dA2.data
+            @test dB1 ≈ dB2
         end
     end
 end
