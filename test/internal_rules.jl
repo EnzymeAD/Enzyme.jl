@@ -386,6 +386,14 @@ end
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
         @test isapprox(dA, dA_sym)
     end
+    @testset "Regression test for #" for TE in (Float64, ComplexF64)
+        function f(A)
+            C = cholesky(A * A')
+            return sum(abs2, C.L * C.U)
+        end
+        A = rand(TE, 3, 3)
+        test_reverse(f, Active, (A, Duplicated))
+    end
 end
 
 @testset "Linear solve for triangular matrices" begin
