@@ -386,13 +386,39 @@ end
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
         @test isapprox(dA, dA_sym)
     end
-    @testset "Regression test for #" for TE in (Float64, ComplexF64)
+    @testset "Regression test for #" begin
         function f(A)
-            C = cholesky(A * A')
+            C = cholesky(A * adjoint(A))
             return sum(abs2, C.L * C.U)
         end
-        A = rand(TE, 3, 3)
-        test_reverse(f, Active, (A, Duplicated))
+        @testset for TE in (Float64, ComplexF64)
+            A = rand(TE, 3, 3)
+            test_reverse(f, Active, (A, Duplicated))
+            @testset "Compare against function bypassing `cholesky`" begin
+                g(A) = sum(abs2, A * adjoint(A))
+                @testset "Without wrapper" begin
+                    dA1 = zero(A)
+                    dA2 = zero(A)
+                    autodiff(Reverse, f, Active, Duplicated(A, dA1))
+                    autodiff(Reverse, g, Active, Duplicated(A, dA2))
+                    @test dA1 ≈ dA2
+                end
+                if TE == Float64
+                    @testset "$wrapper wrapper" for wrapper in (Symmetric, Hermitian,)
+                        function fw(A)
+                            C = cholesky(wrapper(A * adjoint(A)))
+                            return sum(abs2, C.L * C.U)
+                        end
+                        gw(A) = sum(abs2, wrapper(A * adjoint(A)))
+                        dA1 = zero(A)
+                        dA2 = zero(A)
+                        autodiff(Reverse, fw, Active, Duplicated(A, dA1))
+                        autodiff(Reverse, gw, Active, Duplicated(A, dA2))
+                        @test dA1 ≈ dA2
+                    end
+                end
+            end
+        end
     end
 end
 
