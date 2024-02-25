@@ -386,7 +386,7 @@ end
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
         @test isapprox(dA, dA_sym)
     end
-    @testset "Regression test for #" begin
+    @testset "Regression test for #1307" begin
         function f(A)
             C = cholesky(A * adjoint(A))
             return sum(abs2, C.L * C.U)

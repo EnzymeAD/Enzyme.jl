@@ -764,7 +764,7 @@ function EnzymeRules.augmented_primal(
     cache = if isa(A, Const)
         nothing
     else
-        dfact
+        (fact, dfact)
     end
 
     return EnzymeRules.AugmentedReturn(fact, dfact, cache)
@@ -774,10 +774,10 @@ function EnzymeRules.reverse(
     config,
     ::Const{typeof(cholesky)},
     RT::Type,
-    dfact,
+    cache,
     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
     kwargs...)
-
+    fact, dfact = cache
     if !(RT <: Const) && !isa(A, Const)
         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
@@ -785,7 +785,13 @@ function EnzymeRules.reverse(
         for (dA, dfact) in zip(dAs, dfacts)
             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
             if _dA !== dfact.factors
-                _dA .+= dfact.factors
+                Ā = _cholesky_pullback_shared_code(fact, dfact)
+                if dA isa LinearAlgebra.RealHermSym
+                    rmul!(Ā, one(eltype(Ā)) / 2)
+                else
+                    Ā ./= 2
+                end
+                _dA .+= Ā
                 dfact.factors .= 0
             end
         end
@@ -793,6 +799,41 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
+# Taken from ChainRules.jl
+function _cholesky_pullback_shared_code(C, ΔC)
+    Δfactors = ΔC.factors
+    Ā = similar(C.factors)
+    if C.uplo === 'U'
+        U = C.U
+        Ū = eltype(U) <: Real ? real(_maybeUpperTri(Δfactors)) : _maybeUpperTri(Δfactors)
+        mul!(Ā, Ū, U')
+        LinearAlgebra.copytri!(Ā, 'U', true)
+        eltype(Ā) <: Real || _realifydiag!(Ā)
+        ldiv!(U, Ā)
+        rdiv!(Ā, U')
+    else  # C.uplo === 'L'
+        L = C.L
+        L̄ = eltype(L) <: Real ? real(_maybeLowerTri(Δfactors)) : _maybeLowerTri(Δfactors)
+        mul!(Ā, L', L̄)
+        LinearAlgebra.copytri!(Ā, 'L', true)
+        eltype(Ā) <: Real || _realifydiag!(Ā)
+        rdiv!(Ā, L)
+        ldiv!(L', Ā)
+    end
+    return Ā
+end
+
+_maybeUpperTri(A) = UpperTriangular(A)
+_maybeUpperTri(A::Diagonal) = A
+_maybeLowerTri(A) = LowerTriangular(A)
+_maybeLowerTri(A::Diagonal) = A
+
+function _realifydiag!(A)
+    for i in diagind(A)
+        @inbounds A[i] = real(A[i])
+    end
+    return A
+end
 
 # y=inv(A) B
 #   dA −= z y^T
