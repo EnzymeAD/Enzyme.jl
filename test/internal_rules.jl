@@ -189,7 +189,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             db.dval[i] = 1.0
-            Enzyme.autodiff(Forward, driver, dx, dA, db)
+            Enzyme.autodiff(Forward, driver, dx, A, db)
             adJ[i, :] = dx.dval
         end
         return adJ
