@@ -145,11 +145,9 @@ end
         db = Duplicated(b, zeros(length(b)))
         dx = Duplicated(zeros(length(b)), zeros(length(b)))
         for i in 1:length(b)
-            copyto!(dA.val, A)
-            copyto!(db.val, b)
-            fill!(dA.dval, 0.0)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
+            dA.dval .= 0.0
+            db.dval .= 0.0
+            dx.dval .= 0.0
             db.dval[i] = 1.0
             Enzyme.autodiff(Forward, driver, dx, dA, db)
             adJ[i, :] = dx.dval
@@ -162,9 +160,8 @@ end
         db = Duplicated(b, zeros(length(b)))
         dx = Duplicated(zeros(length(b)), zeros(length(b)))
         for i in 1:length(b)
-            copyto!(db.val, b)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
+            db.dval .= 0.0
+            dx.dval .= 0.0
             db.dval[i] = 1.0
             Enzyme.autodiff(Forward, driver, dx, Const(A), db)
             adJ[i, :] = dx.dval
@@ -197,11 +194,9 @@ end
         db = Duplicated(b, zeros(length(b)))
         dx = Duplicated(zeros(length(b)), zeros(length(b)))
         for i in 1:length(b)
-            copyto!(dA.val, A)
-            copyto!(db.val, b)
-            fill!(dA.dval, 0.0)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
+            dA.dval .= 0.0
+            db.dval .= 0.0
+            dx.dval .= 0.0
             dx.dval[i] = 1.0
             Enzyme.autodiff(Reverse, driver, dx, dA, db)
             adJ[i, :] = db.dval
@@ -214,9 +209,8 @@ end
         db = Duplicated(b, zeros(length(b)))
         dx = Duplicated(zeros(length(b)), zeros(length(b)))
         for i in 1:length(b)
-            copyto!(db.val, b)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
+            db.dval .= 0.0
+            dx.dval .= 0.0
             dx.dval[i] = 1.0
             Enzyme.autodiff(Reverse, driver, dx, Const(A), db)
             adJ[i, :] = db.dval
@@ -243,8 +237,6 @@ end
     end
 
     function Jdxdb(driver, A, b)
-        x = A\b
-        dA = zeros(size(A))
         db = zeros(length(b))
         J = zeros(length(b), length(b))
         for i in 1:length(b)
