@@ -379,7 +379,7 @@ end
         return AnyState
     end
 
-    if T <: Complex
+    if T <: Complex && !(T isa UnionAll)
         return active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret))
     end
 
@@ -5024,28 +5024,88 @@ end
     end
 end
 
-@inline function recursive_add(x::T, y::T) where T
-    if guaranteed_const(T)
+# Recursively return x + f(y), where y is active, otherwise x
+
+@inline function recursive_add(x::T, y::T, f::F=identity, forcelhs::F2=guaranteed_const) where {T, F, F2}
+    if forcelhs(T)
         return x
     end
     splatnew(T, ntuple(Val(fieldcount(T))) do i
         Base.@_inline_meta
         prev = getfield(x, i)
-        next = getfield(y, i)
-        recursive_add(prev, next)
+        next = f(getfield(y, i))
+        recursive_add(prev, next, f, forcelhs)
     end)
 end
 
-@inline function recursive_add(x::T, y::T) where {T<:AbstractFloat}
-    return x + y
+@inline function recursive_add(x::T, y::T, f::F=identity, forcelhs::F2=guaranteed_const) where {T<:AbstractFloat, F, F2}
+    if forcelhs(T)
+        return x
+    end
+    return x + f(y)
 end
+
+@inline function recursive_add(x::T, y::T, f::F=identity, forcelhs::F2=guaranteed_const) where {T<:Complex, F, F2}
+    if forcelhs(T)
+        return x
+    end
+    return x + f(y)
+end
+
+@inline mutable_register(::Type{T}) where T <: Integer = true
+@inline mutable_register(::Type{T}) where T <: AbstractFloat = false
+@inline mutable_register(::Type{Complex{T}}) where T <: AbstractFloat = false
+@inline mutable_register(::Type{T}) where T <: Tuple = false
+@inline mutable_register(::Type{T}) where T <: NamedTuple = false
+@inline mutable_register(::Type{Core.Box}) = true
+@inline mutable_register(::Type{T}) where T <: Array = true
+@inline mutable_register(::Type{T}) where T = ismutable(T)
+
+# Recursively In-place accumulate(aka +=). E.g. generalization of x .+= f(y)
+@inline function recursive_accumulate(x::Array{T}, y::Array{T}, f::F=identity) where {T, F}
+    if !mutable_register(T)
+        for I in eachindex(x)
+            prev = x[I]
+            @inbounds x[I] = recursive_add(x[I], (@inbounds y[I]), f, mutable_register)
+        end
+    end
+end
+
+
+# Recursively In-place accumulate(aka +=). E.g. generalization of x .+= f(y)
+@inline function recursive_accumulate(x::Core.Box, y::Core.Box, f::F=identity) where {F}
+    recursive_accumulate(x.contents, y.contents, seen, f)
+end
+
+@inline function recursive_accumulate(x::T, y::T, f::F=identity) where {T, F}
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+    nf = fieldcount(T)
+
+    for i in 1:nf
+        if isdefined(x, i)
+            xi = getfield(x, i)
+            ST = Core.Typeof(xi)
+            if !mutable_register(ST)
+                @assert ismutable(x)
+                yi = getfield(y, i)
+                nexti = recursive_add(xi, yi, f, mutable_register)
+                ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), x, i-1, nexti)
+            end
+        end
+    end
+end
+
+@inline default_adjoint(::Type{T}) where T = error("Active return values with automatic pullback (differential return value) deduction only supported for floating-like values and not type $T. If mutable memory, please use Duplicated. Otherwise, you can explicitly specify a pullback by using split mode, e.g. autodiff_thunk(ReverseSplitWithPrimal, ...)")
+@inline default_adjoint(::Type{T}) where T<:AbstractFloat = one(T)
+@inline default_adjoint(::Type{Complex{T}}) where T = error("Attempted to use automatic pullback (differential return value) deduction on a type unstable function returning a complex number. Please type stabilize your code, e.g. by specifying autodiff(Reverse, f->f(x)::Complex, ...)")
 
 function add_one_in_place(x)
     ty = typeof(x)
     # ptr = Base.pointer_from_objref(x)
     ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
-        x[] = recursive_add(x[], one(eltype(ty)))
+        x[] = recursive_add(x[], default_adjoint(eltype(ty)))
     else
         error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end

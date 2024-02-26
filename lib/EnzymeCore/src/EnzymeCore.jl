@@ -1,7 +1,7 @@
 module EnzymeCore
 
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
-export ReverseSplitModified, ReverseSplitWidth
+export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
@@ -178,14 +178,18 @@ Abstract type for what differentiation mode will be used.
 abstract type Mode{ABI} end
 
 """
-    struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI}
+    struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI}
 
 Reverse mode differentiation.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
+- `ABI`: What runtime ABI to use
+- `Holomorphic`: Whether the complex result function is holomorphic and we should compute d/dz
 """
-struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI} end
-const Reverse = ReverseMode{false,DefaultABI}()
-const ReverseWithPrimal = ReverseMode{true,DefaultABI}()
+struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI} end
+const Reverse = ReverseMode{false,DefaultABI, false}()
+const ReverseWithPrimal = ReverseMode{true,DefaultABI, false}()
+const ReverseHolomorphic = ReverseMode{false,DefaultABI, true}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true}()
 
 """
     struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}

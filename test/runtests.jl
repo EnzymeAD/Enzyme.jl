@@ -290,6 +290,121 @@ make3() = (1.0, 2.0, 3.0)
 
 end
 
+@testset "Simple Complex tests" begin
+    mul2(z) = 2 * z
+    square(z) = z * z
+
+    z = 1.0+1.0im
+
+    @test_throws ErrorException autodiff(Reverse, mul2, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseWithPrimal, mul2, Active, Active(z))
+    @test autodiff(ReverseHolomorphic, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[2] ≈ 2 * z
+
+    @test autodiff(ReverseHolomorphic, square, Active, Active(z))[1][1] ≈ 2 * z
+
+    mul3(z) = Base.inferencebarrier(2 * z)
+
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sum, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 1.0
+
+    sumsq(x) = sum(x .* x)
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 - 2.7im)
+
+    sumsq2(x) = sum(abs2.(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    sumsq2C(x) = Complex{Float64}(sum(abs2.(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2C, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 6.8 - 5.4im
+
+    sumsq3(x) = sum(x .* conj(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 6.8 - 5.4im
+
+    sumsq3R(x) = Float64(sum(x .* conj(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3R, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    function setinact(z)
+        z[1] *= 2
+        nothing
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setinact2(z)
+        z[1] *= 2
+        return 0.0+1.0im
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setact(z)
+        z[1] *= 2
+        return z[1]
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 2.0
+
+    function upgrade(z)
+        z = ComplexF64(z)
+        return z*z
+    end
+    autodiff(ReverseHolomorphic, upgrade, Active, Active(3.1))
+end
+
 @testset "Simple Exception" begin
     f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
