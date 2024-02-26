@@ -77,6 +77,11 @@ else
 #     WorldOverlayMethodTable(interp.world)
 end
 
+function is_alwaysinline_func(@nospecialize(TT))
+    isa(TT, DataType) || return false
+    return false
+end
+
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
@@ -88,6 +93,13 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
+
+    if ft == typeof(Base.inv)
+        if TT <: Tuple{ft, Complex{Float32}} || TT <: Tuple{ft, Complex{Float64}}
+            return true
+        end
+    end
+
     @static if VERSION >= v"1.9-"
     if ft === typeof(Base.rem)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
@@ -185,6 +197,12 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
         return nothing
     end
 
+    if is_alwaysinline_func(specTypes)
+        @safe_debug "Forcing inlining for primitive func" mi.specTypes
+        @assert src !== nothing
+        return src
+    end
+
     if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
         return nothing
@@ -218,6 +236,12 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     if is_primitive_func(specTypes)
         return nothing
     end
+
+    if is_alwaysinline_func(specTypes)
+        @assert src !== nothing
+        return src
+    end
+
     if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         return nothing
     end
@@ -251,6 +275,11 @@ function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, 
     if is_primitive_func(specTypes)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
+
+    if is_alwaysinline_func(specTypes)
+        @assert false "Need to mark resolve_todo function as alwaysinline, but don't know how"
+    end
+
     interp = state.policy.interp
     method_table = Core.Compiler.method_table(interp)
     if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)

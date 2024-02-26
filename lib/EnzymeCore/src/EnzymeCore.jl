@@ -49,6 +49,7 @@ struct Active{T} <: Annotation{T}
 end
 
 Active(i::Integer) = Active(float(i))
+Active(ci::Complex{T}) where T <: Integer = Active(float(ci))
 
 """
     Duplicated(x, ∂f_∂x)

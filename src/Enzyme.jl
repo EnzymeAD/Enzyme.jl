@@ -197,11 +197,12 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     if A <: Active && rt <: Complex
         if Holomorphic
             seen = IdDict()
+            seen2 = IdDict()
 
             f = if f isa Const || f isa Active
                 f
             elseif f isa Duplicated || f isa DuplicatedNoNeed
-                BatchDuplicated(f.val, (f.dval, make_zero(typeof(f), seen, f.dval)))
+                BatchDuplicated(f.val, (f.dval, make_zero(typeof(f), seen, f.dval), make_zero(typeof(f), seen2, f.dval)))
             else
                 throw(ErrorException("Active Complex return does not yet support batching in combined reverse mode"))
             end
@@ -213,36 +214,48 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     arg
                 elseif arg isa Duplicated || arg isa DuplicatedNoNeed
                     RT = eltype(Core.Typeof(arg))
-                    BatchDuplicated(arg.val, (arg.dval, make_zero(RT, seen, arg.dval)))
+                    BatchDuplicated(arg.val, (arg.dval, make_zero(RT, seen, arg.dval), make_zero(RT, seen2, arg.dval)))
                 else
                     throw(ErrorException("Active Complex return does not yet support batching in combined reverse mode"))
                 end
             end
-            width = same_or_one_rec(2, args...)
+            width = same_or_one_rec(3, args...)
             tt′   = Tuple{map(Core.Typeof, args)...}
 
             thunk = Enzyme.Compiler.thunk(Val(world), typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 
-            results = thunk(f, args..., (rt(1), rt(1)))
+            results = thunk(f, args..., (rt(0), rt(1), rt(im)))
 
-            @inline function swapimag(x::T) where T
+            @inline function refn(x::T) where T
                 if T <: Complex
-                    return T(0, -2imag(x))
+                    return conj(x) / 2
+                else
+                    return x
+                end
+            end
+
+            @inline function imfn(x::T) where T
+                if T <: Complex
+                    return im * conj(x) / 2
                 else
                     return T(0)
                 end
             end
 
+            # compute the correct complex derivative in reverse mode by propagating the conjugate return values
+            # then subtracting twice the imaginary component to get the correct result
+
             for (k, v) in seen
-                @show k, v
-                Compiler.recursive_accumulate(k, v, swapimag)
-                @show "post ", k
+                Compiler.recursive_accumulate(k, v, refn)
+            end
+            for (k, v) in seen2
+                Compiler.recursive_accumulate(k, v, imfn)
             end
 
             fused = ntuple(Val(Nargs)) do i
                 Base.@_inline_meta
                 if args[i] isa Active
-                    Compiler.recursive_add(results[1][i][1], results[1][i][2], swapimag)
+                    Compiler.recursive_add(Compiler.recursive_add(results[1][i][1], results[1][i][2], refn), results[1][i][3], imfn)
                 else
                     results[1][i]
                 end
@@ -267,8 +280,11 @@ end
 
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff(mode::CMode, f::F, args::Vararg{Any, Nargs}) where {F, CMode<:Mode, Nargs}
+@inline function autodiff(mode::CMode, f::F, args::Vararg{Annotation, Nargs}) where {F, CMode<:Mode, Nargs}
     autodiff(mode, Const(f), args...)
+end
+@inline function autodiff(mode::CMode, f::F, ::Type{RT}, args::Vararg{Annotation, Nargs}) where {F, RT<:Annotation, CMode<:Mode, Nargs}
+    autodiff(mode, Const(f), RT, args...)
 end
 
 """
@@ -365,7 +381,7 @@ f(x) = x*x
 
     thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
-    thunk(f, args′...)
+    thunk(f, args...)
 end
 
 """
@@ -406,7 +422,7 @@ code, as well as high-order differentiation.
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk(f, args′...)
+    thunk(f, args...)
 end
 
 """
@@ -415,7 +431,7 @@ end
 Same as `autodiff(::ForwardMode, f, Activity, args)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args::Nargs) where {FA<:Annotation, A<:Annotation, Nargs}
+@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args::Vararg{Annotation,Nargs}) where {FA<:Annotation, A<:Annotation, Nargs}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -473,9 +489,13 @@ end
 
 Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff_deferred(mode::CMode, f::F, args::Vararg{Any, Nargs}) where {F, CMode<:Mode, Nargs}
+@inline function autodiff_deferred(mode::CMode, f::F, args::Vararg{Annotation, Nargs}) where {F, CMode<:Mode, Nargs}
     autodiff_deferred(mode, Const(f), args...)
 end
+@inline function autodiff_deferred(mode::CMode, f::F, ::Type{RT}, args::Vararg{Annotation, Nargs}) where {F, RT<:Annotation, CMode<:Mode, Nargs}
+    autodiff_deferred(mode, Const(f), RT, args...)
+end
+
 """
     autodiff_deferred(mode, f, args::Vararg{Annotation, Nargs})
 
@@ -607,7 +627,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 (6.28,)
 ```
 """
-@inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs}
+@inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs}
     width = same_or_one(A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))

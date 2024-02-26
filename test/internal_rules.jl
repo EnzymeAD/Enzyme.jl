@@ -199,7 +199,7 @@ end
                 Forward,
                 driver,
                 dx,
-                A,
+                Const(A),
                 db
             )
             adJ[i, :] = dx.dval
@@ -269,7 +269,7 @@ end
                 Reverse,
                 driver,
                 dx,
-                A,
+                Const(A),
                 db
             )
             adJ[i, :] = db.dval

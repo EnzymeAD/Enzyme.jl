@@ -5033,7 +5033,7 @@ end
     splatnew(T, ntuple(Val(fieldcount(T))) do i
         Base.@_inline_meta
         prev = getfield(x, i)
-        next = f(getfield(y, i))
+        next = getfield(y, i)
         recursive_add(prev, next, f, forcelhs)
     end)
 end
@@ -5098,7 +5098,7 @@ end
 
 @inline default_adjoint(::Type{T}) where T = error("Active return values with automatic pullback (differential return value) deduction only supported for floating-like values and not type $T. If mutable memory, please use Duplicated. Otherwise, you can explicitly specify a pullback by using split mode, e.g. autodiff_thunk(ReverseSplitWithPrimal, ...)")
 @inline default_adjoint(::Type{T}) where T<:AbstractFloat = one(T)
-@inline default_adjoint(::Type{Complex{T}}) where T = error("Attempted to use automatic pullback (differential return value) deduction on a type unstable function returning a complex number. Please type stabilize your code, e.g. by specifying autodiff(Reverse, f->f(x)::Complex, ...)")
+@inline default_adjoint(::Type{Complex{T}}) where T = error("Attempted to use automatic pullback (differential return value) deduction on a either a type unstable function returning an active complex number, or autodiff_deferred returning an active complex number. For the first case, please type stabilize your code, e.g. by specifying autodiff(Reverse, f->f(x)::Complex, ...). For the second case, please use regular non-deferred autodiff")
 
 function add_one_in_place(x)
     ty = typeof(x)
