@@ -174,13 +174,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             db.dval[i] = 1.0
-            Enzyme.autodiff(
-                Forward,
-                driver,
-                dx,
-                dA,
-                db
-            )
+            Enzyme.autodiff(Forward, driver, dx, dA, db)
             adJ[i, :] = dx.dval
         end
         return adJ
@@ -195,13 +189,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             db.dval[i] = 1.0
-            Enzyme.autodiff(
-                Forward,
-                driver,
-                dx,
-                A,
-                db
-            )
+            Enzyme.autodiff(Forward, driver, dx, dA, db)
             adJ[i, :] = dx.dval
         end
         return adJ
@@ -218,13 +206,7 @@ end
         dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
         db = BatchDuplicated(b, ntuple(i -> seed(i), n))
         dx = BatchDuplicated(zeros(length(b)), ntuple(i -> zeros(length(b)), n))
-        Enzyme.autodiff(
-            Forward,
-            driver,
-            dx,
-            dA,
-            db
-        )
+        Enzyme.autodiff(Forward, driver, dx, dA, db)
         for i in 1:n
             adJ[i, :] = dx.dval[i]
         end
@@ -244,13 +226,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             dx.dval[i] = 1.0
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                dA,
-                db
-            )
+            Enzyme.autodiff(Reverse, driver, dx, dA, db)
             adJ[i, :] = db.dval
         end
         return adJ
@@ -265,13 +241,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             dx.dval[i] = 1.0
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                A,
-                db
-            )
+            Enzyme.autodiff(Reverse, driver, dx, A, db)
             adJ[i, :] = db.dval
         end
         return adJ
@@ -288,13 +258,7 @@ end
         dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
         db = BatchDuplicated(b, ntuple(i -> zeros(length(b)), n))
         dx = BatchDuplicated(zeros(length(b)), ntuple(i -> seed(i), n))
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                dA,
-                db
-            )
+            Enzyme.autodiff(Reverse, driver, dx, dA, db)
         for i in 1:n
             adJ[i, :] .= db.dval[i]
         end
@@ -384,6 +348,7 @@ end
         Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
 
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
+        dA_sym = (dA_sym + dA_sym') / 2
         @test isapprox(dA, dA_sym)
     end
     @testset "Regression test for #1307" begin
