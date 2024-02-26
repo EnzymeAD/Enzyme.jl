@@ -786,12 +786,7 @@ function EnzymeRules.reverse(
             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
             if _dA !== dfact.factors
                 Ā = _cholesky_pullback_shared_code(fact, dfact)
-                if dA isa LinearAlgebra.RealHermSym
-                    rmul!(Ā, one(eltype(Ā)) / 2)
-                else
-                    Ā ./= 2
-                end
-                _dA .+= Ā
+                _dA .+= Ā ./ 2
                 dfact.factors .= 0
             end
         end
