@@ -131,35 +131,12 @@ end
         return nothing
     end
 
-    function divdriver(x, A, b)
-        fact = cholesky(A)
-        divdriver_NC(x, fact, b)
-    end
-
-    function divdriver_herm(x, A, b)
-        fact = cholesky(Hermitian(A))
-        divdriver_NC(x, fact, b)
-    end
-
-    function divdriver_sym(x, A, b)
-        fact = cholesky(Symmetric(A))
-        divdriver_NC(x, fact, b)
-    end
-    
-    function ldivdriver(x, A, b)
-        fact = cholesky(A)
-        ldivdriver_NC(x, fact, b)
-    end
-
-    function ldivdriver_herm(x, A, b)
-        fact = cholesky(Hermitian(A))
-        ldivdriver_NC(x, fact, b)
-    end
-
-    function ldivdriver_sym(x, A, b)
-        fact = cholesky(Symmetric(A))
-        ldivdriver_NC(x, fact, b)
-    end
+    divdriver(x, A, b) = divdriver_NC(x, cholesky(A), b)
+    divdriver_herm(x, A, b) = divdriver_NC(x, cholesky(Hermitian(A)), b)
+    divdriver_sym(x, A, b) = divdriver_NC(x, cholesky(Symmetric(A)), b)    
+    ldivdriver(x, A, b) = ldivdriver_NC(x, cholesky(A), b)
+    ldivdriver_herm(x, A, b) = ldivdriver_NC(x, cholesky(Hermitian(A)), b)
+    ldivdriver_sym(x, A, b) = ldivdriver_NC(x, cholesky(Symmetric(A)), b)
 
     # Test forward
     function fwdJdxdb(driver, A, b)
@@ -189,7 +166,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             db.dval[i] = 1.0
-            Enzyme.autodiff(Forward, driver, dx, A, db)
+            Enzyme.autodiff(Forward, driver, dx, Const(A), db)
             adJ[i, :] = dx.dval
         end
         return adJ
@@ -241,7 +218,7 @@ end
             fill!(db.dval, 0.0)
             fill!(dx.dval, 0.0)
             dx.dval[i] = 1.0
-            Enzyme.autodiff(Reverse, driver, dx, A, db)
+            Enzyme.autodiff(Reverse, driver, dx, Const(A), db)
             adJ[i, :] = db.dval
         end
         return adJ

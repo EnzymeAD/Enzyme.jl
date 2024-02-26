@@ -645,7 +645,7 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
         dA = if isa(A, Const)
             ntuple(Val(N)) do i
                 Base.@_inline_meta
-                zeros(A.val)
+                zero(A.val)
             end
         else
             if N == 1
@@ -777,8 +777,8 @@ function EnzymeRules.reverse(
     cache,
     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
     kwargs...)
-    fact, dfact = cache
     if !(RT <: Const) && !isa(A, Const)
+        fact, dfact = cache
         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
 
@@ -871,19 +871,21 @@ function EnzymeRules.reverse(
     B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
     kwargs...
 )
-    if !isa(B, Const) && !isa(A, Const)
+    if !isa(B, Const) 
         (cache_A, cache_B) = cache
-        U = cache_A.U
         Y = B.val
-        Z = U' \ cache_B
+        U = cache_A.U
+        Z = isa(A, Const) ? nothing : U' \ cache_B
         for b in 1:EnzymeRules.width(config)
             dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
             dZ = U' \ dB
-            ∂B = U \ dZ
             func.val(cache_A, dB; kwargs...)
-            Ā = -dZ * Y' - Z * ∂B'
-            dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-            dA.factors .+= UpperTriangular(Ā)
+            if !isa(A, Const)
+                ∂B = U \ dZ
+                Ā = -dZ * Y' - Z * ∂B'
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+                dA.factors .+= UpperTriangular(Ā)
+            end
         end
     end
     return (nothing, nothing)
