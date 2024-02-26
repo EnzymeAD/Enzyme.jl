@@ -289,7 +289,7 @@ grad v(x, y) = [d/dx v, d/dy v] = [d/dx 2*x*y, d/dy 2*x*y] = [2*y, 2*x];
 Reverse mode differentiation computes the derivative of all inputs with respect to a single output by propagating the derivative of the return to its inputs. Here, we can explicitly differentiate with respect to the real and imaginary results, respectively, to find this matrix.
 
 ```jldoctest complex
-f(z) = 2 * z
+f(z) = z * z
 
 # a fixed input to use for testing
 z = 3.1 + 2.7im
