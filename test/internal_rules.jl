@@ -409,7 +409,9 @@ end
                 test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
-        @testset "regression test for #1306" begin
+        @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
+            # Test that we get the same derivative for `M` as for the adjoint of its
+            # (materialized) transpose. It's the same matrix, but represented differently
             function f!(Y, A, B)
                 ldiv!(Y, A, B)
                 return nothing
