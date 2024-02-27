@@ -640,26 +640,18 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
     else
         N = width(RT)
 
-        invL = inv(fact.L)
-
         dA = if isa(A, Const)
             ntuple(Val(N)) do i
                 Base.@_inline_meta
                 zero(A.val)
             end
         else
-            if N == 1
-                (A.dval,)
-            else
-                A.dval
-            end
+            N == 1 ? (A.dval,) : A.dval
         end
 
         dfact = ntuple(Val(N)) do i
             Base.@_inline_meta
-            Cholesky(
-                Matrix(fact.L * LowerTriangular(invL * dA[i] * invL' * 0.5 * I)), 'L', 0
-            )
+            return _cholesky_forward(fact, dA[i])
         end
 
         if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
@@ -669,6 +661,30 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
         else
             return BatchDuplicated(fact, dfact)
         end
+    end
+end
+
+function _cholesky_forward(C::Cholesky, Σdot)
+    # Computes the cholesky forward mode update rule
+    # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
+    if C.uplo == 'U'
+        U = C.U
+        Udot = Σdot / U
+        ldiv!(U', Udot)
+        idx = diagind(Udot)
+        Udot[idx] ./= 2
+        triu!(Udot)
+        rmul!(Udot, U)
+        return Cholesky(Udot, 'U', 0)
+    else
+        L = C.L
+        Ldot = L \ Σdot
+        rdiv!(Ldot, L')
+        idx = diagind(Ldot)
+        Ldot[idx] ./= 2
+        tril!(Ldot)
+        lmul!(L, Ldot)
+        return Cholesky(Ldot, 'L', 0)
     end
 end
 
