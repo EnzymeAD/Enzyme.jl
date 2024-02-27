@@ -15,6 +15,8 @@ mutable struct PipelineConfig
     cleanup::Cint
 end
 
+const RunAttributor = Ref(true) 
+
 function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enalbe_early_simplifications=true,
        enable_scalar_optimizations=true,
        enable_loop_optimizations=true,
@@ -1392,19 +1394,23 @@ function removeDeadArgs!(mod::LLVM.Module)
     end
     propagate_returned!(mod)
     pre_attr!(mod)
-    if LLVM.version().major >= 13
-        ModulePassManager() do pm
-            API.EnzymeAddAttributorLegacyPass(pm)
-            run!(pm, mod)
-        end
+    if RunAttributor[]
+        if LLVM.version().major >= 13
+            ModulePassManager() do pm
+                API.EnzymeAddAttributorLegacyPass(pm)
+                run!(pm, mod)
+            end
+        end 
     end
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        if LLVM.version().major >= 13
-            API.EnzymeAddAttributorLegacyPass(pm)
+        if RunAttributor[]
+            if LLVM.version().major >= 13
+                API.EnzymeAddAttributorLegacyPass(pm)
+            end
         end
         run!(pm, mod)
     end
