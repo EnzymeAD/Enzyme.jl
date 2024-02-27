@@ -291,35 +291,39 @@ make3() = (1.0, 2.0, 3.0)
 end
 
 @testset "Deferred and deferred thunk" begin
-    function square!(A)
-        A .*= A
-        return nothing
+    function dot(A)
+        return A[1] * A[1] + A[2] * A[2] 
     end
-    dA = ones(64)
-    A = Float64.(1:1:64)
+    dA = zeros(2)
+    A = [3.0, 5.0]
     thunk_dA, def_dA = copy(dA), copy(dA)
     def_A, thunk_A = copy(A), copy(A)
-    Enzyme.autodiff(ReverseWithPrimal, square!, Duplicated(A, dA))
-    Enzyme.autodiff_deferred(ReverseWithPrimal, square!, Duplicated(def_A, def_dA))
+    primal = Enzyme.autodiff(ReverseWithPrimal, dot, Active, Duplicated(A, dA))[2]
+    @test primal == 34.0
+    primal = Enzyme.autodiff_deferred(ReverseWithPrimal, dot, Active, Duplicated(def_A, def_dA))[2]
+    @test primal == 34.0
 
     dup = Duplicated(thunk_A, thunk_dA)
     TapeType = Enzyme.EnzymeCore.tape_type(
         ReverseSplitWithPrimal,
-        Const{typeof(square!)}, Const, Duplicated{typeof(thunk_A)}
+        Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
+    @test Tuple{Float64,Float64}  === TapeType
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         TapeType,
         ReverseSplitWithPrimal,
-        Const{typeof(square!)},
-        Const,
-        Const{Nothing},
+        Const{typeof(dot)},
+        Active,
+        Active{Float64},
         Duplicated{typeof(thunk_A)}
     )
-    tape, _, _  = fwd(Const(square!), dup)
-    rev(Const(square!), dup, tape)
-    @test all(A .== def_A)
+    seed = 1.0
+    tape, primal, _  = fwd(Const(dot), dup)
+    @test isa(tape, Tuple{Float64,Float64})
+    rev(Const(dot), dup, 1.0, tape)
+    @test all(primal == 34)
+    @test all(dA .== [6.0, 10.0])
     @test all(dA .== def_dA)
-    @test all(A .== thunk_A)
     @test all(dA .== thunk_dA)
 end
 
