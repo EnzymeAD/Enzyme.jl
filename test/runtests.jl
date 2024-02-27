@@ -310,14 +310,13 @@ end
     )
     @test Tuple{Float64,Float64}  === TapeType
     fwd, rev = Enzyme.autodiff_deferred_thunk(
-        TapeType,
         ReverseSplitWithPrimal,
+        TapeType,
         Const{typeof(dot)},
         Active,
         Active{Float64},
         Duplicated{typeof(thunk_A)}
     )
-    seed = 1.0
     tape, primal, _  = fwd(Const(dot), dup)
     @test isa(tape, Tuple{Float64,Float64})
     rev(Const(dot), dup, 1.0, tape)
