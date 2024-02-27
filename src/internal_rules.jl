@@ -760,7 +760,7 @@ function EnzymeRules.augmented_primal(
         end
     end
 
-    cache = isa(A, Const) : nothing ? (fact_returned, dfact)
+    cache = isa(A, Const) ? nothing : (fact_returned, dfact)
     return EnzymeRules.AugmentedReturn(fact, dfact, cache)
 end
 
