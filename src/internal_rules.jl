@@ -742,11 +742,9 @@ function EnzymeRules.augmented_primal(
     RT::Type,
     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
     kwargs...)
-    fact = if EnzymeRules.needs_primal(config)
-        cholesky(A.val; kwargs...)
-    else
-        nothing
-    end
+
+    fact = cholesky(A.val; kwargs...)
+    fact_returned = EnzymeRules.needs_primal(config) ? fact : nothing
 
     # dfact would be a dense matrix, prepare buffer
     dfact = if RT <: Const
@@ -761,12 +759,8 @@ function EnzymeRules.augmented_primal(
             end
         end
     end
-    cache = if isa(A, Const)
-        nothing
-    else
-        (fact, dfact)
-    end
 
+    cache = isa(A, Const) : nothing ? (fact_returned, dfact)
     return EnzymeRules.AugmentedReturn(fact, dfact, cache)
 end
 
