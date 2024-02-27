@@ -321,25 +321,35 @@ end
         @test isapprox(dA, dA_sym)
     end
     @testset "Unit test for `cholesky` (regression test for #1307)" begin
-        # This test checks the `cholesky` rule without involving `ldiv!`
+        # This test checks the `cholesky` rules without involving `ldiv!`
         function f(A)
             C = cholesky(A * adjoint(A))
             return sum(abs2, C.L * C.U)
         end
         @testset for TE in (Float64, ComplexF64)
             A = rand(TE, 3, 3)
+            test_forward(f, Duplicated, (A, Duplicated))
             test_reverse(f, Active, (A, Duplicated))
             @testset "Compare against function bypassing `cholesky`" begin
                 g(A) = sum(abs2, A * adjoint(A))
-                # If C = cholesky(A * A'), we have A * A' == C.L * C.U, so `g`
-                # is essentially the same fucntion as `f`, but bypassing `cholesky`.
-                # We can therefore use this to check that we get the same derivatives.
+                # If C = cholesky(A * A'), we have A * A' ≈ C.L * C.U, so `g`
+                # is essentially the same function as `f`, but bypassing `cholesky`.
+                # We can therefore use this to check that we get the correct derivatives.
                 @testset "Without wrapper" begin
-                    dA1 = zero(A)
-                    dA2 = zero(A)
-                    autodiff(Reverse, f, Active, Duplicated(A, dA1))
-                    autodiff(Reverse, g, Active, Duplicated(A, dA2))
-                    @test dA1 ≈ dA2
+                    @testset "Forward mode" begin
+                        dA = rand(TE, size(A)...)
+                        d1 = autodiff(Forward, f, Duplicated, Duplicated(A, dA))
+                        d2 = autodiff(Forward, g, Duplicated, Duplicated(A, dA))
+                        @test all(d1 .≈ d2)
+                    end
+
+                    @testset "Reverse mode" begin
+                        dA1 = zero(A)
+                        dA2 = zero(A)
+                        autodiff(Reverse, f, Active, Duplicated(A, dA1))
+                        autodiff(Reverse, g, Active, Duplicated(A, dA2))
+                        @test dA1 ≈ dA2
+                    end
                 end
                 if TE == Float64
                     @testset "$wrapper wrapper" for wrapper in (Symmetric, Hermitian,)
@@ -348,11 +358,21 @@ end
                             return sum(abs2, C.L * C.U)
                         end
                         gw(A) = sum(abs2, wrapper(A * adjoint(A)))
-                        dA1 = zero(A)
-                        dA2 = zero(A)
-                        autodiff(Reverse, fw, Active, Duplicated(A, dA1))
-                        autodiff(Reverse, gw, Active, Duplicated(A, dA2))
-                        @test dA1 ≈ dA2
+
+                        @testset "Forward mode" begin
+                            dA = rand(TE, size(A)...)
+                            d1 = autodiff(Forward, fw, Duplicated, Duplicated(A, dA))
+                            d2 = autodiff(Forward, gw, Duplicated, Duplicated(A, dA))
+                            @test all(d1 .≈ d2)
+                        end
+
+                        @testset "Reverse mode" begin
+                            dA1 = zero(A)
+                            dA2 = zero(A)
+                            autodiff(Reverse, fw, Active, Duplicated(A, dA1))
+                            autodiff(Reverse, gw, Active, Duplicated(A, dA2))
+                            @test dA1 ≈ dA2
+                        end
                     end
                 end
             end
