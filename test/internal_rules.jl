@@ -320,7 +320,8 @@ end
         dA_sym = (dA_sym + dA_sym') / 2
         @test isapprox(dA, dA_sym)
     end
-    @testset "Regression test for #1307" begin
+    @testset "Unit test for `cholesky` (regression test for #1307)" begin
+        # This test checks the `cholesky` rule without involving `ldiv!`
         function f(A)
             C = cholesky(A * adjoint(A))
             return sum(abs2, C.L * C.U)
@@ -330,6 +331,9 @@ end
             test_reverse(f, Active, (A, Duplicated))
             @testset "Compare against function bypassing `cholesky`" begin
                 g(A) = sum(abs2, A * adjoint(A))
+                # If C = cholesky(A * A'), we have A * A' == C.L * C.U, so `g`
+                # is essentially the same fucntion as `f`, but bypassing `cholesky`.
+                # We can therefore use this to check that we get the same derivatives.
                 @testset "Without wrapper" begin
                     dA1 = zero(A)
                     dA2 = zero(A)
