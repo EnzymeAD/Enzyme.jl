@@ -164,7 +164,10 @@ function EnzymeRules.reverse(
 end
 
 @testset "Complex values" begin
-    @test Enzyme.autodiff(Enzyme.Reverse, foo, Active(1.0+3im))[1][1] ≈ 1.0+13.0im
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(foo)}, Active, Active{ComplexF64})
+    z = 1.0+3im
+    grad_u = rev(Const(foo), Active(z), 1.0 + 0.0im, fwd(Const(foo), Active(z))[1])[1][1]
+    @test grad_u ≈ 1.0+13.0im
 end
 
 _scalar_dot(x, y) = conj(x) * y
@@ -288,7 +291,7 @@ function plaquette_sum(U)
         p += remultr(@inbounds U[site])
     end
 
-    return p
+    return real(p)
 end
 
 
