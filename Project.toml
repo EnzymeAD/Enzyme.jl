@@ -16,18 +16,18 @@ Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
-[weakdeps]
-SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-
-[extensions]
-EnzymeSpecialFunctionsExt = "SpecialFunctions"
-
 [compat]
 CEnum = "0.4, 0.5"
-EnzymeCore = "0.6.4, 0.6.5"
+EnzymeCore = "0.6.4, 0.6.5, 0.7"
 Enzyme_jll = "0.0.102"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25"
 LLVM = "6.1"
 ObjectFile = "0.4"
 Preferences = "1.4"
 julia = "1.6"
+
+[extensions]
+EnzymeSpecialFunctionsExt = "SpecialFunctions"
+
+[weakdeps]
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
