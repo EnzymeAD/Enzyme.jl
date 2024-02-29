@@ -220,9 +220,7 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Pkg
-            Pkg.develop(path="lib/EnzymeCore")
-            Pkg.develop(path="lib/EnzymeTestUtils")
-            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.develop([PackageSpec(path="lib/EnzymeCore"), PackageSpec(path="lib/EnzymeTestUtils"), PackageSpec(path=pwd())])
             Pkg.instantiate()'
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
