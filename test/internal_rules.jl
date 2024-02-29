@@ -396,7 +396,7 @@ end
         B = rand(TE, sizeB...)
         Y = zeros(TE, sizeB...)
         A = T(M)
-        @testset "test against EnzymeTestUtils through constructor" begin
+        @testset "test through constructor" begin
             _A = T(A)
             function f!(Y, A, B, ::T) where T
                 ldiv!(Y, T(A), B)
@@ -408,6 +408,26 @@ end
                 are_activities_compatible(Const, TY, TM, TB) || continue
                 test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
+        end
+        @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
+            # Test that we get the same derivative for `M` as for the adjoint of its
+            # (materialized) transpose. It's the same matrix, but represented differently
+            function f!(Y, A, B)
+                ldiv!(Y, A, B)
+                return nothing
+            end
+            A1 = T(M)
+            A2 = T(conj(permutedims(M))')
+            dA1 = make_zero(A1)
+            dA2 = make_zero(A2)
+            dB1 = make_zero(B)
+            dB2 = make_zero(B)
+            dY1 = rand(TE, sizeB...)
+            dY2 = copy(dY1)
+            autodiff(Reverse, f!, Duplicated(Y, dY1), Duplicated(A1, dA1), Duplicated(B, dB1))
+            autodiff(Reverse, f!, Duplicated(Y, dY2), Duplicated(A2, dA2), Duplicated(B, dB2))
+            @test dA1.data ≈ dA2.data
+            @test dB1 ≈ dB2
         end
     end
 end
