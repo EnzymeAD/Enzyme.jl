@@ -278,6 +278,51 @@ Enabling runtime activity does therefore, come with a sharp edge, which is that 
 
 Generally, the preferred solution to these type of activity unstable codes should be to make your variables all activity-stable (e.g. always containing differentiable memory or always containing non-differentiable memory). However, with care, Enzyme does support "Runtime Activity" as a way to differentiate these programs without having to modify your code.
 
+### Mixed Activity
+
+Sometimes in Reverse mode (but not forward mode), you may see an error `Type T has mixed internal activity types` for some type. This error arises when a variable in a computation cannot be fully represented as either a Duplicated or Active variable.
+
+Active variables are used for immutable variables (like `Float64`), whereas Duplicated variables are used for mutable variables (like `Vector{Float64}`). Speciically, since Active variables are immutable, functions with Active inputs will return the adjoint of that variable. In contrast Duplicated variables will have their derivatives `+=`'d in place.
+
+This error indicates that you have a type, like `Tuple{Float, Vector{Float64}}` that has immutable components and mutable components. Therefore neither Active nor Duplicated can be used for this type.
+
+Internally, by virtue of working at the LLVM level, most Julia types are represented as pointers, and this issue does not tend to arise within code fully differentiated by Enzyme internally. However, when a program needs to interact with Julia API's (e.g. as arguments to a custom rule, a type unstable call, or the outermost function being differentiated), Enzyme must adhere to Julia's notion of immutability and will throw this error rather than risk an incorrect result.
+
+For example, consider the following code, which has a type unstable call to `myfirst`, passing in a mixed type `Tuple{Float64, Vector{Float64}}`.
+
+```julia
+@noinline function myfirst(tup::T) where T
+    return tup[1]
+end
+
+function f(x::Float64)
+    vec = [x]
+    tup = (x, vec)
+    Base.inferencebarrier(myfirst)(tup)::Float64
+end
+
+Enzyme.autodiff(Reverse, f, Active, Active(3.1))
+```
+
+When this situation arises, it is often easiest to resolve it by adding a level of indirection to ensure the entire variable is mutable. For example, one could enclose this variable in a reference, such as `Ref{Tuple{Float, Vector{Float64}}}`, like as follows.
+
+
+```julia
+@noinline function myfirst_ref(tup_ref::T) where T
+    tup = tup_ref[]
+    return tup[1]
+end
+
+function f2(x::Float64)
+    vec = [x]
+    tup = (x, vec)
+    tup_ref = Ref(tup)
+    Base.inferencebarrier(myfirst_ref)(tup_ref)::Float64
+end
+
+Enzyme.autodiff(Reverse, f2, Active, Active(3.1))
+```
+
 ### CUDA.jl support
 
 [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only supported on Julia v1.7.0 and onwards. On v1.6, attempting to differentiate CUDA kernel functions will not use device overloads
