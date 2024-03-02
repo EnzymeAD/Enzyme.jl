@@ -796,7 +796,14 @@ function EnzymeRules.reverse(
             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
             if _dA !== dfact.factors
                 Ā = _cholesky_pullback_shared_code(fact, dfact)
-                _dA .+= Ā ./ 2
+                if A.val isa LinearAlgebra.RealHermSym{<:Real,<:Matrix}
+                    rmul!(Ā, one(eltype(Ā)) / 2)
+                    _dA .+= Ā
+                else
+                    idx = diagind(Ā)
+                    @views Ā[idx] .= real.(Ā[idx]) ./ 2
+                    _dA .+= UpperTriangular(Ā)
+                end
                 dfact.factors .= 0
             end
         end

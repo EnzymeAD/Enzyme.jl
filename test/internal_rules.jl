@@ -260,7 +260,7 @@ end
         return J
     end
     
-    @testset "Testing $op" for (op, driver, driver_NC) in (
+    @testset "Testing $op, $driver, $driver_NC" for (op, driver, driver_NC) in (
         (:\, divdriver, divdriver_NC),
         (:\, divdriver_herm, divdriver_NC),
         (:\, divdriver_sym, divdriver_NC),
@@ -312,13 +312,11 @@ end
 
         A = [1.3 0.5; 0.5 1.5]
         b = [1., 2.]
-        V = [1.0 0.0; 0.0 0.0]
         dA = zero(A)
         Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
 
         dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
-        dA_sym = (dA_sym + dA_sym') / 2
-        @test isapprox(dA, dA_sym)
+        @test isapprox((dA + dA') / 2, (dA_sym + dA_sym') / 2)
     end
     @testset "Unit test for `cholesky` (regression test for #1307)" begin
         # This test checks the `cholesky` rules without involving `ldiv!`
@@ -390,6 +388,15 @@ end
                 end
             end
         end
+    end
+    @testset "Linear solve with and without `cholesky`" begin
+        A = [3. 1.; 1. 2.]
+        b = [1., 2.]
+        dA1 = Duplicated(copy(A), zero(A))
+        dA2 = Duplicated(copy(A), zero(A))
+        autodiff(Reverse, (A, b) -> first(A\b), dA1, Const(b))
+        autodiff(Reverse, (A, b) -> first(cholesky(A)\b), dA2, Const(b))
+        @test dA1.dval ≈ dA2.dval
     end
 end
 
