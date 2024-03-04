@@ -39,16 +39,15 @@ function __init__()
 end
 
 mutable struct CallbackContext
-    tag::Symbol
     job::CompilerJob
     stub::Symbol
     l_job::ReentrantLock
     addr::Ptr{Cvoid}
-    CallbackContext(tag, job, stub, l_job) = new(tag, job, stub, l_job, C_NULL)
+    CallbackContext(job, stub, l_job) = new(job, stub, l_job, C_NULL)
 end
 
 const l_outstanding = Base.ReentrantLock()
-const outstanding = Dict{Symbol, Tuple{CallbackContext, Union{Nothing, CallbackContext}}}()
+const outstanding = Base.IdSet{CallbackContext}()
 
 # Setup the lazy callback for creating a module
 function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid})
@@ -61,35 +60,27 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
 
         # 2. lookup if we are the first
         lock(l_outstanding)
-        if haskey(outstanding, cc.tag)
-            ccs = outstanding[cc.tag]
-            delete!(outstanding, cc.tag)
+        if in(cc, outstanding)
+            delete!(outstanding, cc)
         else
-            ccs = nothing
-        end
-        unlock(l_outstanding)
-
-        # 3. We are the second callback to run, but we raced the other one
-        #    thus we return the addr from them.
-        if ccs === nothing
+            unlock(l_outstanding)
             unlock(cc.l_job)
+
+            # 3. We are the second callback to run, but we raced the other one
+            #    thus we return the addr from them.
             @assert cc.addr != C_NULL
             return UInt64(reinterpret(UInt, cc.addr))
         end
+        unlock(l_outstanding)
 
-        cc_adjoint, cc_primal = ccs
         try
             thunk = Compiler._link(cc.job, Compiler._thunk(cc.job))
-            cc_adjoint.addr = thunk.adjoint
-            if cc_primal !== nothing
-                cc_primal.addr  = thunk.primal
-            end
+            mode = cc.job.config.params.mode
+            use_primal = mode == API.DEM_ReverseModePrimal
+            cc.addr = use_primal ? thunk.primal : thunk.adjoint
 
             # 4. Update the stub pointer to point to the recently compiled module
-            set_stub!(orc, string(cc_adjoint.stub), thunk.adjoint)
-            if cc_primal !== nothing
-                set_stub!(orc, string(cc_primal.stub),  thunk.primal)
-            end
+            set_stub!(orc, string(cc.stub), cc.addr)
         finally
             unlock(cc.l_job)
         end
@@ -101,37 +92,20 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
 end
 
 function get_trampoline(job)
-    tag = gensym(:tag)
     l_job = Base.ReentrantLock()
 
-    mode = job.config.params.mode
-    needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
-
-    cc_adjoint = CallbackContext(tag, job, gensym(:adjoint), l_job)
-    if needs_augmented_primal
-        cc_primal = CallbackContext(tag, job, gensym(:primal), l_job)
-    else
-        cc_primal = nothing
-    end
-    lock(l_outstanding) do
-        outstanding[tag] = (cc_adjoint, cc_primal)
-    end
+    cc = CallbackContext(job, gensym(:func), l_job)
+    lock(l_outstanding)
+    push!(outstanding, cc)
+    unlock(l_outstanding)
 
     c_callback = @cfunction(callback, UInt64, (LLVM.API.LLVMOrcJITStackRef, Ptr{Cvoid}))
 
     orc = jit[]
-    addr_adjoint = callback!(orc, c_callback, pointer_from_objref(cc_adjoint))
-    create_stub!(orc, string(cc_adjoint.stub), addr_adjoint)
+    addr_adjoint = callback!(orc, c_callback, pointer_from_objref(cc))
+    create_stub!(orc, string(cc.stub), addr_adjoint)
 
-    if needs_augmented_primal
-        addr_primal = callback!(orc, c_callback, pointer_from_objref(cc_primal))
-        create_stub!(orc, string(cc_primal.stub), addr_primal)
-        addr_primal_stub = address(orc, string(cc_primal.stub))
-    else
-        addr_primal_stub = nothing
-    end
-
-    return address(orc, string(cc_adjoint.stub)), addr_primal_stub
+    return address(orc, string(cc.stub))
 end
 
 
