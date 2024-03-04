@@ -60,7 +60,7 @@ function callback(orc_ref::LLVM.API.LLVMOrcJITStackRef, callback_ctx::Ptr{Cvoid}
 
         # 2. lookup if we are the first
         lock(l_outstanding)
-        if haskey(outstanding, cc)
+        if in(cc, outstanding)
             delete!(outstanding, cc)
         else
             unlock(l_outstanding)
