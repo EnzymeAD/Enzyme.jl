@@ -24,7 +24,7 @@ EnzymeSpecialFunctionsExt = "SpecialFunctions"
 
 [compat]
 CEnum = "0.4, 0.5"
-EnzymeCore = "0.6.4, 0.6.5"
+EnzymeCore = "0.7"
 Enzyme_jll = "0.0.102"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25"
 LLVM = "6.1"

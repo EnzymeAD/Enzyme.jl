@@ -34,18 +34,21 @@ using Test
     @test () === autodiff_deferred(Forward, f, Const(Int))
 
     # Complex numbers
-    cres,  = autodiff(Reverse, f, Active, Active(1.5 + 0.7im))[1]
+    @test_throws ErrorException autodiff(Reverse, f, Active, Active(1.5 + 0.7im))
+    cres,  = autodiff(ReverseHolomorphic, f, Active, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
     cres,  = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres,  = autodiff(Reverse, f, Active(1.5 + 0.7im))[1]
+    @test_throws ErrorException autodiff(Reverse, f, Active(1.5 + 0.7im))
+    cres,  = autodiff(ReverseHolomorphic, f, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
     cres,  = autodiff(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres, = autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))[1]
-    @test cres ≈ 1.0 + 0.0im
+    @test_throws ErrorException autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))
+    @test_throws ErrorException autodiff_deferred(ReverseHolomorphic, f, Active(1.5 + 0.7im))
+
     cres,  = autodiff_deferred(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
@@ -207,16 +210,16 @@ using Test
     @test 7*3.4 + 9 * 1.2 ≈ first(autodiff(Forward, h, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
 
     caller(f, x) = f(x)
-    _, res4 = autodiff(Reverse, caller, Active, (x)->x, Active(3.0))[1]
+    _, res4 = autodiff(Reverse, caller, Active, Const((x)->x), Active(3.0))[1]
     @test res4 ≈ 1.0
 
-    res4, = autodiff(Forward, caller, DuplicatedNoNeed, (x)->x, Duplicated(3.0, 1.0))
+    res4, = autodiff(Forward, caller, DuplicatedNoNeed, Const((x)->x), Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
-    _, res4 = autodiff(Reverse, caller, (x)->x, Active(3.0))[1]
+    _, res4 = autodiff(Reverse, caller, Const((x)->x), Active(3.0))[1]
     @test res4 ≈ 1.0
 
-    res4, = autodiff(Forward, caller, (x)->x, Duplicated(3.0, 1.0))
+    res4, = autodiff(Forward, caller, Const((x)->x), Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
     struct LList
@@ -257,16 +260,16 @@ using Test
     dy = Ref(7.0)
     @test 5.0*3.0 + 2.0*7.0≈ first(autodiff(Forward, mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
 
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))[1]
+    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const((x->x*x,)), Active(2.0))[1]
     @test mid ≈ 4.0
 
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))[1]
+    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const([x->x*x]), Active(2.0))[1]
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, (x->x*x,), Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const((x->x*x,)), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, [x->x*x], Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const([x->x*x]), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
 
@@ -373,10 +376,10 @@ end
        return f.x * x
     end
 
-    @test Enzyme.autodiff(Reverse, method, Active, AFoo(2.0), Active(3.0))[1][2] ≈ 2.0
+    @test Enzyme.autodiff(Reverse, method, Active, Const(AFoo(2.0)), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, AFoo(2.0), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, AFoo(2.0), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(AFoo(2.0)), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 
     struct ABar
@@ -386,10 +389,10 @@ end
        return 2.0 * x
     end
 
-    @test Enzyme.autodiff(Reverse, method, Active, ABar(), Active(3.0))[1][2] ≈ 2.0
+    @test Enzyme.autodiff(Reverse, method, Active, Const(ABar()), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, ABar(), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(ABar()), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 end
 

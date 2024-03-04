@@ -26,22 +26,31 @@ using Enzyme_jll
 
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
-    if typeof(x) <: Complex
+    ∂x, = autodiff(ReverseHolomorphic, f, Active, Active(x))[1]
+
+    finite_diff = if typeof(x) <: Complex
+      RT = typeof(x).parameters[1]
+      (fdm(dx -> f(x+dx), RT(0)) - im * fdm(dy -> f(x+im*dy), RT(0)))/2
     else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+      fdm(f, x)
     end
 
-    rm = ∂x
+    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+
     if typeof(x) <: Integer
         x = Float64(x)
     end
-    ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
+
     if typeof(x) <: Complex
-      @test ∂x ≈ rm
+        ∂re, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
+        ∂im, = autodiff(Forward, f, Duplicated(x, im*one(typeof(x))))
+        ∂x = (∂re - im*∂im)/2
     else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+        ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
     end
+
+    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+
 end
 
 function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
@@ -326,11 +335,130 @@ end
     @test all(dA .== thunk_dA)
 end
 
+@testset "Simple Complex tests" begin
+    mul2(z) = 2 * z
+    square(z) = z * z
+
+    z = 1.0+1.0im
+
+    @test_throws ErrorException autodiff(Reverse, mul2, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseWithPrimal, mul2, Active, Active(z))
+    @test autodiff(ReverseHolomorphic, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[2] ≈ 2 * z
+
+    z = 3.4 + 2.7im
+    @test autodiff(ReverseHolomorphic, square, Active, Active(z))[1][1] ≈ 2 * z
+    @test autodiff(ReverseHolomorphic, identity, Active, Active(z))[1][1] ≈ 1
+
+    @test autodiff(ReverseHolomorphic, Base.inv, Active, Active(3.0 + 4.0im))[1][1] ≈ 0.0112 + 0.0384im
+
+    mul3(z) = Base.inferencebarrier(2 * z)
+
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sum, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 1.0
+
+    sumsq(x) = sum(x .* x)
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    sumsq2(x) = sum(abs2.(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    sumsq2C(x) = Complex{Float64}(sum(abs2.(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2C, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 3.4 - 2.7im
+
+    sumsq3(x) = sum(x .* conj(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 3.4 - 2.7im
+
+    sumsq3R(x) = Float64(sum(x .* conj(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3R, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    function setinact(z)
+        z[1] *= 2
+        nothing
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setinact2(z)
+        z[1] *= 2
+        return 0.0+1.0im
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setact(z)
+        z[1] *= 2
+        return z[1]
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 2.0
+
+    function upgrade(z)
+        z = ComplexF64(z)
+        return z*z
+    end
+    @test autodiff(ReverseHolomorphic, upgrade, Active, Active(3.1))[1][1] ≈ 6.2
+end
+
 @testset "Simple Exception" begin
     f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
     f_x = zero.(y)
-    @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), 0)
+    @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), Const(0))
 end
 
 
@@ -689,7 +817,7 @@ end
     B = Float64[4.0, 5.0]
     dB = Float64[0.0, 0.0]
     f = (X, Y) -> sum(X .* Y)
-    Enzyme.autodiff(Reverse, f, Active, A, Duplicated(B, dB))
+    Enzyme.autodiff(Reverse, f, Active, Const(A), Duplicated(B, dB))
 
     function gc_copy(x)  # Basically g(x) = x^2
         a = x * ones(10)
@@ -920,8 +1048,8 @@ end
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
-    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))[1]
-    @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), 3))
+    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), Const(3)))[1]
+    @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), Const(3)))
 end
 
 @testset "SinCos" begin
@@ -963,9 +1091,9 @@ mybesselj1(z) = mybesselj(1, z)
 
 @testset "Bessel" begin
     autodiff(Reverse, mybesselj, Active, Const(0), Active(1.0))
-    autodiff(Reverse, mybesselj, Active, 0, Active(1.0))
+    autodiff(Reverse, mybesselj, Active, Const(0), Active(1.0))
     autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
-    autodiff(Forward, mybesselj, 0, Duplicated(1.0, 1.0))
+    autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
@@ -1482,7 +1610,7 @@ end
 
     u_v_eta = [0.0]
 
-    v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), 1)[1][2]
+    v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), Const(1))[1][2]
     @test v ≈ 1.0
     @test u_v_eta[1] ≈ 0.0
 
@@ -1492,7 +1620,7 @@ end
         return @inbounds eta[i]
     end
 
-    v = autodiff(Reverse, incopy2, Active, Active(3.14), 1)[1][1]
+    v = autodiff(Reverse, incopy2, Active, Active(3.14), Const(1))[1][1]
     @test v ≈ 1.0
 end
 
@@ -1526,11 +1654,11 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][2]
-    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
+    @test 1.0 ≈ autodiff(Reverse, f_undef, Const(false), Active(2.14))[1][2]
+    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, Const(true), Active(2.14))
 
-    @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
-    @test_throws Base.UndefVarError autodiff(Forward, f_undef, true, Duplicated(2.14, 1.0))
+    @test 1.0 ≈ autodiff(Forward, f_undef, Const(false), Duplicated(2.14, 1.0))[1]
+    @test_throws Base.UndefVarError autodiff(Forward, f_undef, Const(true), Duplicated(2.14, 1.0))
 end
 
 @testset "Return GC error" begin
@@ -1544,8 +1672,8 @@ end
 		end
 	end
 
-    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][2]
-	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
+    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, Const(true), Active(2.1))[1][2]
+	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, Const(true), Duplicated(2.1, 1.0))[1]
 
 	function tobedifferentiated2(cond, a)::Float64
 		if cond
@@ -1555,8 +1683,8 @@ end
 		end
 	end
 
-    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1][2]
-	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, true, Duplicated(2.1, 1.0))[1]
+    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, Const(true), Active(2.1))[1][2]
+	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, Const(true), Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)
         bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(p1))
@@ -1586,8 +1714,8 @@ end
     F_H = [1.0, 0.0]
     F = [1.0, 0.0]
 
-    autodiff(Reverse, mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
-    autodiff(Forward, mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
+    autodiff(Reverse, mer, Duplicated(F, L), Duplicated(F_H, L_H), Const(true))
+    autodiff(Forward, mer, Duplicated(F, L), Duplicated(F_H, L_H), Const(true))
 end
 
 @testset "GC Sret" begin
@@ -1749,8 +1877,8 @@ end
             -t
             nothing
         end
-        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), false)
-        autodiff(Forward, tobedifferentiated, Duplicated(F, L), false)
+        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), Const(false))
+        autodiff(Forward, tobedifferentiated, Duplicated(F, L), Const(false))
     end
 
     main()
@@ -1982,9 +2110,9 @@ end
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond,x)*x
     if sizeof(Int) == sizeof(Int64)
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0))
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
     else
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0f0))
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
     end
     # TODO: Add test for NoShadowException
 end
@@ -2021,7 +2149,7 @@ end;
     loss = Ref(0.0)
     dloss = Ref(1.0)
 
-    autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), R)
+    autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), Const(R))
 
     @test loss[] ≈ 0.0
     @show dloss[] ≈ 0.0
@@ -2036,7 +2164,7 @@ end
 
     out = Ref(0.0)
     dout = Ref(1.0)
-    @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
+    @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), Const(true))[1][1]
 end
 
 struct MyFlux
