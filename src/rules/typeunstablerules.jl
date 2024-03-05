@@ -68,6 +68,15 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
     common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
+function error_if_active_newstruct(::Type{T}, ::Type{Y}) where {T, Y}
+    seen = ()
+    areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
+    if areg == ActiveState
+        throw(AssertionError("Found unhandled active variable ($T) in reverse mode of jl_newstruct constructor for $Y"))
+    end
+    nothing
+end
+
 function common_newstructv_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return true
@@ -81,7 +90,22 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
 	if !needsShadow
 		return
 	end
-    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
+    
+    origops = collect(operands(orig))
+    width = get_width(gutils)
+
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+
+    @assert is_constant_value(gutils, origops[offset])
+    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+    abs = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
+
+
+    ty = new_from_original(gutils, origops[offset])
+    for v in origops[offset+1:end-1]
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(err_if_active_newstruct), emit_jltypeof!(B, v), ty])
+    end
+
     return nothing
 end
 
