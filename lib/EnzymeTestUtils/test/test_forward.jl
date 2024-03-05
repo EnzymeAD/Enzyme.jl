@@ -163,7 +163,7 @@ end
                 x = randn(3)
                 a = randn()
 
-                test_reverse(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
+                test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
                 fkwargs = (; a, incorrect_primal=true)
                 @test fails() do
                     test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
