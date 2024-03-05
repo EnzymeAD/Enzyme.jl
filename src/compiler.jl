@@ -70,6 +70,7 @@ include("compiler/utils.jl")
 const cmplx_known_ops =
 Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
     typeof(Base.inv) => (:cmplx_inv, 1, nothing),
+    typeof(Base.sqrt) => (:cmplx_sqrt, 1, nothing),
    )
 const known_ops =
 Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
