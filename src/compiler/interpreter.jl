@@ -94,7 +94,7 @@ function is_primitive_func(@nospecialize(TT))
         end
     end
 
-    if ft == typeof(Base.inv)
+    if ft == typeof(Base.inv) || ft == typeof(Base.sqrt)
         if TT <: Tuple{ft, Complex{Float32}} || TT <: Tuple{ft, Complex{Float64}}
             return true
         end
