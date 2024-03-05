@@ -177,25 +177,15 @@ function get_trampoline(job)
     end
 
     mode = job.config.params.mode
-    needs_augmented_primal = mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+    use_primal = mode == API.DEM_ReverseModePrimal
 
     # We could also use one dylib per job
     jd = JITDylib(lljit)
 
-    adjoint_sym = String(gensym(:adjoint))
-    _adjoint_sym = String(gensym(:adjoint))
-    adjoint_addr = add_trampoline!(jd, (lljit, lctm, ism),
-                                   _adjoint_sym, adjoint_sym)
-
-    if needs_augmented_primal
-        primal_sym = String(gensym(:augmented_primal))
-        _primal_sym = String(gensym(:augmented_primal))
-        primal_addr = add_trampoline!(jd, (lljit, lctm, ism),
-                                      _primal_sym, primal_sym)
-    else
-        primal_sym = nothing
-        primal_addr = nothing
-    end
+    sym = String(gensym(:func))
+    _sym = String(gensym(:func))
+    addr = add_trampoline!(jd, (lljit, lctm, ism),
+                                   _sym, sym)
 
     # 3. add MU that will call back into the compiler
     function materialize(mr)
@@ -207,14 +197,18 @@ function get_trampoline(job)
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
         GPUCompiler.JuliaContext() do ctx
             mod, adjoint_name, primal_name = Compiler._thunk(job)
-            adjointf = functions(mod)[adjoint_name]
-            LLVM.name!(adjointf, adjoint_sym)
-            if needs_augmented_primal
-                primalf = functions(mod)[primal_name]
-                LLVM.name!(primalf, primal_sym)
-            else
-                @assert primal_name === nothing
-                primalf = nothing
+            func_name = use_primal ? primal_name : adjoint_name
+            other_name = !use_primal ? primal_name : adjoint_name
+
+            func = functions(mod)[func_name]
+            LLVM.name!(func, sym)
+
+            if other_name !== nothing
+                # Otherwise MR will complain -- we could claim responsibilty,
+                # but it would be nicer if _thunk just codegen'd the half
+                # we need.
+                other_func = functions(mod)[other_name]
+                LLVM.unsafe_delete!(mod, other_func)
             end
 
             tsm = move_to_threadsafe(mod)
@@ -237,17 +231,13 @@ function get_trampoline(job)
 
     symbols = [
         LLVM.API.LLVMOrcCSymbolFlagsMapPair(
-            mangle(lljit, adjoint_sym), flags),
+            mangle(lljit, sym), flags),
     ]
-    if needs_augmented_primal
-        push!(symbols, LLVM.API.LLVMOrcCSymbolFlagsMapPair(
-            mangle(lljit, primal_sym), flags),)
-    end
 
-    mu = LLVM.CustomMaterializationUnit(adjoint_sym, symbols,
+    mu = LLVM.CustomMaterializationUnit(sym, symbols,
                                         materialize, discard)
     LLVM.define(jd, mu)
-    return adjoint_addr, primal_addr
+    return addr
 end
 
 function add!(mod)

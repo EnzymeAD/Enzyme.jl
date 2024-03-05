@@ -112,6 +112,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_field_index", "jl_field_index",
     "julia.call", "julia.call2",
     "ijl_tagged_gensym", "jl_tagged_gensym",
     "ijl_array_ptr_copy", "jl_array_ptr_copy",
@@ -4984,7 +4985,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
 
-    return mod, (;adjointf, augmented_primalf, entry=adjointf, compiled=meta.compiled, TapeType)
+    use_primal = mode == API.DEM_ReverseModePrimal
+    entry = use_primal ? augmented_primalf : adjointf
+    return mod, (;adjointf, augmented_primalf, entry, compiled=meta.compiled, TapeType)
 end
 
 # Compiler result
@@ -5653,26 +5656,13 @@ import GPUCompiler: deferred_codegen_jobs
         params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
-        adjoint_addr, primal_addr = get_trampoline(job)
-        adjoint_id = Base.reinterpret(Int, pointer(adjoint_addr))
-        deferred_codegen_jobs[adjoint_id] = job
-
-        if primal_addr !== nothing
-            primal_id = Base.reinterpret(Int, pointer(primal_addr))
-            deferred_codegen_jobs[primal_id] = job
-        else
-            primal_id = 0
-        end
+        addr = get_trampoline(job)
+        id = Base.reinterpret(Int, pointer(addr))
+        deferred_codegen_jobs[id] = job
 
         quote
             Base.@_inline_meta
-            adjoint = ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, adjoint_id)))
-            primal = if $(primal_addr !== nothing)
-                ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, primal_id)))
-            else
-                nothing
-            end
-            adjoint, primal
+            ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), $(reinterpret(Ptr{Cvoid}, id)))
         end
     end
 end

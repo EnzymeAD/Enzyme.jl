@@ -414,8 +414,8 @@ code, as well as high-order differentiation.
 
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
-    @assert primal_ptr === nothing
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+
     thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
     if rt <: Active
         args = (args..., Compiler.default_adjoint(eltype(rt)))
@@ -478,8 +478,7 @@ code, as well as high-order differentiation.
     ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    @assert primal_ptr === nothing
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
     thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
     thunk(f, args...)
 end
@@ -672,6 +671,71 @@ end
     return TapeType
 end
 
+const tape_cache = Dict{UInt, Type}()
+
+const tape_cache_lock = ReentrantLock()
+
+import .Compiler: fspec, remove_innerty, UnknownTapeType
+
+@inline function tape_type(
+    parent_job::Union{GPUCompiler.CompilerJob,Nothing}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
+    ::Type{FA}, ::Type{A}, args...
+) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+    width = if Width == 0
+        w = same_or_one(args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = falses_from_args(Val(1), args...)
+    else
+        ModifiedBetween = ModifiedBetweenT
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+
+    primal_tt = Tuple{map(eltype, args)...}
+
+    world = codegen_world_age(eltype(FA), primal_tt)
+
+    mi = Compiler.fspec(eltype(FA), TT, world)
+
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(
+        Tuple{FA, TT.parameters...}, API.DEM_ReverseModeGradient, width,
+        Compiler.remove_innerty(A), true, #=abiwrap=#false, ModifiedBetweenT,
+        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI
+    )
+    job    = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel=false))
+
+
+    key = hash(parent_job, hash(job))
+
+    # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
+    lock(tape_cache_lock)
+
+    try
+        obj = get(tape_cache, key, nothing)
+        if obj === nothing
+
+            Compiler.JuliaContext() do ctx
+                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job)
+                obj = meta.TapeType
+                tape_cache[key] = obj
+            end
+        end
+        obj
+    finally
+        unlock(tape_cache_lock)
+    end
+end
+
 """
     autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
 
@@ -703,7 +767,8 @@ function f(A, v)
     res
 end
 
-forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+TapeType = tape_type(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active, Active{Float64}, Duplicated{typeof(A)}, Active{typeof(v)})
 
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
@@ -715,7 +780,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
+@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{TapeType}, ::Type{FA}, ::Type{A}, ::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, A2, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
     @assert RABI == FFIABI
     width = if Width == 0
         w = same_or_one(args...)
@@ -735,21 +800,15 @@ result, ∂v, ∂A
 
     @assert ReturnShadow
     TT = Tuple{args...}
-   
+
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
-    # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = EnzymeRules.tape_type(nondef[1])
-    A2 = Compiler.return_type(typeof(nondef[1]))
-
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
-    @assert AugT == typeof(nondef[1])
-    AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
-    @assert AdjT == typeof(nondef[2])
-    AugT(primal_ptr), AdjT(adjoint_ptr)
+    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}(primal_ptr)
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}(adjoint_ptr)
+    aug_thunk, adj_thunk
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable

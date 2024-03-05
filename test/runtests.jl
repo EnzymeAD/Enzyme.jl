@@ -299,6 +299,42 @@ make3() = (1.0, 2.0, 3.0)
 
 end
 
+@testset "Deferred and deferred thunk" begin
+    function dot(A)
+        return A[1] * A[1] + A[2] * A[2] 
+    end
+    dA = zeros(2)
+    A = [3.0, 5.0]
+    thunk_dA, def_dA = copy(dA), copy(dA)
+    def_A, thunk_A = copy(A), copy(A)
+    primal = Enzyme.autodiff(ReverseWithPrimal, dot, Active, Duplicated(A, dA))[2]
+    @test primal == 34.0
+    primal = Enzyme.autodiff_deferred(ReverseWithPrimal, dot, Active, Duplicated(def_A, def_dA))[2]
+    @test primal == 34.0
+
+    dup = Duplicated(thunk_A, thunk_dA)
+    TapeType = Enzyme.EnzymeCore.tape_type(
+        ReverseSplitWithPrimal,
+        Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
+    )
+    @test Tuple{Float64,Float64}  === TapeType
+    fwd, rev = Enzyme.autodiff_deferred_thunk(
+        ReverseSplitWithPrimal,
+        TapeType,
+        Const{typeof(dot)},
+        Active,
+        Active{Float64},
+        Duplicated{typeof(thunk_A)}
+    )
+    tape, primal, _  = fwd(Const(dot), dup)
+    @test isa(tape, Tuple{Float64,Float64})
+    rev(Const(dot), dup, 1.0, tape)
+    @test all(primal == 34)
+    @test all(dA .== [6.0, 10.0])
+    @test all(dA .== def_dA)
+    @test all(dA .== thunk_dA)
+end
+
 @testset "Simple Complex tests" begin
     mul2(z) = 2 * z
     square(z) = z * z
