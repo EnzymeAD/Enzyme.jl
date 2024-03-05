@@ -103,7 +103,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
 
     ty = new_from_original(gutils, origops[offset])
     for v in origops[offset+1:end-1]
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active_newstruct), emit_jltypeof!(B, v), ty])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active_newstruct), emit_jltypeof!(B, new_from_original(gutils, v)), ty])
     end
 
     return nothing
