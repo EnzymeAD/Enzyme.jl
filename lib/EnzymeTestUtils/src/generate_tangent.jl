@@ -17,14 +17,18 @@ map_fields_recursive(f, x::T...) where {T<:AbstractFloat} = f(x...)
 map_fields_recursive(f, x::Array{<:Number}...) = f(x...)
 
 rand_tangent(x) = rand_tangent(Random.default_rng(), x)
-rand_tangent(rng, x) = map_fields_recursive(Base.Fix1(rand_tangent, rng), x)
-# make numbers prettier sometimes when errors are printed.
-rand_tangent(rng, ::T) where {T<:AbstractFloat} = rand(rng, -9:T(0.01):9)
-rand_tangent(rng, x::T) where {T<:Array{<:Number}} = rand_tangent.(rng, x)
+function rand_tangent(rng, x)
+    v, from_vec = to_vec(x)
+    T = eltype(v)
+    # make numbers prettier sometimes when errors are printed.
+    v_new = rand(rng, -9:T(0.01):9, length(v))
+    return from_vec(v_new)
+end
 
-zero_tangent(x) = map_fields_recursive(zero_tangent, x)
-zero_tangent(::T) where {T<:AbstractFloat} = zero(T)
-zero_tangent(x::T) where {T<:Array{<:Number}} = zero_tangent.(x)
+function zero_tangent(x)
+    v, from_vec = to_vec(x)
+    return from_vec(zero(v))
+end
 
 function auto_activity(arg::Tuple)
     if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation
