@@ -239,6 +239,8 @@ end
 
 function tape_type end
 
+function parent_job_for_tape_type end
+
 include("rules.jl")
 
 end # module EnzymeCore
