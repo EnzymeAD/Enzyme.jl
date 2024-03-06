@@ -806,7 +806,10 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
-# Taken from ChainRules.jl
+# Adapted from ChainRules.jl
+# MIT "Expat" License
+# Copyright (c) 2018: Jarrett Revels.
+# https://github.com/JuliaDiff/ChainRules.jl/blob/9f1817a22404259113e230bef149a54d379a660b/src/rulesets/LinearAlgebra/factorization.jl#L507-L528
 function _cholesky_pullback_shared_code(C, ΔC)
     Ā = similar(C.factors)
     if C.uplo === 'U'
