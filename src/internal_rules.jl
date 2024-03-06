@@ -829,11 +829,6 @@ function _cholesky_pullback_shared_code(C, ΔC)
     return Ā
 end
 
-_maybeUpperTri(A) = UpperTriangular(A)
-_maybeUpperTri(A::Diagonal) = A
-_maybeLowerTri(A) = LowerTriangular(A)
-_maybeLowerTri(A::Diagonal) = A
-
 function _realifydiag!(A)
     for i in diagind(A)
         @inbounds A[i] = real(A[i])
