@@ -14,6 +14,26 @@ to_vec(x::Type) = (Float32[], _ -> x)
 # MIT Expat License
 # Copyright (c) 2018 Invenia Technical Computing
 
+# get around the constructors and make the type directly
+# Note this is moderately evil accessing julia's internals
+if VERSION >= v"1.3"
+    @generated function _force_construct(T, args...)
+        return Expr(:splatnew, :T, :args)
+    end
+else
+    @generated function _force_construct(T, args...)
+        return Expr(:new, :T, Any[:(args[$i]) for i in 1:length(args)]...)
+    end
+end
+
+function _construct(T, args...)
+    try
+        return ConstructionBase.constructorof(T)(args...)
+    catch MethodError
+        return _force_construct(T, args...)
+    end
+end
+
 # structs: recursively call to_vec on each field
 function to_vec(x::T) where {T}
     fields = fieldnames(T)
@@ -24,7 +44,7 @@ function to_vec(x::T) where {T}
     function struct_from_vec(x_vec_new::Vector{<:AbstractFloat})
         x_vecs_new = from_vec(x_vec_new)
         fields_new = map((f, v) -> f(v), from_vecs, x_vecs_new)
-        return ConstructionBase.constructorof(T)(fields_new...)
+        return _construct(T, fields_new...)
     end
     return x_vec, struct_from_vec
 end

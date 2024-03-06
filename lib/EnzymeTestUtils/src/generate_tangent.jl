@@ -6,7 +6,7 @@ function map_fields_recursive(f, x::T...) where {T}
     new_fields = map(fields...) do xi...
         map_fields_recursive(f, xi...)
     end
-    return ConstructionBase.constructorof(T)(new_fields...)
+    return _construct(T, new_fields...)
 end
 function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple}}
     map(x...) do xi...
