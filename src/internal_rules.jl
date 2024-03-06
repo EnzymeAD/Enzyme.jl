@@ -667,7 +667,7 @@ end
 function _cholesky_forward(C::Cholesky, Σdot)
     # Computes the cholesky forward mode update rule
     # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
-    if C.uplo == 'U'
+    if C.uplo === 'U'
         U = C.U
         Udot = Σdot / U
         ldiv!(U', Udot)
