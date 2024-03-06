@@ -808,7 +808,6 @@ end
 
 # Taken from ChainRules.jl
 function _cholesky_pullback_shared_code(C, ΔC)
-    Δfactors = ΔC.factors
     Ā = similar(C.factors)
     if C.uplo === 'U'
         U = C.U
