@@ -1,5 +1,6 @@
 using Enzyme
 using EnzymeTestUtils
+using LinearAlgebra
 using MetaTesting
 using Test
 
@@ -130,6 +131,21 @@ end
                         VERSION < v"1.8" && Tx <: Const && !(Ta <: Const) && T <: Complex
                     )
                 end
+            end
+        end
+
+        @testset "structured array inputs/outputs" begin
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                # if some are batch, none must be duplicated
+                are_activities_compatible(Tret, Tx) || continue
+
+                x = Hermitian(randn(T, 5, 5))
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
             end
         end
 
