@@ -678,13 +678,13 @@ function _cholesky_forward(C::Cholesky, Σdot)
         return Cholesky(U̇, 'U', C.info)
     else
         L = C.L
-        Ldot = L \ Σdot
-        rdiv!(Ldot, L')
-        idx = diagind(Ldot)
-        Ldot[idx] ./= 2
-        tril!(Ldot)
-        lmul!(L, Ldot)
-        return Cholesky(Ldot, 'L', 0)
+        L̇ = L \ Ȧ
+        rdiv!(L̇, L')
+        idx = diagind(L̇)
+        L̇[idx] ./= 2
+        tril!(L̇)
+        lmul!(L, L̇)
+        return Cholesky(L̇, 'L', C.info)
     end
 end
 
