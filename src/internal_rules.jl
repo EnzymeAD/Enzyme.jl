@@ -669,13 +669,13 @@ function _cholesky_forward(C::Cholesky, Σdot)
     # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
     if C.uplo === 'U'
         U = C.U
-        Udot = Σdot / U
-        ldiv!(U', Udot)
-        idx = diagind(Udot)
-        Udot[idx] ./= 2
-        triu!(Udot)
-        rmul!(Udot, U)
-        return Cholesky(Udot, 'U', 0)
+        U̇ = Ȧ / U
+        ldiv!(U', U̇)
+        idx = diagind(U̇)
+        U̇[idx] ./= 2
+        triu!(U̇)
+        rmul!(U̇, U)
+        return Cholesky(U̇, 'U', C.info)
     else
         L = C.L
         Ldot = L \ Σdot
