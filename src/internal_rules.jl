@@ -812,7 +812,7 @@ function _cholesky_pullback_shared_code(C, ΔC)
     Ā = similar(C.factors)
     if C.uplo === 'U'
         U = C.U
-        Ū = eltype(U) <: Real ? real(_maybeUpperTri(Δfactors)) : _maybeUpperTri(Δfactors)
+        Ū = ΔC.U
         mul!(Ā, Ū, U')
         LinearAlgebra.copytri!(Ā, 'U', true)
         eltype(Ā) <: Real || _realifydiag!(Ā)
