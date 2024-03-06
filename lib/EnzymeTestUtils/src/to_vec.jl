@@ -75,12 +75,13 @@ function to_vec(x::DenseArray)
     end
     return x_vec, DenseArray_from_vec
 end
-function to_vec(x::NamedTuple)
-    x_tuple = values(x)
-    x_vec, from_vec = to_vec(x_tuple)
-    function NamedTuple_from_vec(x_vec_new::Vector{<:AbstractFloat})
-        x_tuple_new = from_vec(x_vec_new)
-        return typeof(x)(x_tuple_new)
+function to_vec(x::Dict)
+    x_keys = collect(keys(x))
+    x_vals = collect(values(x))
+    x_vec, from_vec = to_vec(x_vals)
+    function Dict_from_vec(x_vec_new::Vector{<:AbstractFloat})
+        x_vals_new = from_vec(x_vec_new)
+        return typeof(x)(Pair.(x_keys, x_vals_new)...)
     end
-    return x_vec, NamedTuple_from_vec
+    return x_vec, Dict_from_vec
 end
