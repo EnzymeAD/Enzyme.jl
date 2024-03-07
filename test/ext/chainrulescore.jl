@@ -1,5 +1,6 @@
 using Enzyme
 using Test
+using ChainRules
 using ChainRulesCore
 using EnzymeCore
 using LinearAlgebra
@@ -23,6 +24,18 @@ rdiff(f, x::AbstractArray) = autodiff(Reverse, f, Active, Duplicated(x, zero(x))
     Enzyme.@import_frule typeof(f2) Float32
     @test fdiff(f2, 1f0) === 5f0
     @test fdiff(f2, 1.0) === 2.0
+
+    @testset "batch duplicated" begin 
+        x = [1.0, 2.0, 0.0]        
+        Enzyme.@import_frule typeof(Base.sort)  Any
+        # for Tret in (Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed)
+        #     for Tx in (Duplicated, BatchDuplicated)
+        for Tret in (Duplicated, DuplicatedNoNeed)
+            for Tx in (Duplicated, BatchDuplicated)
+                test_forward(sort, Tret, (x, Tx))
+            end
+        end
+    end
 end
 
 
