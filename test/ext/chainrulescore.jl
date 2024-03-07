@@ -11,19 +11,19 @@ rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
 rdiff(f, x::AbstractArray) = autodiff(Reverse, f, Active, Duplicated(x, zero(x)))[1][1]
 
 
-# @testset "import_frule" begin
+@testset "import_frule" begin
     f1(x) = 2*x
     ChainRulesCore.@scalar_rule f1(x)  (5.0,)
-    Enzyme.@import_frule typeof(Main.f1) Any
+    Enzyme.@import_frule typeof(f1) Any
     @test fdiff(f1, 1.0) === 5.0
 
     # specific signature    
     f2(x) = 2*x
     ChainRulesCore.@scalar_rule f2(x)  (5*one(x),)
-    Enzyme.@import_frule typeof(Main.f2) Float32
+    Enzyme.@import_frule typeof(f2) Float32
     @test fdiff(f2, 1f0) === 5f0
     @test fdiff(f2, 1.0) === 2.0
-# end
+end
 
 
 # function EnzymeRules.forward(func::Const{typeof(f)}, RT, x::Duplicated)
