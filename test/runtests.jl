@@ -102,6 +102,11 @@ end
         test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
         test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
     end
+
+    using ChainRulesCore
+    @testset "ChainRulesCore ext" begin
+        include("ext/chainrulescore.jl")
+    end
 end
 
 f0(x) = 1.0 + x
@@ -1196,7 +1201,7 @@ end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
-    include("packages/specialfunctions.jl")
+    include("ext/specialfunctions.jl")
 end
 
 @testset "Threads" begin
