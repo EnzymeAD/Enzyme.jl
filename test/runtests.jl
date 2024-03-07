@@ -100,20 +100,6 @@ end
     include("blas.jl")
 end
 
-@static if VERSION ≥ v"1.9-"
-    using SpecialFunctions
-    @testset "SpecialFunctions ext" begin
-        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
-        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
-        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
-    end
-
-    using ChainRulesCore
-    @testset "ChainRulesCore ext" begin
-        include("ext/chainrulescore.jl")
-    end
-end
-
 f0(x) = 1.0 + x
 function vrec(start, x)
     if start > length(x)
@@ -3037,5 +3023,23 @@ end
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
 end
+
+# TEST EXTENSIONS 
+@static if VERSION ≥ v"1.9-"
+    using SpecialFunctions
+    @testset "SpecialFunctions ext" begin
+        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    end
+
+    using ChainRulesCore
+    @testset "ChainRulesCore ext" begin
+        include("ext/chainrulescore.jl")
+    end
+end
+
+
+
 end
 

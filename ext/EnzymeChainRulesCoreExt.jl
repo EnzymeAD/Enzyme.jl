@@ -8,9 +8,9 @@ using Enzyme
 """
     import_frule(::fn, tys...)
 
-Automatically import a ChainRules.frule as a custom forward mode EnzymeRule. When called in batch mode, this
+Automatically import a `ChainRulesCore.frule`` as a custom forward mode `EnzymeRule`. When called in batch mode, this
 will end up calling the primal multiple times, which may result in incorrect behavior if the function mutates,
-and slow code, always. Importing the rule from ChainRules is also likely to be slower than writing your own rule,
+and slow code, always. Importing the rule from `ChainRules` is also likely to be slower than writing your own rule,
 and may also be slower than not having a rule at all.
 
 Use with caution.
