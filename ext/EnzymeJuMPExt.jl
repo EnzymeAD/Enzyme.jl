@@ -24,39 +24,36 @@ function jump_operator(f)
 
     function hessian!(H::AbstractMatrix{T}, x::Vararg{T,N}) where {T,N}
         y = zeros(1)
-        dg = zeros(N)
-        y[1] = 0.0
-        dy = ones(1)
-        ry = ones(1)
-        dry = zeros(1)
+        dy = ntuple(N) do i
+            ones(1)
+        end
         g = zeros(N)
-        dg = zeros(N)
-
+        dg = ntuple(N) do i
+            zeros(N)
+        end
+        ry = ones(1)
+        dry = ntuple(N) do i
+            zeros(1)
+        end
         rx = ntuple(N) do i
             Active(x[i])
         end
 
-        for j in 1:N
-            y[1] = 0.0
-            dy[1] = 1.0
-            ry[1] = 1.0
-            dry[1] = 0.0
-            drx = ntuple(N) do i
+        args = ntuple(N) do i
+            drx = ntuple(N) do j
                 if i == j
                     Active(one(T))
                 else
                     Active(zero(T))
                 end
             end
-            tdrx= ntuple(N) do i
-                Duplicated(rx[i], drx[i])
-            end
-            fill!(dg, 0.0)
-            fill!(g, 0.0)
-            autodiff(Forward, gradient_deferred!, Const, Duplicated(g,dg), Duplicated(y,dy), Duplicated(ry, dry), tdrx...)
-            for i in 1:N
+            BatchDuplicated(rx[i], drx)
+        end
+        autodiff(Forward, gradient_deferred!, Const, BatchDuplicated(g,dg), BatchDuplicated(y,dy), BatchDuplicated(ry, dry), args...)
+        for i in 1:N
+            for j in 1:N
                 if i <= j
-                    H[j,i] = dg[i]
+                    H[j,i] = dg[j][i]
                 end
             end
         end
@@ -73,7 +70,6 @@ function JuMP.add_nonlinear_operator(
     name::Symbol = Symbol(f),
 )
     gradient, hessian = jump_operator(f)
-    @show tuple(f, gradient, hessian)
     MOI.set(model, MOI.UserDefinedFunction(name, dim), tuple(f, gradient, hessian))
     return NonlinearOperator(f, name)
 end
