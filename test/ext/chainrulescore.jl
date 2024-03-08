@@ -2,7 +2,6 @@ using Enzyme
 using Test
 using ChainRules
 using ChainRulesCore
-using EnzymeCore
 using LinearAlgebra
 using EnzymeTestUtils
 
@@ -10,7 +9,6 @@ using EnzymeTestUtils
 fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
 rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
 rdiff(f, x::AbstractArray) = autodiff(Reverse, f, Active, Duplicated(x, zero(x)))[1][1]
-
 
 @testset "import_frule" begin
     f1(x) = 2*x
@@ -28,8 +26,6 @@ rdiff(f, x::AbstractArray) = autodiff(Reverse, f, Active, Duplicated(x, zero(x))
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
         Enzyme.@import_frule typeof(Base.sort)  Any
-        # for Tret in (Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed)
-        #     for Tx in (Duplicated, BatchDuplicated)
         for Tret in (Duplicated, DuplicatedNoNeed)
             for Tx in (Duplicated, BatchDuplicated)
                 test_forward(sort, Tret, (x, Tx))
@@ -37,19 +33,6 @@ rdiff(f, x::AbstractArray) = autodiff(Reverse, f, Active, Duplicated(x, zero(x))
         end
     end
 end
-
-
-# function EnzymeRules.forward(func::Const{typeof(f)}, RT, x::Duplicated)
-#     println("using custom Enzyme forward rule")
-#     y = func.val(x.val)
-#     @show x x.dval typeof(x.dval) RT
-#     if RT <: Const
-#         return y
-#     elseif RT <: Duplicated
-#         return Duplicated(y, 5.0)
-#     end
-# end
-
 
 
 
