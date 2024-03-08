@@ -13,12 +13,12 @@ function jump_operator(f)
         rx = ntuple(N) do i
             Active(x[i])
         end
-        g .= autodiff(ReverseWithPrimal, f!, Const, Duplicated(y,ry), rx...)[1][2:end]
+        g .= autodiff(Reverse, f!, Const, Duplicated(y,ry), rx...)[1][2:end]
         return nothing
     end
 
     function gradient_deferred!(g, y, ry, rx...)
-        g .= autodiff_deferred(ReverseWithPrimal, f!, Const, Duplicated(y,ry), rx...)[1][2:end]
+        g .= autodiff_deferred(Reverse, f!, Const, Duplicated(y,ry), rx...)[1][2:end]
         return nothing
     end
 
