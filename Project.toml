@@ -17,9 +17,11 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [weakdeps]
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [extensions]
+EnzymeJuMPExt = "JuMP"
 EnzymeSpecialFunctionsExt = "SpecialFunctions"
 
 [compat]
@@ -27,6 +29,7 @@ CEnum = "0.4, 0.5"
 EnzymeCore = "0.7"
 Enzyme_jll = "0.0.102"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25"
+JuMP = "1"
 LLVM = "6.1"
 ObjectFile = "0.4"
 Preferences = "1.4"
