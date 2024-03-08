@@ -3,13 +3,13 @@ module EnzymeJuMPExt
 using Enzyme
 using JuMP
 
-function jump_operator(f)
+function jump_operator(f::Function)
     @inline function f!(y, x...)
         y[1] = f(x...)
     end
     function gradient!(g::AbstractVector{T}, x::Vararg{T,N}) where {T,N}
-        y = zeros(1)
-        ry = ones(1)
+        y = zeros(T,1)
+        ry = ones(T,1)
         rx = ntuple(N) do i
             Active(x[i])
         end
@@ -23,17 +23,17 @@ function jump_operator(f)
     end
 
     function hessian!(H::AbstractMatrix{T}, x::Vararg{T,N}) where {T,N}
-        y = zeros(1)
+        y = zeros(T,1)
         dy = ntuple(N) do i
             ones(1)
         end
-        g = zeros(N)
+        g = zeros(T,N)
         dg = ntuple(N) do i
-            zeros(N)
+            zeros(T,N)
         end
         ry = ones(1)
         dry = ntuple(N) do i
-            zeros(1)
+            zeros(T,1)
         end
         rx = ntuple(N) do i
             Active(x[i])
@@ -57,9 +57,9 @@ function jump_operator(f)
                 end
             end
         end
-
         return nothing
     end
+
     return gradient!, hessian!
 end
 
