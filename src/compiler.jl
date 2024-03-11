@@ -1563,7 +1563,7 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
         end
     end
     # val = 
-    call!(B, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
+    call!(B, FT, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
   end
   return val.ref
 end
