@@ -239,7 +239,7 @@ end
 
 function tape_type end
 
-function parent_job_for_tape_type end
+function compiler_config_from_backend end
 
 include("rules.jl")
 
