@@ -7,10 +7,13 @@ import GPUCompiler
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
+@inline function use_ojit()
+    return LLVM.has_julia_ojit() && !Sys.iswindows()
+end
 
 export get_trampoline
 
-@static if LLVM.has_julia_ojit()
+@static if use_ojit()
     struct CompilerInstance
         jit::LLVM.JuliaOJIT
         lctm::Union{LLVM.LazyCallThroughManager, Nothing}
@@ -75,7 +78,7 @@ function __init__()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
     
-    lljit = if !LLVM.has_julia_ojit()
+    lljit = @static if !use_ojit()
         tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
         LLVM.asm_verbosity!(tempTM, true)
 
@@ -129,7 +132,7 @@ function __init__()
     end
 
     atexit() do
-        if !LLVM.has_julia_ojit()
+        @static if !use_ojit()
            ci = jit[]
            dispose(ci)
         end
@@ -219,7 +222,7 @@ function get_trampoline(job)
 
             tsm = move_to_threadsafe(mod)
 
-            il = if LLVM.has_julia_ojit()
+            il = @static if use_ojit()
                 LLVM.IRCompileLayer(lljit)
             else
                 LLVM.IRTransformLayer(lljit)
