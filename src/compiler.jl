@@ -4758,7 +4758,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         target_machine = GPUCompiler.llvm_machine(primal_job.config.target)
     end
 
-    parallel = Threads.nthreads() > 1
+    parallel = parent_job === nothing ? Threads.nthreads() > 1 : false
     process_module = false
     device_module = false
     if parent_job !== nothing
