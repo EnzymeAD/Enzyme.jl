@@ -112,28 +112,41 @@ end
 
 @static if VERSION > v"1.8"
 @testset "Cholesky" begin
-    function cholesky_testfunction(A, b, x1, x2)
-        C1 = cholesky(A * A')
-        C2 = cholesky(Symmetric(A * A'))
-        x1 .= C1 \ b
-        x2 .= C2 \ b
-        return sum(abs2, C1.L * C1.U) + sum(abs2, C2.L * C2.U)
+    function cholesky_testfunction_symmetric(A, b, x1, x2)
+        C1 = cholesky(A * A') # test factorization without wrapper
+        C2 = cholesky(Symmetric(A * A')) # test factorization with wrapper
+        x1 .= C1 \ b # test linear solve with factorization object without wrapper
+        x2 .= C2 \ b # test linear solve with factorization object with wrapper
+        return sum(abs2, C1.L * C1.U) + sum(abs2, C2.L * C2.U) # test factorization itself
     end
-    A = rand(5, 5)
-    b = rand(5)
-    x1 = rand(5)
-    x2 = rand(5)
-    @testset for TA in (Const, Duplicated),
-        Tb in (Const, Duplicated),
-        Tx1 in (Const, Duplicated),
-        Tx2 in (Const, Duplicated)
-        @testset for Tret in (Const, Duplicated)
-            are_activities_compatible(Tret, TA, Tb, Tx1, Tx2) || continue
-            test_forward(cholesky_testfunction, Tret, (A, TA), (b, Tb), (x1, Tx1), (x2, Tx2))
-        end
-        @testset for Tret in (Const, Active)
-            are_activities_compatible(Tret, TA, Tb, Tx1, Tx2) || continue
-            test_reverse(cholesky_testfunction, Tret, (A, TA), (b, Tb), (x1, Tx1), (x2, Tx2))
+    function cholesky_testfunction_hermitian(A, b, x1, x2) 
+        C1 = cholesky(A * adjoint(A)) # test factorization without wrapper
+        C2 = cholesky(Hermitian(A * adjoint(A))) # test factorization with wrapper
+        x1 .= C1 \ b # test linear solve with factorization object without wrapper
+        x2 .= C2 \ b # test linear solve with factorization object with wrapper
+        return sum(abs2, C1.L * C1.U) + sum(abs2, C2.L * C2.U) # test factorization itself
+    end
+    @testset for (TE, testfunction) in (
+        Float64 => cholesky_testfunction_symmetric,
+        Float64 => cholesky_testfunction_hermitian
+    )
+        @testset for TA in (Const, Duplicated),
+            Tb in (Const, Duplicated),
+            Tx1 in (Const, Duplicated),
+            Tx2 in (Const, Duplicated)
+            A = rand(TE, 5, 5)
+            b = rand(TE, 5)
+            x1 = rand(TE, 5)
+            x2 = rand(TE, 5)
+            # ishermitian(A * adjoint(A)) || continue
+            @testset for Tret in (Const, Duplicated)
+                are_activities_compatible(Tret, TA, Tb, Tx1, Tx2) || continue
+                test_forward(testfunction, Tret, (A, TA), (b, Tb), (x1, Tx1), (x2, Tx2))
+            end
+            @testset for Tret in (Const, Active)
+                are_activities_compatible(Tret, TA, Tb, Tx1, Tx2) || continue
+                test_reverse(testfunction, Tret, (A, TA), (b, Tb), (x1, Tx1), (x2, Tx2))
+            end
         end
     end
 end
