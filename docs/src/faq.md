@@ -1,3 +1,10 @@
+```@meta
+CurrentModule = Enzyme
+DocTestSetup = quote
+    using Enzyme
+end
+```
+
 # Frequently asked questions
 
 ## Implementing pullbacks
