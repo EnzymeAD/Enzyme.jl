@@ -58,17 +58,6 @@ Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as duplicated
 auto-differentiate in respect to such arguments, with `dx` acting as an
 accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 `∂f_∂x`.
-
-# Note
-
-Enzyme forces `x` and `∂f_∂x` to have the same types when constructing `Duplicated`.
-This is not a mathematical requirement, but rather a guardrail to prevent user error.
-The memory locations of `x` and `∂f_∂x` are accessed in the same way by the differentiation code, so they should have the same data layout.
-Equality of types is an approximation of this condition.
-
-In some ways, type equality is too strict, but in other ways it is not strict enough.
-For instance, if `x` and `∂f_∂x` are sparse arrays, their sparsity pattern should be identical, but this is not encoded in the type.
-To make sure that `∂f_∂x` has the right data layout, create it with `∂f_∂x = Enzyme.make_zero(x)`.
 """
 struct Duplicated{T} <: Annotation{T}
     val::T
