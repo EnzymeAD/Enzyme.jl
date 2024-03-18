@@ -51,7 +51,7 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Examples" => examples,
-        "FAQ" => "FAQ.md",
+        "FAQ" => "faq.md",
         "API reference" => "api.md",
         "Advanced" => [
             "For developers" => "dev_docs.md",
