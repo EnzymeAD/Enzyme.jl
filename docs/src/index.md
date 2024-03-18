@@ -25,7 +25,7 @@ The Enzyme.jl API revolves around the function [`autodiff`](@ref).
 For some common operations, Enzyme additionally wraps [`autodiff`](@ref) in several convenience functions; e.g., [`gradient`](@ref) and [`jacobian`](@ref).
 
 The tutorial below covers the basic usage of these functions.
-For a complete overview of Enzyme's functionality, see the [API](@ref) documentation.
+For a complete overview of Enzyme's functionality, see the [API reference](@ref) documentation.
 Also see [Implementing pullbacks](@ref) on how to implement back-propagation for functions with non-scalar results.
 
 We will try a few things with the following functions:
