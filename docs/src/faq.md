@@ -9,7 +9,8 @@ end
 
 ## Implementing pullbacks
 
-Enzyme's [`autodiff`](@ref) function can only handle functions with scalar output. To implement pullbacks (back-propagation of gradients/tangents) for array-valued functions, use a mutating function that returns `nothing` and stores it's result in one of the arguments, which must be passed wrapped in a [`Duplicated`](@ref).
+In combined reverse mode, Enzyme's [`autodiff`](@ref) function can only handle functions with scalar output (this is not true for split reverse mode, aka `autodiff_thunk`).
+To implement pullbacks (back-propagation of gradients/tangents) for array-valued functions, use a mutating function that returns `nothing` and stores it's result in one of the arguments, which must be passed wrapped in a [`Duplicated`](@ref).
 
 Given a function `mymul!` that performs the equivalent of `R = A * B` for matrices `A` and `B`, and given a gradient (tangent) `∂z_∂R`, we can compute `∂z_∂A` and `∂z_∂B` like this:
 
