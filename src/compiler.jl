@@ -1,7 +1,8 @@
 module Compiler
 
 import ..Enzyme
-import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
+import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
+               BatchDuplicatedNoNeed,
                BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
                API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md,
@@ -3062,7 +3063,8 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl, seen)
+    retT = (!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType
+    retTT = typetree(retT, ctx, dl, seen)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
