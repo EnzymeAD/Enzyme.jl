@@ -850,7 +850,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
         idx = 0
         dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig)))))
-        Tys2 = (eltype(A) for A in activity[2+isKWCall:end] if A <: Active)
+        Tys2 = (eltype(A) for A in activity[(2 + isKWCall):end] if A <: Active)
         seen = TypeTreeTable()
         for (v, Ty) in zip(actives, Tys2)
             TT = typetree(Ty, ctx, dl, seen)
