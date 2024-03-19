@@ -22,5 +22,6 @@ jobs:
           julia  -e 'using JuliaFormatter; format("."; verbose=true)'
       - uses: reviewdog/action-suggester@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           tool_name: JuliaFormatter
           fail_on_error: true
