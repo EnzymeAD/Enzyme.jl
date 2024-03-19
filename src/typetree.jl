@@ -60,10 +60,13 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
 end
 
 function to_md(tt::TypeTree, ctx)
-    return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme), LLVM.API.LLVMValueRef, (API.CTypeTreeRef,LLVM.API.LLVMContextRef), tt, ctx)))
+    return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme),
+                                                    LLVM.API.LLVMValueRef,
+                                                    (API.CTypeTreeRef,
+                                                     LLVM.API.LLVMContextRef), tt, ctx)))
 end
 
-const TypeTreeTable = IdDict{Any, Union{Nothing, TypeTree}}
+const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
 
 """
     function typetree(T, ctx, dl, seen=TypeTreeTable())
@@ -88,7 +91,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
     return tree::TypeTree
 end
 
-function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where T <: Integer
+function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:Integer}
     return TypeTree(API.DT_Integer, -1, ctx)
 end
 
@@ -108,7 +111,7 @@ function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where T<:AbstractFloat
+function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:AbstractFloat}
     GPUCompiler.@safe_warn "Unknown floating point type" T
     return TypeTree()
 end
@@ -127,7 +130,7 @@ end
 
 function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
-    for i in 0:(sizeof(Csize_t)-1)
+    for i in 0:(sizeof(Csize_t) - 1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
@@ -141,14 +144,15 @@ function typetree_inner(::Type{<:AbstractString}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree_inner(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl, seen::TypeTreeTable) where T
+function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
+                        seen::TypeTreeTable) where {T}
     tt = copy(typetree(T, ctx, dl, seen))
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt
 end
 
-function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where T
+function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
     offset = 0
 
     tt = copy(typetree(T, ctx, dl, seen))
@@ -212,8 +216,8 @@ function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
 
     tt = TypeTree()
     for f in 1:fieldcount(T)
-        offset  = fieldoffset(T, f)
-        subT    = fieldtype(T, f)
+        offset = fieldoffset(T, f)
+        subT = fieldtype(T, f)
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
