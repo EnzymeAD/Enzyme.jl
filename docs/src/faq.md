@@ -59,12 +59,19 @@ Note that the result of the backpropagation is *added to* `∂z_∂A` and `∂z_
 
 Enzyme checks that `x` and `∂f_∂x` have the same types when constructing objects of type `Duplicated`, `DuplicatedNoNeed`, `BatchDuplicated`, etc.
 This is not a mathematical or practical requirement within Enzyme, but rather a guardrail to prevent user error.
-The memory locations of `x` and `∂f_∂x` are accessed in the same way by the differentiation code, so they should have the same data layout.
-Equality of types is an approximation of this condition.
+The memory locations of the shadow `∂f_∂x` can only be accessed in the derivative function `∂f` if the corresponding memory locations of the variable `x` are accessed by the function `f`.
+Imposing that the variable `x` and shadow `∂f_∂x` have the same type is a heuristic way to ensure that they have the same data layout.
+This helps prevent some user errors, for instance when the provided shadow cannot be accessed at the relevant memory locations.
 
 In some ways, type equality is too strict: two different types can have the same data layout.
+For instance, a vector and a view of a matrix column are arranged identically in memory.
 But in other ways it is not strict enough.
-For instance, if `x` and `∂f_∂x` are sparse arrays, their sparsity pattern should be identical, but this is not encoded in the type.
+Suppose you have a function `f(x) = x[7]`.
+If you call `Enzyme.autodiff(Reverse, f, Duplicated(ones(10), ones(1))`, the type check alone will not be sufficient.
+Since the original code accesses `x[7]`, the derivative code will try to set `∂f_∂x[7]`.
+The length is not encoded in the type, so Julia cannot provide a high-level error before running `autodiff`, and the user may end up with a segfault (or other memory error) when running the generated derivative code.
+Another typical example is sparse arrays, for which the sparsity pattern of `x` and `∂f_∂x` should be identical.
+
 To make sure that `∂f_∂x` has the right data layout, create it with `∂f_∂x = Enzyme.make_zero(x)`.
 
 ## CUDA support
