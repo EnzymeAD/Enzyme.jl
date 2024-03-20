@@ -10,7 +10,8 @@ end
 ## Implementing pullbacks
 
 In combined reverse mode, Enzyme's [`autodiff`](@ref) function can only handle functions with scalar output (this is not true for split reverse mode, aka `autodiff_thunk`).
-To implement pullbacks (back-propagation of gradients/tangents) for array-valued functions, use a mutating function that returns `nothing` and stores it's result in one of the arguments, which must be passed wrapped in a [`Duplicated`](@ref).
+To implement pullbacks (back-propagation of gradients/tangents) for array-valued functions, use a mutating function that returns `nothing` and stores its result in one of the arguments, which must be passed wrapped in a [`Duplicated`](@ref).
+Regardless of AD mode, this mutating function will be much more efficient anyway than one which allocates the output.
 
 Given a function `mymul!` that performs the equivalent of `R = A * B` for matrices `A` and `B`, and given a gradient (tangent) `∂z_∂R`, we can compute `∂z_∂A` and `∂z_∂B` like this:
 
@@ -56,8 +57,8 @@ Note that the result of the backpropagation is *added to* `∂z_∂A` and `∂z_
 
 ## Identical types in `Duplicated`
 
-Enzyme forces `x` and `∂f_∂x` to have the same types when constructing objects of type `Duplicated`, `DuplicatedNoNeed`, `BatchDuplicated`, etc.
-This is not a mathematical requirement, but rather a guardrail to prevent user error.
+Enzyme checks that `x` and `∂f_∂x` have the same types when constructing objects of type `Duplicated`, `DuplicatedNoNeed`, `BatchDuplicated`, etc.
+This is not a mathematical or practical requirement within Enzyme, but rather a guardrail to prevent user error.
 The memory locations of `x` and `∂f_∂x` are accessed in the same way by the differentiation code, so they should have the same data layout.
 Equality of types is an approximation of this condition.
 
