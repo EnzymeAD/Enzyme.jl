@@ -513,7 +513,7 @@ end
             return true
         end
         @assert state == MixedState
-        throw(AssertionError(string(T)*" has mixed internal activity types. See https://enzyme.mit.edu/julia/dev/#Mixed-Activity for more information"))
+        throw(AssertionError(string(T)*" has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"))
     else
         return false
     end
