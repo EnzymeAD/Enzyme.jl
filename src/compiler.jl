@@ -4366,6 +4366,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     mod, meta = GPUCompiler.codegen(:llvm, primal_job; optimize=false, toplevel=toplevel, cleanup=false, validate=false, parent_job=parent_job)
     prepare_llvm(mod, primal_job, meta)
+    for f in functions(mod)
+        permit_inlining!(f)
+    end
 
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
