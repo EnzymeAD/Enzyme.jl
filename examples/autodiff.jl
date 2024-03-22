@@ -1,4 +1,4 @@
-# # AutoDiff API
+# # Basics
 
 # The goal of this tutorial is to give users already familiar with automatic
 # differentiation (AD) an overview
