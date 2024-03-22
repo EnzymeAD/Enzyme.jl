@@ -17,6 +17,8 @@ using Enzyme
 using Test
 using FiniteDifferences
 using Aqua
+using SparseArrays
+using StaticArrays
 using Statistics
 using LinearAlgebra
 using InlineStrings
@@ -2348,6 +2350,18 @@ end
 
     grad = Enzyme.gradient(Reverse, abs2, 7.0)
     @test grad == 14.0
+end
+
+@testset "Gradient & SparseArrays / StaticArrays" begin
+    x = sparse([5.0 0.0 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseMatrixCSC
+    @test dx == [1 0 1]
+
+    x = @SArray [5.0 0.0 6.0]
+    dx = Enzyme.gradient(Reverse, prod, x)
+    @test dx isa SArray
+    @test dx == [0 30 0]
 end
 
 @testset "Jacobian" begin
