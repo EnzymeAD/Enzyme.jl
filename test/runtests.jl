@@ -2341,9 +2341,14 @@ end
     grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
     @test grad == (x = [3.0, 4.0], y = [1.0, 2.0])
 
-    xp = (x = [1.0, 2.0], p = 3)
+    xp = (x = [1.0, 2.0], p = 3)  # 3::Int is non-diff
     grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp)
     @test grad.x == [3.0, 12.0]
+
+    xp2 = (x = [1.0, 2.0], p = 3.0)  # mixed activity
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp2)
+    @test grad.x == [3.0, 12.0]
+    @test grad.p ≈ 5.545177444479562
 
     grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
     @test grad == (x = 6.0, y = 5.0)
@@ -2353,15 +2358,20 @@ end
 end
 
 @testset "Gradient & SparseArrays / StaticArrays" begin
+    x = sparse([5.0, 0.0, 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseVector
+    @test dx ≈ [1, 0, 1]
+
     x = sparse([5.0 0.0 6.0])
     dx = Enzyme.gradient(Reverse, sum, x)
     @test dx isa SparseMatrixCSC
-    @test dx == [1 0 1]
+    @test dx ≈ [1 0 1]
 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Reverse, prod, x)
     @test dx isa SArray
-    @test dx == [0 30 0]
+    @test dx ≈ [0 30 0]
 end
 
 @testset "Jacobian" begin
