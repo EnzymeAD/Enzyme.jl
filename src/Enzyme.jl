@@ -898,12 +898,17 @@ end
 """
     gradient(::ReverseMode, f, x)
 
-Compute the gradient of an array-input function `f` using reverse mode.
-This will allocate and return new array with the gradient result.
+Compute the gradient of a real-valued function `f` using reverse mode.
+This will allocate and return new array `make_zero(x)` with the gradient result.
 
-Example:
+Besides arrays, for struct `x` it returns another instance of the same type,
+whose fields contain the components of the gradient.
+In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
+while `grad.c == x.c` for other types.
 
-```jldoctest
+Examples:
+
+```jldoctest gradient
 f(x) = x[1]*x[2]
 
 grad = gradient(Reverse, f, [2.0, 3.0])
@@ -913,6 +918,14 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 2-element Vector{Float64}:
  3.0
  2.0
+```
+
+```jldoctest gradient
+grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
+
+# output
+
+(a = 3.0, b = [2.0], c = "str")
 ```
 """
 @inline function gradient(::ReverseMode, f::F, x::X) where {F, X}
@@ -933,6 +946,7 @@ end
 
 Compute the gradient of an array-input function `f` using reverse mode,
 storing the derivative result in an existing array `dx`.
+Both `x` and `dx` must be `Array`s of the same type.
 
 Example:
 
@@ -956,7 +970,7 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 end
 
 """
-    gradient(::ForwardMode, f, x; shadow=onehot(x))
+    gradient(::ForwardMode, f, x::Array; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -997,7 +1011,7 @@ end
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
 """
-    gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
+    gradient(::ForwardMode, f, x::Array, ::Val{chunk}; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using vector forward mode.
 Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
