@@ -2344,7 +2344,7 @@ end
     @test grad.x == [3.0, 12.0]
 
     grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
-    @test grad == (x = 5.0, y = 6.0)
+    @test grad == (x = 6.0, y = 5.0)
 
     grad = Enzyme.gradient(Reverse, abs2, 7.0)
     @test grad == 14.0
