@@ -916,9 +916,15 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 ```
 """
 @inline function gradient(::ReverseMode, f, x)
-    dx = zero(x)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    dx
+    if Enzyme.Compiler.active_reg(typeof(x))
+        dx = Ref(make_zero(x))
+        autodiff(Reverse, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff(Reverse, f, Active, Duplicated(x, dx))
+        return dx
+    end
 end
 
 

@@ -2334,6 +2334,22 @@ end
     @test xact.dval[2] ≈ dy2 * 2
 end
 
+@testset "Gradient & NamedTuples" begin
+    xy = (x = [1.0, 2.0], y = [3.0, 4.0])
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad == (x = [3.0, 4.0], y = [1.0, 2.0])
+
+    xp = (x = [1.0, 2.0], p = 3)
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp)
+    @test grad.x == [3.0, 12.0]
+
+    grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
+    @test grad == (x = 5.0, y = 6.0)
+
+    grad = Enzyme.gradient(Reverse, abs2, 7.0)
+    @test grad == 14.0
+end
+
 @testset "Jacobian" begin
     function inout(v)
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
