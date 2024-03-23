@@ -49,13 +49,13 @@ Now we have:
 
 ```@example pullback
 R ≈ A * B            &&
-∂z_∂A ≈ ∂z_∂R0 * B'   &&  # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[1]
-∂z_∂B ≈ A' * ∂z_∂R0       # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[2]
+∂z_∂A ≈ ∂z_∂R0 * B'  &&  # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[1]
+∂z_∂B ≈ A' * ∂z_∂R0      # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[2]
 ```
 
 Note that the result of the backpropagation is *added to* `∂z_∂A` and `∂z_∂B`, they act as accumulators for gradient information.
 
-## Identical types in `Duplicated`
+## Identical types in `Duplicated` / Memory Layout
 
 Enzyme checks that `x` and `∂f_∂x` have the same types when constructing objects of type `Duplicated`, `DuplicatedNoNeed`, `BatchDuplicated`, etc.
 This is not a mathematical or practical requirement within Enzyme, but rather a guardrail to prevent user error.
@@ -74,14 +74,94 @@ Another typical example is sparse arrays, for which the sparsity pattern of `x` 
 
 To make sure that `∂f_∂x` has the right data layout, create it with `∂f_∂x = Enzyme.make_zero(x)`.
 
+### Circumventing Duplicated Restrictions / Advanced Memory Layout
+
+Advanced users may leverage Enzyme's memory semantics (only touching locations in the shadow that were touched in the primal) for additional performance/memory savings, at the obvious cost of potential safety if used incorrectly.
+
+Consider the following function that loads from offset 47 of a Ptr
+
+```jldoctest dup
+function f(ptr)
+    x = unsafe_load(ptr, 47)
+    x * x
+end
+
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+unsafe_store!(ptr, 3.14, 47)
+
+f(ptr)
+
+# output
+  9.8596
+```
+
+The recommended (and guaranteed sound) way to differentiate this is to pass in a shadow pointer that is congruent with the primal. That is to say, its length (and recursively for any sub types) are equivalent to the primal.
+
+```jldoctest dup
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+unsafe_store!(ptr, 3.14, 47)
+dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(100*sizeof(Float64), 1))
+
+autodiff(Reverse, f, Duplicated(ptr, dptr))
+
+unsafe_load(dptr, 47)
+
+# output
+  6.28
+```
+
+However, since we know the original function only reads from one float64, we could choose to only allocate a single float64 for the shadow, as long as we ensure that loading from offset 47 (the only location accessed) is in bounds.
+
+```jldoctest dup
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
+
+# offset the pointer to have unsafe_load(dptr, 47) access the 0th byte of dptr
+# since julia one indexes we subtract 46 * sizeof(Float64) here
+autodiff(Reverse, f, Duplicated(ptr, dptr - 46 * sizeof(Float64)))
+
+# represents the derivative of the 47'th elem of ptr, 
+unsafe_load(dptr, 1)
+
+# output
+  6.28
+```
+
+However, this style of optimization is not specific to Enzyme, or AD, as one could have done the same thing on the primal code where it only passed in one float. The difference, here however, is that performing these memory-layout tricks safely in Enzyme requires understanding the access patterns of the generated derivative code -- like discussed here.
+
+
+```jldoctest dup
+ptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
+unsafe_store!(ptr, 3.14)
+# offset the pointer to have unsafe_load(ptr, 47) access the 0th byte of dptr
+# again since julia one indexes we subtract 46 * sizeof(Float64) here
+f(ptr - 46 * sizeof(Float64)))
+
+# output
+  9.8596
+```
+
 ## CUDA support
 
-[CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only supported on Julia v1.7.0 and onwards. On v1.6, attempting to differentiate CUDA kernel functions will not use device overloads
-correctly and thus returns fundamentally wrong results.
+[CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only supported on Julia v1.7.0 and onwards. On v1.6, attempting to differentiate CUDA kernel functions will not use device overloads correctly and thus returns fundamentally wrong results.
+
+Specifically, differentiating within device kernels is supported. See our [cuda tests](https://github.com/EnzymeAD/Enzyme.jl/blob/main/test/cuda.jl) for some examples. 
+
+Differentiating through a heterogeneous (e.g. combined host and device) code presently requires defining a custom derivative that tells Enzyme that differentiating an `@cuda` call is done by performing `@cuda` of its generated derivative. For an example of this in Enzyme-C++ see [here](https://enzyme.mit.edu/getting_started/CUDAGuide/). Automating this for a better experience for CUDA.jl requires an update to [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl/pull/1869/files), and is now available for Kernel Abstractions.
+
+Differentiating host-side code when accesses device memory (e.g. `sum(CuArray)`) is not yet supported, but in progress.
+
+## Linear Algebra
+
+Enzyme supports presently some, but not all of Julia's linear algebra library. This is because some of Julia's linear algebra library is not pure Julia code and calls external functions such as BLAS, LaPACK, CuBLAS, SuiteSparse, etc.
+
+For all BLAS functions, Enzyme will generate a correct derivative function. If it is a `gemm` (matmul), `gemv` (matvec), `dot` (dot product), `axpy` (vector add and scale), and a few others, Enzyme will generate a fast derivative using another corresponding BLAS call.  For other BLAS functions, Enzyme will presently emit a warning `Fallback BLAS [functionname]` that indicates that Enzyme will differentiate this function by differentiating a serial implementation of BLAS. This will still work for all BLAS codes, but may be slower on a parallel platform.
+
+Other libraries do not yet have derivatives (either fast or fallback) implemented within Enzyme. Supporting these is not a fundamental limitation, but requires implementing a rule in Enzyme describing how to differentiate them. Contributions welcome!
 
 ## Sparse arrays
 
-At the moment there is limited support for sparse linear algebra operations. Sparse arrays may be used, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
+Differentiating code using sparse arrays is supported, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
 
 ```jldoctest sparse
 using SparseArrays
@@ -108,6 +188,47 @@ da2
 
 Sometimes, determining how to perform this zeroing can be complicated.
 That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
+
+Some Julia libraries sparse linear algebra libraries call out to external C code like SuiteSparse which we don't presently implement derivatives for (we have some but have yet to complete all). If that case happens, Enzyme will throw a "no derivative found" error at the callsite of that function. This isn't a fundamental limitation, and is easily resolvable by writing a custom rule or internal Enzyme support. Help is certainly welcome :).
+
+### Advanced Sparse arrays
+
+Essentially the way Enzyme represents all data structures, including sparse data structures, is to have the shadow (aka derivative) memory be the same memory layout as the primal. Suppose you have an input data structure `x`. The derivative of `x` at byte offset 12 will be stored in the shadow dx at byte offset 12, etc.
+
+This has the nice property that the storage for the derivative, including all intermediate computations, is the same as that of the primal (ignoring caching requirements for reverse mode).
+
+It also means that any arbitrary data structure can be differentiated with respect to, and we don’t have any special handling required to register every data structure one could create.
+
+This representation does have some caveats (e.g. see Identical types in `Duplicated` above).
+
+Sparse data structures are often represented with say a Vector{Float64} that holds the actual elements, and a Vector{Int} that specifies the index n the backing array that corresponds to the true location in the overall vector.
+
+We have no explicit special cases for sparse Data structures, so the layout semantics mentioned above is indeed what Enzyme uses.
+
+Thus the derivative of a sparse array is to have a second backing array of the same size, and another Vector{Int} (of the same offsets).
+
+As a concrete example, suppose we have the following: `x = { 3 : 2.7, 10 : 3.14 }`. In other words, a sparse data structure with two elements, one at index 3, another at index 10. This could be represented with the backing array being `[2.7, 3.14]` and the index array being `[3, 10]`.
+
+A correctly zero-initialized shadow data structure would be to have a backing array of size 2 with zero’s, and an index array again being `[3, 10]`.
+
+In this form the second element of the derivative backing array is used to store/represent the derivative of the second element of the original backing array, in other words the derivative at index 10.
+
+Like mentioned above, a caveat here is that this correctly zero’d initializer is not the default produced by `sparse([0.0])` as this drops the zero elements from the backing array. Enzyme.make_zero recursively goes through your data structure to generate the shadows of the correct structure (and in this case would make a new backing array of appropriate size). The `make_zero` function is not special cased to sparsity, but just comes out as a result.
+
+Internally, when differentiating a function this is the type of data structure that Enzyme builds and uses to represent variables. However, at the Julia level that there’s a bit of a sharp edge.
+
+Consider a function `f(A(x))` where `x` is a scalar or dense input, `A(x)` returns a sparse array, and `f(A(x))` returns a scalar loss. 
+
+The derivative that Enzyme creates for `A(x)` would create both the backing/index arrays for the original result A, as well as the equal sized backing/index arrays for the derivative.
+
+For any program which generates sparse data structures internally, like the total program `f(A(x))`, this will always give you the answer you expect. Moreover, the memory requirements of the derivative will be the same as the primal (other AD tools will blow up the memory usage and construct dense derivatives where the primal was sparse).
+
+The added caveat, however, comes when you differentiate a top level function that has a sparse array input. For example, consider the sparse `sum` function which adds up all elements. While in one definition, this function represents summing up all elements of the virtual sparse array (including the zero's which are never materialized), in a more literal sense this `sum` function will only add elements 3 and 10 of the input sparse array -- the only two nonzero elements -- or equivalently the sum of the whole backing array. Correspondingly Enzyme will update the sparse shadow data structure to mark both elements 3 and 10 as having a derivative of 1 (or more literally set all the elements of the backing array to derivative 1). These are the only variables that Enzyme needs to update, since they are the only variables read (and thus the only ones which have a non-zero derivative). Thus any function which may call this method and compose via the chain rule will only ever read the derivative of these two elements. This is why this memory-safe representation composes within Enzyme, though may produce counter-intuitive reuslts at the top level.
+
+If the name we gave to this data structure wasn’t "SparseArray" but instead "MyStruct" this is precisely the answer we would have desired. However, since the sparse array printer prints zeros for elements outside of the sparse backing array, this isn’t what one would expect. Making a nicer user conversion from Enzyme’s form of differential data structures, to the more natural "Julia" form where there is a semantic mismatch between what Julia intends a data structure to mean by name, and what is being discussed [here](https://github.com/EnzymeAD/Enzyme.jl/issues/1334).
+
+The benefit of this representation is that : (1) all of our rules compose correctly (you get the correct answer for `f(A(x)`), (2) without the need to special case any sparse code, and (3) with the same memory/performance expectations as the original code.
+
 
 ## Activity of temporary storage
 
