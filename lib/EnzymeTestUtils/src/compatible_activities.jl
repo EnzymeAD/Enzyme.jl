@@ -20,7 +20,7 @@ _batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
 _batch_size(::Type{<:Annotation}) = nothing
 function _batch_size(activities...)
     sizes = filter(!isnothing, map(_batch_size, activities))
-    isempty(sizes) && return nothing
+    isempty(sizes) && return 1
     @assert all(==(sizes[1]), sizes)
     return sizes[1]
 end

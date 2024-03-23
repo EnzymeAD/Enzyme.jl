@@ -1,5 +1,6 @@
 using Enzyme
 using EnzymeTestUtils
+using LinearAlgebra
 using MetaTesting
 using Test
 
@@ -131,6 +132,21 @@ end
             end
         end
 
+        @testset "structured array inputs/outputs" begin
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated),
+                T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                # if some are batch, none must be duplicated
+                are_activities_compatible(Tret, Tx) || continue
+
+                x = Hermitian(randn(T, 5, 5))
+
+                atol = rtol = sqrt(eps(real(T)))
+                test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
+            end
+        end
+
         @testset "mutating function" begin
             Enzyme.API.runtimeActivity!(true)
             sz = (2, 3)
@@ -161,7 +177,7 @@ end
                 x = randn(3)
                 a = randn()
 
-                test_reverse(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
+                test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
                 fkwargs = (; a, incorrect_primal=true)
                 @test fails() do
                     test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)

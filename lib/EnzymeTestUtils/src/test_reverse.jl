@@ -94,10 +94,10 @@ function test_reverse(
         args_copy = deepcopy(Base.tail(primals))
         y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # generate tangent for output
-        if !_any_batch_duplicated(map(typeof, activities)...)
+        if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
             ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
         else
-            batch_size = _batch_size(map(typeof, activities)...)
+            batch_size = _batch_size(ret_activity, map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
             ȳ = ntuple(batch_size) do _
                 ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
@@ -135,7 +135,7 @@ function test_reverse(
         else
             # if there's a shadow result, then we need to set it to our random adjoint
             if !(shadow_result === nothing)
-                if !_any_batch_duplicated(map(typeof, activities)...)
+                if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
                     map_fields_recursive(copyto!, shadow_result, ȳ)
                 else
                     for (sr, dy) in zip(shadow_result, ȳ)
