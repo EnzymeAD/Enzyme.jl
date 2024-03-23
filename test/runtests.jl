@@ -2350,6 +2350,11 @@ end
     @test grad.x == [3.0, 12.0]
     @test grad.p ≈ 5.545177444479562
 
+    xy = (x = [1.0, 2.0], y = [3, 4])  # y is non-diff
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad.x == [3.0, 4.0]
+    @test grad.y === xy.y  # make_zero did not copy this
+
     grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
     @test grad == (x = 6.0, y = 5.0)
 

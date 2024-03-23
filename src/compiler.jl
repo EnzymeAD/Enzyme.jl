@@ -1199,6 +1199,9 @@ end
     if haskey(seen, prev)
         return seen[prev]
     end
+    if guaranteed_const_nongen(RT, nothing)
+        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
+    end
     newa = RT(undef, size(prev))
     seen[prev] = newa
     for I in eachindex(prev)
@@ -1214,6 +1217,7 @@ end
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
     return ((EnzymeCore.make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
 end
+
 
 
 @inline function EnzymeCore.make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
