@@ -54,8 +54,8 @@ function Enzyme._import_frule(fn, tys...)
         push!(valtyexprs, ty)
         push!(valtys, :($ty = Core.Typeof($val)))
         push!(primals, :($val.val))
-        push!(tangents, :($ty <: Const ? ChainRulesCore.NoTangent() : $val.dval))
-        push!(tangentsi, :($ty <: Const ? ChainRulesCore.NoTangent() : $val.dval[i]))
+        push!(tangents, :($ty <: Const ? $ChainRulesCore.NoTangent() : $val.dval))
+        push!(tangentsi, :($ty <: Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
     end
 
     quote
