@@ -2908,7 +2908,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     rt = job.config.params.rt
     shadow_init = job.config.params.shadowInit
     ctx = context(mod)
-    dl  = string(LLVM.datalayout(mod))
+    dl = string(LLVM.datalayout(mod))
 
     tt = [TT.parameters[2:end]...,]
 
@@ -4484,7 +4484,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         if expectLen != length(parameters(f))
             continue
-            throw(AssertionError("Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved"))
+            throw(
+                AssertionError(
+                    "Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved",
+                ),
+            )
         end
 
         jlargs = classify_arguments(
