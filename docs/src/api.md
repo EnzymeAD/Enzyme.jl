@@ -1,4 +1,4 @@
-# API
+# API reference
 
 ## Types and constants
 
@@ -14,7 +14,7 @@ Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.A
 Order = [:macro, :function]
 ```
 
-# Documentation
+## Documentation
 
 ```@autodocs
 Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
