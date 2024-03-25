@@ -898,12 +898,17 @@ end
 """
     gradient(::ReverseMode, f, x)
 
-Compute the gradient of an array-input function `f` using reverse mode.
-This will allocate and return new array with the gradient result.
+Compute the gradient of a real-valued function `f` using reverse mode.
+This will allocate and return new array `make_zero(x)` with the gradient result.
 
-Example:
+Besides arrays, for struct `x` it returns another instance of the same type,
+whose fields contain the components of the gradient.
+In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
+while `grad.c == x.c` for other types.
 
-```jldoctest
+Examples:
+
+```jldoctest gradient
 f(x) = x[1]*x[2]
 
 grad = gradient(Reverse, f, [2.0, 3.0])
@@ -914,11 +919,25 @@ grad = gradient(Reverse, f, [2.0, 3.0])
  3.0
  2.0
 ```
+
+```jldoctest gradient
+grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
+
+# output
+
+(a = 3.0, b = [2.0], c = "str")
+```
 """
-@inline function gradient(::ReverseMode, f, x)
-    dx = zero(x)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    dx
+@inline function gradient(::ReverseMode, f::F, x::X) where {F, X}
+    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        dx = Ref(make_zero(x))
+        autodiff(Reverse, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff(Reverse, f, Active, Duplicated(x, dx))
+        return dx
+    end
 end
 
 
@@ -927,6 +946,7 @@ end
 
 Compute the gradient of an array-input function `f` using reverse mode,
 storing the derivative result in an existing array `dx`.
+Both `x` and `dx` must be `Array`s of the same type.
 
 Example:
 
@@ -943,14 +963,14 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient!(::ReverseMode, dx, f, x)
+@inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
     dx .= 0
     autodiff(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
 """
-    gradient(::ForwardMode, f, x; shadow=onehot(x))
+    gradient(::ForwardMode, f, x::Array; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -970,7 +990,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
+@inline function gradient(::ForwardMode, f, x::Array; shadow=onehot(x))
     if length(x) == 0
         return ()
     end
@@ -991,7 +1011,7 @@ end
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
 """
-    gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
+    gradient(::ForwardMode, f, x::Array, ::Val{chunk}; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using vector forward mode.
 Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
@@ -1009,7 +1029,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X<:Array, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -1019,7 +1039,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X<:Array}
     ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end

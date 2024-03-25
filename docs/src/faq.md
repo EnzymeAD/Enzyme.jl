@@ -187,8 +187,19 @@ da2
   [1]  =  1.0
 ```
 
+
 Sometimes, determining how to perform this zeroing can be complicated.
 That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
+
+```jldoctest sparse
+Enzyme.make_zero(a)
+Enzyme.gradient(Reverse, sum, a) # This calls make_zero(a)
+
+# output
+
+1-element SparseVector{Float64, Int64} with 1 stored entry:
+  [1]  =  1.0
+```
 
 Some Julia libraries sparse linear algebra libraries call out to external C code like SuiteSparse which we don't presently implement derivatives for (we have some but have yet to complete all). If that case happens, Enzyme will throw a "no derivative found" error at the callsite of that function. This isn't a fundamental limitation, and is easily resolvable by writing a custom rule or internal Enzyme support. Help is certainly welcome :).
 
@@ -229,7 +240,6 @@ The added caveat, however, comes when you differentiate a top level function tha
 If the name we gave to this data structure wasn’t "SparseArray" but instead "MyStruct" this is precisely the answer we would have desired. However, since the sparse array printer prints zeros for elements outside of the sparse backing array, this isn’t what one would expect. Making a nicer user conversion from Enzyme’s form of differential data structures, to the more natural "Julia" form where there is a semantic mismatch between what Julia intends a data structure to mean by name, and what is being discussed [here](https://github.com/EnzymeAD/Enzyme.jl/issues/1334).
 
 The benefit of this representation is that : (1) all of our rules compose correctly (you get the correct answer for `f(A(x)`), (2) without the need to special case any sparse code, and (3) with the same memory/performance expectations as the original code.
-
 
 ## Activity of temporary storage
 
