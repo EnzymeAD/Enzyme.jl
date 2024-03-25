@@ -114,6 +114,7 @@ However, since we know the original function only reads from one float64, we cou
 
 ```jldoctest dup
 ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+unsafe_store!(ptr, 3.14, 47)
 dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 
 # offset the pointer to have unsafe_load(dptr, 47) access the 0th byte of dptr
@@ -121,7 +122,7 @@ dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 autodiff(Reverse, f, Duplicated(ptr, dptr - 46 * sizeof(Float64)))
 
 # represents the derivative of the 47'th elem of ptr, 
-unsafe_load(dptr, 1)
+unsafe_load(dptr)
 
 # output
 6.28
@@ -135,7 +136,7 @@ ptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 unsafe_store!(ptr, 3.14)
 # offset the pointer to have unsafe_load(ptr, 47) access the 0th byte of dptr
 # again since julia one indexes we subtract 46 * sizeof(Float64) here
-f(ptr - 46 * sizeof(Float64)))
+f(ptr - 46 * sizeof(Float64))
 
 # output
 9.8596
