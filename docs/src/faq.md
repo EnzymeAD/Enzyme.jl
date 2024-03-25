@@ -92,7 +92,7 @@ unsafe_store!(ptr, 3.14, 47)
 f(ptr)
 
 # output
-  9.8596
+9.8596
 ```
 
 The recommended (and guaranteed sound) way to differentiate this is to pass in a shadow pointer that is congruent with the primal. That is to say, its length (and recursively for any sub types) are equivalent to the primal.
@@ -107,7 +107,7 @@ autodiff(Reverse, f, Duplicated(ptr, dptr))
 unsafe_load(dptr, 47)
 
 # output
-  6.28
+6.28
 ```
 
 However, since we know the original function only reads from one float64, we could choose to only allocate a single float64 for the shadow, as long as we ensure that loading from offset 47 (the only location accessed) is in bounds.
@@ -124,7 +124,7 @@ autodiff(Reverse, f, Duplicated(ptr, dptr - 46 * sizeof(Float64)))
 unsafe_load(dptr, 1)
 
 # output
-  6.28
+6.28
 ```
 
 However, this style of optimization is not specific to Enzyme, or AD, as one could have done the same thing on the primal code where it only passed in one float. The difference, here however, is that performing these memory-layout tricks safely in Enzyme requires understanding the access patterns of the generated derivative code -- like discussed here.
@@ -138,7 +138,7 @@ unsafe_store!(ptr, 3.14)
 f(ptr - 46 * sizeof(Float64)))
 
 # output
-  9.8596
+9.8596
 ```
 
 ## CUDA support
