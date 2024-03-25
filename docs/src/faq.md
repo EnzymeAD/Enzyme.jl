@@ -109,6 +109,16 @@ da2
 Sometimes, determining how to perform this zeroing can be complicated.
 That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
 
+```jldoctest sparse
+Enzyme.make_zero(a)
+Enzyme.gradient(Reverse, sum, a) # This calls make_zero(a)
+
+# output
+
+1-element SparseVector{Float64, Int64} with 1 stored entry:
+  [1]  =  1.0
+```
+
 ## Activity of temporary storage
 
 If you pass in any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. For example, consider the following function which uses a temporary buffer to compute the result.
