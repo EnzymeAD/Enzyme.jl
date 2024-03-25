@@ -1351,7 +1351,9 @@ function removeDeadArgs!(mod::LLVM.Module)
                     inp = operands(u)[idx]
                     cl = call!(B, funcT, rfunc, LLVM.Value[inp])
                     if isa(value_type(inp), LLVM.PointerType)
-                        LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture")
+                        )
                     end
                 end
             end
