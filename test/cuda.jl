@@ -75,7 +75,7 @@ function val_kernel!(_, ::Val{N}) where N
     return nothing
 end
 
-function dval_kernel!(du, ::Val{N}) where N
+function dval_kernel!(du, ::Val{N}) where {N}
     autodiff_deferred(Reverse, val_kernel!, Const, du, Const(Val(N)))
     return nothing
 end
