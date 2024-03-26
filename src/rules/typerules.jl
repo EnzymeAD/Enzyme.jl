@@ -116,4 +116,3 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     end
     return UInt8(false)
 end
-
