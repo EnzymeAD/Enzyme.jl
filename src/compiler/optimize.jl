@@ -1348,8 +1348,13 @@ function removeDeadArgs!(mod::LLVM.Module)
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
-                    cl = call!(B, funcT, rfunc, LLVM.Value[operands(u)[idx]])
-                    LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
+                    inp = operands(u)[idx]
+                    cl = call!(B, funcT, rfunc, LLVM.Value[inp])
+                    if isa(value_type(inp), LLVM.PointerType)
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture")
+                        )
+                    end
                 end
             end
         end
@@ -1371,8 +1376,13 @@ function removeDeadArgs!(mod::LLVM.Module)
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
-                    cl = call!(B, funcT, sfunc, LLVM.Value[operands(u)[idx]])
-                    LLVM.API.LLVMAddCallSiteAttribute(cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture"))
+                    inp = operands(u)[idx]
+                    cl = call!(B, funcT, sfunc, LLVM.Value[inp])
+                    if isa(value_type(inp), LLVM.PointerType)
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            cl, LLVM.API.LLVMAttributeIndex(1), EnumAttribute("nocapture")
+                        )
+                    end
                 end
             end
         end
