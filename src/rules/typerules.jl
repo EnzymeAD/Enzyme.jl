@@ -17,7 +17,7 @@ function alloc_obj_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = typetree(typ, ctx, dl)
+    rest = typetree(typ, ctx, dl) # copy unecessary since only user of `rest`
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
     return UInt8(false)
@@ -107,7 +107,7 @@ function alloc_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeT
     ctx = LLVM.context(LLVM.Value(val))
     dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
 
-    rest = typetree(typ, ctx, dl)
+    rest = typetree(typ, ctx, dl) # copy unecessary since only user of `rest`
     only!(rest, -1)
     API.EnzymeMergeTypeTree(ret, rest)
 
