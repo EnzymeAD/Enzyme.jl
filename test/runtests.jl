@@ -277,6 +277,7 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    test_scalar(sqrt, 1.7+2.1im)
     
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
