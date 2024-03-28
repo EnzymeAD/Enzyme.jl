@@ -7,6 +7,9 @@ version = "0.7.1"
 Adapt = "3, 4"
 julia = "1.6"
 
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+
 [extensions]
 AdaptExt = "Adapt"
 

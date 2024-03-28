@@ -257,4 +257,9 @@ function compiler_job_from_backend end
 
 include("rules.jl")
 
+if !isdefined(Base, :get_extension)
+    using Adapt
+    include("../ext/AdaptExt.jl")
+end
+
 end # module EnzymeCore
