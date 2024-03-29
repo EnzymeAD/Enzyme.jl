@@ -1,10 +1,11 @@
 module Compiler
 
 import ..Enzyme
-import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
+import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
+               BatchDuplicatedNoNeed,
                BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
-               API, TypeTree, typetree, only!, shift!, data0!, merge!, to_md,
+               API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
@@ -2933,6 +2934,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         push!(args_known_values, API.IntList())
     end
 
+    seen = TypeTreeTable()
     for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
@@ -2958,8 +2960,9 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         else
             error("illegal annotation type")
         end
-        typeTree = typetree(source_typ, ctx, dl)
+        typeTree = typetree(source_typ, ctx, dl, seen)
         if isboxed
+            typeTree = copy(typeTree)
             merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
             only!(typeTree, -1)
         end
@@ -3060,7 +3063,9 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retTT = typetree((!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ? Ptr{actualRetType} : actualRetType, ctx, dl)
+    retT = (!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ?
+           Ptr{actualRetType} : actualRetType
+    retTT = typetree(retT, ctx, dl, seen)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -4037,6 +4042,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         push!(parameter_attributes(wrapper_f, 1), EnumAttribute("swiftself"))
     end
 
+    seen = TypeTreeTable()
     # emit IR performing the "conversions"
     let builder = IRBuilder()
         toErase = LLVM.CallInst[]
@@ -4100,7 +4106,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 if RetActivity <: Const
                     metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
-                metadata(sretPtr)["enzyme_type"] = to_md(typetree(Ptr{actualRetType}, ctx, dl), ctx)
+                metadata(sretPtr)["enzyme_type"] = to_md(typetree(Ptr{actualRetType}, ctx,
+                                                                  dl, seen), ctx)
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
@@ -4128,7 +4135,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
                 ctx = LLVM.context(entry_f)
-                metadata(ptr)["enzyme_type"] = to_md(typetree(Ptr{arg.typ}, ctx, dl), ctx)
+                metadata(ptr)["enzyme_type"] = to_md(typetree(Ptr{arg.typ}, ctx, dl, seen),
+                                                     ctx)
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
