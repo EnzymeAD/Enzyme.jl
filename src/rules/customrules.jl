@@ -479,22 +479,15 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function has_aug_fwd_rule(orig, gutils)
+@inline function aug_fwd_mi(orig, gutils)
     width = get_width(gutils)
-
-    shadowType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-    if shadowR != C_NULL
-        unsafe_store!(shadowR,UndefValue(shadowType).ref)
-    end
-
-    # TODO: don't inject the code multiple times for multiple calls
 
     # 1) extract out the MI from attributes
     mi, RealRt = enzyme_custom_extract_mi(orig)
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(#=B=#nothing, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(#=B=#nothing, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     needsShadowJL = if RT <: Active
@@ -540,9 +533,12 @@ function has_aug_fwd_rule(orig, gutils)
         catch e
         end
     end
-    return ami !== nothing
+    return ami, augprimal_TT
 end
 
+@inline function has_aug_fwd_rule(orig, gutils)
+    return aug_fwd_mi(orig, gutils)[1] !== nothing
+end
 
 function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils, normalR, shadowR, tape)::LLVM.API.LLVMValueRef
 
@@ -571,6 +567,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         needsShadow
     end
 
+    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
+    
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
@@ -578,40 +576,9 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
-    
     mode = get_mode(gutils)
 
-    ami = nothing
-
-    augprimal_tt = copy(activity)
-    if isKWCall
-        popfirst!(augprimal_tt)
-        @assert kwtup !== nothing
-        insert!(augprimal_tt, 1, kwtup)
-        insert!(augprimal_tt, 2, Core.typeof(EnzymeRules.augmented_primal))
-        insert!(augprimal_tt, 3, C)
-        insert!(augprimal_tt, 5, Type{RT})
-
-        augprimal_TT = Tuple{augprimal_tt...}
-        kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        try
-            ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
-            @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
-        catch e
-        end
-    else
-        @assert kwtup === nothing
-        insert!(augprimal_tt, 1, C)
-        insert!(augprimal_tt, 3, Type{RT})
-
-        augprimal_TT = Tuple{augprimal_tt...}
-        try
-            ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
-            @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
-        catch e
-        end
-    end
+    ami, augprimal_TT = aug_fwd_mi(orig, gutils)
     
     if ami !== nothing
         target = DefaultCompilerTarget()
