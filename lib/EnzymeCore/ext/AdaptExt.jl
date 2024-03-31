@@ -1,6 +1,6 @@
 module AdaptExt
-isdefined(Base, :get_extension) ? (using Adapt) : (using ..Adapt)
-isdefined(Base, :get_extension) ? (using EnzymeCore) : (using ..EnzymeCore)
+using Adapt
+using EnzymeCore
 
 	Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 	Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
