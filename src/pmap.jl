@@ -1,4 +1,4 @@
-function pmap(count, body::Body, args::Vararg{Any,N}) where {Body,N}
+function pmap(body::Body, count, args::Vararg{Any,N}) where {Body,N}
     ccall(:jl_enter_threaded_region, Cvoid, ())
     n_threads = Base.Threads.nthreads()
     n_gen = min(n_threads, count)
@@ -48,7 +48,7 @@ macro parallel(args...)
          nothing
        end
        lenr = length(range)
-       $pmap(lenr, bodyf, range, $(captured...))
+       $pmap(bodyf, lenr, range, $(captured...))
      end
    end)
 end

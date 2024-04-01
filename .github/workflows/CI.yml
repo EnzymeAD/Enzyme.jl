@@ -6,11 +6,17 @@ on:
       - main
       - release-*
     tags: '*'
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
@@ -18,10 +24,11 @@ jobs:
           - '1.6'
           - '1.7'
           - '1.8'
-          - '~1.9.0-0'
+          - '1.9'
+          - '1.10'
           - 'nightly'
         os:
-          - ubuntu-latest
+          - ubuntu-20.04
           - macOS-latest
           - windows-latest
         arch:
@@ -33,20 +40,52 @@ jobs:
           - os: windows-latest
             arch: x64
             libEnzyme: local
-        # include:
-          # special test with LLVM assertions enabled
-          # TODO: enable this across all versions
-          #       (needs LLVM.jl fixes, and julia-actions/setup-julia support)
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.7'
-          #   assertions: true
-          # - os: ubuntu-latest
-          #   arch: x64
-          #   libEnzyme: packaged
-          #   version: '1.8'
-          #   assertions: true
+        include:
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.6'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.9'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x86
+            libEnzyme: packaged
+            version: '1.10'
+            assertions: false
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.7'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.8'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.9'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.10'
+            assertions: true
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
@@ -54,16 +93,18 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - name: Download Julia with assertions
+      - uses: actions/checkout@v3
         if: ${{ matrix.assertions }}
-        env:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+        with:
+          repository: 'JuliaLang/julia'
+          ref: release-${{ matrix.version }}
+          path: 'julia'
+      - name: Compile Julia
+        if: ${{ matrix.assertions }}
         run: |
-          wget https://julialangnightlies.s3.amazonaws.com/assert_bin/linux/$arch/$version/julia-latest-linux64.tar.gz
-          tar -xvzf julia-latest-linux64.tar.gz
-          rm -rf julia-latest-linux64.tar.gz
-          echo $PWD/julia-*/bin >> $GITHUB_PATH
+          sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
+          make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
+          echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: actions/cache@v1
         env:
           cache-name: cache-artifacts
@@ -83,26 +124,100 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: build_libenzyme
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
           julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: build_libenzyme_mac
         run: |
           julia --project=deps -e 'using Pkg; Pkg.instantiate()'
           SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
+        if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
+        if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: run_tests
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
       - uses: codecov/codecov-action@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           file: lcov.info
+  enzymetestutils:
+    name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    env:
+      JULIA_PROJECT: "lib/EnzymeTestUtils"
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.7'
+          - '1.8'
+          - '1.9'
+          - '1.10'
+          - 'nightly'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+        libEnzyme: [packaged]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: actions/cache@v1
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ env.cache-name }}-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-
+      - name: setup EnzymeTestUtils
+        shell: julia --color=yes {0}
+        id: setup_testutils
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        run: |
+          using Pkg
+          Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])
+          Pkg.instantiate()
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: Run the tests
+        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: run_tests
+        shell: julia --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.test("EnzymeTestUtils"; coverage=true)
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
+        with:
+          directories: lib/EnzymeTestUtils/src
+      - uses: codecov/codecov-action@v2
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
+        with:
+          files: lcov.info
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -114,8 +229,7 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Pkg
-            Pkg.develop(path="lib/EnzymeCore")
-            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.develop([PackageSpec(path="lib/EnzymeCore"), PackageSpec(path="lib/EnzymeTestUtils"), PackageSpec(path=pwd())])
             Pkg.instantiate()'
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager

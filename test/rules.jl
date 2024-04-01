@@ -4,7 +4,7 @@ using Enzyme
 using Enzyme: EnzymeRules
 using Test
 
-import .EnzymeRules: forward, Annotation, has_frule, has_frule_from_sig
+import .EnzymeRules: forward, Annotation, has_frule_from_sig
 
 f(x) = x^2
 
@@ -87,11 +87,11 @@ function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
 end
 
 @testset "Registry" begin
-    @test_throws ErrorException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, g, Duplicated(1.0, 1.0))
 
     rh(cond, x) = cond ? g(x) : x
     @test Enzyme.autodiff(Forward, rh, Const(false), Duplicated(1.0, 1.0)) == (1.0,)
-    @test_throws ErrorException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, rh, Const(true), Duplicated(1.0, 1.0))
 end
 
 function alloc_sq(x)
@@ -131,7 +131,28 @@ end
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
     @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
-    @test_throws ErrorException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
+end
+
+foo(x) = 2x;
+
+function EnzymeRules.forward(
+    func::Const{typeof(foo)},
+    RT::Type{<:Union{Duplicated,BatchDuplicated}},
+    x::Union{Duplicated,BatchDuplicated},
+)
+    if RT <: BatchDuplicated
+        return BatchDuplicated(func.val(x.val), map(func.val, x.dval))
+    else
+        return Duplicated(func.val(x.val), func.val(x.dval))
+    end
+end
+
+@testset "Batch complex" begin
+     res = autodiff(Forward, foo, BatchDuplicated, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))  # errors, see below
+     @test res[1] ≈ 0.2 + 0.0im
+     @test res[2][1] ≈ 0.4 + 0.0im
+     @test res[2][2] ≈ 0.6 + 0.0im
 end
 
 end # module ForwardRules

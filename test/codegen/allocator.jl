@@ -3,10 +3,10 @@
 using Enzyme
 using LLVM
 
-function create_ir!(ctx, mod, name, Type, Count, AlignedSize)
+function create_ir!(mod, name, Type, Count, AlignedSize)
 
-    T_int64 = LLVM.Int64Type(ctx)
-    T_void = LLVM.VoidType(ctx)
+    T_int64 = LLVM.Int64Type()
+    T_void = LLVM.VoidType()
 
     if Count === nothing
         FT = LLVM.FunctionType(T_void, [T_int64])
@@ -16,8 +16,8 @@ function create_ir!(ctx, mod, name, Type, Count, AlignedSize)
 
     fun = LLVM.Function(mod, name, FT)
 
-    Builder(ctx) do builder
-        entry = BasicBlock(fun, "entry"; ctx)
+    IRBuilder() do builder
+        entry = BasicBlock(fun, "entry")
         position!(builder, entry)
 
         if Count === nothing
@@ -33,9 +33,9 @@ function create_ir!(ctx, mod, name, Type, Count, AlignedSize)
 end
 
 LLVM.Context() do ctx
-    LLVM.Module("test"; ctx) do mod
+    LLVM.Module("test") do mod
 
-        create_ir!(ctx, mod, "simple_dynamic", LLVM.DoubleType(ctx), nothing, LLVM.ConstantInt(8; ctx))
+        create_ir!(mod, "simple_dynamic", LLVM.DoubleType(), nothing, LLVM.ConstantInt(8))
 # CHECK-LABEL: define void @simple_dynamic(i64 %0) {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = mul nuw i64 %0, 8
@@ -46,7 +46,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
 
-        create_ir!(ctx, mod, "simple_static", LLVM.DoubleType(ctx), LLVM.ConstantInt(1; ctx), LLVM.ConstantInt(8; ctx))
+        create_ir!(mod, "simple_static", LLVM.DoubleType(), LLVM.ConstantInt(1), LLVM.ConstantInt(8))
 # CHECK-LABEL: define void @simple_static() {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %0 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
@@ -56,10 +56,10 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
 
-        T_jlvalue = LLVM.StructType(LLVM.LLVMType[]; ctx)
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
 
-        create_ir!(ctx, mod, "jltype", T_prjlvalue, LLVM.ConstantInt(1; ctx), LLVM.ConstantInt(8; ctx))
+        create_ir!(mod, "jltype", T_prjlvalue, LLVM.ConstantInt(1), LLVM.ConstantInt(8))
 # CHECK-LABEL: define void @jltype() {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %0 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
@@ -70,7 +70,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
 
-        create_ir!(ctx, mod, "jltype_dynamic", T_prjlvalue, nothing, LLVM.ConstantInt(8; ctx))
+        create_ir!(mod, "jltype_dynamic", T_prjlvalue, nothing, LLVM.ConstantInt(8))
 # CHECK-LABEL: define void @jltype_dynamic(i64 %0) {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()
@@ -84,7 +84,7 @@ LLVM.Context() do ctx
 # CHECK-NEXT:   ret void
 # CHECK-NEXT: }
 
-        create_ir!(ctx, mod, "jltype_dynamic_vec", LLVM.VectorType(T_prjlvalue, 2), nothing, LLVM.ConstantInt(16; ctx))
+        create_ir!(mod, "jltype_dynamic_vec", LLVM.VectorType(T_prjlvalue, 2), nothing, LLVM.ConstantInt(16))
 # CHECK-LABEL: define void @jltype_dynamic_vec(i64 %0) {
 # CHECK-NEXT: entry:
 # CHECK-NEXT:   %1 = call {}*** @julia.{{(get_pgcstack|ptls_states)}}()

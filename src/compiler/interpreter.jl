@@ -1,7 +1,7 @@
 module Interpreter
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
-using GPUCompiler: CodeCache, WorldView
+using GPUCompiler: CodeCache, WorldView, @safe_debug
 import ..Enzyme
 import ..EnzymeRules
 
@@ -77,6 +77,11 @@ else
 #     WorldOverlayMethodTable(interp.world)
 end
 
+function is_alwaysinline_func(@nospecialize(TT))
+    isa(TT, DataType) || return false
+    return false
+end
+
 function is_primitive_func(@nospecialize(TT))
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
@@ -88,6 +93,13 @@ function is_primitive_func(@nospecialize(TT))
             return true
         end
     end
+
+    if ft == typeof(Base.inv)
+        if TT <: Tuple{ft, Complex{Float32}} || TT <: Tuple{ft, Complex{Float64}}
+            return true
+        end
+    end
+
     @static if VERSION >= v"1.9-"
     if ft === typeof(Base.rem)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
@@ -102,21 +114,31 @@ function is_primitive_func(@nospecialize(TT))
        ft === typeof(Base.exp10) ||
        ft === typeof(Base.exp2) ||
        ft === typeof(Base.expm1) ||
-       ft === typeof(Base.log) ||
+       ft === typeof(Base.log) || ft === typeof(Base.FastMath.log) ||
        ft === typeof(Base.log1p) ||
        ft === typeof(Base.log2) ||
        ft === typeof(Base.log10) ||
        ft === typeof(Base.asin) ||
        ft === typeof(Base.acos) ||
        ft === typeof(Base.atan) ||
+       ft === typeof(Base.sinpi) ||
+       ft === typeof(Base.cospi) ||
        ft === typeof(Base.sinh) || ft === typeof(Base.FastMath.sinh_fast) ||
        ft === typeof(Base.cosh) || ft === typeof(Base.FastMath.cosh_fast) ||
        ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
-       ft === typeof(Base.sqrt) || ft === typeof(Base.sincos)
+       ft === typeof(Base.sqrt) || ft === typeof(Base.sincos) || ft === typeof(Base.sincospi)
         if TT <: Tuple{ft, Float32} || TT <: Tuple{ft, Float64} || TT <: Tuple{ft, Float16}
             return true
         end
     end
+@static if VERSION < v"1.8.0"
+else
+    if ft === typeof(Base.fma_emulated)
+        if TT <: Tuple{ft, Float32, Float32, Float32} || TT <: Tuple{ft, Float64, Float64, Float64}
+            return true
+        end
+    end
+end
     if ft === typeof(Base.:^) || ft === typeof(Base.atan)
         if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
             return true
@@ -134,6 +156,32 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
+function isKWCallSignature(@nospecialize(TT))
+    if VERSION >= v"1.9.0-DEV.1598"
+        return TT <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    else
+        if hasproperty(TT, :parameters) && length(TT.parameters) >= 3
+            kwftype = TT.parameters[1]
+            ft = TT.parameters[3]
+            if ccall(:jl_argument_method_table, Any, (Any,), ft) === nothing
+                return false
+            end
+            if Core.kwftype(ft) == kwftype
+                return true
+            end
+        end
+        return false
+    end
+end
+
+function simplify_kw(specTypes)
+    if isKWCallSignature(specTypes)
+        return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
+    else
+        return specTypes
+    end
+end
+
 # https://github.com/JuliaLang/julia/pull/46965
 @static if VERSION ≥ v"1.9.0-DEV.1535"
 
@@ -141,18 +189,33 @@ import Core.Compiler: CallInfo
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    if is_primitive_func(mi.specTypes)
+    method_table = Core.Compiler.method_table(interp)
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
+        @safe_debug "Blocking inlining for primitive func" mi.specTypes
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+
+    if is_alwaysinline_func(specTypes)
+        @safe_debug "Forcing inlining for primitive func" mi.specTypes
+        @assert src !== nothing
+        return src
+    end
+
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
+        @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
         return nothing
     end
+
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+            @safe_debug "Blocking inlining due to frule" mi.specTypes
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+            @safe_debug "Blocking inling due to rrule" mi.specTypes
             return nothing
         end
     end
@@ -167,18 +230,27 @@ elseif isdefined(Core.Compiler, :is_stmt_inline)
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     @nospecialize(src), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
 
-    if is_primitive_func(mi.specTypes)
+    method_table = Core.Compiler.method_table(interp)
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
         return nothing
     end
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+
+    if is_alwaysinline_func(specTypes)
+        @assert src !== nothing
+        return src
+    end
+
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         return nothing
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return nothing
         end
     end
@@ -198,19 +270,27 @@ Core.Compiler.inlining_policy(interp::EnzymeInterpreter) = EnzymeInliningPolicy(
 
 function Core.Compiler.resolve_todo(todo::InliningTodo, state::InliningState{S, T, <:EnzymeInliningPolicy}) where {S<:Union{Nothing, Core.Compiler.EdgeTracker}, T}
     mi = todo.mi
-    if is_primitive_func(mi.specTypes) 
+    specTypes = simplify_kw(mi.specTypes)
+
+    if is_primitive_func(specTypes)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
+
+    if is_alwaysinline_func(specTypes)
+        @assert false "Need to mark resolve_todo function as alwaysinline, but don't know how"
+    end
+
     interp = state.policy.interp
-    if EnzymeRules.is_inactive_from_sig(mi.specTypes; world = interp.world)
+    method_table = Core.Compiler.method_table(interp)
+    if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
     end
     if interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     else
-        if EnzymeRules.has_rrule_from_sig(mi.specTypes; world = interp.world)
+        if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
             return Core.Compiler.compileable_specialization(state.et, todo.spec.match)
         end
     end

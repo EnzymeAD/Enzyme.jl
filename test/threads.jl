@@ -63,6 +63,24 @@ end
     @test 2.0 ≈ dx[3]
 end
 
+@testset "Advanced, Active-var Threads $(Threads.nthreads())" begin
+    function f_multi(out, in)
+        Threads.@threads for idx in 1:length(out)
+            out[idx] = in
+        end
+        return nothing
+    end
+
+    out = [1.0, 2.0]
+    dout = [1.0, 1.0]
+@static if VERSION < v"1.8"
+    @test_throws AssertionError autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+else
+    res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+    @test res[1][2] ≈ 2.0
+end
+end
+
 @testset "Closure-less threads $(Threads.nthreads())" begin
     function bf(i, x)
       x[i] *= x[i]
@@ -70,7 +88,7 @@ end
     end
 
     function psquare0(x)
-      Enzyme.pmap(10, bf, x)
+      Enzyme.pmap(bf, 10, x)
     end
 
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -114,6 +132,9 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, thr_inactive, false, Active(2.14))[1][2]
-    @test 1.0 ≈ autodiff(Forward, thr_inactive, false, Duplicated(2.14, 1.0))[1]
+    @test 1.0 ≈ autodiff(Reverse, thr_inactive, Const(false), Active(2.14))[1][2]
+    @test 1.0 ≈ autodiff(Forward, thr_inactive, Const(false), Duplicated(2.14, 1.0))[1]
+    
+    @test 1.0 ≈ autodiff(Reverse, thr_inactive, Const(true), Active(2.14))[1][2]
+    @test 1.0 ≈ autodiff(Forward, thr_inactive, Const(true), Duplicated(2.14, 1.0))[1]
 end

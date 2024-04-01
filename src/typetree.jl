@@ -44,80 +44,118 @@ function data0!(tt::TypeTree)
     API.EnzymeTypeTreeData0Eq(tt)
 end
 
+function canonicalize!(tt::TypeTree, size, dl)
+    API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
+end
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
 
 function merge!(dst::TypeTree, src::TypeTree; consume=true)
     API.EnzymeMergeTypeTree(dst, src)
-    LLVM.dispose(src)
+    if consume
+        LLVM.dispose(src)
+    end
     return nothing
 end
 
-function typetree(::Type{T}, ctx, dl, seen=nothing) where T <: Integer
-    tt = TypeTree()
-    for i in 1:sizeof(T)
-        merge!(tt, TypeTree(API.DT_Integer, i-1, ctx))
-    end
-    return tt
+function to_md(tt::TypeTree, ctx)
+    return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme),
+                                                    LLVM.API.LLVMValueRef,
+                                                    (API.CTypeTreeRef,
+                                                     LLVM.API.LLVMContextRef), tt, ctx)))
 end
 
-function typetree(::Type{Float16}, ctx, dl, seen=nothing)
+const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
+
+"""
+    function typetree(T, ctx, dl, seen=TypeTreeTable())
+
+Construct a Enzyme typetree from a Julia type.
+
+!!! warning
+    When using a memoized lookup by providing `seen` across multiple calls to typtree
+    the user must call `copy` on the returned value before mutating it.
+"""
+function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
+    if haskey(seen, T)
+        tree = seen[T]
+        if tree === nothing
+            return TypeTree() # stop recursion, but don't cache
+        end
+    else
+        seen[T] = nothing # place recursion marker
+        tree = typetree_inner(T, ctx, dl, seen)
+        seen[T] = tree
+    end
+    return tree::TypeTree
+end
+
+function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:Integer}
+    return TypeTree(API.DT_Integer, -1, ctx)
+end
+
+function typetree_inner(::Type{Char}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_Integer, -1, ctx)
+end
+
+function typetree_inner(::Type{Float16}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Half, -1, ctx)
 end
 
-function typetree(::Type{Float32}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Float32}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Float, -1, ctx)
 end
 
-function typetree(::Type{Float64}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree(::Type{T}, ctx, dl, seen=nothing) where T<:AbstractFloat
+function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:AbstractFloat}
     GPUCompiler.@safe_warn "Unknown floating point type" T
     return TypeTree()
 end
 
-function typetree(::Type{<:DataType}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{<:DataType}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree(::Type{Any}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Any}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree(::Type{Symbol}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Symbol}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree(::Type{Core.SimpleVector}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
-    for i in 0:(sizeof(Csize_t)-1)
+    for i in 0:(sizeof(Csize_t) - 1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
 end
 
-function typetree(::Type{Union{}}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{Union{}}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree(::Type{<:AbstractString}, ctx, dl, seen=nothing)
+function typetree_inner(::Type{<:AbstractString}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
-function typetree(::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}}, ctx, dl, seen=nothing) where T
-    tt = typetree(T, ctx, dl, seen)
+function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
+                        seen::TypeTreeTable) where {T}
+    tt = copy(typetree(T, ctx, dl, seen))
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt
 end
 
-function typetree(::Type{<:Array{T}}, ctx, dl, seen=nothing) where T
+function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
     offset = 0
 
-    tt = typetree(T, ctx, dl, seen)
+    tt = copy(typetree(T, ctx, dl, seen))
     if !allocatedinline(T)
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
         only!(tt, 0)
@@ -132,7 +170,7 @@ function typetree(::Type{<:Array{T}}, ctx, dl, seen=nothing) where T
         sizeofstruct += sizeof(Csize_t)
     end
 
-    for i in offset:sizeofstruct
+    for i in offset:(sizeofstruct-1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
@@ -144,21 +182,14 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
-function typetree(@nospecialize(T), ctx, dl, seen=nothing)
+function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
 
-    if seen !== nothing && T ∈ seen
-        GPUCompiler.@safe_warn "Recursive type" T
+    if T === Tuple
         return TypeTree()
     end
-    if seen === nothing
-        seen = Set{DataType}()
-    else
-        seen = copy(seen) # need to copy otherwise we'll count siblings as recursive
-    end
-    push!(seen, T)
 
     try
         fieldcount(T)
@@ -177,7 +208,6 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
         if T <: Module
             return TypeTree()
         end
-        error("$T is unknown leaf")
     end
 
     if !Base.isconcretetype(T)
@@ -186,11 +216,12 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
 
     tt = TypeTree()
     for f in 1:fieldcount(T)
-        offset  = fieldoffset(T, f)
-        subT    = fieldtype(T, f)
-        subtree = typetree(subT, ctx, dl, seen)
+        offset = fieldoffset(T, f)
+        subT = fieldtype(T, f)
+        subtree = copy(typetree(subT, ctx, dl, seen))
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
+            # FIXME: Handle union
             continue
         end
 
@@ -204,6 +235,7 @@ function typetree(@nospecialize(T), ctx, dl, seen=nothing)
 
         merge!(tt, subtree)
     end
+    canonicalize!(tt, sizeof(T), dl)
     return tt
 end
 

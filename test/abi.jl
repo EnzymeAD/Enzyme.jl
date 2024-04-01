@@ -34,18 +34,21 @@ using Test
     @test () === autodiff_deferred(Forward, f, Const(Int))
 
     # Complex numbers
-    cres,  = autodiff(Reverse, f, Active, Active(1.5 + 0.7im))[1]
+    @test_throws ErrorException autodiff(Reverse, f, Active, Active(1.5 + 0.7im))
+    cres,  = autodiff(ReverseHolomorphic, f, Active, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
     cres,  = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres,  = autodiff(Reverse, f, Active(1.5 + 0.7im))[1]
+    @test_throws ErrorException autodiff(Reverse, f, Active(1.5 + 0.7im))
+    cres,  = autodiff(ReverseHolomorphic, f, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
     cres,  = autodiff(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
-    cres, = autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))[1]
-    @test cres ≈ 1.0 + 0.0im
+    @test_throws ErrorException autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))
+    @test_throws ErrorException autodiff_deferred(ReverseHolomorphic, f, Active(1.5 + 0.7im))
+
     cres,  = autodiff_deferred(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
@@ -207,16 +210,16 @@ using Test
     @test 7*3.4 + 9 * 1.2 ≈ first(autodiff(Forward, h, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
 
     caller(f, x) = f(x)
-    _, res4 = autodiff(Reverse, caller, Active, (x)->x, Active(3.0))[1]
+    _, res4 = autodiff(Reverse, caller, Active, Const((x)->x), Active(3.0))[1]
     @test res4 ≈ 1.0
 
-    res4, = autodiff(Forward, caller, DuplicatedNoNeed, (x)->x, Duplicated(3.0, 1.0))
+    res4, = autodiff(Forward, caller, DuplicatedNoNeed, Const((x)->x), Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
-    _, res4 = autodiff(Reverse, caller, (x)->x, Active(3.0))[1]
+    _, res4 = autodiff(Reverse, caller, Const((x)->x), Active(3.0))[1]
     @test res4 ≈ 1.0
 
-    res4, = autodiff(Forward, caller, (x)->x, Duplicated(3.0, 1.0))
+    res4, = autodiff(Forward, caller, Const((x)->x), Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
     struct LList
@@ -257,16 +260,16 @@ using Test
     dy = Ref(7.0)
     @test 5.0*3.0 + 2.0*7.0≈ first(autodiff(Forward, mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
 
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, (x->x*x,), Active(2.0))[1]
+    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const((x->x*x,)), Active(2.0))[1]
     @test mid ≈ 4.0
 
-    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, [x->x*x], Active(2.0))[1]
+    _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const([x->x*x]), Active(2.0))[1]
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, (x->x*x,), Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const((x->x*x,)), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, [x->x*x], Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const([x->x*x]), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
 
@@ -336,21 +339,28 @@ end
         end
     end
 
-    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(true))
-    d = Duplicated(Float64[2.0], Float64[0.0])
-    r = forward(d, Const(false))
-    @test r[2] ≈ 2.0 
-    @test r[3] ≈ 0.0 
+    forward, pullback0 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), Const{typeof(fwdunion)}, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(Float64[2.0], Float64[0.0]), Const(false))
+    @test primal ≈ 2.0 
+    @test shadow[] ≈ 0.0 
     
-    r = forward(d, Const(true))
-    @test r[2] == Base._InitialValue()
-    @test r[3] == Base._InitialValue()
+    forward, pullback1 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, false))), Const{typeof(fwdunion)}, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(Float64[2.0], Float64[0.0]), Const(true))
+    @test primal == Base._InitialValue() 
+    @test shadow == Base._InitialValue()
+    @test pullback0 == pullback1
     
-    forward, pullback = Enzyme.Compiler.thunk(fwdunion, nothing, Enzyme.Duplicated, Tuple{Enzyme.Duplicated{Vector{Float64}}, Const{Bool}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), #=ModifiedBetween=#Val(true), #=returnPrimal=#Val(false))
-    r = forward(d, Const(false))
-    @test r[2] ≈ 0.0 
-    r = forward(d, Const(true))
-    @test r[2] == Base._InitialValue()
+    forward, pullback2 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), Const{typeof(fwdunion)}, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(Float64[2.0], Float64[0.0]), Const(false))
+    @test primal == nothing
+    @test shadow[] ≈ 0.0 
+    @test pullback0 != pullback2
+    
+    forward, pullback3 = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((true, true, false))), Const{typeof(fwdunion)}, Duplicated, Duplicated{Vector{Float64}}, Const{Bool})
+    tape, primal, shadow = forward(Const(fwdunion), Duplicated(Float64[2.0], Float64[0.0]), Const(true))
+    @test primal == nothing
+    @test shadow == Base._InitialValue()    
+    @test pullback2 == pullback3
 end
 
 @testset "Callable ABI" begin
@@ -366,10 +376,10 @@ end
        return f.x * x
     end
 
-    @test Enzyme.autodiff(Reverse, method, Active, AFoo(2.0), Active(3.0))[1][2] ≈ 2.0
+    @test Enzyme.autodiff(Reverse, method, Active, Const(AFoo(2.0)), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, AFoo(2.0), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, AFoo(2.0), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(AFoo(2.0)), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
 
     struct ABar
@@ -379,9 +389,22 @@ end
        return 2.0 * x
     end
 
-    @test Enzyme.autodiff(Reverse, method, Active, ABar(), Active(3.0))[1][2] ≈ 2.0
+    @test Enzyme.autodiff(Reverse, method, Active, Const(ABar()), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, ABar(), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, ABar(), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(ABar()), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
+end
+
+@testset "Promotion" begin
+    x = [1.0, 2.0]; dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
+    rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
+    r = autodiff(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[1] ≈ 100.0
+    @test r[2][1] ≈ -400.0
+    @test r[2][2] ≈ 200.0
+    r = autodiff_deferred(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[1] ≈ 100.0
+    @test r[2][1] ≈ -400.0
+    @test r[2][2] ≈ 200.0
 end
