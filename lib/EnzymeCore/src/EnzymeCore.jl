@@ -236,4 +236,8 @@ function tape_type end
 
 include("rules.jl")
 
+if !isdefined(Base, :get_extension)
+    include("../ext/AdaptExt.jl")
+end
+
 end # module EnzymeCore
