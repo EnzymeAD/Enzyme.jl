@@ -1,5 +1,5 @@
 
-function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
+function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils, mi, @nospecialize(RT), reverse::Bool, isKWCall::Bool)
     ops = collect(operands(orig))
     called = ops[end]
     ops = ops[1:end-1]
@@ -207,7 +207,7 @@ function enzyme_custom_setup_args(B, orig, gutils, mi, RT, reverse, isKWCall)
     return args, activity, (overwritten...,), actives, kwtup
 end
 
-function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
+function enzyme_custom_setup_ret(gutils::GradientUtils, orig::LLVM.CallInst, mi, @nospecialize(RealRt))
     width = get_width(gutils)
     mode = get_mode(gutils)
     
@@ -216,7 +216,23 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
 
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
+    # Conditionally use the get return. This is done because EnzymeGradientUtilsGetReturnDiffeType
+    # calls differential use analysis to determine needsprimal/shadow. However, since now this function
+    # is used as part of differential use analysis, we need to avoid an ininite recursion. Thus use
+    # the version without differential use if actual unreachable results are not available anyways.
+    uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig)))-1)
+    activep = if API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable)) == 1
+        API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
+    else
+        actv = API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false)
+        if !isghostty(RealRt)
+            needsPrimalP[] = 1
+            if actv == API.DFT_DUP_ARG || actv == API.DFT_DUP_NONEED
+                needsShadowP[] = 1
+            end
+        end
+        actv
+    end
     needsPrimal = needsPrimalP[] != 0
     origNeedsPrimal = needsPrimal
     _, sret, _ = get_return_info(RealRt)
@@ -479,7 +495,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-@inline function aug_fwd_mi(orig, gutils)
+@inline function aug_fwd_mi(orig::LLVM.CallInst, gutils::GradientUtils)
     width = get_width(gutils)
 
     # 1) extract out the MI from attributes
