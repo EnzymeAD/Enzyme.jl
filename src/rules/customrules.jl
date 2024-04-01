@@ -568,7 +568,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     end
 
     C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
-    
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
@@ -948,4 +948,13 @@ function enzyme_custom_rev(B, orig, gutils, tape)
     end
     enzyme_custom_common_rev(#=forward=#false, B, orig, gutils, #=normalR=#C_NULL, #=shadowR=#C_NULL, #=tape=#tape)
     return nothing
+end
+
+function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+    # use default
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
+        return (false, true)
+    end
+    # don't use default and always require the arg
+    return (true, false)
 end
