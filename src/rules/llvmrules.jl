@@ -1155,7 +1155,18 @@ macro fwdfunc(f)
     ))
 end
 
+
+macro diffusefunc(f)
+   :(@cfunction((OrigCI, gutils, val, shadow, mode, useDefault) -> begin
+     res = $f(LLVM.CallInst(OrigCI), GradientUtils(gutils), LLVM.Value(val), shadow != 0, mode)::Tuple{Bool, Bool}
+     unsafe_store!(useDefault, UInt8(res[2]))
+     UInt8(res[1])
+    end, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
+    ))
+end
+
 @noinline function register_llvm_rules()
+    API.EnzymeRegisterDiffUseCallHandler("enzyme_custom", @diffusefunc(enzyme_custom_diffuse))
     register_handler!(
         ("julia.call",),
         @augfunc(jlcall_augfwd),
