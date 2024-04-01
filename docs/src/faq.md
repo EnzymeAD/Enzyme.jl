@@ -271,7 +271,7 @@ Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const
 Passing in a dupliacted (e.g. differentiable) variable for `tmp` now leads to the correct answer.
 
 ```jldoctest storage
-Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), Vector{Float64}(undef, 1)), Const(1), Const(5))  # Correct (returns 10.367999999999999 == 1.2^4 * 5)
+Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), zeros(1)), Const(1), Const(5))  # Correct (returns 10.367999999999999 == 1.2^4 * 5)
 
 # output
 
