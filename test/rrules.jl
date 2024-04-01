@@ -31,13 +31,13 @@ function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape,
     end
 end
 
-function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function augmented_primal(::ConfigWidth{1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     v = x.val[1]
     x.val[1] *= v
     return AugmentedReturn(nothing, nothing, v)
 end
 
-function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
+function reverse(::ConfigWidth{1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
     return (nothing,)
 end
