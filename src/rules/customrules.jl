@@ -221,7 +221,7 @@ function enzyme_custom_setup_ret(gutils::GradientUtils, orig::LLVM.CallInst, mi,
     # is used as part of differential use analysis, we need to avoid an ininite recursion. Thus use
     # the version without differential use if actual unreachable results are not available anyways.
     uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig)))-1)
-    activep = if API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable)) == 1
+    activep = if mode == API.DEM_ForwardMode || API.EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, length(uncacheable)) == 1
         API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
     else
         actv = API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false)
