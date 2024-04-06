@@ -60,7 +60,7 @@ function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         if in(name, ("ijl_f_getfield", "jl_f_getfield"))
             return common_jl_getfield_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if in(name, ("ijl_s_getfield", "jl_s_getfield"))
+        if in(name, ("ijl_f_setfield", "jl_f_setfield"))
             return common_setfield_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))

@@ -86,7 +86,9 @@ end
                     elseif TT <: NamedTuple
                         x = (a=randn(T), b=randn(T))
                     else  # TT <: TestStruct
-                        VERSION ≤ v"1.8" && (@test_skip false; continue)
+                        if VERSION <= v"1.8" && Tx == BatchDuplicated
+                            continue
+                        end
                         x = TestStruct(randn(T, 5), randn(T))
                     end
                     atol = rtol = sqrt(eps(real(T)))

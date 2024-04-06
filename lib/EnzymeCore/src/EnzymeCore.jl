@@ -239,6 +239,26 @@ end
 
 function tape_type end
 
+"""
+    compiler_job_from_backend(::KernelAbstractions.Backend, F::Type, TT:Type)::GPUCompiler.CompilerJob
+
+Returns a GPUCompiler CompilerJob from a backend as specified by the first argument to the function.
+
+For example, in CUDA one would do:
+
+```julia
+function EnzymeCore.compiler_job_from_backend(::CUDABackend, @nospecialize(F::Type), @nospecialize(TT::Type))
+    mi = GPUCompiler.methodinstance(F, TT)
+    return GPUCompiler.CompilerJob(mi, CUDA.compiler_config(CUDA.device()))
+end
+```
+"""
+function compiler_job_from_backend end
+
 include("rules.jl")
+
+if !isdefined(Base, :get_extension)
+    include("../ext/AdaptExt.jl")
+end
 
 end # module EnzymeCore
