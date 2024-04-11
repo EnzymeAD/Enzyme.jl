@@ -17,6 +17,8 @@ using Enzyme
 using Test
 using FiniteDifferences
 using Aqua
+using SparseArrays
+using StaticArrays
 using Statistics
 using LinearAlgebra
 using InlineStrings
@@ -275,6 +277,7 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    test_scalar(sqrt, 1.7+2.1im)
     
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
@@ -2332,6 +2335,49 @@ end
     r = pullback(Const(times2), xact, tape)
     @test xact.dval[1] ≈ dy1 * 2
     @test xact.dval[2] ≈ dy2 * 2
+end
+
+@testset "Gradient & NamedTuples" begin
+    xy = (x = [1.0, 2.0], y = [3.0, 4.0])
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad == (x = [3.0, 4.0], y = [1.0, 2.0])
+
+    xp = (x = [1.0, 2.0], p = 3)  # 3::Int is non-diff
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp)
+    @test grad.x == [3.0, 12.0]
+
+    xp2 = (x = [1.0, 2.0], p = 3.0)  # mixed activity
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp2)
+    @test grad.x == [3.0, 12.0]
+    @test grad.p ≈ 5.545177444479562
+
+    xy = (x = [1.0, 2.0], y = [3, 4])  # y is non-diff
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad.x == [3.0, 4.0]
+    @test grad.y === xy.y  # make_zero did not copy this
+
+    grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
+    @test grad == (x = 6.0, y = 5.0)
+
+    grad = Enzyme.gradient(Reverse, abs2, 7.0)
+    @test grad == 14.0
+end
+
+@testset "Gradient & SparseArrays / StaticArrays" begin
+    x = sparse([5.0, 0.0, 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseVector
+    @test dx ≈ [1, 0, 1]
+
+    x = sparse([5.0 0.0 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseMatrixCSC
+    @test dx ≈ [1 0 1]
+
+    x = @SArray [5.0 0.0 6.0]
+    dx = Enzyme.gradient(Reverse, prod, x)
+    @test dx isa SArray
+    @test dx ≈ [0 30 0]
 end
 
 @testset "Jacobian" begin
