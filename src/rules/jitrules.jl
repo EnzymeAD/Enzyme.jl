@@ -412,7 +412,15 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
+    for a in ActivityList
+        emit_jl!(B, a)
+    end
+    @show ActivityList
+    @show [absint(arg) for arg in ActivityList]
     etup0 = emit_tuple!(B, ActivityList)
+    @show etup0
+    @show absint(etup0)
+    emit_jl!(B, etup0)
     etup =  emit_apply_type!(B, Base.Val, [etup0])
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1

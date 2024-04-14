@@ -1,4 +1,10 @@
-unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
+const captured_constants = Set{Any}()
+
+function ident_and_capture(x)
+    push!(captured_constants, x)
+    return x
+end
+unsafe_to_pointer(ptr) = ccall(Base.@cfunction(ident_and_capture, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
 export unsafe_to_pointer
 
 const Tracked = 10

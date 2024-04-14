@@ -223,7 +223,6 @@ function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
             len = get_array_len(B, shadowin)
             length = LLVM.mul!(B, len, elSize)
-            isVolatile = LLVM.ConstantInt(LLVM.IntType(1), 0)
             GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
             LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
         end
@@ -242,7 +241,6 @@ function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
                 elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
                 len = get_array_len(B, shadowin)
                 length = LLVM.mul!(B, len, elSize)
-                isVolatile = LLVM.ConstantInt(LLVM.IntType(1), 0)
                 GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
                 LLVM.memset!(B, get_array_data(callv), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
@@ -894,25 +892,35 @@ function jl_array_del_end_rev(B, orig, gutils, tape)
         offset = new_from_original(gutils, origops[2])
         offset = lookup_value(gutils, offset, B)
 
-        if width == 1
-            args = LLVM.Value[
-                              shadowin
-                              offset
-                              ]
-            LLVM.call!(B, fty, delF, args)
-        else
-            for idx in 1:width
-                args = LLVM.Value[
-                                  extract_value!(B, shadowin, idx-1)
-                                  offset
-                                  ]
-                LLVM.call!(B, fty, delF, args)
+        # TODO get actual alignment
+        algn = 0
+        
+        i8 = LLVM.IntType(8)
+        for idx in 1:width
+            anti = if width == 1
+                shadowin
+            else
+                extract_value!(B, shadowin, idx-1)
             end
+            if API.runtimeActivity()
+                emit_error(B, orig, "Enzyme: Not yet implemented runtime activity for reverse of jl_array_del_end")
+            end
+            args = LLVM.Value[anti, offset]
+            
+            anti = shadowin
+            elSize = get_array_elsz(B, anti)
+            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
+            len = get_array_len(B, anti)
+            
+            LLVM.call!(B, fty, delF, args)
+            
+            length = LLVM.mul!(B, len, elSize)
+            
+            GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type"
+            toset = get_array_data(B, anti)
+            toset = gep!(B, i8, toset, LLVM.Value[length])
+            LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)
         end
-
-        # GPUCompiler.@safe_warn "Not applying memsetUnknown concrete type" tt=string(tt)
-        emit_error(B, orig, "Not applying memset on reverse of jl_array_del_end")
-        # memset(data + idx * elsz, 0, inc * elsz);
     end
     return nothing
 end
