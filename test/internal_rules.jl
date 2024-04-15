@@ -7,6 +7,7 @@ using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
 using Test
+import Random
 
 struct TPair
     a::Float64
