@@ -443,7 +443,7 @@ end
     Random.rand(d::MyDistribution) = rand(Random.default_rng(), d)
 
     # Outer rand should be differentiated through, and inner rand and randn should be ignored.
-    @test autodiff(Enzyme.Reverse, x -> rand(DiracDelta(x)), Active, Active(1.0)) == ((1.0,),)
+    @test autodiff(Enzyme.Reverse, x -> rand(MyDistribution(x)), Active, Active(1.0)) == ((1.0,),)
 end
 
 end # InternalRules
