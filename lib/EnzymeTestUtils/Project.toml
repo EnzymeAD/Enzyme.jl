@@ -21,8 +21,9 @@ Quaternions = "0.7"
 julia = "1.6"
 
 [extras]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MetaTesting = "9e32d19f-1e4f-477a-8631-b16c78aa0f56"
 Quaternions = "94ee1d12-ae83-5a48-8b1c-48b8ff168ae0"
 
 [targets]
-test = ["MetaTesting", "Quaternions"]
+test = ["LinearAlgebra", "MetaTesting", "Quaternions"]
