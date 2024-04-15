@@ -446,5 +446,4 @@ end
     @test autodiff(Enzyme.Reverse, x -> rand(DiracDelta(x)), Active, Active(1.0)) == ((1.0,),)
 end
 
-
 end # InternalRules
