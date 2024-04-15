@@ -91,17 +91,12 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
         fd_vec = only(FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec))
         fd = from_vec_in(fd_vec)
     else
-        fd = Tuple(
-            zip(
-                map(ȳ, s̄igargs...) do ȳ_extended...
-                    ȳ_extended_vec, _ = to_vec(ȳ_extended)
-                    fd_vec = only(
-                        FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
-                    )
-                    return from_vec_in(fd_vec)
-                end...,
-            ),
-        )
+        fd = Tuple(zip(map(ȳ, s̄igargs...) do ȳ_extended...
+                           ȳ_extended_vec, _ = to_vec(ȳ_extended)
+                           fd_vec = only(FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec,
+                                                                sigargs_vec))
+                           return from_vec_in(fd_vec)
+                       end...))
     end
     @assert length(fd) == length(sigarginds)
     x̄s[sigarginds] = collect(fd)
