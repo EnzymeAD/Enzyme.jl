@@ -14,6 +14,7 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
+# This mimicks literal_pointer_val / literal_pointer_val_slot
 function unsafe_to_llvm(val)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -22,9 +23,10 @@ function unsafe_to_llvm(val)
     #      We likely should emit global variables and use something
     #      like `absolute_symbol_materialization` and write out cache-files
     #      that have relocation tables.
+    # TODO: What about things like `nothing`
     if !Base.ismutable(val)
         val = Ref(val) # FIXME many objects could be leaked here
-        ptr = pointer(val)
+        ptr = Base.unsafe_convert(Ptr{Cvoid}, val)
     else
         ptr = Base.pointer_from_objref(val)
     end
