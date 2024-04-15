@@ -72,6 +72,12 @@ end
 function EnzymeRules.inactive(::typeof(Random.rand!), ::Random.AbstractRNG, ::Random.Sampler, ::AbstractArray)
     return nothing
 end
+function EnzymeRules.inactive(::typeof(Random.randn), args...)
+    return nothing
+end
+function EnzymeRules.inactive(::typeof(Random.randn!), args...)
+    return nothing
+end
 function EnzymeRules.inactive(::typeof(Random.default_rng), args...)
     return nothing
 end
