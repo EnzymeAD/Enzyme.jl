@@ -7,7 +7,7 @@ function test_to_vec(x)
     @test x_vec isa DenseVector{<:AbstractFloat}
     x2 = from_vec(x_vec)
     @test typeof(x2) === typeof(x)
-    EnzymeTestUtils.test_approx(x2, x)
+    return EnzymeTestUtils.test_approx(x2, x)
 end
 
 @testset "to_vec" begin
@@ -32,7 +32,7 @@ end
 
     @testset "array of floats" begin
         @testset for T in (Float32, Float64, ComplexF32, ComplexF64),
-            sz in (2, (2, 3), (2, 3, 4))
+                     sz in (2, (2, 3), (2, 3, 4))
 
             test_to_vec(randn(T, sz))
         end
@@ -47,7 +47,7 @@ end
 
     @testset "nested array" begin
         @testset for T in (Float32, Float64, ComplexF32, ComplexF64),
-            sz in (2, (2, 3), (2, 3, 4))
+                     sz in (2, (2, 3), (2, 3, 4))
 
             test_to_vec([randn(T, sz) for _ in 1:10])
         end

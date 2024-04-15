@@ -48,12 +48,12 @@ end
             x2[:x] = y
             test_approx(x1, x2; atol=err * 1.1)
             @test fails() do
-                test_approx(x1, x2; atol=err * 0.9)
+                return test_approx(x1, x2; atol=err * 0.9)
             end
         end
         x2[:x] = vcat(x1[:x], 1.0)
         @test errors() do
-            test_approx(x1, x2; atol=err * 0.9)
+            return test_approx(x1, x2; atol=err * 0.9)
         end
     end
     @testset "non-numeric types" begin

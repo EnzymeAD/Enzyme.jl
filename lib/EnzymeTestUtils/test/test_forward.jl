@@ -136,8 +136,8 @@ end
 
         @testset "structured array inputs/outputs" begin
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
+                         Tx in (Const, Duplicated, BatchDuplicated),
+                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tx) || continue
@@ -182,7 +182,7 @@ end
                 test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
                 fkwargs = (; a, incorrect_primal=true)
                 @test fails() do
-                    test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
+                    return test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
                 end
             end
         end

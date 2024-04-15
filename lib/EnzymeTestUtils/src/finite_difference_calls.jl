@@ -31,17 +31,15 @@ function _fd_forward(fdm, f, rettype, y, activities)
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
         all(ignores) && return zero_tangent(y)
         sig_arg_dval_vec, _ = to_vec(ẋs[.!ignores])
-        ret_deval_vec = FiniteDifferences.jvp(
-            fdm, f_vec, (sig_arg_val_vec, sig_arg_dval_vec),
-        )
+        ret_deval_vec = FiniteDifferences.jvp(fdm, f_vec,
+                                              (sig_arg_val_vec, sig_arg_dval_vec))
         return from_vec_out(ret_deval_vec)
     elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
         all(ignores) && return (var"1"=zero_tangent(y),)
         ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             sig_args_dvals_vec, _ = to_vec(sig_args_dvals)
-            ret_dval_vec = FiniteDifferences.jvp(
-                fdm, f_vec, (sig_arg_val_vec, sig_args_dvals_vec),
-            )
+            ret_dval_vec = FiniteDifferences.jvp(fdm, f_vec,
+                                                 (sig_arg_val_vec, sig_args_dvals_vec))
             return from_vec_out(ret_dval_vec)
         end
         return NamedTuple{ntuple(Symbol, length(ret_dvals))}(ret_dvals)
