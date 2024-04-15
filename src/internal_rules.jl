@@ -66,36 +66,12 @@ end
 function EnzymeRules.inactive(::typeof(Core.kwfunc), args...)
     return nothing
 end
-
-# Copy from ChainRules.jl
 function EnzymeRules.inactive(::typeof(Random.rand), ::Random.AbstractRNG, ::Random.Sampler)
     return nothing
 end
-
-# maybe don't need all these though, they fall back to above?
-# function EnzymeRules.inactive(::typeof(Random.rand), ::Random.AbstractRNG, ::Integer...)
-#     return nothing
-# end
-# function EnzymeRules.inactive(::typeof(Random.rand), ::Type{<:Real})
-#     return nothing
-# end
-# function EnzymeRules.inactive(::typeof(Random.rand), ::Type{<:Real}, ::Tuple)
-#     return nothing
-# end
-# function EnzymeRules.inactive(::typeof(Random.rand), ::Integer...)
-#     return nothing
-# end
-
-# hide as possibly unsafe for parameter-dependent distrs
-# function EnzymeRules.inactive(::typeof(Random.rand!), args...)
-#     return nothing
-# end
-# function EnzymeRules.inactive(::typeof(Random.randn), args...)
-#     return nothing
-# end
-# function EnzymeRules.inactive(::typeof(Random.randn!), args...)
-#     return nothing
-# end
+function EnzymeRules.inactive(::typeof(Random.rand!), ::Random.AbstractRNG, ::Random.Sampler, ::AbstractArray)
+    return nothing
+end
 function EnzymeRules.inactive(::typeof(Random.default_rng), args...)
     return nothing
 end
