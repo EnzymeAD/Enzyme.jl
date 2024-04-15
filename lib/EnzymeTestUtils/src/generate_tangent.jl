@@ -4,7 +4,7 @@ function map_fields_recursive(f, x::T...) where {T}
     fields = map(ConstructionBase.getfields, x)
     all(isempty, fields) && return first(x)
     new_fields = map(fields...) do xi...
-        map_fields_recursive(f, xi...)
+        return map_fields_recursive(f, xi...)
     end
     return _construct(T, new_fields...)
 end
