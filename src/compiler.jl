@@ -5259,8 +5259,6 @@ end
 
 function add_one_in_place(x)
     ty = typeof(x)
-    # ptr = Base.pointer_from_objref(x)
-    ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
         x[] = recursive_add(x[], default_adjoint(eltype(ty)))
     else
