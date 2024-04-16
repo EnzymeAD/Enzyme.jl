@@ -33,85 +33,119 @@ end
 # struct (i.e. with a container of the same type as the original), while ChainRules
 # represents the tangent with an array of some type that is tangent to the subspace defined
 # by the original array type.
+# We take special care that floats that occupy the same memory in the argument only appear
+# once in the vector, and that the reconstructed object shares the same memory pattern
+
+function to_vec(x)
+    x_vec, from_vec_inner = to_vec(x, AliasDict())
+    from_vec(x_vec::Vector{<:AbstractFloat}) = from_vec_inner(x_vec, AliasDict())
+    return x_vec, from_vec
+end
 
 # base case: we've unwrapped to a number, so we break the recursion
-to_vec(x::AbstractFloat) = ([x], only)
-
-# types: they and their fields aren't differentiable, so we bypass them
-to_vec(x::Type) = (Float32[], _ -> x)
-
-# below code is adapted from https://github.com/JuliaDiff/FiniteDifferences.jl/blob/99ad77f05bdf6c023b249025dbb8edc746d52b4f/src/to_vec.jl
-# MIT Expat License
-# Copyright (c) 2018 Invenia Technical Computing
-
-# get around the constructors and make the type directly
-# Note this is moderately evil accessing julia's internals
-if VERSION >= v"1.3"
-    @generated function _force_construct(T, args...)
-        return Expr(:splatnew, :T, :args)
-    end
-else
-    @generated function _force_construct(T, args...)
-        return Expr(:new, :T, Any[:(args[$i]) for i in 1:length(args)]...)
-    end
+function to_vec(x::AbstractFloat, seen_vecs::AliasDict)
+    AbstractFloat_from_vec(v::Vector{<:AbstractFloat}, _) = oftype(x, only(v))
+    return [x], AbstractFloat_from_vec
 end
 
-function _construct(T, args...)
-    try
-        return ConstructionBase.constructorof(T)(args...)
-    catch MethodError
-        return _force_construct(T, args...)
-    end
-end
-
-# structs: recursively call to_vec on each field
-function to_vec(x::T) where {T}
-    fields = fieldnames(T)
-    isempty(fields) && return (Float32[], _ -> x)
-    x_vecs_and_from_vecs = map(to_vec ∘ Base.Fix1(getfield, x), fields)
-    x_vecs, from_vecs = first.(x_vecs_and_from_vecs), last.(x_vecs_and_from_vecs)
-    x_vec, from_vec = to_vec(x_vecs)
-    function struct_from_vec(x_vec_new::Vector{<:AbstractFloat})
-        x_vecs_new = from_vec(x_vec_new)
-        fields_new = map((f, v) -> f(v), from_vecs, x_vecs_new)
-        return _construct(T, fields_new...)
-    end
-    return x_vec, struct_from_vec
-end
-
-# basic containers: recursively call to_vec on each element
-function to_vec(x::Union{DenseVector,Tuple})
-    x_vecs_and_from_vecs = map(to_vec, x)
-    x_vecs, from_vecs = first.(x_vecs_and_from_vecs), last.(x_vecs_and_from_vecs)
-    subvec_lengths = map(length, x_vecs)
-    subvec_ends = cumsum(subvec_lengths)
-    subvec_inds = map(subvec_lengths, subvec_ends) do l, e
-        return (e - l + 1):e
-    end
-    function DenseVector_Tuple_from_vec(x_vec_new::Vector{<:AbstractFloat})
-        x_new = map(from_vecs, subvec_inds) do from_vec, inds
-            return from_vec(x_vec_new[inds])
+# basic containers: loop over defined elements, recursively converting them to vectors
+function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:Array}
+    has_seen = haskey(seen_vecs, x)
+    is_const = Enzyme.Compiler.guaranteed_const_nongen(RT, nothing)
+    if has_seen || is_const
+        x_vec = Float32[]
+    else
+        x_vecs = Vector{<:AbstractFloat}[]
+        from_vecs = []
+        subvec_inds = UnitRange{Int}[]
+        l = 0
+        for i in eachindex(x)
+            isassigned(x, i) || continue
+            xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
+            push!(x_vecs, xi_vec)
+            push!(from_vecs, xi_from_vec)
+            push!(subvec_inds, (l + 1):(l + length(xi_vec)))
+            l += length(xi_vec)
         end
-        return oftype(x, x_new)
+        x_vec = reduce(vcat, x_vecs; init=Float32[])
+        seen_vecs[x] = x_vec
     end
-    x_vec = reduce(vcat, x_vecs; init=Float32[])
-    return x_vec, DenseVector_Tuple_from_vec
+    function Array_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+        if xor(has_seen, haskey(seen_xs, x))
+            throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
+        end
+        has_seen && return reshape(seen_xs[x], size(x))
+        is_const && return x
+        x_new = typeof(x)(undef, size(x))
+        k = 1
+        for i in eachindex(x)
+            isassigned(x, i) || continue
+            xi = from_vecs[k](x_vec_new[subvec_inds[k]], seen_xs)
+            x_new[i] = xi
+            k += 1
+        end
+        seen_xs[x] = x_new
+        return x_new
+    end
+    return x_vec, Array_from_vec
 end
-function to_vec(x::DenseArray)
-    x_vec, from_vec = to_vec(vec(x))
-    function DenseArray_from_vec(x_vec_new::Vector{<:AbstractFloat})
-        x_new = reshape(from_vec(x_vec_new), size(x))
-        return oftype(x, x_new)
+function to_vec(x::Tuple, seen_vecs::AliasDict)
+    x_vec, from_vec = to_vec(collect(x), seen_vecs)
+    function Tuple_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+        return typeof(x)(Tuple(from_vec(x_vec_new, seen_xs)))
     end
-    return x_vec, DenseArray_from_vec
+    return x_vec, Tuple_from_vec
 end
-function to_vec(x::Dict)
-    x_keys = collect(keys(x))
-    x_vals = collect(values(x))
-    x_vec, from_vec = to_vec(x_vals)
-    function Dict_from_vec(x_vec_new::Vector{<:AbstractFloat})
-        x_vals_new = from_vec(x_vec_new)
-        return typeof(x)(Pair.(x_keys, x_vals_new)...)
+function to_vec(x::NamedTuple, seen_vecs::AliasDict)
+    x_vec, from_vec = to_vec(values(x), seen_vecs)
+    function NamedTuple_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+        return NamedTuple{keys(x)}(from_vec(x_vec_new, seen_xs))
     end
-    return x_vec, Dict_from_vec
+    return x_vec, NamedTuple_from_vec
+end
+
+# fallback: for any other struct, loop over fields, recursively converting them to vectors
+function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
+    has_seen = haskey(seen_vecs, x)
+    is_const = Enzyme.Compiler.guaranteed_const_nongen(RT, nothing)
+    if has_seen || is_const
+        x_vec = Float32[]
+    else
+        @assert !Base.isabstracttype(RT)
+        @assert Base.isconcretetype(RT)
+        nf = fieldcount(RT)
+        flds = Vector{Any}(undef, nf)
+        for i in 1:nf
+            if isdefined(x, i)
+                flds[i] = xi = getfield(x, i)
+            elseif !ismutable(x)
+                nf = i - 1 # rest of tail must be undefined values
+                break
+            end
+        end
+        x_vec, fields_from_vec = to_vec(flds, seen_vecs)
+        seen_vecs[x] = x_vec
+    end
+    function Struct_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+        if xor(has_seen, haskey(seen_xs, x))
+            throw(ErrorException("Objects must be reconstructed in the same order as they are vectorized."))
+        end
+        has_seen && return seen_xs[x]
+        (is_const || nf == 0) && return x
+        flds_new = fields_from_vec(x_vec_new, seen_xs)
+        if ismutable(x)
+            x_new = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
+            for i in 1:nf
+                if isdefined(x, i)
+                    xi = flds_new[i]
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), x_new, i - 1, xi)
+                end
+            end
+        else
+            x_new = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_new, nf)
+        end
+        seen_xs[x] = x_new
+        return x_new
+    end
+    return x_vec, Struct_from_vec
 end
