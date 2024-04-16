@@ -25,6 +25,8 @@ function rand_tangent(rng, x)
     return from_vec(v_new)
 end
 
+# differs from Enzyme.make_zero primarily in that reshaped Arrays in the argument will share
+# the same memory in the output.
 function zero_tangent(x)
     v, from_vec = to_vec(x)
     return from_vec(zero(v))
