@@ -62,7 +62,7 @@ end
     end
 
     @test autodiff(Forward, f4, Duplicated(1.5, 1.0))[1] == 1.5
-    @static if v"1.7-" <= VERSION < v"1.8-"
+    @static if VERSION < v"1.7-" || VERSION >= v"1.8-"
         @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
     end
     @test autodiff(Reverse, f4, Active(1.5))[1][1] == 1.5
