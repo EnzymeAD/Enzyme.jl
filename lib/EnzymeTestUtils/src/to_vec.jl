@@ -1,3 +1,33 @@
+# Like an IdDict, but also handles cases where 2 arrays share the same memory due to
+# reshaping
+struct AliasDict{K,V} <: AbstractDict{K,V}
+    id_dict::IdDict{K,V}
+    dataids_dict::IdDict{Tuple{UInt,Vararg{UInt}},V}
+end
+AliasDict() = AliasDict(IdDict(), IdDict{Tuple{UInt,Vararg{UInt}},Any}())
+
+function Base.haskey(d::AliasDict, key)
+    haskey(d.id_dict, key) && return true
+    key isa Array && haskey(d.dataids_dict, Base.dataids(key)) && return true
+    return false
+end
+
+Base.getindex(d::AliasDict, key) = d.id_dict[key]
+function Base.getindex(d::AliasDict, key::Array)
+    haskey(d.id_dict, key) && return d.id_dict[key]
+    dataids = Base.dataids(key)
+    return d.dataids_dict[dataids]
+end
+
+function Base.setindex!(d::AliasDict, val, key)
+    d.id_dict[key] = val
+    if key isa Array
+        dataids = Base.dataids(key)
+        d.dataids_dict[dataids] = val
+    end
+    return d
+end
+
 # alternative to FiniteDifferences.to_vec to use Enzyme's semantics for arrays instead of
 # ChainRules': Enzyme treats tangents of AbstractArrays the same as tangents of any other
 # struct (i.e. with a container of the same type as the original), while ChainRules
