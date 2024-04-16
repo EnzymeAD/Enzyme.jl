@@ -5,6 +5,18 @@ struct TestStruct{X,A}
     a::A
 end
 
+struct TestStruct2
+    x::Any
+    a::Any
+    TestStruct2(x) = new(x)
+end
+
+mutable struct MutableTestStruct
+    x::Any
+    a::Any
+    MutableTestStruct() = new()
+end
+
 struct MutatedCallable{T}
     x::T
 end
