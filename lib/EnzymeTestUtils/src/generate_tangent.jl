@@ -50,3 +50,27 @@ end
 function _build_activity(primal, T::Type{<:Annotation})
     throw(ArgumentError("Unsupported activity type: $T"))
 end
+
+# below code is adapted from https://github.com/JuliaDiff/FiniteDifferences.jl/blob/99ad77f05bdf6c023b249025dbb8edc746d52b4f/src/to_vec.jl
+# MIT Expat License
+# Copyright (c) 2018 Invenia Technical Computing
+
+# get around the constructors and make the type directly
+# Note this is moderately evil accessing julia's internals
+if VERSION >= v"1.3"
+    @generated function _force_construct(T, args...)
+        return Expr(:splatnew, :T, :args)
+    end
+else
+    @generated function _force_construct(T, args...)
+        return Expr(:new, :T, Any[:(args[$i]) for i in 1:length(args)]...)
+    end
+end
+
+function _construct(T, args...)
+    try
+        return ConstructionBase.constructorof(T)(args...)
+    catch MethodError
+        return _force_construct(T, args...)
+    end
+end
