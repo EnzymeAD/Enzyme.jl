@@ -106,6 +106,26 @@ end
             end
         end
 
+        @testset "equivalent arrays in output" begin
+            function f(x)
+                z = x * 2
+                return (z, z)
+            end
+            x = randn(2, 3)
+            test_reverse(f, Duplicated, (x, Duplicated))
+        end
+
+        @testset "arrays sharing memory in output" begin
+            function f(x)
+                z = x * 2
+                return (z, vec(z))
+            end
+            x = randn(2, 3)
+            @test_broken !fails() do
+                return test_reverse(f, Duplicated, (x, Duplicated))
+            end
+        end
+
         @testset "mutating function" begin
             sz = (2, 3)
             @testset for Ty in (Const, Duplicated, BatchDuplicated),
