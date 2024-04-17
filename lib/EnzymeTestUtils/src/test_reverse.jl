@@ -27,6 +27,8 @@ differences.
 additional constraints:
 - If the return value is a struct, then all floating point numbers contained in the struct
     or its fields must be in arrays.
+- If an `Array{<:AbstractFloat}` appears in the input/output, then a reshaped version of it
+    may not also appear in the input/output.
 
 # Arguments
 
