@@ -23,9 +23,8 @@ end
 Test `Enzyme.autodiff_thunk` of `f` in `ReverseSplitWithPrimal`-mode against finite
 differences.
 
-`f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with several
+`f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with
 additional constraints:
-- If it mutates one of its arguments, it must not also return that argument.
 - If the return value is a struct, then all floating point numbers contained in the struct
     or its fields must be in arrays.
 
