@@ -124,7 +124,9 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
             end
         end
         x_vec, fields_from_vec = to_vec(flds, seen_vecs)
-        seen_vecs[x] = x_vec
+        if ismutable(x)
+            seen_vecs[x] = x_vec
+        end
     end
     function Struct_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
         if xor(has_seen, haskey(seen_xs, x))
@@ -144,7 +146,9 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
         else
             x_new = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_new, nf)
         end
-        seen_xs[x] = x_new
+        if ismutable(x)
+            seen_xs[x] = x_new
+        end
         return x_new
     end
     return x_vec, Struct_from_vec

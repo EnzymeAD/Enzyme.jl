@@ -43,6 +43,11 @@ end
         x = TestStruct(1, TestStruct("foo", v))
         test_to_vec(x)
         @test to_vec(x)[1] == vec(v)
+
+        x = (TestStruct(1.0, 2.0), TestStruct(1.0, 2.0))
+        v, from_vec = to_vec(x)
+        @test v == [1.0, 2.0, 1.0, 2.0]
+        @test from_vec(v) === x
     end
 
     @testset "incompletely initialized struct" begin
@@ -70,6 +75,21 @@ end
             @test getfield(y2, k) == reshape(v2, size(x))
             @test !isdefined(y2, k === :a ? :x : :a)
         end
+
+        y = MutableTestStruct()
+        y.x = randn()
+        t = (y, y)
+        v, from_vec = to_vec(t)
+        @test v == [y.x]
+        t2 = from_vec(v)
+        @test t2[1] === t2[2]
+
+        t = (y, deepcopy(y))
+        v, from_vec = to_vec(t)
+        @test v == [y.x, y.x]
+        t2 = from_vec(v)
+        @test t2[1].x == t2[2].x
+        @test t2[1] !== t2[2]
     end
 
     @testset "nested array" begin
