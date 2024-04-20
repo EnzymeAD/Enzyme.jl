@@ -1,6 +1,9 @@
 unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
 export unsafe_to_pointer
 
+@inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
+export is_concrete_tuple
+
 const Tracked = 10
 const Derived = 11
 export Tracked, Derived
