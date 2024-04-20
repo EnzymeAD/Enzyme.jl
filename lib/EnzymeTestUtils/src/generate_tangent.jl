@@ -41,7 +41,7 @@ _build_activity(rng, primal, ::Type{<:Active}) = Active(primal)
 function _build_activity(rng, primal, ::Type{<:Duplicated})
     return Duplicated(primal, rand_tangent(rng, primal))
 end
-function _build_activity(rng, ::Type{<:BatchDuplicated})
+function _build_activity(rng, primal, ::Type{<:BatchDuplicated})
     return BatchDuplicated(primal, ntuple(_ -> rand_tangent(rng, primal), 2))
 end
 function _build_activity(rng, primal, T::Type{<:Annotation})
