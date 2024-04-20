@@ -134,7 +134,7 @@ end
             end
         end
 
-        @testset "structured array inputs/outputs" begin
+        VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                          Tx in (Const, Duplicated, BatchDuplicated),
                          T in (Float32, Float64, ComplexF32, ComplexF64)
