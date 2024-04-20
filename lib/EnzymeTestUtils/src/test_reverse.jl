@@ -8,7 +8,7 @@ for N in 1:30
         function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
             Base.@_inline_meta
             @static if VERSION ≤ v"1.8"
-                # callsite inline syntax unsupported in <= 1.8 
+                # callsite inline syntax unsupported in <= 1.8
                 f($(argexprs...); fkwargs...)
             else
                 @inline f($(argexprs...); fkwargs...)
@@ -25,8 +25,6 @@ differences.
 
 `f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with
 additional constraints:
-- If the return value is a struct, then all floating point numbers contained in the struct
-    or its fields must be in arrays.
 - If an `Array{<:AbstractFloat}` appears in the input/output, then a reshaped version of it
     may not also appear in the input/output.
 
