@@ -112,7 +112,13 @@ end
                 return (z, z)
             end
             x = randn(2, 3)
-            test_reverse(f, Duplicated, (x, Duplicated))
+
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                test_reverse(f, Tret, (x, Tx))
+            end
         end
 
         @testset "arrays sharing memory in output" begin
@@ -121,8 +127,17 @@ end
                 return (z, vec(z))
             end
             x = randn(2, 3)
-            @test_broken !fails() do
-                return test_reverse(f, Duplicated, (x, Duplicated))
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                if Tx <: Const
+                    test_reverse(f, Tret, (x, Tx))
+                else
+                    @test_broken !fails() do
+                        return test_reverse(f, Tret, (x, Tx))
+                    end
+                end
             end
         end
 
