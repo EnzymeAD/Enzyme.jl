@@ -102,7 +102,7 @@ function test_reverse(
             batch_size = _batch_size(map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
             ȳ = ntuple(batch_size) do _
-                ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
+                return ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
             end
         end
         # call finitedifferences, avoid mutating original arguments
