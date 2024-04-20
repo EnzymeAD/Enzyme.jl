@@ -26,6 +26,9 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+function isapproxfn(fn, args...; kwargs...)
+    isapprox(args...; kwargs...)
+end
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(ReverseHolomorphic, f, Active, Active(x))[1]
@@ -37,7 +40,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
       fdm(f, x)
     end
 
-    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
 
     if typeof(x) <: Integer
         x = Float64(x)
@@ -51,7 +54,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
         ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
     end
 
-    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
 
 end
 
