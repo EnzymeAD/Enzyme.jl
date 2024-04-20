@@ -135,19 +135,19 @@ end
         end
 
         VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
-            @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                         Tx in (Const, Duplicated, BatchDuplicated),
-                         T in (Float32, Float64, ComplexF32, ComplexF64)
+                                                                        @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                                                                                     Tx in (Const, Duplicated, BatchDuplicated),
+                                                                                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
-                # if some are batch, none must be duplicated
-                are_activities_compatible(Tret, Tx) || continue
+                                                                                 # if some are batch, none must be duplicated
+                                                                                 are_activities_compatible(Tret, Tx) || continue
 
-                x = Hermitian(randn(T, 5, 5))
+                                                                                 x = Hermitian(randn(T, 5, 5))
 
-                atol = rtol = sqrt(eps(real(T)))
-                test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
-            end
-        end
+                                                                                 atol = rtol = sqrt(eps(real(T)))
+                                                                                 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
+                                                                                 end
+                                                                        end
 
         @testset "equivalent arrays in output" begin
             function f(x)
@@ -156,7 +156,7 @@ end
             end
             x = randn(2, 3)
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated)
+                         Tx in (Const, Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Tx) || continue
                 test_forward(f, Tret, (x, Tx))
@@ -170,7 +170,7 @@ end
             end
             x = randn(2, 3)
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated)
+                         Tx in (Const, Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Tx) || continue
                 test_forward(f, Tret, (x, Tx))
