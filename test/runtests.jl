@@ -2380,6 +2380,26 @@ end
     @test dx ≈ [0 30 0]
 end
 
+
+function sparse_eval(x::Vector{Float64})
+    A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
+    B = sparsevec([1, 1, 2, 3], [2.0*x[2], 1.0-x[1], 2.0+x[3], -1.0])
+    C = A + B
+    return A[1]
+end
+
+@static if VERSION ≥ v"1.7-" 
+@testset "Type Unstable SparseArrays" begin
+    x = [3.1, 2.7, 8.2]
+    dx = [0.0, 0.0, 0.0]
+
+    autodiff(Reverse, sparse_eval, Duplicated(x, dx))
+    
+    @test x ≈ [3.1, 2.7, 8.2]
+    @test dx ≈ [-1.0, 43.74, 0]
+end
+end
+
 @testset "Jacobian" begin
     function inout(v)
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
@@ -2883,11 +2903,10 @@ end
     @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
 
     f7(x) = median([2.0, 1.0, x])
-    # Fails on Julia 1.9 due to #880
-    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
     @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
     @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
-    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
 
     f8(x) = middle([2.0, x, 1.0])
     @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5

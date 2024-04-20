@@ -461,8 +461,6 @@ end
         end
     end
 
-    @inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
-
     @assert !Base.isabstracttype(T)
     if !(Base.isconcretetype(T) || is_concrete_tuple(T) || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
@@ -5259,8 +5257,6 @@ end
 
 function add_one_in_place(x)
     ty = typeof(x)
-    # ptr = Base.pointer_from_objref(x)
-    ptr = unsafe_to_pointer(x)
     if ty <: Base.RefValue || ty == Base.RefValue{Float64}
         x[] = recursive_add(x[], default_adjoint(eltype(ty)))
     else
