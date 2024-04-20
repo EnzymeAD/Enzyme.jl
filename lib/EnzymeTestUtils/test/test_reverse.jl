@@ -6,7 +6,7 @@ using Test
 
 function f_mut_rev!(y, x, a)
     map!(xi -> xi * a, y, x)
-    return nothing
+    return y
 end
 
 f_kwargs_rev(x; a=3.0, kwargs...) = a .* x .^ 2
@@ -146,18 +146,17 @@ end
             @testset for Ty in (Const, Duplicated, BatchDuplicated),
                 Tx in (Const, Duplicated, BatchDuplicated),
                 Ta in (Const, Active),
-                Tret in (Const,),  # return value is nothing
                 T in (Float32, Float64, ComplexF32, ComplexF64)
 
                 # if some are batch, none must be duplicated
-                are_activities_compatible(Tret, Ty, Tx, Ta) || continue
+                are_activities_compatible(Ty, Tx, Ta) || continue
 
                 x = randn(T, sz)
                 y = zeros(T, sz)
                 a = randn(T)
 
                 atol = rtol = sqrt(eps(real(T)))
-                test_reverse(f_mut_rev!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                test_reverse(f_mut_rev!, Ty, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
             end
         end
 
