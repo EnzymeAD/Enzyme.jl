@@ -26,21 +26,24 @@ zero_tangent(x) = map_fields_recursive(zero_tangent, x)
 zero_tangent(::T) where {T<:AbstractFloat} = zero(T)
 zero_tangent(x::T) where {T<:Array{<:Number}} = zero_tangent.(x)
 
-function auto_activity(arg::Tuple)
+auto_activity(arg) = auto_activity(Random.default_rng(), arg)
+function auto_activity(rng, arg::Tuple)
     if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation
-        return _build_activity(arg...)
+        return _build_activity(rng, arg...)
     end
     return Const(arg)
 end
-auto_activity(activity::Annotation) = activity
-auto_activity(activity) = Const(activity)
+auto_activity(rng, activity::Annotation) = activity
+auto_activity(rng, activity) = Const(activity)
 
-_build_activity(primal, ::Type{<:Const}) = Const(primal)
-_build_activity(primal, ::Type{<:Active}) = Active(primal)
-_build_activity(primal, ::Type{<:Duplicated}) = Duplicated(primal, rand_tangent(primal))
-function _build_activity(primal, ::Type{<:BatchDuplicated})
-    return BatchDuplicated(primal, ntuple(_ -> rand_tangent(primal), 2))
+_build_activity(rng, primal, ::Type{<:Const}) = Const(primal)
+_build_activity(rng, primal, ::Type{<:Active}) = Active(primal)
+function _build_activity(rng, primal, ::Type{<:Duplicated})
+    return Duplicated(primal, rand_tangent(rng, primal))
 end
-function _build_activity(primal, T::Type{<:Annotation})
+function _build_activity(rng, ::Type{<:BatchDuplicated})
+    return BatchDuplicated(primal, ntuple(_ -> rand_tangent(rng, primal), 2))
+end
+function _build_activity(rng, primal, T::Type{<:Annotation})
     throw(ArgumentError("Unsupported activity type: $T"))
 end
