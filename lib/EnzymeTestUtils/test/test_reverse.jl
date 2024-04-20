@@ -144,9 +144,9 @@ end
         @testset "mutating function" begin
             sz = (2, 3)
             @testset for Ty in (Const, Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                Ta in (Const, Active),
-                T in (Float32, Float64, ComplexF32, ComplexF64)
+                         Tx in (Const, Duplicated, BatchDuplicated),
+                         Ta in (Const, Active),
+                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Ty, Tx, Ta) || continue
