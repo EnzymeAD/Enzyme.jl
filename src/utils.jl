@@ -5,7 +5,7 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-unsafe_to_pointer(val) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
+@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
 export unsafe_to_pointer
 
 const Tracked = 10
@@ -25,13 +25,15 @@ function unsafe_to_llvm(val)
     #      that have relocation tables.
     # TODO: What about things like `nothing`
     if !Base.ismutable(val)
-        val = Ref(val) # FIXME many objects could be leaked here
-        ptr = Base.unsafe_convert(Ptr{Cvoid}, val)
+        val = Core.Box(val) # FIXME many objects could be leaked here
+        @assert Base.ismutable(val)
+        push!(captured_constants, val) # Globally root
+        ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Base.pointer_from_objref(val)))
     else
+        @assert Base.ismutable(val)
+        push!(captured_constants, val) # Globally root
         ptr = Base.pointer_from_objref(val)
     end
-    @assert Base.ismutable(val)
-    push!(captured_constants, val) # Globally root
     fill_val = LLVM.ConstantInt(convert(UInt, ptr))
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
