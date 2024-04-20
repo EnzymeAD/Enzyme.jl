@@ -149,6 +149,34 @@ end
             end
         end
 
+        @testset "equivalent arrays in output" begin
+            function f(x)
+                z = x * 2
+                return (z, z)
+            end
+            x = randn(2, 3)
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                test_forward(f, Tret, (x, Tx))
+            end
+        end
+
+        @testset "arrays sharing memory in output" begin
+            function f(x)
+                z = x * 2
+                return (z, z)
+            end
+            x = randn(2, 3)
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                test_forward(f, Tret, (x, Tx))
+            end
+        end
+
         @testset "mutating function" begin
             Enzyme.API.runtimeActivity!(true)
             sz = (2, 3)
