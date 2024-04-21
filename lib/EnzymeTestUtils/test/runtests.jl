@@ -1,5 +1,8 @@
 using EnzymeTestUtils
+using Random
 using Test
+
+Random.seed!(0)
 
 @testset "EnzymeTestUtils.jl" begin
     include("helpers.jl")

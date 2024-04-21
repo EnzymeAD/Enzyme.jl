@@ -39,6 +39,7 @@ additional constraints:
 
 # Keywords
 
+- `rng::AbstractRNG`: The random number generator to use for generating random tangents.
 - `fdm=FiniteDifferences.central_fdm(5, 1)`: The finite differences method to use.
 - `fkwargs`: Keyword arguments to pass to `f`.
 - `rtol`: Relative tolerance for `isapprox`.
@@ -75,6 +76,7 @@ function test_reverse(
     f,
     ret_activity,
     args...;
+    rng::Random.AbstractRNG=Random.default_rng(),
     fdm=FiniteDifferences.central_fdm(5, 1),
     fkwargs::NamedTuple=NamedTuple(),
     rtol::Real=1e-9,
@@ -87,7 +89,7 @@ function test_reverse(
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
-        activities = map(auto_activity, (f, args...))
+        activities = map(Base.Fix1(auto_activity, rng), (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
         fcopy = deepcopy(first(primals))
@@ -95,12 +97,12 @@ function test_reverse(
         y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # generate tangent for output
         if !_any_batch_duplicated(map(typeof, activities)...)
-            ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+            ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
         else
             batch_size = _batch_size(map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
             ȳ = ntuple(batch_size) do _
-                ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+                return ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
             end
         end
         # call finitedifferences, avoid mutating original arguments
