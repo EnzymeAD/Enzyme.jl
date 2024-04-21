@@ -3,8 +3,8 @@
 
 Test `Enzyme.autodiff` of `f` in `Forward`-mode against finite differences.
 
-`f` has all constraints of the same argument passed to `Enzyme.autodiff`, with several
-additional constraints:
+`f` has all constraints of the same argument passed to `Enzyme.autodiff`, with additional
+constraints:
 - If it mutates one of its arguments, it _must_ return that argument.
 
 # Arguments

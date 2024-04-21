@@ -8,7 +8,7 @@ for N in 1:30
         function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
             Base.@_inline_meta
             @static if VERSION ≤ v"1.8"
-                # callsite inline syntax unsupported in <= 1.8 
+                # callsite inline syntax unsupported in <= 1.8
                 f($(argexprs...); fkwargs...)
             else
                 @inline f($(argexprs...); fkwargs...)
@@ -23,11 +23,10 @@ end
 Test `Enzyme.autodiff_thunk` of `f` in `ReverseSplitWithPrimal`-mode against finite
 differences.
 
-`f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with several
+`f` has all constraints of the same argument passed to `Enzyme.autodiff_thunk`, with
 additional constraints:
-- If it mutates one of its arguments, it must not also return that argument.
-- If the return value is a struct, then all floating point numbers contained in the struct
-    or its fields must be in arrays.
+- If an `Array{<:AbstractFloat}` appears in the input/output, then a reshaped version of it
+    may not also appear in the input/output.
 
 # Arguments
 
@@ -96,13 +95,13 @@ function test_reverse(
         args_copy = deepcopy(Base.tail(primals))
         y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # generate tangent for output
-        if !_any_batch_duplicated(map(typeof, activities)...)
+        if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
             ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
         else
-            batch_size = _batch_size(map(typeof, activities)...)
+            batch_size = _batch_size(ret_activity, map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
             ȳ = ntuple(batch_size) do _
-                return ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
+                return ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
             end
         end
         # call finitedifferences, avoid mutating original arguments
@@ -137,7 +136,7 @@ function test_reverse(
         else
             # if there's a shadow result, then we need to set it to our random adjoint
             if !(shadow_result === nothing)
-                if !_any_batch_duplicated(map(typeof, activities)...)
+                if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
                     map_fields_recursive(copyto!, shadow_result, ȳ)
                 else
                     for (sr, dy) in zip(shadow_result, ȳ)
