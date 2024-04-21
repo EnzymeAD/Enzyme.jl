@@ -21,6 +21,26 @@ function test_approx(x::AbstractArray, y::AbstractArray, msg; kwargs...)
     end
     return nothing
 end
+function test_approx(x::Tuple, y::Tuple, msg; kwargs...)
+    @test_msg "$msg: lengths must match" length(x) == length(y)
+    for i in eachindex(x)
+        msg_new = "$msg: ::$(typeof(x))[$i]"
+        test_approx(x[i], y[i], msg_new; kwargs...)
+    end
+    return nothing
+end
+function test_approx(x::Dict, y::Dict, msg; kwargs...)
+    @test_msg "$msg: keys must match" issetequal(keys(x), keys(y))
+    for k in keys(x)
+        msg_new = "$msg: ::$(typeof(x))[$k]"
+        test_approx(x[k], y[k], msg_new; kwargs...)
+    end
+    return nothing
+end
+function test_approx(x::Type, y::Type, msg; kwargs...)
+    @test_msg "$msg: types must match" x === y
+    return nothing
+end
 test_approx(x, y, msg; kwargs...) = _test_fields_approx(x, y, msg; kwargs...)
 
 function _test_fields_approx(x, y, msg; kwargs...)
