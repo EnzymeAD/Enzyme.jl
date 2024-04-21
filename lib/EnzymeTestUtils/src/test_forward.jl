@@ -17,6 +17,7 @@ constraints:
 
 # Keywords
 
+- `rng::AbstractRNG`: The random number generator to use for generating random tangents.
 - `fdm=FiniteDifferences.central_fdm(5, 1)`: The finite differences method to use.
 - `fkwargs`: Keyword arguments to pass to `f`.
 - `rtol`: Relative tolerance for `isapprox`.
@@ -54,6 +55,7 @@ function test_forward(
     f,
     ret_activity,
     args...;
+    rng::Random.AbstractRNG=Random.default_rng(),
     fdm=FiniteDifferences.central_fdm(5, 1),
     fkwargs::NamedTuple=NamedTuple(),
     rtol::Real=1e-9,
@@ -67,7 +69,7 @@ function test_forward(
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
-        activities = map(auto_activity, (f, args...))
+        activities = map(Base.Fix1(auto_activity, rng), (f, args...))
         primals = map(x -> x.val, activities)
         # call primal, avoid mutating original arguments
         fcopy = deepcopy(first(primals))
