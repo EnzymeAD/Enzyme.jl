@@ -3763,9 +3763,12 @@ end
     @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
     @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
 
-    f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
-    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
-    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    # On Julia 1.6 the gradients are wrong (0.7 not 1.2) and on 1.7 it errors
+    @static if VERSION ≥ v"1.8-"
+        f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+        @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+        @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    end
 end
 
 @testset "hvcat_fill" begin
