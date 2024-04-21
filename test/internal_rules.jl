@@ -230,8 +230,6 @@ end
     end
 end
 
-end
-
 @testset "rand and randn rules" begin
     # Distributed as x + unit normal + uniform
     struct MyDistribution
