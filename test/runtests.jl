@@ -270,11 +270,17 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.sinc, 2.2)
+    end
     test_scalar(Base.FastMath.sinh_fast, 1.0)
     test_scalar(Base.FastMath.cosh_fast, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.FastMath.exp_fast, 1.0)
+    end
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.exp10, 1.0)
+    end
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
     test_scalar(x->rem(x, 1), 0.7)
