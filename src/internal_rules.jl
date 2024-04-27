@@ -993,7 +993,7 @@ function EnzymeRules.reverse(
                 Ā = _cholesky_pullback_shared_code(fact, dfact)
                 idx = diagind(Ā)
                 @views Ā[idx] .= real.(Ā[idx]) ./ 2
-                _dA .+= UpperTriangular(Ā)
+                _dA .+= UpperTriangular(Ā) .+ UpperTriangular(tril!(dfact.factors, -1)')
                 dfact.factors .= 0
             end
         end
