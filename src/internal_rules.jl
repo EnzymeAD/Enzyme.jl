@@ -993,9 +993,7 @@ function EnzymeRules.reverse(
             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
             if _dA !== dfact.factors
                 Ā = _cholesky_pullback_shared_code(fact, dfact)
-                idx = diagind(Ā)
-                @views Ā[idx] .= real.(Ā[idx]) ./ 2
-                _dA .+= UpperTriangular(Ā)
+                _dA .+= Ā
                 dfact.factors .= 0
             end
         end
@@ -1018,6 +1016,7 @@ function _cholesky_pullback_shared_code(C, ΔC)
         ldiv!(U, Ā)
         rdiv!(Ā, U')
         Ā .+= tril!(ΔC.factors, -1)' # correction for unused triangle
+        triu!(Ā)
     else  # C.uplo === 'L'
         L = C.L
         L̄ = ΔC.L
@@ -1027,7 +1026,10 @@ function _cholesky_pullback_shared_code(C, ΔC)
         rdiv!(Ā, L)
         ldiv!(L', Ā)
         Ā .+= triu!(ΔC.factors, 1)' # correction for unused triangle
+        tril!(Ā)
     end
+    idx = diagind(Ā)
+    @views Ā[idx] .= real.(Ā[idx]) ./ 2
     return Ā
 end
 
