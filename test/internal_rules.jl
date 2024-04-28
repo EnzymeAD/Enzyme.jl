@@ -161,7 +161,8 @@ end
         @testset "with wrapper arguments" begin
             @testset for Te in (Float64,), TS in (Symmetric, Hermitian), uplo in (:U, :L)
                 @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
-                    A = TS(exp(rand(Te, 4, 4)), uplo)
+                    _A = collect(exp(TS(rand(Te, 4, 4))))
+                    A = TS(_A, uplo)
                     are_activities_compatible(Tret, TA) || continue
                     test_forward(cholesky, Tret, (A, TA))
                     test_reverse(cholesky, Tret, (A, TA))
