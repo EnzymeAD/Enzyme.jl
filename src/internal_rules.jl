@@ -814,7 +814,7 @@ function EnzymeRules.forward(
         @assert !isa(B, Const)
 
         retval = if !isa(fact, Const) || (RT <: Const) || (RT <: Duplicated) || (RT <: BatchDuplicated)
-            func.val(fact.val, B.val; kwargs...)
+            B.val
         else
             nothing
         end
@@ -831,7 +831,6 @@ function EnzymeRules.forward(
                 _ldiv_Cholesky_forward!(L, U, B.val, dL, dU, dB)
             end
             return dB
-            # func.val(fact.val, dB; kwargs...)
         end
 
         if RT <: Const
