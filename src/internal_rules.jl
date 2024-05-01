@@ -783,7 +783,7 @@ function _cholesky_forward(C::Cholesky, Ȧ)
         U̇[idx] ./= 2
         triu!(U̇)
         rmul!(U̇, U)
-        U̇ .+= UpperTriangular(Ȧ)' - Diagonal(Ȧ) # correction for unused triangle
+        U̇ .+= UpperTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
         return Cholesky(U̇, 'U', C.info)
     else
         L = C.L
@@ -793,7 +793,7 @@ function _cholesky_forward(C::Cholesky, Ȧ)
         L̇[idx] ./= 2
         tril!(L̇)
         lmul!(L, L̇)
-        L̇ .+= LowerTriangular(Ȧ)' - Diagonal(Ȧ) # correction for unused triangle
+        L̇ .+= LowerTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
         return Cholesky(L̇, 'L', C.info)
     end
 end
@@ -805,24 +805,19 @@ function EnzymeRules.forward(
         B::Annotation{<:AbstractVecOrMat};
         kwargs...
 )
-    @info "Hi from forward(::typeof(ldiv!),...)"
-    if isa(B, Const)
+    if B isa Const
         return func.val(fact.val, B.val; kwargs...)
     else
-
         N = width(B)
-        @assert !isa(B, Const)
-
-        retval = if !isa(fact, Const) || (RT <: Const) || (RT <: Duplicated) || (RT <: BatchDuplicated)
-            B.val
-        else
-            nothing
-        end
+        retval = B.val
 
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
-            if !isa(fact, Const)
+            if fact isa Const
+                ldiv!(fact.val, B.val)
+                ldiv!(fact.val, dB)
+            else
                 dfact = N == 1 ? fact.dval : fact.dval[b]
                 L = fact.val.L
                 U = fact.val.U
