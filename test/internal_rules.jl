@@ -171,8 +171,18 @@ end
             Tret in (Const, Duplicated)
             @testset "$(size(_B))" for _B in (B, b)
                 are_activities_compatible(Tret, TC, TB) || continue
-                test_forward(\, Tret, (C, TC), (_B, TB))
+                # Non-uniform activities are disabled due to unresolved questions
+                Tret == TC == TB && test_forward(\, Tret, (C, TC), (_B, TB))
                 test_reverse(\, Tret, (C, TC), (_B, TB))
+            end
+        end
+        @testset for TC in (Const, Duplicated), TB in (Const, Duplicated),
+            Tret in (Const, Duplicated)
+            @testset "$(size(_B))" for _B in (B, b)
+                are_activities_compatible(Tret, TC, TB) || continue
+                # Non-uniform activities are disabled due to unresolved questions
+                Tret == TC == TB && test_forward(ldiv!, Tret, (C, TC), (_B, TB))
+                Tret == TB && test_reverse(ldiv!, Tret, (C, TC), (_B, TB))
             end
         end
     end

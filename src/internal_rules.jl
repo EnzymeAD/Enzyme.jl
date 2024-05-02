@@ -958,7 +958,7 @@ function EnzymeRules.augmented_primal(
         kwargs...
 )
     cache_B = if !isa(A, Const) && !isa(B, Const)
-        EnzymeRules.overwritten(config)[3] ? copy(B.val) : B.val
+        copy(B.val)
     else
         nothing
     end
@@ -986,9 +986,9 @@ function EnzymeRules.reverse(
 )
     if !isa(B, Const) 
         (cache_A, cache_B) = cache
-        Y = B.val
         U = cache_A.U
         Z = isa(A, Const) ? nothing : U' \ cache_B
+        Y = isa(A, Const) ? nothing : U \ Z
         for b in 1:EnzymeRules.width(config)
             dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
             dZ = U' \ dB
