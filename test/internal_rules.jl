@@ -161,32 +161,34 @@ end
     end
 end
 
-@testset "Linear solve for `Cholesky`" begin
-    @testset for Te in (Float64,)
-        A = exp(Symmetric(rand(Te, 4, 4)))
-        C = cholesky(A)
-        B = rand(Te, 4, 4)
-        b = rand(Te, 4)
-        @testset for TC in (Const, Duplicated), TB in (Const, Duplicated),
-            Tret in (Const, Duplicated)
-            @testset "$(size(_B))" for _B in (B, b)
-                are_activities_compatible(Tret, TC, TB) || continue
-                # Non-uniform activities are disabled due to unresolved questions
-                Tret == TC == TB && test_forward(\, Tret, (C, TC), (_B, TB))
-                test_reverse(\, Tret, (C, TC), (_B, TB))
+    @testset "Linear solve for `Cholesky`" begin
+        @testset for Te in (Float64,)
+            A = exp(Symmetric(rand(Te, 4, 4)))
+            C = cholesky(A)
+            B = rand(Te, 4, 4)
+            b = rand(Te, 4)
+            @testset for TC in (Const, Duplicated), TB in (Const, Duplicated),
+                         Tret in (Const, Duplicated)
+
+                @testset "$(size(_B))" for _B in (B, b)
+                    are_activities_compatible(Tret, TC, TB) || continue
+                    # Non-uniform activities are disabled due to unresolved questions
+                    Tret == TC == TB && test_forward(\, Tret, (C, TC), (_B, TB))
+                    test_reverse(\, Tret, (C, TC), (_B, TB))
+                end
             end
-        end
-        @testset for TC in (Const, Duplicated), TB in (Const, Duplicated),
-            Tret in (Const, Duplicated)
-            @testset "$(size(_B))" for _B in (B, b)
-                are_activities_compatible(Tret, TC, TB) || continue
-                # Non-uniform activities are disabled due to unresolved questions
-                Tret == TC == TB && test_forward(ldiv!, Tret, (C, TC), (_B, TB))
-                Tret == TB && test_reverse(ldiv!, Tret, (C, TC), (_B, TB))
+            @testset for TC in (Const, Duplicated), TB in (Const, Duplicated),
+                         Tret in (Const, Duplicated)
+
+                @testset "$(size(_B))" for _B in (B, b)
+                    are_activities_compatible(Tret, TC, TB) || continue
+                    # Non-uniform activities are disabled due to unresolved questions
+                    Tret == TC == TB && test_forward(ldiv!, Tret, (C, TC), (_B, TB))
+                    Tret == TB && test_reverse(ldiv!, Tret, (C, TC), (_B, TB))
+                end
             end
         end
     end
-end
 
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),

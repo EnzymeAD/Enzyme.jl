@@ -751,7 +751,7 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
         dA = if isa(A, Const)
             ntuple(Val(N)) do i
                 Base.@_inline_meta
-                zero(A.val)
+                return zero(A.val)
             end
         else
             N == 1 ? (A.dval,) : A.dval
@@ -798,13 +798,11 @@ function _cholesky_forward(C::Cholesky, Ȧ)
     end
 end
 
-function EnzymeRules.forward(
-        func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, Duplicated}},
-        fact::Annotation{<:Cholesky},
-        B::Annotation{<:AbstractVecOrMat};
-        kwargs...
-)
+function EnzymeRules.forward(func::Const{typeof(ldiv!)},
+                             RT::Type{<:Union{Const,Duplicated}},
+                             fact::Annotation{<:Cholesky},
+                             B::Annotation{<:AbstractVecOrMat};
+                             kwargs...)
     if B isa Const
         return func.val(fact.val, B.val; kwargs...)
     else
@@ -852,13 +850,13 @@ function _ldiv_Cholesky_forward!(L, U, B, dL, dU, dB)
     return B, dB
 end
 
-function EnzymeRules.augmented_primal(
-    config,
-    func::Const{typeof(cholesky)},
-    RT::Type,
-    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-    kwargs...)
-
+function EnzymeRules.augmented_primal(config,
+                                      func::Const{typeof(cholesky)},
+                                      RT::Type,
+                                      A::Annotation{<:Union{Matrix,
+                                                            LinearAlgebra.RealHermSym{<:Real,
+                                                                                      <:Matrix}}};
+                                      kwargs...)
     fact = if EnzymeRules.needs_primal(config) || !(RT <: Const)
         cholesky(A.val; kwargs...)
     else
@@ -876,7 +874,7 @@ function EnzymeRules.augmented_primal(
         else
             ntuple(Val(EnzymeRules.width(config))) do i
                 Base.@_inline_meta
-                Enzyme.make_zero(fact)
+                return Enzyme.make_zero(fact)
             end
         end
     end
@@ -885,13 +883,14 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn(fact_returned, dfact, cache)
 end
 
-function EnzymeRules.reverse(
-    config,
-    ::Const{typeof(cholesky)},
-    RT::Type,
-    cache,
-    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-    kwargs...)
+function EnzymeRules.reverse(config,
+                             ::Const{typeof(cholesky)},
+                             RT::Type,
+                             cache,
+                             A::Annotation{<:Union{Matrix,
+                                                   LinearAlgebra.RealHermSym{<:Real,
+                                                                             <:Matrix}}};
+                             kwargs...)
     if !(RT <: Const) && !isa(A, Const)
         fact, dfact = cache
         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
