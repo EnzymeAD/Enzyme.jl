@@ -136,30 +136,30 @@ end
 end
 
 @static if VERSION > v"1.8"
-@testset "cholesky" begin
-    @testset "with wrapper arguments" begin
-        @testset for Te in (Float64,), TS in (Symmetric, Hermitian), uplo in (:U, :L)
-            @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
-                _A = collect(exp(TS(rand(Te, 4, 4))))
-                A = TS(_A, uplo)
-                are_activities_compatible(Tret, TA) || continue
-                test_forward(cholesky, Tret, (A, TA))
-                test_reverse(cholesky, Tret, (A, TA))
+    @testset "cholesky" begin
+        @testset "with wrapper arguments" begin
+            @testset for Te in (Float64,), TS in (Symmetric, Hermitian), uplo in (:U, :L)
+                @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
+                    _A = collect(exp(TS(rand(Te, 4, 4))))
+                    A = TS(_A, uplo)
+                    are_activities_compatible(Tret, TA) || continue
+                    test_forward(cholesky, Tret, (A, TA))
+                    test_reverse(cholesky, Tret, (A, TA))
+                end
+            end
+        end
+        @testset "without wrapper arguments" begin
+            _square(A) = A * A'
+            @testset for Te in (Float64,)
+                @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
+                    A = rand(Te, 4, 4)
+                    are_activities_compatible(Tret, TA) || continue
+                    test_forward(cholesky ∘ _square, Tret, (A, TA))
+                    test_reverse(cholesky ∘ _square, Tret, (A, TA))
+                end
             end
         end
     end
-    @testset "without wrapper arguments" begin
-        _square(A) = A * A'
-        @testset for Te in (Float64,)
-            @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
-                A = rand(Te, 4, 4)
-                are_activities_compatible(Tret, TA) || continue
-                test_forward(cholesky ∘ _square, Tret, (A, TA))
-                test_reverse(cholesky ∘ _square, Tret, (A, TA))
-            end
-        end
-    end
-end
 
     @testset "Linear solve for `Cholesky`" begin
         @testset for Te in (Float64,)
