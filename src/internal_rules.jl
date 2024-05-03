@@ -948,15 +948,15 @@ function _realifydiag!(A)
     return A
 end
 
-function EnzymeRules.augmented_primal(
-        config,
-        func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
-
-        A::Annotation{<:Cholesky},
-        B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-        kwargs...
-)
+function EnzymeRules.augmented_primal(config,
+                                      func::Const{typeof(ldiv!)},
+                                      RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
+                                                       BatchDuplicatedNoNeed,
+                                                       BatchDuplicated}},
+                                      A::Annotation{<:Cholesky},
+                                      B::Union{Const,DuplicatedNoNeed,Duplicated,
+                                               BatchDuplicatedNoNeed,BatchDuplicated};
+                                      kwargs...)
     cache_B = if !isa(A, Const) && !isa(B, Const)
         copy(B.val)
     else
@@ -975,16 +975,15 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_B))
 end
 
-function EnzymeRules.reverse(
-    config,
-    func::Const{typeof(ldiv!)},
-    dret,
-    cache,
-    A::Annotation{<:Cholesky},
-    B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-    kwargs...
-)
-    if !isa(B, Const) 
+function EnzymeRules.reverse(config,
+                             func::Const{typeof(ldiv!)},
+                             dret,
+                             cache,
+                             A::Annotation{<:Cholesky},
+                             B::Union{Const,DuplicatedNoNeed,Duplicated,
+                                      BatchDuplicatedNoNeed,BatchDuplicated};
+                             kwargs...)
+    if !isa(B, Const)
         (cache_A, cache_B) = cache
         U = cache_A.U
         Z = isa(A, Const) ? nothing : U' \ cache_B
