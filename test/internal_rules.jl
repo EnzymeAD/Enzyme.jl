@@ -162,8 +162,9 @@ end
     end
 
     @testset "Linear solve for `Cholesky`" begin
-        @testset for Te in (Float64,)
-            A = exp(Symmetric(rand(Te, 4, 4)))
+        @testset for Te in (Float64,), uplo in (:U, :L)
+            _A = collect(exp(Symmetric(rand(Te, 4, 4))))
+            A = Symmetric(_A, uplo)
             C = cholesky(A)
             B = rand(Te, 4, 4)
             b = rand(Te, 4)

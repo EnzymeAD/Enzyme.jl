@@ -995,7 +995,12 @@ function EnzymeRules.reverse(config,
                 ∂B = U \ dZ
                 Ā = -dZ * Y' - Z * ∂B'
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-                dA.factors .+= UpperTriangular(Ā)
+                if A.val.uplo === 'U'
+                    dA.factors .+= UpperTriangular(Ā)
+                else
+                    dA.factors .+= LowerTriangular(Ā')
+                end
+
             end
         end
     end
