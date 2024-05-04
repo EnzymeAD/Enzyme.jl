@@ -799,7 +799,7 @@ function _cholesky_forward(C::Cholesky, Ȧ)
 end
 
 function EnzymeRules.forward(func::Const{typeof(ldiv!)},
-                             RT::Type{<:Union{Const,Duplicated}},
+                             RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
                              fact::Annotation{<:Cholesky},
                              B::Annotation{<:AbstractVecOrMat};
                              kwargs...)
@@ -809,20 +809,31 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         N = width(B)
         retval = B.val
 
+        L = fact.val.L
+        U = fact.val.U
+
+        ldiv!(L, B.val)
+        for b in 1:N
+            dB = N == 1 ? B.dval : B.dval[b]
+            if !(fact isa Const)
+                dL = N == 1 ? fact.dval.L : fact.dval[b].L
+                mul!(dB, dL, B.val, -1, 1)
+            end
+            ldiv!(L, dB)
+        end
+        ldiv!(U, B.val)
+        for b in 1:N
+            dB = N == 1 ? B.dval : B.dval[b]
+            if !(fact isa Const)
+                dU = N == 1 ? fact.dval.U : fact.dval[b].U
+                mul!(dB, dU, B.val, -1, 1)
+            end
+            ldiv!(U, dB)
+        end
+
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
-            if fact isa Const
-                ldiv!(fact.val, B.val)
-                ldiv!(fact.val, dB)
-            else
-                dfact = N == 1 ? fact.dval : fact.dval[b]
-                L = fact.val.L
-                U = fact.val.U
-                dL = dfact.L
-                dU = dfact.U
-                _ldiv_Cholesky_forward!(L, U, B.val, dL, dU, dB)
-            end
             return dB
         end
 
@@ -838,16 +849,6 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
             return BatchDuplicated(retval, dretvals)
         end
     end
-end
-
-function _ldiv_Cholesky_forward!(L, U, B, dL, dU, dB)
-    ldiv!(L, B)
-    mul!(dB, dL, B, -1, 1)
-    ldiv!(L, dB)
-    ldiv!(U, B)
-    mul!(dB, dU, B, -1, 1)
-    ldiv!(U, dB)
-    return B, dB
 end
 
 function EnzymeRules.augmented_primal(config,
