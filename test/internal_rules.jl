@@ -162,12 +162,14 @@ end
     end
 
     @testset "Linear solve for `Cholesky`" begin
+        activities = (Const, Duplicated, DuplicatedNoNeed, BatchDuplicated,
+                      BatchDuplicatedNoNeed)
         @testset for Te in (Float64, ComplexF64), uplo in ('L', 'U')
             C = Cholesky(I + rand(Te, 4, 4), uplo, 0)
             B = rand(Te, 4, 4)
             b = rand(Te, 4)
-            @testset for TC in (Const, Duplicated, BatchDuplicated),
-                         TB in (Const, Duplicated, BatchDuplicated),
+            @testset for TC in activities,
+                         TB in activities,
                          Tret in (Const, Duplicated, BatchDuplicated)
 
                 @testset "$(size(_B))" for _B in (B, b)
@@ -179,8 +181,8 @@ end
                     test_reverse(\, Tret, (C, TC), (_B, TB))
                 end
             end
-            @testset for TC in (Const, Duplicated, BatchDuplicated),
-                         TB in (Const, Duplicated, BatchDuplicated),
+            @testset for TC in activities,
+                         TB in activities,
                          Tret in (Const, Duplicated, BatchDuplicated)
 
                 @testset "$(size(_B))" for _B in (B, b)
