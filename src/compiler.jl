@@ -4386,6 +4386,13 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     return wrapper_f, returnRoots, boxedArgs, loweredArgs
 end
 
+function no_type_setting(specTypes; world=nothing)
+    if specTypes[1] == typeof(Random.xoshiro_bulk_simd)
+        continue
+    end
+    return false
+end
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, toplevel::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -4556,6 +4563,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         ctx = LLVM.context(f)
 
+        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
+
+        if no_type_setting(mi.specTypes; world)
+            continue
+        end
+
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
                 continue
@@ -4620,7 +4633,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
         end
 
-        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
     end
 
     custom = Dict{String,LLVM.API.LLVMLinkage}()
