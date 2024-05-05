@@ -325,7 +325,6 @@ end
         ReverseSplitWithPrimal,
         TapeType,
         Const{typeof(dot)},
-        Active,
         Active{Float64},
         Duplicated{typeof(thunk_A)}
     )
