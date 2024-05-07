@@ -36,8 +36,6 @@ Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
 """
 function Enzyme._import_frule(fn, tys...)
     vals = []
-    valtys = []
-    valtyexprs = []
     exprs = []
     primals = []
     tangents = []
@@ -50,56 +48,53 @@ function Enzyme._import_frule(fn, tys...)
         push!(anns, :($TA <: Annotation{<:$ty}))
         push!(vals, val)
         push!(exprs, e)
-        ty = Symbol("ty_$i")
-        push!(valtyexprs, ty)
-        push!(valtys, :($ty = Core.Typeof($val)))
         push!(primals, :($val.val))
-        push!(tangents, :($ty <: Const ? $ChainRulesCore.NoTangent() : $val.dval))
-        push!(tangentsi, :($ty <: Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
+        push!(tangents, :($val isa Const ? $ChainRulesCore.NoTangent() : $val.dval))
+        push!(tangentsi, :($val isa Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
     end
 
     quote
         function EnzymeRules.forward(fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
-            $(valtys...)
-            batchsize = same_or_one($(valtyexprs...))
+            batchsize = same_or_one(1, $(vals...))
             if batchsize == 1
-                dfn = Core.Typeof(fn) <: Const ? $ChainRulesCore.NoTangent() : fn.dval
+                dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval
                 cres = $ChainRulesCore.frule((dfn, $(tangents...),), fn.val, $(primals...); kwargs...)
                 if RetAnnotation <: Const
                     return nothing
-                elseif RetAnnotation <: Duplicated || RetAnnotation <: BatchDuplicated
+                elseif RetAnnotation <: Duplicated
                     return Duplicated(cres[1], cres[2])
-                elseif RetAnnotation <: DuplicatedNoNeed || RetAnnotation <: BatchDuplicatedNoNeed
-                    return cres[2]
+                elseif RetAnnotation <: DuplicatedNoNeed
+                    return cres[2]::eltype(RetAnnotation)
                 else
                     @assert false
                 end
             else
                 if RetAnnotation <: Const
-                    for i in 1:batchsize
-                        dfn = Core.Typeof(fn) <: Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
+                    ntuple(Val(batchsize)) do i
+                        Base.@_inline_meta
+                        dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
                         $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)
                     end
                     return nothing
-                elseif RetAnnotation <: Duplicated || RetAnnotation <: BatchDuplicated
+                elseif RetAnnotation <: BatchDuplicated
                     cres1 = begin
                         i = 1
-                        dfn = Core.Typeof(fn) <: Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
+                        dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
                         $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)
                     end
-                    batches = ntuple(function f1(j)
+                    batches = ntuple(Val(batchsize-1)) do j
                         Base.@_inline_meta
                         i = j+1
-                        dfn = Core.Typeof(fn) <: Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
+                        dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
                         $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)[2]
-                    end, Val(batchsize-1))
+                    end
                     return BatchDuplicated(cres1[1], (cres1[2], batches...))
-                elseif RetAnnotation <: DuplicatedNoNeed || RetAnnotation <: BatchDuplicatedNoNeed
-                    ntuple(function f2(i)
+                elseif RetAnnotation <: BatchDuplicatedNoNeed
+                    ntuple(Val(batchsize)) do i
                         Base.@_inline_meta
-                        dfn = Core.Typeof(fn) <: Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
+                        dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
                         $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)[2]
-                    end, Val(batchsize))
+                    end
                 else
                     @assert false
                 end

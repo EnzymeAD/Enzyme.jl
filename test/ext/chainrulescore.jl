@@ -30,26 +30,37 @@ fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
-        Enzyme.@import_frule typeof(Base.sort)  Any
-        # for Tret in (Duplicated, DuplicatedNoNeed)
-        #     for Tx in (Duplicated, Const)
-        #         test_forward(Base.sort, Tret, (x, Tx))
-        #     end
-        # end
+        Enzyme.@import_frule typeof(Base.sort) Any
+
         test_forward(Base.sort, Duplicated, (x, Duplicated))
-        test_forward(Base.sort, BatchDuplicated, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Duplicated, (x, DuplicatedNoNeed))
         test_forward(Base.sort, DuplicatedNoNeed, (x, Duplicated))
-        test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicated))
-        test_forward(Base.sort, DuplicatedNoNeed, (x, Const))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, DuplicatedNoNeed, (x, DuplicatedNoNeed))
+        test_forward(Base.sort, Const, (x, Duplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Const, (x, DuplicatedNoNeed))
+
+        test_forward(Base.sort, Const, (x, Const))
+
+        # ChainRules does not support this case (returning notangent)
         # test_forward(Base.sort, Duplicated, (x, Const))
-        # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, Const))
-        # test_forward(Base.sort, BatchDuplicated, (x, Const))
+        # test_forward(Base.sort, DuplicatedNoNeed, (x, Const))
+
+        test_forward(Base.sort, BatchDuplicated, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, BatchDuplicated, (x, BatchDuplicatedNoNeed))
+        test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicatedNoNeed))
+        test_forward(Base.sort, Const, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Const, (x, BatchDuplicatedNoNeed))        
         
-        # for Tret in (Duplicated, DuplicatedNoNeed)
-        #     for Tx in (Duplicated, BatchDuplicated)
-        #         test_forward(sort, Tret, (x, Tx))
-        #     end
-        # end
+        # ChainRules does not support this case (returning notangent)
+        # test_forward(Base.sort, BatchDuplicated, (x, Const))
+        # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, Const))
     end
 end
 
