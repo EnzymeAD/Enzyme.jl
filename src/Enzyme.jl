@@ -1197,5 +1197,10 @@ end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
+function _import_frule end # defined in EnzymeChainRulesCoreExt extension
+
+macro import_frule(args...)
+    return _import_frule(args...)
+end 
 
 end # module
