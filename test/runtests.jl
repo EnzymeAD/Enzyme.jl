@@ -2857,6 +2857,83 @@ end
     end
 end
 
+const SEED = 42
+const N_SAMPLES = 500
+const N_COMPONENTS = 4
+
+const rnd = Random.MersenneTwister(SEED)
+const data = randn(rnd, N_SAMPLES)
+const params0 = [rand(rnd, N_COMPONENTS); randn(rnd, N_COMPONENTS); 2rand(rnd, N_COMPONENTS)]
+
+# ========== Objective function ==========
+normal_pdf(x::Real, mean::Real, var::Real) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+normal_pdf(x, mean, var) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+# original objective (doesn't work)
+function mixture_loglikelihood1(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    sum(mat .* weights', dims=2) .|> log |> sum
+end
+
+# another form of original objective (doesn't work)
+function mixture_loglikelihood2(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    obj_true = sum(
+        sum(
+            weight * normal_pdf(x, mean, std^2)
+            for (weight, mean, std) in zip(weights, means, stds)
+        ) |> log
+        for x in data
+    )
+end
+
+# objective re-written by me
+function mixture_loglikelihood3(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+
+    obj = zero(eltype(mat))
+    for x in data
+        obj_i = zero(eltype(mat))
+        for (weight, mean, std) in zip(weights, means, stds)
+            obj_i += weight * normal_pdf(x, mean, std^2)
+        end
+        obj += log(obj_i)
+    end
+    return obj
+end
+
+const objective1 = params -> mixture_loglikelihood1(params, data)
+const objective2 = params -> mixture_loglikelihood2(params, data)
+const objective3 = params -> mixture_loglikelihood3(params, data)
+
+@testset "Type unsstable return" begin
+    expected =  [289.7308495620467,
+                199.27559524985728,
+                 236.6894577756876,
+                 292.0612340227955,
+                  -9.429799389881452,
+                  26.722295646439047,
+                  -1.9180355546752244,
+                  37.98749089573396,
+                 -24.095620148778277,
+                 -13.935687326484112,
+                 -38.00044665702692,
+                 12.87712891527131]
+    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)
+    # objective2 fails from runtime activity requirements
+    # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)
+    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)
+end
+
 struct HarmonicAngle
     k::Float64
     t0::Float64

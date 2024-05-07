@@ -3554,7 +3554,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                             end
                         end
 
-                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{actualRetType}, world)
+                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{Any}, world)
                         push!(function_attributes(cf), EnumAttribute("alwaysinline", 0))
                         for shadowv in shadows
                             c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
@@ -5322,9 +5322,8 @@ end
 end
 
 function add_one_in_place(x)
-    ty = typeof(x)
-    if ty <: Base.RefValue || ty == Base.RefValue{Float64}
-        x[] = recursive_add(x[], default_adjoint(eltype(ty)))
+    if x isa Base.RefValue
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
         error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end
