@@ -4386,7 +4386,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     return wrapper_f, returnRoots, boxedArgs, loweredArgs
 end
 
-function no_type_setting(specTypes; world=nothing)
+function no_type_setting(@nospecialize(specTypes); world=nothing)
     if specTypes[1] == typeof(Random.xoshiro_bulk_simd)
         continue
     end
