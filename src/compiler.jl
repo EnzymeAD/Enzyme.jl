@@ -4386,11 +4386,19 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     return wrapper_f, returnRoots, boxedArgs, loweredArgs
 end
 
+using Random
+# returns arg, return
 function no_type_setting(@nospecialize(specTypes); world=nothing)
-    if specTypes[1] == typeof(Random.xoshiro_bulk_simd)
-        continue
+    @static if VERSION >= v"1.7.0-"
+        # Even though the julia type here is ptr{int8}, the actual data can be something else
+        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
+            return (true, false)
+        end
+        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_nosimd)
+            return (true, false)
+        end
     end
-    return false
+    return (false, false)
 end
 
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
@@ -4565,72 +4573,72 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
 
-        if no_type_setting(mi.specTypes; world)
-            continue
-        end
-
-        for arg in jlargs
-            if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-                continue
-            end
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute(
-                    "enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))
-                ),
-            )
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
-            )
-
-            byref = arg.cc
-
-            rest = typetree(arg.typ, ctx, dl)
-
-            if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
-                # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
-                # aka the next field after this in the bigger object isn't guaranteed to also be the same.
-                if allocatedinline(arg.typ)
-                    shift!(rest, dl, 0, sizeof(arg.typ), 0)
+        if !no_type_setting(mi.specTypes; world)[1]
+            for arg in jlargs
+                if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                    continue
                 end
-                merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                only!(rest, -1)
-            else
-                # canonicalize wrt size
-            end
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute("enzyme_type", string(rest)),
-            )
-        end
-
-        if sret !== nothing
-            idx = 0
-            if !in(0, parmsRemoved)
-                rest = typetree(sret, ctx, dl)
                 push!(
-                    parameter_attributes(f, idx + 1),
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute(
+                        "enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))
+                    ),
+                )
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
+                )
+
+                byref = arg.cc
+
+                rest = typetree(arg.typ, ctx, dl)
+
+                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+                    # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+                    # aka the next field after this in the bigger object isn't guaranteed to also be the same.
+                    if allocatedinline(arg.typ)
+                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                    end
+                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                    only!(rest, -1)
+                else
+                    # canonicalize wrt size
+                end
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_type", string(rest)),
                 )
-                idx += 1
             end
-            if returnRoots !== nothing
-                if !in(1, parmsRemoved)
-                    rest = TypeTree(API.DT_Pointer, -1, ctx)
+        end
+
+        if !no_type_setting(mi.specTypes; world)[2]
+            if sret !== nothing
+                idx = 0
+                if !in(0, parmsRemoved)
+                    rest = typetree(sret, ctx, dl)
                     push!(
                         parameter_attributes(f, idx + 1),
                         StringAttribute("enzyme_type", string(rest)),
                     )
+                    idx += 1
+                end
+                if returnRoots !== nothing
+                    if !in(1, parmsRemoved)
+                        rest = TypeTree(API.DT_Pointer, -1, ctx)
+                        push!(
+                            parameter_attributes(f, idx + 1),
+                            StringAttribute("enzyme_type", string(rest)),
+                        )
+                    end
                 end
             end
-        end
 
-        if llRT !== nothing && LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
-            @assert !retRemoved
-            rest = typetree(llRT, ctx, dl)
-            push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
+            if llRT !== nothing && LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
+                @assert !retRemoved
+                rest = typetree(llRT, ctx, dl)
+                push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
+            end
         end
 
     end

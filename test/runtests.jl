@@ -1137,6 +1137,17 @@ end
     Enzyme.API.runtimeActivity!(false)
 end
 
+function fillsum(x)
+    a = similar(rand(3, 3))
+    fill!(a, x)
+    return sum(a)
+end
+
+@testset "Fill sum" begin
+    res = autodiff(Forward, fillsum, Duplicated(2.0, 1.0))[1]
+    @test 9.0 ≈ res
+end
+
 
 mutable struct RTGData
 	x
