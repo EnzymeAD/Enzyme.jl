@@ -422,6 +422,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return v2, offset, skipload
                     end
 
+                    if isa(v, LLVM.ConstantExpr) && opcode(v) == LLVM.API.LLVMGetElementPtr && !hasload
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
+                        return v2, offset, skipload
+                    end
+
                     undeforpoison = isa(v, LLVM.UndefValue)
                     @static if LLVM.version() >= v"12"
                         undeforpoison |= isa(v, LLVM.PoisonValue)
