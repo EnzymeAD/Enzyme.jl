@@ -362,6 +362,13 @@ end
     end
 end
 
+@inline function staticInTup(::Val{T}, tup::NTuple{N, Val}) where {T, N}
+    any(ntuple(Val(N)) do i
+        Base.@_inline_meta
+        Val(T) == tup[i]
+    end)
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -469,20 +476,28 @@ end
     @static if VERSION < v"1.7.0"
         nT = T
     else
-        nT = if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
-            Tuple{((T2 isa Core.TypeofVararg ? Any : T2) for T2 in T.parameters)...,}
+        nT = if is_concrete_tuple(T)
+            Tuple{(ntuple(length(T.parameters)) do i
+                Base.@_inline_meta
+                sT = T.parameters[i]
+                if sT isa Core.TypeofVararg
+                    Any
+                else
+                    sT
+                end
+            end)...}
         else
             T
         end
     end
 
-    if Val(nT) ∈ seen
+    if staticInTup(Val(nT), seen)
         return MixedState
     end
 
-    seen = (Val(nT), seen...)
+    seen2 = (Val(nT), seen...)
 
-    fty = Merger{seen,typeof(world),justActive, UnionSret}(world)
+    fty = Merger{seen2,typeof(world),justActive, UnionSret}(world)
 
     ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(nT)))...)
 
@@ -521,7 +536,7 @@ end
     return res
 end
 
-Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} = guess_activity(T, convert(API.CDerivativeMode, mode))
+@inline Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} = guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     ActReg = active_reg_inner(T, (), nothing)
@@ -1177,6 +1192,30 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
     end
 end
 
+@inline function EnzymeCore.make_zero(x::Array{FT, N})::Array{FT, N} where {FT <: AbstractFloat, N}
+    return Base.zero(x)
+end
+@inline function EnzymeCore.make_zero(x::Array{Complex{FT}, N})::Array{Complex{FT}, N} where {FT <: AbstractFloat, N}
+    return Base.zero(x)
+end
+
+@inline function EnzymeCore.make_zero(::Type{Array{FT, N}}, seen::IdDict, prev::Array{FT, N}, ::Val{copy_if_inactive}=Val(false))::Array{FT, N} where {copy_if_inactive, FT<:AbstractFloat, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
+@inline function EnzymeCore.make_zero(::Type{Array{Complex{FT}, N}}, seen::IdDict, prev::Array{Complex{FT}, N}, ::Val{copy_if_inactive}=Val(false))::Array{Complex{FT}, N} where {copy_if_inactive, FT<:AbstractFloat, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
+
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
@@ -1205,10 +1244,11 @@ end
 end
 
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
-    return ((EnzymeCore.make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
+    return ntuple(length(prev)) do i
+        Base.@_inline_meta
+        EnzymeCore.make_zero(RT.parameters[i], seen, prev[i], Val(copy_if_inactive))
+    end
 end
-
-
 
 @inline function EnzymeCore.make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
     return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
