@@ -535,6 +535,27 @@ end
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
 end
 
+function deadarg_pow(z::T, i) where {T<:Real}
+    zabs = abs(z)
+    if sign(z) < zero(T)
+        return (zabs^i) * (cos(T(π) * i) + sin(T(π) * i)im)
+    end
+    return zabs^i + zero(T)im
+end
+
+function deadargtest(n)
+    wp = 1 + deadarg_pow(-n, 0.5)
+
+    deadarg_pow(-n, 0.5)
+
+    return real(wp)
+end
+
+@testset "Dead arg elim" begin
+    res = autodiff(Enzyme.ReverseWithPrimal, deadargtest, Active, Active(0.25))
+    @test res[2] ≈ 1.0
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
