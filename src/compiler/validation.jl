@@ -576,9 +576,16 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
                         if length(tys) != length(flib.specTypes.parameters)
-                            @show tys, flib, inst, offset, start
+                              msg = sprint() do io::IO
+                                  println(io, "Enzyme internal error (length(tys) != length(flib.specTypes.parameters))")
+                                  println(io, "tys=", tys)
+                                  println(io, "flib=", flib)
+                                  println(io, "inst=", inst)
+                                  println(io, "offset=", offset)
+                                  println(io, "start=", start)
+                              end
+                              throw(AssertionError(msg))
                         end
-                        @assert length(tys) == length(flib.specTypes.parameters)
                     end
                     tys = flib.specTypes.parameters
                 end
