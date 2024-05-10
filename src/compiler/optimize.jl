@@ -422,6 +422,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                         return v2, offset, skipload
                     end
 
+                    if isa(v, LLVM.ConstantExpr) && opcode(v) == LLVM.API.LLVMGetElementPtr && !hasload
+                        v2, offset, skipload = getparent(operands(v)[1], offset, hasload)
+                        offset = nuwadd!(b, offset, API.EnzymeComputeByteOffsetOfGEP(b, v, offty))
+                        v2 = bitcast!(b, v2, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(v2))))
+                        @assert eltype(value_type(v2)) == eltype(value_type(v))
+                        return v2, offset, skipload
+                    end
+
                     undeforpoison = isa(v, LLVM.UndefValue)
                     @static if LLVM.version() >= v"12"
                         undeforpoison |= isa(v, LLVM.PoisonValue)
@@ -829,6 +837,15 @@ function propagate_returned!(mod::LLVM.Module)
                 if !prevent && (linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage) && any(kind(attr) == kind(EnumAttribute("nocapture")) for attr in collect(parameter_attributes(fn, i)))
                     val = nothing
                     illegalUse = false
+                    torem = LLVM.Instruction[]
+                    argeltype = if LLVM.version().major >= 12
+                        # TODO try to get sret element type if possible
+                        # note currently opaque pointers has this break [and we need to doa check if opaque
+                        # and if so get inner piece]
+                        eltype(value_type(arg))
+                    else
+                        eltype(value_type(arg))
+                    end
                     for u in LLVM.uses(fn)
                         un = LLVM.user(u)
                         if !isa(un, LLVM.CallInst)
@@ -851,8 +868,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        eltype = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
                         seenfn = false
-                        torem = LLVM.Instruction[]
                         todo = LLVM.Instruction[]
                         for u2 in LLVM.uses(ops[i])
                             un2 = LLVM.user(u2)
@@ -897,14 +914,19 @@ function propagate_returned!(mod::LLVM.Module)
                             push!(torem, un2)
                         end
                         if illegalUse
-                            continue
+                            break
                         end
+                    end
+                    if !illegalUse
                         for c in reverse(torem)
                             unsafe_delete!(LLVM.parent(c), c)
                         end
                         B = IRBuilder()
                         position!(B, first(instructions(first(blocks(fn)))))
-                        al = alloca!(B, LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i])))
+                        al = alloca!(B, argeltype)
+                        if value_type(al) != value_type(arg)
+                            al = addrspacecast!(B, al, value_type(arg))
+                        end
                         LLVM.replace_uses!(arg, al)
                     end
                 end
@@ -1539,7 +1561,6 @@ end
         gvn!(pm) # Exxtra
         run!(pm, mod)
     end
-
     removeDeadArgs!(mod)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)

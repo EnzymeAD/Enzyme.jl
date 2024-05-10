@@ -362,6 +362,13 @@ end
     end
 end
 
+@inline function staticInTup(::Val{T}, tup::NTuple{N, Val}) where {T, N}
+    any(ntuple(Val(N)) do i
+        Base.@_inline_meta
+        Val(T) == tup[i]
+    end)
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -469,20 +476,28 @@ end
     @static if VERSION < v"1.7.0"
         nT = T
     else
-        nT = if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
-            Tuple{((T2 isa Core.TypeofVararg ? Any : T2) for T2 in T.parameters)...,}
+        nT = if is_concrete_tuple(T)
+            Tuple{(ntuple(length(T.parameters)) do i
+                Base.@_inline_meta
+                sT = T.parameters[i]
+                if sT isa Core.TypeofVararg
+                    Any
+                else
+                    sT
+                end
+            end)...}
         else
             T
         end
     end
 
-    if Val(nT) ∈ seen
+    if staticInTup(Val(nT), seen)
         return MixedState
     end
 
-    seen = (Val(nT), seen...)
+    seen2 = (Val(nT), seen...)
 
-    fty = Merger{seen,typeof(world),justActive, UnionSret}(world)
+    fty = Merger{seen2,typeof(world),justActive, UnionSret}(world)
 
     ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(nT)))...)
 
@@ -521,7 +536,7 @@ end
     return res
 end
 
-Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} = guess_activity(T, convert(API.CDerivativeMode, mode))
+@inline Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} = guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     ActReg = active_reg_inner(T, (), nothing)
@@ -1177,6 +1192,30 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
     end
 end
 
+@inline function EnzymeCore.make_zero(x::Array{FT, N})::Array{FT, N} where {FT <: AbstractFloat, N}
+    return Base.zero(x)
+end
+@inline function EnzymeCore.make_zero(x::Array{Complex{FT}, N})::Array{Complex{FT}, N} where {FT <: AbstractFloat, N}
+    return Base.zero(x)
+end
+
+@inline function EnzymeCore.make_zero(::Type{Array{FT, N}}, seen::IdDict, prev::Array{FT, N}, ::Val{copy_if_inactive}=Val(false))::Array{FT, N} where {copy_if_inactive, FT<:AbstractFloat, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
+@inline function EnzymeCore.make_zero(::Type{Array{Complex{FT}, N}}, seen::IdDict, prev::Array{Complex{FT}, N}, ::Val{copy_if_inactive}=Val(false))::Array{Complex{FT}, N} where {copy_if_inactive, FT<:AbstractFloat, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
+
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:AbstractFloat}
     return RT(0)
 end
@@ -1205,10 +1244,11 @@ end
 end
 
 @inline function EnzymeCore.make_zero(::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false))::RT where {copy_if_inactive, RT<:Tuple}
-    return ((EnzymeCore.make_zero(a, seen, prev[i], Val(copy_if_inactive)) for (i, a) in enumerate(RT.parameters))...,)
+    return ntuple(length(prev)) do i
+        Base.@_inline_meta
+        EnzymeCore.make_zero(RT.parameters[i], seen, prev[i], Val(copy_if_inactive))
+    end
 end
-
-
 
 @inline function EnzymeCore.make_zero(::Type{NamedTuple{A,RT}}, seen::IdDict, prev::NamedTuple{A,RT}, ::Val{copy_if_inactive}=Val(false))::NamedTuple{A,RT} where {copy_if_inactive, A,RT}
     return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
@@ -3514,7 +3554,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                             end
                         end
 
-                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{actualRetType}, world)
+                        cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{Any}, world)
                         push!(function_attributes(cf), EnumAttribute("alwaysinline", 0))
                         for shadowv in shadows
                             c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
@@ -4386,6 +4426,21 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     return wrapper_f, returnRoots, boxedArgs, loweredArgs
 end
 
+using Random
+# returns arg, return
+function no_type_setting(@nospecialize(specTypes); world=nothing)
+    @static if VERSION >= v"1.7.0-"
+        # Even though the julia type here is ptr{int8}, the actual data can be something else
+        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
+            return (true, false)
+        end
+        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_nosimd)
+            return (true, false)
+        end
+    end
+    return (false, false)
+end
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, toplevel::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -4556,71 +4611,76 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         ctx = LLVM.context(f)
 
-        for arg in jlargs
-            if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-                continue
-            end
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute(
-                    "enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))
-                ),
-            )
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
-            )
+        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
 
-            byref = arg.cc
-
-            rest = typetree(arg.typ, ctx, dl)
-
-            if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
-                # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
-                # aka the next field after this in the bigger object isn't guaranteed to also be the same.
-                if allocatedinline(arg.typ)
-                    shift!(rest, dl, 0, sizeof(arg.typ), 0)
+        if !no_type_setting(mi.specTypes; world)[1]
+            for arg in jlargs
+                if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                    continue
                 end
-                merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                only!(rest, -1)
-            else
-                # canonicalize wrt size
-            end
-            push!(
-                parameter_attributes(f, arg.codegen.i),
-                StringAttribute("enzyme_type", string(rest)),
-            )
-        end
-
-        if sret !== nothing
-            idx = 0
-            if !in(0, parmsRemoved)
-                rest = typetree(sret, ctx, dl)
                 push!(
-                    parameter_attributes(f, idx + 1),
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute(
+                        "enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))
+                    ),
+                )
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
+                )
+
+                byref = arg.cc
+
+                rest = typetree(arg.typ, ctx, dl)
+
+                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+                    # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+                    # aka the next field after this in the bigger object isn't guaranteed to also be the same.
+                    if allocatedinline(arg.typ)
+                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                    end
+                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                    only!(rest, -1)
+                else
+                    # canonicalize wrt size
+                end
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_type", string(rest)),
                 )
-                idx += 1
             end
-            if returnRoots !== nothing
-                if !in(1, parmsRemoved)
-                    rest = TypeTree(API.DT_Pointer, -1, ctx)
+        end
+
+        if !no_type_setting(mi.specTypes; world)[2]
+            if sret !== nothing
+                idx = 0
+                if !in(0, parmsRemoved)
+                    rest = typetree(sret, ctx, dl)
                     push!(
                         parameter_attributes(f, idx + 1),
                         StringAttribute("enzyme_type", string(rest)),
                     )
+                    idx += 1
                 end
+                if returnRoots !== nothing
+                    if !in(1, parmsRemoved)
+                        rest = TypeTree(API.DT_Pointer, -1, ctx)
+                        push!(
+                            parameter_attributes(f, idx + 1),
+                            StringAttribute("enzyme_type", string(rest)),
+                        )
+                    end
+                end
+            end
+
+            if llRT !== nothing && LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
+                @assert !retRemoved
+                rest = typetree(llRT, ctx, dl)
+                push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
             end
         end
 
-        if llRT !== nothing && LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
-            @assert !retRemoved
-            rest = typetree(llRT, ctx, dl)
-            push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
-        end
-
-        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
     end
 
     custom = Dict{String,LLVM.API.LLVMLinkage}()
@@ -4733,11 +4793,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")], false, false)
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
@@ -5262,9 +5322,8 @@ end
 end
 
 function add_one_in_place(x)
-    ty = typeof(x)
-    if ty <: Base.RefValue || ty == Base.RefValue{Float64}
-        x[] = recursive_add(x[], default_adjoint(eltype(ty)))
+    if x isa Base.RefValue
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
         error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string(x))
     end

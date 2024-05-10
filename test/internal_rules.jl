@@ -207,15 +207,12 @@ end
         A = T(M)
         @testset "test through constructor" begin
             _A = T(A)
-            function f!(Y, A, B, ::T) where T
-                ldiv!(Y, T(A), B)
-                return nothing
-            end
+            f!(Y, A, B, ::T) where {T} = ldiv!(Y, T(A), B)
             for TY in (Const, Duplicated, BatchDuplicated),
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
-                test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
         @testset "test through `Adjoint` wrapper (regression test for #1306)" begin

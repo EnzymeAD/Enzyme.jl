@@ -29,8 +29,13 @@ num2num_3(x) = 10.31^(x + x) - x
 num2num_4(x) = 1.0
 num2num_5(x) = 1. / (1. + exp(-x))
 
+@static if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
 const NUMBER_TO_NUMBER_FUNCS = (num2num_1, num2num_2, num2num_3,
                                 num2num_4, num2num_5, identity)
+else
+const NUMBER_TO_NUMBER_FUNCS = (num2num_1, num2num_2, num2num_3,
+                                num2num_4, identity)
+end
 
 #######################
 # f(x::Number)::Array #
@@ -122,11 +127,16 @@ const VECTOR_TO_NUMBER_FUNCS = (vec2num_1, vec2num_2,  vec2num_3, vec2num_4, vec
                                 #=vec2num_6,=# vec2num_7, rosenbrock_1, rosenbrock_2,
                                 rosenbrock_3, #=rosenbrock_4,=# ackley, self_weighted_logit,
                                 first)
-else
+elseif sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
 # vec2num_6 fails due to #708
 const VECTOR_TO_NUMBER_FUNCS = (vec2num_1, vec2num_2,  vec2num_3, vec2num_4, vec2num_5,
                                 #=vec2num_6,=# vec2num_7, rosenbrock_1, rosenbrock_2,
                                 rosenbrock_3, rosenbrock_4, ackley, self_weighted_logit,
+                                first)
+else
+const VECTOR_TO_NUMBER_FUNCS = (#=vec2num_1,=# vec2num_2,  vec2num_3, vec2num_4, vec2num_5,
+                                #=vec2num_6,=# vec2num_7, rosenbrock_1, rosenbrock_2,
+                                rosenbrock_3, rosenbrock_4, #=ackley,=# self_weighted_logit,
                                 first)
 end
 ########################
