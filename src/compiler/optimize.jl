@@ -667,12 +667,15 @@ function fix_decayaddr!(mod::LLVM.Module)
                     end
                 end
                 if !sret
-                    println(string(f))
-                    @show inst, st, fop
-                    flush(stdout)
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: did not have sret when expected")
+                        println(io, "f=", string(f))
+                        println(io, "inst=", string(inst))
+                        println(io, "st=", string(st))
+                        println(io, "fop=", string(fop))
+                    end
+                    throw(AssertionError(msg))
                 end
-                
-                @assert sret
                
                 elt = eltype(value_type(inst))
                 if temp === nothing
@@ -1322,20 +1325,26 @@ function checkNoAssumeFalse(mod, shouldshow=false)
                     @show op2
                 end
                 if !op2
-                    println(string(mod))
-                    println(string(f))
-                    println(string(bb))
-                    flush(stdout)
-                    @assert false
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: non-constant assume condition")
+                        println(io, "mod=", string(mod))
+                        println(io, "f=", string(f))
+                        println(io, "bb=", string(bb))
+                        println(io, "op2=", string(op2))
+                    end
+                    throw(AssertionError(msg))
                 end
             end
             if isa(op, LLVM.ICmpInst)
                 if predicate_int(op) == LLVM.API.LLVMIntNE && operands(op)[1] == operands(op)[2]
-                    println(string(mod))
-                    println(string(f))
-                    println(string(bb))
-                    flush(stdout)
-                    @assert false
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: non-icmp assume condition")
+                        println(io, "mod=", string(mod))
+                        println(io, "f=", string(f))
+                        println(io, "bb=", string(bb))
+                        println(io, "op=", string(op))
+                    end
+                    throw(AssertionError(msg))
                 end
             end
         end
@@ -1716,10 +1725,6 @@ function post_optimze!(mod, tm, machine=true)
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
         throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
     end
-    # println(string(mod))
-    # @safe_show "pre_post", mod
-    # flush(stdout)
-    # flush(stderr)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm, LLVM.triple(mod))
         addOptimizationPasses!(pm)
