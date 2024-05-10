@@ -1649,7 +1649,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         throw(exc)
     elseif errtype == API.ET_NoShadow
-        data = GradientUtils(API.EnzymeGradientUtilsRef(data))
+        gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
 
         msgN = sprint() do io::IO
             print(io, "Enzyme could not find shadow for value\n")
@@ -1661,7 +1661,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             if !isa(val, LLVM.Argument)
                 print(io, "\n Inverted pointers: \n")
-                ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+                ip = API.EnzymeGradientUtilsInvertedPointersToString(gutils)
                 sval = Base.unsafe_string(ip)
                 write(io, sval)
                 API.EnzymeStringFree(ip)
@@ -1673,7 +1673,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 println(io)
             end
         end
-        emit_error(B, nothing, msgN)
+        emit_error(IRBuilder(B), nothing, msgN)
         return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
