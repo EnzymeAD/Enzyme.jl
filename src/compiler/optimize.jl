@@ -667,12 +667,15 @@ function fix_decayaddr!(mod::LLVM.Module)
                     end
                 end
                 if !sret
-                    println(string(f))
-                    @show inst, st, fop
-                    flush(stdout)
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: did not have sret when expected")
+                        println(io, "f=", string(f))
+                        println(io, "inst=", string(inst))
+                        println(io, "st=", string(st))
+                        println(io, "fop=", string(fop))
+                    end
+                    throw(AssertionError(msg))
                 end
-                
-                @assert sret
                
                 elt = eltype(value_type(inst))
                 if temp === nothing
@@ -1208,9 +1211,12 @@ function validate_return_roots!(mod)
             if length(enzyme_srets) == 1 && LLVM.return_type(LLVM.function_type(f)) == VT && length(enzyme_srets_v) == 0
                 # Upgrading to sret requires writeonly
                 if !any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in collect(parameter_attributes(f, 1)))
-                    @show f
-                    @show collect(parameter_attributes(f, 1))
-                    @assert false
+                      msg = sprint() do io::IO
+                          println(io, "Enzyme internal error (not writeonly sret)")
+                          println(io, string(f))
+                          println(io, "collect(parameter_attributes(f, 1))=", collect(parameter_attributes(f, 1)))
+                      end
+                      throw(AssertionError(msg))
                 end
                 
                 alty = nothing
@@ -1220,7 +1226,14 @@ function validate_return_roots!(mod)
                     @assert LLVM.called_operand(u) == f
                     alop = operands(u)[1]
                     if !isa(alop, LLVM.AllocaInst)
-                        @show alop, u, f
+                     msg = sprint() do io::IO
+                          println(io, "Enzyme internal error (!isa(alop, LLVM.AllocaInst))")
+                          println(io, "alop=", alop)
+                          println(io, "u=", u)
+                          println(io, "f=", string(f))
+                      end
+                      throw(AssertionError(msg))
+
                     end
                     @assert isa(alop, LLVM.AllocaInst)
                     nty = API.EnzymeAllocaType(alop)
@@ -1275,9 +1288,16 @@ function validate_return_roots!(mod)
                 enzyme_srets = enzyme_srets2
 
                 if length(enzyme_srets) != 0
-                    @show f
-                    @show enzyme_srets, enzyme_srets_v, srets, rroots, rroots_v
-                    @assert false
+                     msg = sprint() do io::IO
+                          println(io, "Enzyme internal error (length(enzyme_srets) != 0)")
+                          println(io, "f=", string(f))
+                          println(io, "enzyme_srets=", enzyme_srets)
+                          println(io, "enzyme_srets_v=", enzyme_srets_v)
+                          println(io, "srets=", srets)
+                          println(io, "rroots=", rroots)
+                          println(io, "rroots_v=", rroots_v)
+                      end
+                      throw(AssertionError(msg))
                 end
             end
         end
@@ -1303,39 +1323,33 @@ function checkNoAssumeFalse(mod, shouldshow=false)
                 continue
             end
             intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(inst))
-            if shouldshow
-                @show intr, inst
-            end
             if intr != LLVM.Intrinsic("llvm.assume").id
                 continue
             end
-            if shouldshow
-                @show inst
-            end
             op = operands(inst)[1]
-            if shouldshow
-                @show op
-            end
             if isa(op, LLVM.ConstantInt)
                 op2 = convert(Bool, op)
-                if shouldshow
-                    @show op2
-                end
                 if !op2
-                    println(string(mod))
-                    println(string(f))
-                    println(string(bb))
-                    flush(stdout)
-                    @assert false
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: non-constant assume condition")
+                        println(io, "mod=", string(mod))
+                        println(io, "f=", string(f))
+                        println(io, "bb=", string(bb))
+                        println(io, "op2=", string(op2))
+                    end
+                    throw(AssertionError(msg))
                 end
             end
             if isa(op, LLVM.ICmpInst)
                 if predicate_int(op) == LLVM.API.LLVMIntNE && operands(op)[1] == operands(op)[2]
-                    println(string(mod))
-                    println(string(f))
-                    println(string(bb))
-                    flush(stdout)
-                    @assert false
+                    msg = sprint() do io
+                        println(io, "Enzyme Internal Error: non-icmp assume condition")
+                        println(io, "mod=", string(mod))
+                        println(io, "f=", string(f))
+                        println(io, "bb=", string(bb))
+                        println(io, "op=", string(op))
+                    end
+                    throw(AssertionError(msg))
                 end
             end
         end
@@ -1716,10 +1730,6 @@ function post_optimze!(mod, tm, machine=true)
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
         throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
     end
-    # println(string(mod))
-    # @safe_show "pre_post", mod
-    # flush(stdout)
-    # flush(stderr)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm, LLVM.triple(mod))
         addOptimizationPasses!(pm)
