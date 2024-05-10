@@ -5063,7 +5063,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
                     if shouldemit
                         b = IRBuilder()
-                        position!(b, term)
+                        position!(b, term)is guaranteed to return an error a
                         emit_error(b, term, "Enzyme: The original primal code hits this error condition, thus differentiating it does not make sense")
                     end
                 end
@@ -5772,9 +5772,36 @@ end
         rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
 
         if rrt == Union{}
-            estr = "Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up"
+            estr = "Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up and just running primal"
+            primargs = Expr[]
+
+            RT = Tuple{map(eltype, (A, TT.parameters...))}
+            llvm_f, _ = LLVM.Interop.create_function(RT, ())
+            push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+
+            mod = LLVM.parent(llvm_f)
+
+            LLVM.IRBuilder() do builder
+                entry = BasicBlock(llvm_f, "entry")
+
+                lvals = LLVM.Value[]
+                for AT in (FA, TT.parameters...)
+                    T = eltype(AT)
+
+                    obj = emit_allocobj!(builder, T)
+                    push!(lvals, obj)
+                end
+                ret!(lvals)
+            end
+
+            ir = string(mod)
+            fn = LLVM.name(llvm_f)
+
 			return quote
-				error($estr)
+                @warn $estr
+                vals = llvmcall(($ir, $fn), $RT, ())
+				vals[1](vals[2:end]...)
+                error($estr)
 			end
         end
         
