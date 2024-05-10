@@ -4793,11 +4793,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree")], false, false)
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
