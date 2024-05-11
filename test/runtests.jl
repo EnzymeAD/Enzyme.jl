@@ -196,6 +196,14 @@ end
     end
 end
 
+@testset "Recursion optimization" begin
+    # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test occursin("diffe",fn)
+    @test !occursin("aug",fn)
+end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]

@@ -3017,7 +3017,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         elseif T <: DuplicatedNoNeed || T<: BatchDuplicatedNoNeed
             push!(args_activity, API.DFT_DUP_NONEED)
         else
-            error("illegal annotation type")
+            error("illegal annotation type $T")
         end
         typeTree = typetree(source_typ, ctx, dl, seen)
         if isboxed
@@ -5769,8 +5769,12 @@ function _thunk(job, postopt::Bool=true)
     end
 
     # Run post optimization pipeline
-    if postopt && job.config.params.ABI <: FFIABI
-        post_optimze!(mod, JIT.get_tm())
+    if postopt 
+        if job.config.params.ABI <: FFIABI
+            post_optimze!(mod, JIT.get_tm())
+        else
+            propagate_returned!(mod)
+        end
     end
     return (mod, adjoint_name, primal_name, meta.TapeType)
 end

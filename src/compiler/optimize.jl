@@ -798,6 +798,127 @@ function prop_global!(g)
     return changed, newfns
 end
 
+# From https://llvm.org/doxygen/IR_2Instruction_8cpp_source.html#l00959
+function mayWriteToMemory(inst::LLVM.Instruction)::Bool
+    # we will ignore fense here
+    if isa(inst, LLVM.StoreInst)
+        return true
+    end
+    if isa(inst, LLVM.VAArgInst)
+        return true
+    end
+    if isa(inst, LLVM.AtomicCmpXchgInst)
+        return true
+    end
+    if isa(inst, LLVM.AtomicRMWInst)
+        return true
+    end
+    if isa(inst, LLVM.CatchPadInst)
+        return true
+    end
+    if isa(inst, LLVM.CatchRetInst)
+        return true
+    end
+    if isa(inst, LLVM.CallInst) || isa(inst, LLVM.InvokeInst) || isa(inst, LLVM.CallBrInst)
+        idx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
+        count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx);
+            
+        Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
+        LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
+        for j in 1:count
+            attr = LLVM.Attribute(unsafe_load(Attrs, j))
+            if kind(attr) == kind(EnumAttribute("readnone"))
+                return false
+            end
+            if kind(attr) == kind(EnumAttribute("readonly"))
+                return false
+            end
+        end
+        Libc.free(Attrs)
+        return true
+    end
+    # Ignoring load unordered case
+    return false
+end
+
+function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
+    calls = LLVM.CallInst[]
+
+    for u in LLVM.uses(fn)
+        un = LLVM.user(u)
+
+        # Only permit call users
+        if !isa(un, LLVM.CallInst)
+            return false
+        end
+        un = un::LLVM.CallInst
+
+        # Passing the fn as an argument is not permitted
+        for op in collect(operands(un))[1:end-1]
+            if op == fn
+                return false
+            end
+        end
+
+        # Something with a user is not permitted
+        for u2 in LLVM.uses(un)
+            return false
+        end
+        push!(calls, un)
+    end
+    if length(calls) == 0
+        return false
+    end
+
+    done = Set{LLVM.Function}()
+    todo = LLVM.Function[fn]
+
+    while length(todo) != 0
+        cur = pop!(todo)
+        if cur in done
+            continue
+        end
+        push!(done, cur)
+
+        attrs = collect(function_attributes(cur))
+        if any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) || any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+            continue
+        end
+
+        if LLVM.name(cur) == "julia.safepoint"
+            continue
+        end
+
+        if isempty(blocks(cur))
+            return false
+        end
+        for bb in blocks(cur)
+            for inst in instructions(bb)
+                if !mayWriteToMemory(inst)
+                    continue
+                end
+                if isa(inst, LLVM.CallInst)
+
+                    fn2 = LLVM.called_operand(inst)
+                    if isa(fn2, LLVM.Function)
+                        push!(todo, fn2)
+                        continue
+                    end
+                end
+                return false
+            end
+        end
+    end
+
+    for c in calls    
+        parentf = LLVM.parent(LLVM.parent(c))
+        push!(next, LLVM.name(parentf))
+        LLVM.API.LLVMInstructionEraseFromParent(c)
+    end
+    push!(next, LLVM.name(fn))
+    return true
+end
+
 function propagate_returned!(mod::LLVM.Module)
     globs = LLVM.GlobalVariable[]
     for g in globals(mod)
@@ -823,6 +944,9 @@ function propagate_returned!(mod::LLVM.Module)
         for fn in functions(mod)
             if isempty(blocks(fn))
                 continue
+            end
+            if remove_readonly_unused_calls!(fn, next)
+                changed = true
             end
             attrs = collect(function_attributes(fn))
             prevent = any(kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs)
@@ -1107,7 +1231,21 @@ function propagate_returned!(mod::LLVM.Module)
         if !changed
             break
         else
-            todo = collect(functions(mod)[name] for name in next)
+            todo = LLVM.Function[]
+            for name in next
+                fn = functions(mod)[name]
+                if linkage(fn) == LLVM.API.LLVMInternalLinkage || linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                    has_user = false
+                    for u in LLVM.uses(fn)
+                        has_user = true
+                        break
+                    end
+                    if !has_user
+                        LLVM.API.LLVMDeleteFunction(fn)
+                    end
+                end
+                push!(todo, fn)
+            end
         end
     end
 end
