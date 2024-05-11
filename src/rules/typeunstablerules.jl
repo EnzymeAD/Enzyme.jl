@@ -249,11 +249,12 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
-setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
-
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    res = getfield(dptr, symname)
+    res = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname)
+    else
+	   Base.getfield(dptr, symname)
+    end
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
@@ -271,7 +272,11 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
 end
 
 function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    res = getfield_idx(dptr, symname)
+    res = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname+1)
+    else
+	   Base.getfield(dptr, symname+1)
+    end
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
@@ -289,7 +294,11 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
 end
 
 function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    cur = getfield(dptr, symname)
+    cur = if dptr isa Base.RefValue
+	   getfield(dptr[], symname)
+    else
+	   getfield(dptr, symname)
+    end
 
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
@@ -305,16 +314,20 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     return nothing
 end
 function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    cur = getfield_idx(dptr, symname)
+    cur = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname+1)
+    else
+	   Base.getfield(dptr, symname+1)
+    end
 
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield_idx(dptr, symname, recursive_add(cur, dret[]))
+            setfield!(dptr, symname+1, recursive_add(cur, dret[]))
         else
-            setfield_idx(dptr, symname, recursive_add(cur, dret[1][]))
+            setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield_idx(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
+                setfield!(dptrs[i], symname+1, recursive_add(cur, dret[1+i][]))
             end
         end
     end
