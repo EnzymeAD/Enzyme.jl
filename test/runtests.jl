@@ -2116,6 +2116,53 @@ end
     @test dmt2.y ≈ 2.4
 end
 
+
+struct GFUniform{T}
+    a::T
+    b::T
+end
+GFlogpdf(d::GFUniform, ::Real) = -log(d.b - d.a)
+
+struct GFNormal{T}
+    μ::T
+    σ::T
+end
+GFlogpdf(d::GFNormal, x::Real) = -(x - d.μ)^2 / (2 * d.σ^2)
+
+struct GFProductDist{V}
+    dists::V
+end
+function GFlogpdf(d::GFProductDist, x::Vector)
+    dists = d.dists
+    s = zero(eltype(x))
+    for i in eachindex(x)
+	s += GFlogpdf(dists[i], x[i])
+    end
+    return s
+end
+
+struct GFNamedDist{Names, D<:NamedTuple{Names}}
+    dists::D
+end
+
+function GFlogpdf(d::GFNamedDist{N}, x::NamedTuple{N}) where {N}
+    vt = values(x)
+    dists = d.dists
+    return mapreduce((dist, acc) -> GFlogpdf(dist, acc), +, dists, vt)
+end
+
+
+@testset "Getfield with reference" begin
+    Enzyme.API.runtimeActivity!(true)
+
+    d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
+    p = (a = 1.0, b = [0.5, 0.5])
+    dp = Enzyme.make_zero(p)
+    GFlogpdf(d, p)
+    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
+    Enzyme.API.runtimeActivity!(false)
+end
+
 @testset "apply iterate" begin
     function mktup(v)
         tup = tuple(v...)
