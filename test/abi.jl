@@ -408,3 +408,37 @@ end
     @test r[2][1] ≈ -400.0
     @test r[2][2] ≈ 200.0
 end
+
+abssum(x) = sum(abs2, x);
+
+@testset "Type inference" begin
+    x = ones(10)
+    @inferred autodiff(Enzyme.Reverse, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.ReverseWithPrimal, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.ReverseHolomorphic, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.ReverseHolomorphicWithPrimal, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.Forward, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.Forward, abssum, Duplicated, Duplicated(x,x))
+    @inferred autodiff(Enzyme.Forward, abssum, DuplicatedNoNeed, Duplicated(x,x))
+    
+    @inferred gradient(Reverse, abssum, x)
+    @inferred gradient!(Reverse, x, abssum, x)
+    
+    cx = ones(10)
+    @inferred autodiff(Enzyme.ReverseHolomorphic, sum, Duplicated(cx,cx))
+    @inferred autodiff(Enzyme.ReverseHolomorphicWithPrimal, sum, Duplicated(cx,cx))
+    @inferred autodiff(Enzyme.Forward, sum, Duplicated(cx,cx))
+    
+    @inferred Enzyme.make_zero(x)
+    @inferred Enzyme.make_zero(cx)
+    
+    tx =  (1.0, 2.0, 3.0)
+
+    @inferred Enzyme.Compiler.active_reg_inner(Tuple{Float64,Float64,Float64}, (), nothing, Val(true))
+    @inferred Enzyme.make_zero(tx)
+    
+    @inferred gradient(Reverse, abssum, tx)
+    @inferred gradient(Forward, abssum, tx)
+
+end
+
