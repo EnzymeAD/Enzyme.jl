@@ -325,7 +325,7 @@ end
         ReverseSplitWithPrimal,
         TapeType,
         Const{typeof(dot)},
-        Active{Float64},
+        Active,
         Duplicated{typeof(thunk_A)}
     )
     tape, primal, _  = fwd(Const(dot), dup)

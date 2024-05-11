@@ -783,7 +783,7 @@ function f(A, v)
 end
 
 TapeType = tape_type(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
-forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active{Float64}, Duplicated{typeof(A)}, Active{typeof(v)})
+forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
 
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
@@ -819,10 +819,34 @@ result, ∂v, ∂A
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
-    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}(primal_ptr)
-    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}(adjoint_ptr)
+    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+
+    RT = if A2 <: Duplicated && width != 1
+        if A2 isa UnionAll
+            BatchDuplicated{T, width} where T
+        else
+            BatchDuplicated{eltype(A2), width}
+        end
+    elseif A2 <: DuplicatedNoNeed && width != 1
+        if A2 isa UnionAll
+            BatchDuplicatedNoNeed{T, width} where T
+        else
+            BatchDuplicatedNoNeed{eltype(A2), width}
+        end
+    else
+        A2
+    end
+    
+    rt = if RT isa UnionAll
+        RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
+    else
+        @assert RT isa DataType
+        RT
+    end
+
+    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, Val{width}, Val(ReturnPrimal), TapeType}(primal_ptr)
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, Val{width}, TapeType}(adjoint_ptr)
     aug_thunk, adj_thunk
 end
 
