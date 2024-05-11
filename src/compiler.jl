@@ -2774,7 +2774,20 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states", "julia.safepoint", "ijl_throw")
+    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states", "julia.safepoint", "ijl_throw", "julia.pointer_from_objref",
+                  "ijl_array_grow_end", "jl_array_grow_end", "ijl_array_del_end", "jl_array_del_end",
+                  "ijl_array_grow_beg", "jl_array_grow_beg", "ijl_array_del_beg", "jl_array_del_beg",
+                  "ijl_pop_handler", "jl_pop_handler",
+                  "ijl_push_handler", "jl_push_handler",
+                  "ijl_module_name", "jl_module_name",
+                  "ijl_restore_excstack", "jl_restore_excstack",
+                  "julia.except_enter",
+                  "ijl_get_nth_field_checked", "jl_get_nth_field_checked",
+                  "jl_egal__unboxed",
+                  "ijl_reshape_array", "jl_reshape_array",
+                  "ijl_eqtable_get", "jl_eqtable_get",
+                  "jl_gc_run_pending_finalizers",
+                 )
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), no_escaping_alloc)
@@ -2826,7 +2839,7 @@ function annotate!(mod, mode)
                     continue
                 end
                 LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
-                LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, no_escaping_alloc)
+                LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
                 if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
                     LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), LLVM.EnumAttribute("inaccessiblememonly", 0))
                 end

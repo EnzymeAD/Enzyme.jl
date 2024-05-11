@@ -795,7 +795,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{TapeType}, ::Type{FA}, ::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
+@inline function autodiff_deferred_thunk(mode::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, tt::Type{TapeType}, fa::Type{FA}, a2::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
     @assert RABI == FFIABI
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -839,7 +839,11 @@ result, ∂v, ∂A
     end
     
     rt = if RT isa UnionAll
-        RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
+        @static if VERSION < v"1.8-"
+            throw(MethodError(autodiff, (mode, tt, fa, a2, args...)))
+        else
+            RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
+        end
     else
         @assert RT isa DataType
         RT
