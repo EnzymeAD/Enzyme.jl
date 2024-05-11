@@ -321,11 +321,16 @@ end
         Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
     @test Tuple{Float64,Float64}  === TapeType
+    Ret = if VERSION < v"1.8-"
+        Active{Float64}
+    else
+        Active
+    end
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         ReverseSplitWithPrimal,
         TapeType,
         Const{typeof(dot)},
-        Active{Float64},
+        Ret,
         Duplicated{typeof(thunk_A)}
     )
     tape, primal, _  = fwd(Const(dot), dup)
@@ -335,6 +340,33 @@ end
     @test all(dA .== [6.0, 10.0])
     @test all(dA .== def_dA)
     @test all(dA .== thunk_dA)
+
+    @static if VERSION < v"1.8-"
+    else
+        function kernel(len, A)
+            for i in 1:len
+                A[i] *= A[i]
+            end
+        end
+
+        A = Array{Float64}(undef, 64)
+        dA = Array{Float64}(undef, 64)
+
+        A .= (1:1:64)
+        dA .= 1
+
+        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
+            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward(Const(f), Const(ctx), args...)[1]
+            return nothing
+        end
+
+        ModifiedBetween = Val((false, false, true))
+
+        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
+    end
+
 end
 
 @testset "Simple Complex tests" begin
