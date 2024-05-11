@@ -7,6 +7,7 @@ using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
 using Test
+import Random
 
 struct TPair
     a::Float64
@@ -43,6 +44,30 @@ end
     @test autodiff(Forward, f2, Duplicated(2.0, 1.0))[1] == -3
     @test autodiff(Forward, f2, BatchDuplicated(2.0, (1.0, 2.0)))[1] == (var"1"=-3.0, var"2"=-6.0)
     @test autodiff(Reverse, f2, Active, Active(2.0))[1][1] == -3
+
+    function f3(x)
+        a = [2.0, 2.5, x, 1.0]
+        return partialsort(a, 2)
+    end
+
+    @test autodiff(Forward, f3, Duplicated(1.5, 1.0))[1] == 1.0
+    @test autodiff(Forward, f3, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.0, var"2"=2.0)
+    @test autodiff(Reverse, f3, Active(1.5))[1][1] == 1.0
+    @test autodiff(Reverse, f3, Active(2.5))[1][1] == 0.0
+
+    function f4(x)
+        a = [2.0, 2.5, x, x / 2]
+        y = partialsort(a, 1:2)
+        return sum(y)
+    end
+
+    @test autodiff(Forward, f4, Duplicated(1.5, 1.0))[1] == 1.5
+    @static if VERSION < v"1.7-" || VERSION >= v"1.8-"
+        @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
+    end
+    @test autodiff(Reverse, f4, Active(1.5))[1][1] == 1.5
+    @test autodiff(Reverse, f4, Active(4.0))[1][1] == 0.5
+    @test autodiff(Reverse, f4, Active(6.0))[1][1] == 0.0
 
     dd = Duplicated([TPair(1, 2), TPair(2, 3), TPair(0, 1)], [TPair(0, 0), TPair(0, 0), TPair(0, 0)])
     res = Enzyme.autodiff(Reverse, sorterrfn, dd, Active(1.0))
@@ -398,15 +423,12 @@ end
         A = T(M)
         @testset "test through constructor" begin
             _A = T(A)
-            function f!(Y, A, B, ::T) where T
-                ldiv!(Y, T(A), B)
-                return nothing
-            end
+            f!(Y, A, B, ::T) where {T} = ldiv!(Y, T(A), B)
             for TY in (Const, Duplicated, BatchDuplicated),
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
-                test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
         @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
@@ -432,4 +454,18 @@ end
     end
 end
 end
+
+@testset "rand and randn rules" begin
+    # Distributed as x + unit normal + uniform
+    struct MyDistribution
+        x::Float64
+    end
+
+    Random.rand(rng::Random.AbstractRNG, d::MyDistribution) = d.x + randn() + rand()
+    Random.rand(d::MyDistribution) = rand(Random.default_rng(), d)
+
+    # Outer rand should be differentiated through, and inner rand and randn should be ignored.
+    @test autodiff(Enzyme.Reverse, x -> rand(MyDistribution(x)), Active, Active(1.0)) == ((1.0,),)
+end
+
 end # InternalRules

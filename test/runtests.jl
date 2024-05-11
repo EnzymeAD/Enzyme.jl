@@ -26,6 +26,9 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+function isapproxfn(fn, args...; kwargs...)
+    isapprox(args...; kwargs...)
+end
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
     ∂x, = autodiff(ReverseHolomorphic, f, Active, Active(x))[1]
@@ -37,7 +40,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
       fdm(f, x)
     end
 
-    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
 
     if typeof(x) <: Integer
         x = Float64(x)
@@ -51,7 +54,7 @@ function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs..
         ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
     end
 
-    @test isapprox(∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
 
 end
 
@@ -95,15 +98,6 @@ include("typetree.jl")
 end
 @static if VERSION ≥ v"1.7-" || !Sys.iswindows()
     include("blas.jl")
-end
-
-@static if VERSION ≥ v"1.9-"
-    using SpecialFunctions
-    @testset "SpecialFunctions ext" begin
-        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
-        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
-        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
-    end
 end
 
 f0(x) = 1.0 + x
@@ -202,6 +196,14 @@ end
     end
 end
 
+@testset "Recursion optimization" begin
+    # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test occursin("diffe",fn)
+    @test !occursin("aug",fn)
+end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -267,16 +269,23 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.sinc, 2.2)
+    end
     test_scalar(Base.FastMath.sinh_fast, 1.0)
     test_scalar(Base.FastMath.cosh_fast, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.FastMath.exp_fast, 1.0)
+    end
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.exp10, 1.0)
+    end
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    test_scalar(sqrt, 1.7+2.1im)
     
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
@@ -320,12 +329,16 @@ end
         Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
     @test Tuple{Float64,Float64}  === TapeType
+    Ret = if VERSION < v"1.8-"
+        Active{Float64}
+    else
+        Active
+    end
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         ReverseSplitWithPrimal,
         TapeType,
         Const{typeof(dot)},
-        Active,
-        Active{Float64},
+        Ret,
         Duplicated{typeof(thunk_A)}
     )
     tape, primal, _  = fwd(Const(dot), dup)
@@ -335,6 +348,33 @@ end
     @test all(dA .== [6.0, 10.0])
     @test all(dA .== def_dA)
     @test all(dA .== thunk_dA)
+
+    @static if VERSION < v"1.8-"
+    else
+        function kernel(len, A)
+            for i in 1:len
+                A[i] *= A[i]
+            end
+        end
+
+        A = Array{Float64}(undef, 64)
+        dA = Array{Float64}(undef, 64)
+
+        A .= (1:1:64)
+        dA .= 1
+
+        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
+            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward(Const(f), Const(ctx), args...)[1]
+            return nothing
+        end
+
+        ModifiedBetween = Val((false, false, true))
+
+        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
+    end
+
 end
 
 @testset "Simple Complex tests" begin
@@ -533,6 +573,27 @@ end
 
     f10(x) = hypot(x, 2x)
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
+end
+
+function deadarg_pow(z::T, i) where {T<:Real}
+    zabs = abs(z)
+    if sign(z) < zero(T)
+        return (zabs^i) * (cos(T(π) * i) + sin(T(π) * i)im)
+    end
+    return zabs^i + zero(T)im
+end
+
+function deadargtest(n)
+    wp = 1 + deadarg_pow(-n, 0.5)
+
+    deadarg_pow(-n, 0.5)
+
+    return real(wp)
+end
+
+@testset "Dead arg elim" begin
+    res = autodiff(Enzyme.ReverseWithPrimal, deadargtest, Active, Active(0.25))
+    @test res[2] ≈ 1.0
 end
 
 @testset "Taylor series tests" begin
@@ -1136,6 +1197,17 @@ end
     Enzyme.API.runtimeActivity!(false)
 end
 
+function fillsum(x)
+    a = similar(rand(3, 3))
+    fill!(a, x)
+    return sum(a)
+end
+
+@testset "Fill sum" begin
+    res = autodiff(Forward, fillsum, Duplicated(2.0, 1.0))[1]
+    @test 9.0 ≈ res
+end
+
 
 mutable struct RTGData
 	x
@@ -1198,7 +1270,7 @@ end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
-    include("packages/specialfunctions.jl")
+    include("ext/specialfunctions.jl")
 end
 
 @testset "Threads" begin
@@ -2079,6 +2151,53 @@ end
     @test dmt2.y ≈ 2.4
 end
 
+
+struct GFUniform{T}
+    a::T
+    b::T
+end
+GFlogpdf(d::GFUniform, ::Real) = -log(d.b - d.a)
+
+struct GFNormal{T}
+    μ::T
+    σ::T
+end
+GFlogpdf(d::GFNormal, x::Real) = -(x - d.μ)^2 / (2 * d.σ^2)
+
+struct GFProductDist{V}
+    dists::V
+end
+function GFlogpdf(d::GFProductDist, x::Vector)
+    dists = d.dists
+    s = zero(eltype(x))
+    for i in eachindex(x)
+	s += GFlogpdf(dists[i], x[i])
+    end
+    return s
+end
+
+struct GFNamedDist{Names, D<:NamedTuple{Names}}
+    dists::D
+end
+
+function GFlogpdf(d::GFNamedDist{N}, x::NamedTuple{N}) where {N}
+    vt = values(x)
+    dists = d.dists
+    return mapreduce((dist, acc) -> GFlogpdf(dist, acc), +, dists, vt)
+end
+
+
+@testset "Getfield with reference" begin
+    Enzyme.API.runtimeActivity!(true)
+
+    d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
+    p = (a = 1.0, b = [0.5, 0.5])
+    dp = Enzyme.make_zero(p)
+    GFlogpdf(d, p)
+    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
+    Enzyme.API.runtimeActivity!(false)
+end
+
 @testset "apply iterate" begin
     function mktup(v)
         tup = tuple(v...)
@@ -2404,6 +2523,26 @@ end
     dx = Enzyme.gradient(Reverse, prod, x)
     @test dx isa SArray
     @test dx ≈ [0 30 0]
+end
+
+
+function sparse_eval(x::Vector{Float64})
+    A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
+    B = sparsevec([1, 1, 2, 3], [2.0*x[2], 1.0-x[1], 2.0+x[3], -1.0])
+    C = A + B
+    return A[1]
+end
+
+@static if VERSION ≥ v"1.7-" 
+@testset "Type Unstable SparseArrays" begin
+    x = [3.1, 2.7, 8.2]
+    dx = [0.0, 0.0, 0.0]
+
+    autodiff(Reverse, sparse_eval, Duplicated(x, dx))
+    
+    @test x ≈ [3.1, 2.7, 8.2]
+    @test dx ≈ [-1.0, 43.74, 0]
+end
 end
 
 @testset "Jacobian" begin
@@ -2844,6 +2983,83 @@ end
     end
 end
 
+const SEED = 42
+const N_SAMPLES = 500
+const N_COMPONENTS = 4
+
+const rnd = Random.MersenneTwister(SEED)
+const data = randn(rnd, N_SAMPLES)
+const params0 = [rand(rnd, N_COMPONENTS); randn(rnd, N_COMPONENTS); 2rand(rnd, N_COMPONENTS)]
+
+# ========== Objective function ==========
+normal_pdf(x::Real, mean::Real, var::Real) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+normal_pdf(x, mean, var) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+# original objective (doesn't work)
+function mixture_loglikelihood1(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    sum(mat .* weights', dims=2) .|> log |> sum
+end
+
+# another form of original objective (doesn't work)
+function mixture_loglikelihood2(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    obj_true = sum(
+        sum(
+            weight * normal_pdf(x, mean, std^2)
+            for (weight, mean, std) in zip(weights, means, stds)
+        ) |> log
+        for x in data
+    )
+end
+
+# objective re-written by me
+function mixture_loglikelihood3(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+
+    obj = zero(eltype(mat))
+    for x in data
+        obj_i = zero(eltype(mat))
+        for (weight, mean, std) in zip(weights, means, stds)
+            obj_i += weight * normal_pdf(x, mean, std^2)
+        end
+        obj += log(obj_i)
+    end
+    return obj
+end
+
+const objective1 = params -> mixture_loglikelihood1(params, data)
+const objective2 = params -> mixture_loglikelihood2(params, data)
+const objective3 = params -> mixture_loglikelihood3(params, data)
+
+@testset "Type unsstable return" begin
+    expected =  [289.7308495620467,
+                199.27559524985728,
+                 236.6894577756876,
+                 292.0612340227955,
+                  -9.429799389881452,
+                  26.722295646439047,
+                  -1.9180355546752244,
+                  37.98749089573396,
+                 -24.095620148778277,
+                 -13.935687326484112,
+                 -38.00044665702692,
+                 12.87712891527131]
+    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)
+    # objective2 fails from runtime activity requirements
+    # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)
+    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)
+end
+
 struct HarmonicAngle
     k::Float64
     t0::Float64
@@ -2909,11 +3125,10 @@ end
     @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
 
     f7(x) = median([2.0, 1.0, x])
-    # Fails on Julia 1.9 due to #880
-    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
     @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
     @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
-    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
 
     f8(x) = middle([2.0, x, 1.0])
     @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
@@ -2943,5 +3158,23 @@ end
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
 end
+
+# TEST EXTENSIONS 
+@static if VERSION ≥ v"1.9-"
+    using SpecialFunctions
+    @testset "SpecialFunctions ext" begin
+        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    end
+
+    using ChainRulesCore
+    @testset "ChainRulesCore ext" begin
+        include("ext/chainrulescore.jl")
+    end
+end
+
+
+
 end
 

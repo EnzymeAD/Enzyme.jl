@@ -66,13 +66,16 @@ end
 function EnzymeRules.inactive(::typeof(Core.kwfunc), args...)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Random.rand), args...)
+function EnzymeRules.inactive(::typeof(Random.rand), ::Random.AbstractRNG, ::Random.Sampler)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Random.rand!), args...)
+function EnzymeRules.inactive(::typeof(Random.rand!), ::Random.AbstractRNG, ::Random.Sampler, ::AbstractArray)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.randn), args...)
+    return nothing
+end
+function EnzymeRules.inactive(::typeof(Random.randn!), args...)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.default_rng), args...)
@@ -631,6 +634,111 @@ function EnzymeRules.reverse(
     back_inds = sortperm(inds)
     xs.dval .= xs.dval[back_inds]
     return (nothing,)
+end
+
+function EnzymeRules.forward(
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...
+    ) where {T <: AbstractArray{<:AbstractFloat}}
+    kv = k.val
+    inds = collect(eachindex(xs.val))
+    partialsortperm!(inds, xs.val, kv; kwargs...)
+    xs.val .= xs.val[inds]
+    xs.dval .= xs.dval[inds]
+    if RT <: Const
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    elseif RT <: DuplicatedNoNeed
+        return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
+    else
+        if kv isa Integer
+            return Duplicated(xs.val[kv], xs.dval[kv])
+        else
+            return Duplicated(view(xs.val, kv), view(xs.dval, kv))
+        end
+    end
+end
+
+function EnzymeRules.forward(
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
+        xs::BatchDuplicated{T, N},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...
+    ) where {T <: AbstractArray{<:AbstractFloat}, N}
+    kv = k.val
+    inds = collect(eachindex(xs.val))
+    partialsortperm!(inds, xs.val, kv; kwargs...)
+    xs.val .= xs.val[inds]
+    for i in 1:N
+        xs.dval[i] .= xs.dval[i][inds]
+    end
+    if RT <: Const
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    elseif RT <: BatchDuplicatedNoNeed
+        if kv isa Integer
+            return ntuple(i -> xs.dval[i][kv], N)
+        else
+            return ntuple(i -> view(xs.dval[i], kv), N)
+        end
+    else
+        if kv isa Integer
+            return BatchDuplicated(xs.val[kv], ntuple(i -> xs.dval[i][kv], N))
+        else
+            return BatchDuplicated(view(xs.val, kv), ntuple(i -> view(xs.dval[i], kv), N))
+        end
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.ConfigWidth{1},
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...
+    ) where {T <: AbstractArray{<:AbstractFloat}}
+    kv = k.val
+    inds = collect(eachindex(xs.val))
+    partialsortperm!(inds, xs.val, kv; kwargs...)
+    xs.val .= xs.val[inds]
+    xs.dval .= xs.dval[inds]
+    if EnzymeRules.needs_primal(config)
+        primal = kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    else
+        primal = nothing
+    end
+    if RT <: Const || RT <: Active
+        shadow = nothing
+    else
+        shadow = kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
+    end
+    return EnzymeRules.AugmentedReturn(primal, shadow, inds)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.ConfigWidth{1},
+        ::Const{typeof(partialsort!)},
+        dret::Union{Active, Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}}},
+        tape,
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
+    inds = tape
+    kv = k.val
+    if dret isa Active
+        if kv isa Integer
+            xs.dval[kv] += dret.val
+        else
+            xs.dval[kv] .+= dret.val
+        end
+    end
+    back_inds = sortperm(inds)
+    xs.dval .= xs.dval[back_inds]
+    return (nothing, nothing)
 end
 
 function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
