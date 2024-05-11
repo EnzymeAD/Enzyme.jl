@@ -783,7 +783,7 @@ function f(A, v)
 end
 
 TapeType = tape_type(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
-forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active{Float64}, Duplicated{typeof(A)}, Active{typeof(v)})
 
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
@@ -840,7 +840,7 @@ result, ∂v, ∂A
     
     rt = if RT isa UnionAll
         @static if VERSION < v"1.8-"
-            throw(MethodError(autodiff, (mode, tt, fa, a2, args...)))
+            throw(MethodError(autodiff_deferred_thunk, (mode, tt, fa, a2, args...)))
         else
             RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
         end

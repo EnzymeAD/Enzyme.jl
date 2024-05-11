@@ -602,6 +602,8 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), inactive)
                     nofree = LLVM.EnumAttribute("nofree")
                     LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), nofree)
+                    no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
                 end
             end
         end

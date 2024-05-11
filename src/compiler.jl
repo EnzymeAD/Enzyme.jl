@@ -2361,6 +2361,7 @@ function zero_allocation(B::LLVM.IRBuilder, jlType, LLVMType, obj, AlignedSize, 
     wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(), [value_type(obj), T_int8, value_type(Size)]))
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_math", "enzyme_zerotype"))
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_inactive"))
+    push!(function_attributes(wrapper_f), StringAttribute("enzyme_no_escaping_allocation"))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("nofree", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("argmemonly", 0))
@@ -2777,6 +2778,8 @@ function annotate!(mod, mode)
     for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states", "julia.safepoint", "ijl_throw", "julia.pointer_from_objref",
                   "ijl_array_grow_end", "jl_array_grow_end", "ijl_array_del_end", "jl_array_del_end",
                   "ijl_array_grow_beg", "jl_array_grow_beg", "ijl_array_del_beg", "jl_array_del_beg",
+                  "ijl_array_grow_at", "jl_array_grow_at",
+                  "ijl_array_del_at", "jl_array_del_at",
                   "ijl_pop_handler", "jl_pop_handler",
                   "ijl_push_handler", "jl_push_handler",
                   "ijl_module_name", "jl_module_name",
@@ -4337,6 +4340,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         if kind(prev) == kind(StringAttribute("enzyme_inactive"))
             push!(attributes, prev)
         end
+        if kind(prev) == kind(StringAttribute("enzyme_no_escaping_allocation"))
+            push!(attributes, prev)
+        end
     end
 
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
@@ -4807,6 +4813,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     EnumAttribute("speculatable", 0),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation")
                                   ])
             continue
         end
@@ -4828,6 +4835,20 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("no_escaping_allocation"))
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_inactive"))
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("nofree"))
+                    end
+                end
+            end
+            continue
+        end
+        if func === typeof(Base.match)
+            handleCustom(llvmfn, "base_match", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
+            for bb in blocks(llvmfn)
+                for inst in instructions(bb)
+                    if isa(inst, LLVM.CallInst)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("no_escaping_allocation"))
                         LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_inactive"))
                         LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("nofree"))
                     end
