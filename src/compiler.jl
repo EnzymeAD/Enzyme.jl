@@ -103,6 +103,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_try_substrtod", "jl_try_substrtod",
     "jl_f__apply_iterate",
     "ijl_field_index", "jl_field_index",
     "julia.call", "julia.call2",
@@ -178,6 +179,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_try_substrtod", "jl_try_substrtod",
     "ijl_tagged_gensym", "jl_tagged_gensym",
     "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
@@ -2790,6 +2792,7 @@ function annotate!(mod, mode)
                   "ijl_reshape_array", "jl_reshape_array",
                   "ijl_eqtable_get", "jl_eqtable_get",
                   "jl_gc_run_pending_finalizers",
+                  "ijl_try_substrtod", "jl_try_substrtod",
                  )
         if haskey(fns, fname)
             fn = fns[fname]
