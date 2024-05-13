@@ -1231,4 +1231,10 @@ macro import_frule(args...)
     return _import_frule(args...)
 end 
 
+function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
+
+macro import_rrule(args...)
+    return _import_rrule(args...)
+end
+
 end # module
