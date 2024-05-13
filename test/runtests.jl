@@ -947,6 +947,16 @@ end
     @test res.y == nothing
 end
 
+@testset "Methoe errors" begin
+     fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
+     @test_throws MethodError fwd(ones(10))
+     @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
+     @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
+     # TODO
+     # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
+     fwd(Const(sum), Duplicated(ones(10), ones(10)))
+end
+
 @testset "Generic Active Union Return" begin
 
     function generic_union_ret(A)
