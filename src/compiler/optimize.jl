@@ -833,6 +833,10 @@ function mayWriteToMemory(inst::LLVM.Instruction)::Bool
             if kind(attr) == kind(EnumAttribute("readonly"))
                 return false
             end
+            # Note out of spec, and only legal in context of removing unused calls
+            if kind(attr) == kind(StringAttribute("enzyme_error"))
+                return false
+            end
         end
         Libc.free(Attrs)
         return true
