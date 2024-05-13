@@ -198,25 +198,42 @@ end
 
 sumsq2(x) = sum(abs2, x)
 sumsin(x) = sum(sin, x)
+sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
 @testset "Recursion optimization" begin
     # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}})
+       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     @test !occursin("aug",fn)
     
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}})
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     @test !occursin("aug",fn)
     
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}})
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    if count("call fastcc void @diffejulia__mapreduce", fn) != 1
+        println(fn)
+    end
+    @test count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
+    # no memory overwritten state [in addition to the arg-based variant]
+    @test_broken !occursin("aug",fn)
+
+    x = ones(100)
+    dx = zeros(100)
+    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
 end
 
 # @testset "Split Tape" begin
