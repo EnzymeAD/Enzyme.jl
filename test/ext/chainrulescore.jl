@@ -69,21 +69,21 @@ rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
 @testset "import_rrule" begin
     f1(x) = 2*x
     ChainRulesCore.@scalar_rule f1(x)  (5*one(x),)
-    Enzyme.@import_frule typeof(f1) Any
+    Enzyme.@import_rrule typeof(f1) Any
     @test rdiff(f1, 1f0) === 5f0
     @test rdiff(f1, 1.0) === 5.0
 
     # specific signature    
     f2(x) = 2*x
     ChainRulesCore.@scalar_rule f2(x)  (5*one(x),)
-    Enzyme.@import_frule typeof(f2) Float32
+    Enzyme.@import_rrule typeof(f2) Float32
     @test rdiff(f2, 1f0) === 5f0
     @test rdiff(f2, 1.0) === 2.0
 
     # two arguments
     f3(x, y) = 2*x + y
     ChainRulesCore.@scalar_rule f3(x, y)  (5*one(x), y)
-    Enzyme.@import_frule typeof(f3) Any Any    
+    Enzyme.@import_rrule typeof(f3) Any Any    
     @test rdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test rdiff(y -> f3(1.0, y), 2.) === 2.0
 

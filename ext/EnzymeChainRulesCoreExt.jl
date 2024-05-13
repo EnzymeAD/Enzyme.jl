@@ -126,7 +126,7 @@ Use with caution.
 Enzyme.@import_rrule(typeof(Base.sort), Any);
 ```
 """
-macro import_rrule(fn, tys...)
+function Enzyme._import_rrule(fn, tys...)
     vals = []
     valtys = []
     exprs = []
@@ -134,78 +134,143 @@ macro import_rrule(fn, tys...)
     tangents = []
     tangentsi = []
     anns = []
-    nothings = [(:nothing)]
+    nothings = []
+    ntys = length(tys)
+    act_res = Expr[:(fn isa Active ? res[1] : nothing)]
+    invertcomb = Expr[]
+    # TODO at one point extend api to support active fn's
+    # push!(nothings, :nothing)
+    # push!(invertcomb,
+    # quote
+    #     fn isa Active ? (
+    #         (EnzymeRules.width(config) == 1) ? tcomb[1][1] : 
+    #         ntuple(Val(EnzymeRules.width(config))) do batch_i
+    #             Base.@_inline_meta
+    #             tcomb[batch_i][1]
+    #         end
+    #        ) : nothing
+    # end)
+    
     for (i, ty) in enumerate(tys)
         push!(nothings, :(nothing))
         val = Symbol("arg_$i")
         TA = Symbol("AN_$i")
         e = :($val::$TA)
-        push!(anns, :($TA <: Union{Const, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed}{<:$ty}))
+        push!(anns, :($TA <: Annotation{<:$ty}))
         push!(vals, val)
         push!(exprs, e)
         primal = Symbol("primcopy_$i")
         push!(primals, primal)
-        push!(valtys, :($primal = overwritten(config)[$i+1] ? deepcopy($val.val) : $val.val))
-        push!(tangents, :($val isa Const ? $ChainRulesCore.NoTangent() : $val.dval))
-        push!(tangentsi, :($val isa  Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
+        push!(valtys, :($primal = $(EnzymeRules.overwritten)(config)[$i+1] ? deepcopy($val.val) : $val.val))
+        push!(tangents, :($val isa $Enzyme.Const ? $ChainRulesCore.NoTangent() : $val.dval))
+        push!(tangentsi, :($val isa  $Enzyme.Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
+        push!(act_res, :($val isa Active ? (res[$i+1] isa $ChainRulesCore.NoTangent ? zero($val) : $ChainRulesCore.unthunk(res[$i+1]) ) : nothing))
+        push!(invertcomb, quote
+        $val isa Active ? (
+            (EnzymeRules.width(config) == 1) ? tcomb[1][$i+1] : 
+            ntuple(Val(EnzymeRules.width(config))) do batch_i
+                Base.@_inline_meta
+                tcomb[batch_i][$i+1]
+            end
+           ) : nothing
+        end)
     end
 
-    :(
-        function EnzymeRules.augmented_primal(config::ConfigWidth{batchsize}, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {batchsize, RetAnnotation, FA<:Annotation{<:$fn}, $(anns...)}
+
+    quote
+        function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
             $(valtys...)
             
-            res, pullback = $ChainRulesCore.rrule(fn.val, $(primals...); kwargs...)
+            res, pullback = if RetAnnotation <: Const
+                (fn.val($(primals...); kwargs...), nothing)
+            else
+                $ChainRulesCore.rrule(fn.val, $(primals...); kwargs...)
+            end
 
-            primal = if needs_primal(config)
+            primal = if EnzymeRules.needs_primal(config)
                 res
             else
                 nothing
             end
 
-            shadow = if !needs_shadow(config)
+            shadow = if !EnzymeRules.needs_shadow(config)
                 nothing
             else
-                if batchsize == 1
+                if EnzymeRules.width(config) == 1
                     Enzyme.make_zero(res)
                 else
-                    ntuple(Val(batchsize)) do j
+                    ntuple(Val(EnzymeRules.width(config))) do j
                         Base.@_inline_meta
                         Enzyme.make_zero(res)
                     end
                 end
             end
 
-            return AugmentedReturn(primal, shadow, (shadow, pullback))
+            return EnzymeRules.AugmentedReturn(primal, shadow, (shadow, pullback))
         end
 
-        function EnzymeRules.reverse(config::ConfigWidth{batchsize}, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {batchsize, RetAnnotation, TapeTy, FA<:Annotation{<:$fn}, $(anns...)}
-            shadow, pullback = tape
+        function EnzymeRules.reverse(config, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+            if !(RetAnnotation <: Const)
+                shadow, pullback = tape
 
-            if batchsize == 1
-                res = pullback(shadow)
-                for (cr, en) in zip(res, (fn, $(vals...),))
-                    if en isa Const || cr <: $ChainRulesCore.NoTangent
-                        continue
-                    end
-                    en.dval .+= cr
-                end
-            else
-                ntuple(Val(batchsize)) do i
+                tcomb = ntuple(Val(EnzymeRules.width(config))) do batch_i
                     Base.@_inline_meta
-                    res = pullback(shadow[i])
+                    shad = EnzymeRules.width(config)  == 1 ? shadow : shadow[batch_i]
+                    res = pullback(shad)
+
                     for (cr, en) in zip(res, (fn, $(vals...),))
-                        if en isa Const || cr <: $ChainRulesCore.NoTangent
+                        if en isa Const || cr isa $ChainRulesCore.NoTangent
                             continue
                         end
-                        en.dval[i] .+= cr
+                        if en isa Active
+                            continue
+                        end
+                        if EnzymeRules.width(config)  == 1
+                            en.dval .+= cr
+                        else
+                            en.dval[batch_i] .+= cr
+                        end
                     end
-                    nothing
+                    
+                    ($(act_res...),)
                 end
+
+                return ($(invertcomb...),)
             end
 
             return ($(nothings...),)
         end
-    )
+
+        function EnzymeRules.reverse(config, fn::FA, dval::Active{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+            oldshadow, pullback = tape
+
+            shadow = dval.val
+
+            tcomb = ntuple(Val(EnzymeRules.width(config))) do batch_i
+                Base.@_inline_meta
+                shad = EnzymeRules.width(config)  == 1 ? shadow : shadow[batch_i]
+                res = pullback(shad)
+
+                for (cr, en) in zip(res, (fn, $(vals...),))
+                    if en isa Const || cr isa $ChainRulesCore.NoTangent
+                        continue
+                    end
+                    if en isa Active
+                        continue
+                    end
+                    if EnzymeRules.width(config)  == 1
+                        en.dval .+= cr
+                    else
+                        en.dval[batch_i] .+= cr
+                    end
+                end
+                
+                ($(act_res...),)
+            end
+
+            return ($(invertcomb...),)
+        end
+    end
 end
 
 end # module
