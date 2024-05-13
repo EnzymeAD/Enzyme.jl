@@ -196,10 +196,24 @@ end
     end
 end
 
+sumsq2(x) = sum(abs2, x)
+sumsin(x) = sum(sin, x)
 @testset "Recursion optimization" begin
     # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test occursin("diffe",fn)
+    @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test occursin("diffe",fn)
+    @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}})
     end
     @test occursin("diffe",fn)
     @test !occursin("aug",fn)

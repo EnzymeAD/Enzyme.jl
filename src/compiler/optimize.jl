@@ -844,6 +844,7 @@ end
 function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
     calls = LLVM.CallInst[]
 
+    hasUser = false
     for u in LLVM.uses(fn)
         un = LLVM.user(u)
 
@@ -862,12 +863,10 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
 
         # Something with a user is not permitted
         for u2 in LLVM.uses(un)
-            return false
+            hasUser = true
+            break
         end
         push!(calls, un)
-    end
-    if length(calls) == 0
-        return false
     end
 
     done = Set{LLVM.Function}()
@@ -908,6 +907,22 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
                 return false
             end
         end
+    end
+    
+    changed = false
+    attrs = collect(function_attributes(fn))
+    if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+        if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
+            delete!(function_attributes(fn), EnumAttribute("writeonly"))
+            push!(function_attributes(fn), EnumAttribute("readnone"))
+        else
+            push!(function_attributes(fn), EnumAttribute("readonly"))
+        end
+        changed = true
+    end
+
+    if length(calls) == 0 || hasUser
+        return changed
     end
 
     for c in calls    
