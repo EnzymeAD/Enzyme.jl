@@ -2815,7 +2815,8 @@ function annotate!(mod, mode)
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
                   "jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash",
-                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv")
+                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv",
+                  "ijl_new_array", "jl_new_array")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
