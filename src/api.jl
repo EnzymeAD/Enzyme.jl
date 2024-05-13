@@ -356,7 +356,7 @@ end
 An debugging option for developers of Enzyme. If one sets this flag prior
 to the first differentiation of a function, Enzyme will print (to stderr)
 information about each LLVM value -- specifically whether it and its shadow
-is required for computing the derivative. In contrast to `printunnecessary!`,
+is required for computing the derivative. In contrast to [`printunnecessary!`](@ref),
 this flag prints debug log for the analysis which determines for each value
 and shadow value, whether it can find a user which would require it to be kept
 around (rather than being deleted). This is prior to any cache optimizations
@@ -420,10 +420,10 @@ end
 An debugging option for developers of Enzyme. If one sets this flag prior
 to the first differentiation of a function, Enzyme will print (to stderr)
 information about each LLVM value -- specifically whether it and its shadow
-is required for computing the derivative. In contrast to `printdiffuse!`,
+is required for computing the derivative. In contrast to [`printdiffuse!`](@ref),
 this flag prints the final results after running cache optimizations such
-as minCut (see Recompute vs Cache Heuristics from https://c.wsmoses.com/papers/EnzymeGPU.pdf
-and slides 31-33 from https://c.wsmoses.com/presentations/enzyme-sc.pdf) for a
+as minCut (see Recompute vs Cache Heuristics from [this paper](https://c.wsmoses.com/papers/EnzymeGPU.pdf)
+and slides 31-33 from [this presentation](https://c.wsmoses.com/presentations/enzyme-sc.pdf)) for a
 description of the caching algorithm. This may be helpful for debugging
 caching, phi node deletion, performance, and other errors.
 Off by default
@@ -477,7 +477,7 @@ One can silence these issues by setting `looseTypeAnalysis!(true)` which tells
 Enzyme to make its best guess. This will remove the error and allow differentiation
 to continue, however, it may produce incorrect results. Alternatively one can
 consider increasing the space of the evaluated type lattice which gives Enzyme
-more time to run a more thorough analysis through the use of `maxtypeoffset!(val)`
+more time to run a more thorough analysis through the use of [`maxtypeoffset!`](@ref)
 """
 function looseTypeAnalysis!(val)
     ptr = cglobal((:looseTypeAnalysis, libEnzyme))
@@ -494,7 +494,7 @@ through conditional branches. This may lead to illegal type errors when analyzin
 code with unions. Disabling strict aliasing will enable these union types to be
 correctly analyzed. However, it may lead to some errors that sufficient type information
 cannot be deduced. One can turn these insufficient type information errors into to
-warnings by calling `looseTypeAnalysis!(true)` which tells Enzyme to use its best
+warnings by calling [`looseTypeAnalysis!`](@ref)`(true)` which tells Enzyme to use its best
 guess in such scenarios.
 """
 function strictAliasing!(val)
@@ -573,7 +573,7 @@ end
     typeWarning!(val::Bool)
 
 Whether to print a warning when Type Analysis learns informatoin about a value's type
-which cannot be represented in the current size of the lattice. See `maxtypeoffset` for
+which cannot be represented in the current size of the lattice. See [`maxtypeoffset!`](@ref) for
 more information.
 Off by default.
 """
