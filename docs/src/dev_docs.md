@@ -24,13 +24,13 @@ It may take a few minutes to compile fully.
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl
 ```
 
-You will now find a file LocalPrefernces.toml which has been generated and contains a path to the new Enzyme_jll binary you have built.
-To use your Enzyme_jll instead of the default shipped by Enzyme.jl, ensure that this file is at the root of any Julia project you wish
-to test it with *and* that the Julia project has Enzyme_jll as an explicit dependency. Note that an indirect dependency here is not
-sufficient (e.g. just because a project depends on Enzyme.jl, which depends on Enzyme_jll, does not mean that your project will pick up
-this file unless you also add a direct dependency to Enzyme_jll).
+You will now find a file LocalPrefernces.toml which has been generated and contains a path to the new Enzyme\_jll binary you have built.
+To use your Enzyme\_jll instead of the default shipped by Enzyme.jl, ensure that this file is at the root of any Julia project you wish
+to test it with *and* that the Julia project has Enzyme\_jll as an explicit dependency. Note that an indirect dependency here is not
+sufficient (e.g. just because a project depends on Enzyme.jl, which depends on Enzyme\_jll, does not mean that your project will pick up
+this file unless you also add a direct dependency to Enzyme\_jll).
 
-To test whether your project found the custom version of Enzyme_jll, you can inspect the path of the Enzyme_jll library in use as follows.
+To test whether your project found the custom version of Enzyme\_jll, you can inspect the path of the Enzyme\_jll library in use as follows.
 
 ```bash
 ~/my/project.jl (master)> julia --project=.
@@ -44,18 +44,18 @@ julia> Enzyme_jll.libEnzyme_path
 
 This should correspond to the path in the LocalPreferences.toml you just generated.
 
-Note that your system can have only one custom built Enzyme_jll at a time. If you build one version for one version of Enzyme or Julia
+Note that your system can have only one custom built Enzyme\_jll at a time. If you build one version for one version of Enzyme or Julia
 and later build a new verison of Enzyme, it remove the old build. 
 
-Note that Julia versions are tightly coupled and you cannot use an Enzyme_jll built for one version of Julia for another version of Julia.
+Note that Julia versions are tightly coupled and you cannot use an Enzyme\_jll built for one version of Julia for another version of Julia.
 
-The same script can also be used to build Enzyme_jll for a branch other than main as follows.
+The same script can also be used to build Enzyme\_jll for a branch other than main as follows.
 
 ```bash
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl --branch mybranch
 ```
 
-It can also be used to build Enzyme_jll from a local copy of Enzyme on your machine, which do not need to be committed to git.
+It can also be used to build Enzyme\_jll from a local copy of Enzyme on your machine, which do not need to be committed to git.
 
 ```bash
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl ../path/to/Enzyme
@@ -68,7 +68,7 @@ Start Julia in your development copy of Enzyme.jl
 ~/s/Enzyme.jl (master)> julia --project=.
 ```
 
-Then create a development copy of Enzyme_jll and activate it within.
+Then create a development copy of Enzyme\_jll and activate it within.
 
 ```julia-repl
 julia> using Enzyme_jll
