@@ -5261,13 +5261,13 @@ struct CompileResult{AT, PT}
 end
 
 @inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
-enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
-enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
-enzyme_call(Val(false), thunk.adjoint, AdjointThunk, Val(Width), #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
+enzyme_call(Val(false), thunk.adjoint, AdjointThunk{PT, FA, RT, TT, Width, TapeT}, Val(Width), #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 @inline raw_enzyme_call(thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
 enzyme_call(Val(true), thunk.adjoint, AdjointThunk, Val(Width), #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 
@@ -5398,11 +5398,23 @@ end
 
         if !RawCall
             if rettype <: Active
-                @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
+                if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             elseif rettype <: Const
-                @assert length(argtypes)              + needs_tape == length(argexprs)
+                if length(argtypes)              + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             else
-                @assert length(argtypes)              + needs_tape == length(argexprs)
+                if length(argtypes)              + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             end
         end
 
