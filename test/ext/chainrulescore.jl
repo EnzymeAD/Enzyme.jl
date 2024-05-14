@@ -16,6 +16,7 @@ end
 ChainRulesCore.@scalar_rule MockModule.mock_function(x::MockModule.MockType) (3 * one(x.x),)
 
 fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
+fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockType(one(x.x))))[2]
 
 @testset "import_frule" begin
     f1(x) = 2*x
@@ -80,6 +81,7 @@ fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
 end
 
 rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
+rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
 
 @testset "import_rrule" begin
     f1(x) = 2*x
