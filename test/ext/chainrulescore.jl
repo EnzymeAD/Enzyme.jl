@@ -5,6 +5,16 @@ using ChainRulesCore
 using LinearAlgebra
 using EnzymeTestUtils
 
+module MockModule
+    struct MockType
+        x::Float32
+    end
+
+    mock_function(x::MockType) = 2 * x.x
+end
+
+ChainRulesCore.@scalar_rule MockModule.mock_function(x::MockModule.MockType) (3 * one(x.x),)
+
 fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
 
 @testset "import_frule" begin
@@ -27,6 +37,11 @@ fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
     Enzyme.@import_frule typeof(f3) Any Any    
     @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test fdiff(y -> f3(1.0, y), 2.) === 2.0
+
+    # external module (checks correct type escaping)
+    Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
+    @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
+    @test fdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
@@ -86,6 +101,11 @@ rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
     Enzyme.@import_rrule typeof(f3) Any Any    
     @test rdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test rdiff(y -> f3(1.0, y), 2.) === 2.0
+
+    # external module (checks correct type escaping)
+    Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
