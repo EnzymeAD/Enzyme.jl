@@ -39,7 +39,7 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
     @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test fdiff(y -> f3(1.0, y), 2.) === 2.0
 
-    # external module (checks correct type escaping)
+    # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
     @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
     @test fdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
@@ -104,7 +104,7 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
     @test rdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test rdiff(y -> f3(1.0, y), 2.) === 2.0
 
-    # external module (checks correct type escaping)
+    # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
     @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
     @test rdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
