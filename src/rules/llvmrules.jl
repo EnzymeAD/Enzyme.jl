@@ -576,6 +576,15 @@ function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig)
         return true
     end
+    
+    mode = get_mode(gutils)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
+    if needsShadowP[] == 0
+        return false
+    end
 
     width = get_width(gutils)
 
