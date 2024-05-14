@@ -735,6 +735,10 @@ function pre_attr!(mod::LLVM.Module)
     return nothing
 end
 
+function jl_inst_simplify!(PM)
+    ccall((:LLVMAddJLInstSimplifyPass, API.libEnzyme), Cvoid, (LLVM.API.LLVMPassManagerRef,), PM)
+end
+
 function post_attr!(mod::LLVM.Module)
 end
 
@@ -1597,6 +1601,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         cse!(pm)
@@ -1615,6 +1620,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     propagate_returned!(mod)
     ModulePassManager() do pm
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         if RunAttributor[]
@@ -1676,12 +1682,15 @@ end
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
         gvn!(pm) # Extra
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         cfgsimplification!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         jump_threading!(pm)
         correlated_value_propagation!(pm)
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         reassociate!(pm)
         early_cse!(pm)
         alloc_opt!(pm)
@@ -1695,6 +1704,7 @@ end
             loop_unswitch!(pm)
         end
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
         loop_unroll!(pm)
@@ -1705,9 +1715,11 @@ end
         # This InstCombine needs to be after GVN
         # Otherwise it will generate load chains in GPU code...
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         mem_cpy_opt!(pm)
         sccp!(pm)
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         jump_threading!(pm)
         dead_store_elimination!(pm)
         alloc_opt!(pm)
@@ -1722,6 +1734,7 @@ end
 
         aggressive_dce!(pm)
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         # Loop Vectorize -- not for Enzyme
         # InstCombine
 
@@ -1732,6 +1745,7 @@ end
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
         instruction_combining!(pm) # Extra for Enzyme
+        jl_inst_simplify!(pm)
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
         gvn!(pm) # Exxtra
         run!(pm, mod)
@@ -1773,9 +1787,11 @@ function addOptimizationPasses!(pm)
     # consider AggressiveInstCombinePass at optlevel > 2
 
     instruction_combining!(pm)
+    jl_inst_simplify!(pm)
     cfgsimplification!(pm)
     scalar_repl_aggregates!(pm)
     instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+    jl_inst_simplify!(pm)
     jump_threading!(pm)
     correlated_value_propagation!(pm)
 
@@ -1796,6 +1812,7 @@ function addOptimizationPasses!(pm)
     julia_licm!(pm)
     # Subsequent passes not stripping metadata from terminator
     instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+    jl_inst_simplify!(pm)
     ind_var_simplify!(pm)
     loop_deletion!(pm)
     loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
@@ -1806,6 +1823,7 @@ function addOptimizationPasses!(pm)
     # over the structure of an aggregate)
     scalar_repl_aggregates!(pm)
     instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+    jl_inst_simplify!(pm)
 
     gvn!(pm)
     mem_cpy_opt!(pm)
@@ -1816,6 +1834,7 @@ function addOptimizationPasses!(pm)
     # This needs to be InstCombine instead of InstSimplify to allow
     # loops over Union-typed arrays to vectorize.
     instruction_combining!(pm)
+    jl_inst_simplify!(pm)
     jump_threading!(pm)
     dead_store_elimination!(pm)
 
@@ -1829,6 +1848,7 @@ function addOptimizationPasses!(pm)
     cfgsimplification!(pm)
     loop_deletion!(pm)
     instruction_combining!(pm)
+    jl_inst_simplify!(pm)
     loop_vectorize!(pm)
     # TODO: createLoopLoadEliminationPass
     cfgsimplification!(pm)
@@ -1873,6 +1893,7 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         dce!(pm)
         lower_ptls!(pm, #=dump_native=# false)
         instruction_combining!(pm)
+        jl_inst_simplify!(pm)
         # Clean up write barrier and ptls lowering
         cfgsimplification!(pm)
     else
