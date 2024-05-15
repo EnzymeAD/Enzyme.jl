@@ -431,7 +431,7 @@ code, as well as high-order differentiation.
 
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
 
-    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
+    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     if rt <: Active
         args = (args..., Compiler.default_adjoint(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -490,11 +490,11 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
+    ReturnPrimal = RT <: Duplicated || RT <: BatchDuplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     thunk(f, args...)
 end
 
@@ -795,7 +795,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{TapeType}, ::Type{FA}, ::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
+@inline function autodiff_deferred_thunk(mode::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, tt::Type{TapeType}, fa::Type{FA}, a2::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
     @assert RABI == FFIABI
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -819,10 +819,38 @@ result, ∂v, ∂A
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
-    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}(primal_ptr)
-    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}(adjoint_ptr)
+    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+
+    RT = if A2 <: Duplicated && width != 1
+        if A2 isa UnionAll
+            BatchDuplicated{T, width} where T
+        else
+            BatchDuplicated{eltype(A2), width}
+        end
+    elseif A2 <: DuplicatedNoNeed && width != 1
+        if A2 isa UnionAll
+            BatchDuplicatedNoNeed{T, width} where T
+        else
+            BatchDuplicatedNoNeed{eltype(A2), width}
+        end
+    else
+        A2
+    end
+    
+    rt = if RT isa UnionAll
+        @static if VERSION < v"1.8-"
+            throw(MethodError(autodiff_deferred_thunk, (mode, tt, fa, a2, args...)))
+        else
+            RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
+        end
+    else
+        @assert RT isa DataType
+        RT
+    end
+
+    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, width, ReturnPrimal, TapeType}(primal_ptr)
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, width, TapeType}(adjoint_ptr)
     aug_thunk, adj_thunk
 end
 
@@ -1202,5 +1230,11 @@ function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 macro import_frule(args...)
     return _import_frule(args...)
 end 
+
+function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
+
+macro import_rrule(args...)
+    return _import_rrule(args...)
+end
 
 end # module

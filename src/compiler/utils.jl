@@ -285,8 +285,8 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
         end
         println(io, "ctype = ", ctype)
         println(io, "tape = ", tape)
-        println(io, "val = ", val)
-        println(io, "prev = ", prev)
+        println(io, "val = ", string(val))
+        println(io, "prev = ", string(prev))
         println(io, "lidxs = ", lidxs)
         println(io, "ridxs = ", ridxs)
         println(io, "tape_type(tape) = ", tape_type(tape))

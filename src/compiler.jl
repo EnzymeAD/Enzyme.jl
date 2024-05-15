@@ -103,6 +103,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_try_substrtod", "jl_try_substrtod",
     "jl_f__apply_iterate",
     "ijl_field_index", "jl_field_index",
     "julia.call", "julia.call2",
@@ -178,6 +179,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_try_substrtod", "jl_try_substrtod",
     "ijl_tagged_gensym", "jl_tagged_gensym",
     "jl_get_world_counter", "ijl_get_world_counter",
     "memhash32_seed", "memhash_seed",
@@ -1346,6 +1348,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     # 2. Call error function and insert unreachable
     ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
+    LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
     return ct
     # FIXME(@wsmoses): Allow for emission of new BB in this code path
     # unreachable!(B)
@@ -1649,7 +1652,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         end
         throw(exc)
     elseif errtype == API.ET_NoShadow
-        data = GradientUtils(API.EnzymeGradientUtilsRef(data))
+        gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
 
         msgN = sprint() do io::IO
             print(io, "Enzyme could not find shadow for value\n")
@@ -1661,7 +1664,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             if !isa(val, LLVM.Argument)
                 print(io, "\n Inverted pointers: \n")
-                ip = API.EnzymeGradientUtilsInvertedPointersToString(data)
+                ip = API.EnzymeGradientUtilsInvertedPointersToString(gutils)
                 sval = Base.unsafe_string(ip)
                 write(io, sval)
                 API.EnzymeStringFree(ip)
@@ -1673,7 +1676,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 println(io)
             end
         end
-        emit_error(B, nothing, msgN)
+        emit_error(IRBuilder(B), nothing, msgN)
         return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
@@ -2361,6 +2364,7 @@ function zero_allocation(B::LLVM.IRBuilder, jlType, LLVMType, obj, AlignedSize, 
     wrapper_f = LLVM.Function(mod, "zeroType", LLVM.FunctionType(LLVM.VoidType(), [value_type(obj), T_int8, value_type(Size)]))
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_math", "enzyme_zerotype"))
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_inactive"))
+    push!(function_attributes(wrapper_f), StringAttribute("enzyme_no_escaping_allocation"))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("nofree", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("argmemonly", 0))
@@ -2653,6 +2657,7 @@ end
 function annotate!(mod, mode)
     inactive = LLVM.StringAttribute("enzyme_inactive", "")
     active = LLVM.StringAttribute("enzyme_active", "")
+    no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
     fns = functions(mod)
 
     for f in fns
@@ -2663,6 +2668,7 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), inactive)
+            push!(function_attributes(fn), no_escaping_alloc)
             for u in LLVM.uses(fn)
                 c = LLVM.user(u)
                 if !isa(c, LLVM.CallInst)
@@ -2679,6 +2685,7 @@ function annotate!(mod, mode)
                     continue
                 end
                 LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), inactive)
+                LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
             end
         end
     end
@@ -2771,6 +2778,31 @@ function annotate!(mod, mode)
         end
     end
 
+    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states", "julia.safepoint", "ijl_throw", "julia.pointer_from_objref",
+                  "ijl_array_grow_end", "jl_array_grow_end", "ijl_array_del_end", "jl_array_del_end",
+                  "ijl_array_grow_beg", "jl_array_grow_beg", "ijl_array_del_beg", "jl_array_del_beg",
+                  "ijl_array_grow_at", "jl_array_grow_at",
+                  "ijl_array_del_at", "jl_array_del_at",
+                  "ijl_pop_handler", "jl_pop_handler",
+                  "ijl_push_handler", "jl_push_handler",
+                  "ijl_module_name", "jl_module_name",
+                  "ijl_restore_excstack", "jl_restore_excstack",
+                  "julia.except_enter",
+                  "ijl_get_nth_field_checked", "jl_get_nth_field_checked",
+                  "jl_egal__unboxed",
+                  "ijl_reshape_array", "jl_reshape_array",
+                  "ijl_eqtable_get", "jl_eqtable_get",
+                  "jl_gc_run_pending_finalizers",
+                  "ijl_try_substrtod", "jl_try_substrtod",
+                 )
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), no_escaping_alloc)
+        end
+    end
+
+ 
+
     for fname in ("julia.pointer_from_objref",)
         if haskey(fns, fname)
             fn = fns[fname]
@@ -2784,10 +2816,12 @@ function annotate!(mod, mode)
                   "jl_alloc_array_1d", "jl_alloc_array_2d", "jl_alloc_array_3d",
                   "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
                   "jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash",
-                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv")
+                  "jl_f_tuple", "ijl_f_tuple", "jl_new_structv", "ijl_new_structv",
+                  "ijl_new_array", "jl_new_array")
         if haskey(fns, boxfn)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
+            push!(function_attributes(fn), no_escaping_alloc)
             if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
                 push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0))
             end
@@ -2813,6 +2847,7 @@ function annotate!(mod, mode)
                     continue
                 end
                 LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
+                LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
                 if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
                     LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), LLVM.EnumAttribute("inaccessiblememonly", 0))
                 end
@@ -2987,7 +3022,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         elseif T <: DuplicatedNoNeed || T<: BatchDuplicatedNoNeed
             push!(args_activity, API.DFT_DUP_NONEED)
         else
-            error("illegal annotation type")
+            error("illegal annotation type $T")
         end
         typeTree = typetree(source_typ, ctx, dl, seen)
         if isboxed
@@ -4310,6 +4345,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         if kind(prev) == kind(StringAttribute("enzyme_inactive"))
             push!(attributes, prev)
         end
+        if kind(prev) == kind(StringAttribute("enzyme_no_escaping_allocation"))
+            push!(attributes, prev)
+        end
     end
 
     if LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMReturnStatusAction) != 0
@@ -4780,6 +4818,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     EnumAttribute("speculatable", 0),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation")
                                   ])
             continue
         end
@@ -4801,6 +4840,20 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("no_escaping_allocation"))
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_inactive"))
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("nofree"))
+                    end
+                end
+            end
+            continue
+        end
+        if func === typeof(Base.match)
+            handleCustom(llvmfn, "base_match", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
+            for bb in blocks(llvmfn)
+                for inst in instructions(bb)
+                    if isa(inst, LLVM.CallInst)
+                        LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("no_escaping_allocation"))
                         LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_inactive"))
                         LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("nofree"))
                     end
@@ -5210,20 +5263,20 @@ struct CompileResult{AT, PT}
 end
 
 @inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
-enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk, Width, ReturnPrimal, TT, RT, fn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
-enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk, Width, ReturnPrimal, TT, RT, fn, Cvoid, args...)
+enzyme_call(Val(false), thunk.adjoint, ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
-enzyme_call(Val(false), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
+enzyme_call(Val(false), thunk.adjoint, AdjointThunk{PT, FA, RT, TT, Width, TapeT}, Val(Width), #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 @inline raw_enzyme_call(thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, TapeT} =
-enzyme_call(Val(true), thunk.adjoint, AdjointThunk, Width, #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
+enzyme_call(Val(true), thunk.adjoint, AdjointThunk, Val(Width), #=ReturnPrimal=#Val(false), TT, RT, fn, TapeT, args...)
 
 @inline (thunk::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} =
-enzyme_call(Val(false), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, fn, TapeT, args...)
+enzyme_call(Val(false), thunk.primal, AugmentedForwardThunk, Val(Width), Val(ReturnPrimal), TT, RT, fn, TapeT, args...)
 @inline raw_enzyme_call(thunk::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT}, fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} =
-enzyme_call(Val(true), thunk.primal, AugmentedForwardThunk, Width, ReturnPrimal, TT, RT, fn, TapeT, args...)
+enzyme_call(Val(true), thunk.primal, AugmentedForwardThunk, Val(Width), Val(ReturnPrimal), TT, RT, fn, TapeT, args...)
 
 
 function jl_set_typeof(v::Ptr{Cvoid}, T)
@@ -5330,7 +5383,7 @@ function add_one_in_place(x)
     return nothing
 end
 
-@generated function enzyme_call(::Val{RawCall}, fptr::PT, ::Type{CC}, ::Type{Val{width}}, ::Val{returnPrimal}, tt::Type{T},
+@generated function enzyme_call(::Val{RawCall}, fptr::PT, ::Type{CC}, ::Val{width}, ::Val{returnPrimal}, tt::Type{T},
         rt::Type{RT}, fn::FA, ::Type{TapeType}, args::Vararg{Any, N}) where {RawCall, PT, FA, T, RT, TapeType, N, CC, width, returnPrimal}
 
     JuliaContext() do ctx
@@ -5347,11 +5400,23 @@ end
 
         if !RawCall
             if rettype <: Active
-                @assert length(argtypes) + is_adjoint + needs_tape == length(argexprs)
+                if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             elseif rettype <: Const
-                @assert length(argtypes)              + needs_tape == length(argexprs)
+                if length(argtypes)              + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             else
-                @assert length(argtypes)              + needs_tape == length(argexprs)
+                if length(argtypes)              + needs_tape != length(argexprs)
+                    return quote
+                        throw(MethodError($CC($fptr), $args))
+                    end
+                end
             end
         end
 
@@ -5721,8 +5786,12 @@ function _thunk(job, postopt::Bool=true)
     end
 
     # Run post optimization pipeline
-    if postopt && job.config.params.ABI <: FFIABI
-        post_optimze!(mod, JIT.get_tm())
+    if postopt 
+        if job.config.params.ABI <: FFIABI
+            post_optimze!(mod, JIT.get_tm())
+        else
+            propagate_returned!(mod)
+        end
     end
     return (mod, adjoint_name, primal_name, meta.TapeType)
 end
@@ -5807,8 +5876,8 @@ end
         compile_result = cached_compilation(job)
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             TapeType = compile_result.TapeType
-            AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal), TapeType}
-            AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, TapeType}
+            AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal, TapeType}
+            AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, TapeType}
             return quote
                 Base.@_inline_meta
                 augmented = $AugT($(compile_result.primal))
@@ -5816,13 +5885,13 @@ end
                 (augmented, adjoint)
             end
         elseif Mode == API.DEM_ReverseModeCombined
-            CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal}
             return quote
                 Base.@_inline_meta
                 $CAdjT($(compile_result.adjoint))
             end
         elseif Mode == API.DEM_ForwardMode
-            FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, Val{width}, Val(ReturnPrimal)}
+            FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal}
             return quote
                 Base.@_inline_meta
                 $FMT($(compile_result.adjoint))

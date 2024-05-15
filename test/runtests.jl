@@ -196,6 +196,57 @@ end
     end
 end
 
+sumsq2(x) = sum(abs2, x)
+sumsin(x) = sum(sin, x)
+sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
+@testset "Recursion optimization" begin
+    # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    Enzyme.API.printall!(true)
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    Enzyme.API.printall!(false)
+    @test occursin("diffe",fn)
+    if count("call fastcc void @diffejulia__mapreduce", fn) != 1
+        println(sprint() do io
+           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
+       end)
+        println(sprint() do io
+           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
+       end)
+        println(fn)
+    end
+    # TODO per system being run on the indexing in the mapreduce is broken
+    # @test count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
+    # no memory overwritten state [in addition to the arg-based variant]
+    @test_broken !occursin("aug",fn)
+
+    x = ones(100)
+    dx = zeros(100)
+    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
+end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -321,11 +372,16 @@ end
         Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
     @test Tuple{Float64,Float64}  === TapeType
+    Ret = if VERSION < v"1.8-"
+        Active{Float64}
+    else
+        Active
+    end
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         ReverseSplitWithPrimal,
         TapeType,
         Const{typeof(dot)},
-        Active{Float64},
+        Ret,
         Duplicated{typeof(thunk_A)}
     )
     tape, primal, _  = fwd(Const(dot), dup)
@@ -335,6 +391,33 @@ end
     @test all(dA .== [6.0, 10.0])
     @test all(dA .== def_dA)
     @test all(dA .== thunk_dA)
+
+    @static if VERSION < v"1.8-"
+    else
+        function kernel(len, A)
+            for i in 1:len
+                A[i] *= A[i]
+            end
+        end
+
+        A = Array{Float64}(undef, 64)
+        dA = Array{Float64}(undef, 64)
+
+        A .= (1:1:64)
+        dA .= 1
+
+        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
+            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward(Const(f), Const(ctx), args...)[1]
+            return nothing
+        end
+
+        ModifiedBetween = Val((false, false, true))
+
+        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
+    end
+
 end
 
 @testset "Simple Complex tests" begin
@@ -891,6 +974,16 @@ end
     res = autodiff(Reverse, test_f, Active(Foo2(3.0, :two)))[1][1]
     @test res.x ≈ 6.0
     @test res.y == nothing
+end
+
+@testset "Methoe errors" begin
+     fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
+     @test_throws MethodError fwd(ones(10))
+     @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
+     @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
+     # TODO
+     # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
+     fwd(Const(sum), Duplicated(ones(10), ones(10)))
 end
 
 @testset "Generic Active Union Return" begin
@@ -2084,6 +2177,53 @@ end
     @test dmt2.y ≈ 2.4
 end
 
+
+struct GFUniform{T}
+    a::T
+    b::T
+end
+GFlogpdf(d::GFUniform, ::Real) = -log(d.b - d.a)
+
+struct GFNormal{T}
+    μ::T
+    σ::T
+end
+GFlogpdf(d::GFNormal, x::Real) = -(x - d.μ)^2 / (2 * d.σ^2)
+
+struct GFProductDist{V}
+    dists::V
+end
+function GFlogpdf(d::GFProductDist, x::Vector)
+    dists = d.dists
+    s = zero(eltype(x))
+    for i in eachindex(x)
+	s += GFlogpdf(dists[i], x[i])
+    end
+    return s
+end
+
+struct GFNamedDist{Names, D<:NamedTuple{Names}}
+    dists::D
+end
+
+function GFlogpdf(d::GFNamedDist{N}, x::NamedTuple{N}) where {N}
+    vt = values(x)
+    dists = d.dists
+    return mapreduce((dist, acc) -> GFlogpdf(dist, acc), +, dists, vt)
+end
+
+
+@testset "Getfield with reference" begin
+    Enzyme.API.runtimeActivity!(true)
+
+    d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
+    p = (a = 1.0, b = [0.5, 0.5])
+    dp = Enzyme.make_zero(p)
+    GFlogpdf(d, p)
+    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
+    Enzyme.API.runtimeActivity!(false)
+end
+
 @testset "apply iterate" begin
     function mktup(v)
         tup = tuple(v...)
@@ -2409,6 +2549,14 @@ end
     dx = Enzyme.gradient(Reverse, prod, x)
     @test dx isa SArray
     @test dx ≈ [0 30 0]
+
+@static if VERSION ≥ v"1.9-" 
+    x = @SArray [5.0 0.0 6.0]
+    dx = Enzyme.gradient(Forward, prod, x)
+    @test dx[1] ≈ 0
+    @test dx[2] ≈ 30
+    @test dx[3] ≈ 0
+end
 end
 
 

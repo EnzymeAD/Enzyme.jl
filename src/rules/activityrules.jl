@@ -29,12 +29,21 @@ function julia_activity_rule(f::LLVM.Function)
     end
     world = enzyme_extract_world(f)
 
-    if  expectLen != length(parameters(f))
-        println(string(f))
-        @show expectLen, swiftself, sret, returnRoots, mi.specTypes.parameters, retRemoved, parmsRemoved
-    end
     # TODO fix the attributor inlining such that this can assert always true
-    @assert expectLen == length(parameters(f))
+    if expectLen != length(parameters(f))
+          msg = sprint() do io::IO
+              println(io, "Enzyme Internal Error (expectLen != length(parameters(f)))")
+              println(io, string(f))
+              println(io, "expectLen=", string(expectLen))
+              println(io, "swiftself=", string(swiftself))
+              println(io, "sret=", string(sret))
+              println(io, "returnRoots=", string(returnRoots))
+              println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
+              println(io, "retRemoved=", string(retRemoved))
+              println(io, "parmsRemoved=", string(parmsRemoved))
+          end
+          throw(AssertionError(msg))
+    end
 
     jlargs = classify_arguments(mi.specTypes, function_type(f), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
