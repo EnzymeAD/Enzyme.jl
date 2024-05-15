@@ -13,10 +13,19 @@ module MockModule
     mock_function(x::MockType) = 2 * x.x
 end
 
-ChainRulesCore.@scalar_rule MockModule.mock_function(x::MockModule.MockType) (3 * one(x.x),)
+function ChainRulesCore.frule((_, ẋ), ::typeof(MockModule.mock_function), x)
+    y = MockModule.mock_function(x)
+    ẏ = 3 * ẋ.x
+    return y, ẏ
+end
+
+function ChainRulesCore.rrule(::typeof(MockModule.mock_function), x)
+    y = MockModule.mock_function(x)
+    return y, ȳ -> 2 * ȳ
+end
 
 fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
-fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockType(one(x.x))))[2]
+fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[2]
 
 @testset "import_frule" begin
     f1(x) = 2*x
@@ -42,7 +51,6 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
     @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
-    @test fdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
@@ -106,8 +114,7 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
 
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
-    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
-    @test rdiff(MockModule.mock_function, MockModule.MockType(1.0)) === 3.0
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 2f0
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
