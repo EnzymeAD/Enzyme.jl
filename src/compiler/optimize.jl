@@ -833,6 +833,10 @@ function mayWriteToMemory(inst::LLVM.Instruction)::Bool
             if kind(attr) == kind(EnumAttribute("readonly"))
                 return false
             end
+            # Note out of spec, and only legal in context of removing unused calls
+            if kind(attr) == kind(StringAttribute("enzyme_error"))
+                return false
+            end
         end
         Libc.free(Attrs)
         return true
@@ -1509,6 +1513,8 @@ function checkNoAssumeFalse(mod, shouldshow=false)
     end
 end
 
+cse!(pm) = LLVM.API.LLVMAddEarlyCSEPass(pm)
+
 function removeDeadArgs!(mod::LLVM.Module)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
@@ -1593,6 +1599,7 @@ function removeDeadArgs!(mod::LLVM.Module)
         instruction_combining!(pm)
         alloc_opt!(pm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
+        cse!(pm)
         run!(pm, mod)
     end
     propagate_returned!(mod)
@@ -1615,6 +1622,7 @@ function removeDeadArgs!(mod::LLVM.Module)
                 API.EnzymeAddAttributorLegacyPass(pm)
             end
         end
+        cse!(pm)
         run!(pm, mod)
     end
     post_attr!(mod)

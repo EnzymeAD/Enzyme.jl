@@ -1348,6 +1348,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     # 2. Call error function and insert unreachable
     ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
+    LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
     return ct
     # FIXME(@wsmoses): Allow for emission of new BB in this code path
     # unreachable!(B)
