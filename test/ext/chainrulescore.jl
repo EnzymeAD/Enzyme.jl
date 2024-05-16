@@ -114,7 +114,7 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
 
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
-    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 2f0
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === MockModule.MockType(2f0)
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
