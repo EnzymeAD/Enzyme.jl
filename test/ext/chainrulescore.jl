@@ -5,7 +5,27 @@ using ChainRulesCore
 using LinearAlgebra
 using EnzymeTestUtils
 
+module MockModule
+    struct MockType
+        x::Float32
+    end
+
+    mock_function(x::MockType) = 2 * x.x
+end
+
+function ChainRulesCore.frule((_, ẋ), ::typeof(MockModule.mock_function), x)
+    y = MockModule.mock_function(x)
+    ẏ = 3 * ẋ.x
+    return y, ẏ
+end
+
+function ChainRulesCore.rrule(::typeof(MockModule.mock_function), x)
+    y = MockModule.mock_function(x)
+    return y, ȳ -> 2 * ȳ
+end
+
 fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
+fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[2]
 
 @testset "import_frule" begin
     f1(x) = 2*x
@@ -27,6 +47,10 @@ fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
     Enzyme.@import_frule typeof(f3) Any Any    
     @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test fdiff(y -> f3(1.0, y), 2.) === 2.0
+
+    # external module (checks correct type escaping, PR #1446)
+    Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
+    @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
@@ -65,6 +89,7 @@ fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
 end
 
 rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
+rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
 
 @testset "import_rrule" begin
     f1(x) = 2*x
@@ -86,6 +111,10 @@ rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
     Enzyme.@import_rrule typeof(f3) Any Any    
     @test rdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test rdiff(y -> f3(1.0, y), 2.) === 2.0
+
+    # external module (checks correct type escaping, PR #1446)
+    Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === MockModule.MockType(2f0)
 
     @testset "batch duplicated" begin 
         x = [1.0, 2.0, 0.0]        
