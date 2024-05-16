@@ -2,7 +2,7 @@
 
 ## Development of Enzyme and Enzyme.jl together (recommended)
 
-Normally Enzyme.jl downloads and install [Enzyme](github.com/EnzymeAD/Enzyme) for the user automatically since Enzyme needs to be built against
+Normally Enzyme.jl downloads and installs [Enzyme](https://github.com/EnzymeAD/enzyme) for the user automatically since Enzyme needs to be built against
 Julia bundeled LLVM. In case that you are making updates to Enzyme and want to test them against Enzyme.jl the instructions
 below should help you get started.
 
@@ -45,7 +45,7 @@ julia> Enzyme_jll.libEnzyme_path
 This should correspond to the path in the LocalPreferences.toml you just generated.
 
 Note that your system can have only one custom built Enzyme\_jll at a time. If you build one version for one version of Enzyme or Julia
-and later build a new verison of Enzyme, it remove the old build. 
+and later build a new version of Enzyme, it removes the old build. 
 
 Note that Julia versions are tightly coupled and you cannot use an Enzyme\_jll built for one version of Julia for another version of Julia.
 
@@ -55,7 +55,7 @@ The same script can also be used to build Enzyme\_jll for a branch other than ma
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl --branch mybranch
 ```
 
-It can also be used to build Enzyme\_jll from a local copy of Enzyme on your machine, which do not need to be committed to git.
+It can also be used to build Enzyme\_jll from a local copy of Enzyme on your machine, which does not need to be committed to git.
 
 ```bash
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl ../path/to/Enzyme
@@ -105,7 +105,7 @@ julia> Base.libllvm_version_string
 "9.0.1jl"
 ```
 
-If the LLVM version ends in a `jl` you a likely using the private LLVM.
+If the LLVM version ends in a `jl` you are likely using the private LLVM.
 
 In your source checkout of Enzyme:
 
