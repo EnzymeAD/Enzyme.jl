@@ -1760,6 +1760,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         seen = Dict{LLVM.Value, LLVM.Value}()
         illegal = false
         created = LLVM.Instruction[] 
+        world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
         function make_replacement(cur::LLVM.Value, prevbb)::LLVM.Value
             ncur = new_from_original(gutils, cur)
             if cur in keys(seen)
@@ -1768,7 +1769,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             
             legal, TT = abs_typeof(cur, true)
             if legal
-                world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
                 if guaranteed_const_nongen(TT, world)
                     return ncur
                 end
@@ -1842,9 +1842,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
             
             if isa(cur, LLVM.PHIInst)
-                B = IRBuilder()
-                position!(B, ncur)
-                phi2 = phi!(prevbb, value_type(cur), "tempphi"*LLVM.name(cur))
+                Bphi = IRBuilder()
+                position!(Bphi, ncur)
+                phi2 = phi!(Bphi, value_type(cur), "tempphi"*LLVM.name(cur))
                 seen[cur] = phi2
                 changed = false
                 recsize = length(created)+1
@@ -1856,11 +1856,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                         changed = true
                         break
                     end
-                    if tmp != v && v != cur
+                    if tmp != new_from_original(gutils, v) && v != cur
                         changed = true
-                        break
                     end
-                    push!(LLVM.incoming(phi2), (tmp, bb))
+                    push!(LLVM.incoming(phi2), (tmp, new_from_original(gutils, bb)))
                 end
                 if !changed || illegal
                     LLVM.API.LLVMInstructionEraseFromParent(phi2)
