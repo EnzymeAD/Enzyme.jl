@@ -161,6 +161,75 @@ function check_ir(job, mod::LLVM.Module)
     end
 end
 
+# Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
+function rewrite_ccalls!(mod::LLVM.Module)
+    for f in collect(functions(mod))
+        replaceAndErase = Tuple{Instruction, Instruction}[]
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.CallInst)
+                changed = false
+                newbundles = OperandBundleDef[]
+                B = IRBuilder()
+                position!(B, inst)
+                for bunduse in operand_bundles(inst)
+                    bunduse = LLVM.OperandBundleDef(bunduse)
+                    if LLVM.tag_name(bunduse) != "jl_roots"
+                        push!(newbundles, bunduse)
+                        continue
+                    end
+                    uservals = LLVM.Value[]
+                    subchanged = false
+                    for lval in LLVM.inputs(bunduse)
+                        llty = value_type(lval)
+                        vals = get_julia_inner_types(B, nothing, lval)
+                        for v in vals
+                            push!(uservals, v)
+                        end
+                        if length(vals) == 1 && vals[1] == lval
+                            continue
+                        end
+                        subchanged = true
+                    end
+                    if !subchanged
+                        push!(newbundles, bunduse)
+                        continue
+                    end
+                    changed = true
+                    push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                end
+                @show inst, changed, newbundles
+                if changed
+                    prevname = LLVM.name(inst)
+                    LLVM.name!(inst, "")
+                    @show value_type(inst), called_operand(inst), collect(operands(inst)[1:end-1]), newbundles, prevname
+                    newinst = call!(B, value_type(inst), called_operand(inst), collect(operands(inst)[1:end-1]), newbundles, prevname)
+
+                    for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(operands(st))-1)]...]
+                        idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
+                        count = LLVM.API.LLVMGetCallSiteAttributeCount(st, idx);
+                        
+                        Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
+                        LLVM.API.LLVMGetCallSiteAttributes(st, idx, Attrs)
+                        for j in 1:count
+                            LLVM.API.LLVMAddCallSiteAttribute(newi, idx, unsafe_load(Attrs, j))
+                        end
+                        Libc.free(Attrs)
+                    end
+
+                    API.EnzymeCopyMetadata(newinst, inst)
+                    callconv!(newinst, inst)
+                    push!(replaceAndErase, (inst, newinst))
+                end
+            end
+        end
+        for (inst, newinst) in replaceAndErase
+            @show "replace", inst, newinst
+            replace_uses!(inst, newinst)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+end
+
 function check_ir!(job, errors, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
@@ -174,6 +243,7 @@ function check_ir!(job, errors, mod::LLVM.Module)
         replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
         unsafe_delete!(mod, f)
     end
+    rewrite_ccalls!(mod)
     for f in collect(functions(mod))
         check_ir!(job, errors, imported, f)
     end

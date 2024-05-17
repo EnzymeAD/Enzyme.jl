@@ -2090,7 +2090,10 @@ end
 function get_julia_inner_types(B, p, startvals...; added=[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    vals = LLVM.Value[p]
+    vals = LLVM.Value[]
+    if p != nothing
+        push!(vals, p)
+    end
     todo = LLVM.Value[startvals...]
     while length(todo) != 0
         cur = popfirst!(todo)
