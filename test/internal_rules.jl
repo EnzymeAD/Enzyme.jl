@@ -168,7 +168,7 @@ end
         @testset for Te in (Float64, ComplexF64), uplo in ('L', 'U')
             C = Cholesky(I + rand(Te, 5, 5), uplo, 0)
             B = rand(Te, 5, 5)
-            b = rand(Te, 4)
+            b = rand(Te, 5)
             @testset for TC in activities,
                          TB in activities,
                          Tret in (Const, Duplicated, BatchDuplicated)
