@@ -137,10 +137,11 @@ end
 
 @static if VERSION > v"1.8"
     @testset "cholesky" begin
+        activities = (Const, Duplicated, BatchDuplicated,)
         @testset "with wrapper arguments" begin
             @testset for Te in (Float64,), TS in (Symmetric, Hermitian), uplo in (:U, :L)
-                @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
-                    _A = collect(exp(TS(rand(Te, 4, 4))))
+                @testset for TA in activities, Tret in activities
+                    _A = collect(exp(TS(rand(Te, 5, 5))))
                     A = TS(_A, uplo)
                     are_activities_compatible(Tret, TA) || continue
                     test_forward(cholesky, Tret, (A, TA))
@@ -151,8 +152,8 @@ end
         @testset "without wrapper arguments" begin
             _square(A) = A * A'
             @testset for Te in (Float64,)
-                @testset for TA in (Const, Duplicated), Tret in (Const, Duplicated)
-                    A = rand(Te, 4, 4)
+                @testset for TA in activities, Tret in activities
+                    A = rand(Te, 5, 5)
                     are_activities_compatible(Tret, TA) || continue
                     test_forward(cholesky ∘ _square, Tret, (A, TA))
                     test_reverse(cholesky ∘ _square, Tret, (A, TA))
@@ -165,8 +166,8 @@ end
         activities = (Const, Duplicated, DuplicatedNoNeed, BatchDuplicated,
                       BatchDuplicatedNoNeed)
         @testset for Te in (Float64, ComplexF64), uplo in ('L', 'U')
-            C = Cholesky(I + rand(Te, 4, 4), uplo, 0)
-            B = rand(Te, 4, 4)
+            C = Cholesky(I + rand(Te, 5, 5), uplo, 0)
+            B = rand(Te, 5, 5)
             b = rand(Te, 4)
             @testset for TC in activities,
                          TB in activities,
