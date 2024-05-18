@@ -137,27 +137,23 @@ end
 
 @static if VERSION > v"1.8"
     @testset "cholesky" begin
-        activities = (Const, Duplicated, BatchDuplicated,)
-        @testset "with wrapper arguments" begin
-            @testset for Te in (Float64,), TS in (Symmetric, Hermitian), uplo in (:U, :L)
-                @testset for TA in activities, Tret in activities
-                    _A = collect(exp(TS(rand(Te, 5, 5))))
-                    A = TS(_A, uplo)
-                    are_activities_compatible(Tret, TA) || continue
-                    test_forward(cholesky, Tret, (A, TA))
-                    test_reverse(cholesky, Tret, (A, TA))
-                end
+        activities = (Const, Duplicated, BatchDuplicated)
+        _square(A) = A * adjoint(A)
+        @testset for (Te, TSs) in (
+            Float64 => (Symmetric, Hermitian),
+        ), TA in activities, Tret in activities
+            @testset "without wrapper arguments" begin
+                A = rand(Te, 5, 5)
+                are_activities_compatible(Tret, TA) || continue
+                test_forward(cholesky ∘ _square, Tret, (A, TA))
+                test_reverse(cholesky ∘ _square, Tret, (A, TA))
             end
-        end
-        @testset "without wrapper arguments" begin
-            _square(A) = A * A'
-            @testset for Te in (Float64,)
-                @testset for TA in activities, Tret in activities
-                    A = rand(Te, 5, 5)
-                    are_activities_compatible(Tret, TA) || continue
-                    test_forward(cholesky ∘ _square, Tret, (A, TA))
-                    test_reverse(cholesky ∘ _square, Tret, (A, TA))
-                end
+            @testset "with wrapper arguments" for TS in TSs, uplo in (:U, :L)
+                _A = collect(exp(TS(I + rand(Te, 5, 5))))
+                A = TS(_A, uplo)
+                are_activities_compatible(Tret, TA) || continue
+                test_forward(cholesky, Tret, (A, TA); fdm=FiniteDifferences.forward_fdm(5, 1))
+                test_reverse(cholesky, Tret, (A, TA))
             end
         end
     end
