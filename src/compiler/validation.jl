@@ -197,27 +197,22 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     changed = true
                     push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
                 end
-                @show inst, changed, newbundles
                 if changed
                     prevname = LLVM.name(inst)
                     LLVM.name!(inst, "")
-                    @show value_type(inst), called_operand(inst), collect(operands(inst)[1:end-1]), newbundles, prevname
-                    newinst = call!(B, value_type(inst), called_operand(inst), collect(operands(inst)[1:end-1]), newbundles, prevname)
-
-                    for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(operands(st))-1)]...]
+                    newinst = call!(B, called_type(inst), called_operand(inst), collect(arguments(inst)), newbundles, prevname)
+                    for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
                         idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
-                        count = LLVM.API.LLVMGetCallSiteAttributeCount(st, idx);
-                        
+                        count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx);
                         Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
-                        LLVM.API.LLVMGetCallSiteAttributes(st, idx, Attrs)
+                        LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
                         for j in 1:count
-                            LLVM.API.LLVMAddCallSiteAttribute(newi, idx, unsafe_load(Attrs, j))
+                            LLVM.API.LLVMAddCallSiteAttribute(newinst, idx, unsafe_load(Attrs, j))
                         end
                         Libc.free(Attrs)
                     end
-
                     API.EnzymeCopyMetadata(newinst, inst)
-                    callconv!(newinst, inst)
+                    callconv!(newinst, callconv(inst))
                     push!(replaceAndErase, (inst, newinst))
                 end
             end
