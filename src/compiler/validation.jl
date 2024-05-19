@@ -183,6 +183,10 @@ function rewrite_ccalls!(mod::LLVM.Module)
                         llty = value_type(lval)
                         vals = get_julia_inner_types(B, nothing, lval)
                         for v in vals
+                            if isa(v, LLVM.PointerNull)
+                                subchanged = true
+                                continue
+                            end
                             push!(uservals, v)
                         end
                         if length(vals) == 1 && vals[1] == lval
