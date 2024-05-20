@@ -163,7 +163,7 @@ end
         activities = (Const, Duplicated, DuplicatedNoNeed, BatchDuplicated,
                       BatchDuplicatedNoNeed)
         @testset for Te in (Float64, ComplexF64), uplo in ('L', 'U')
-            C = Cholesky(I + rand(Te, 5, 5), uplo, 0)
+            C = Cholesky(I + rand(Te, 5, 5), uplo, 0) # add `I` for numerical stability
             B = rand(Te, 5, 5)
             b = rand(Te, 5)
             @testset for TC in activities,
