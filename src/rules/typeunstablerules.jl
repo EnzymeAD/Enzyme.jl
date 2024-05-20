@@ -753,7 +753,6 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
 
         for idx in 1:width
             vals = LLVM.Value[
-              new_from_original(gutils, origops[1]),
               (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1),
               new_from_original(gutils, origops[3]),
               unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
@@ -787,7 +786,6 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
 
         for idx in 1:width
             vals = LLVM.Value[
-              lookup_value(gutils, new_from_original(gutils, origops[1]), B),
               lookup_value(gutils, (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1), B),
               lookup_value(gutils, new_from_original(gutils, origops[3]), B),
               unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
