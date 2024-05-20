@@ -138,6 +138,8 @@ end
 @static if VERSION > v"1.8"
     @testset "cholesky" begin
         activities = (Const, Duplicated, BatchDuplicated)
+        # Workaround for issue #1456:
+        _realifydiag(A) = (A[diagind(A)] .= real(A[diagind(A)]); return A)
         _square(A) = A * adjoint(A)
         @testset for (Te, TSs) in (
             Float64 => (Symmetric, Hermitian),
@@ -146,8 +148,8 @@ end
             @testset "without wrapper arguments" begin
                 A = rand(Te, 5, 5)
                 are_activities_compatible(Tret, TA) || continue
-                test_forward(cholesky ∘ _square, Tret, (A, TA))
-                test_reverse(cholesky ∘ _square, Tret, (A, TA))
+                test_forward(cholesky ∘ _realifydiag ∘ _square, Tret, (A, TA))
+                test_reverse(cholesky ∘ _realifydiag ∘ _square, Tret, (A, TA))
             end
             @testset "with wrapper arguments" for TS in TSs, uplo in (:U, :L)
                 _A = collect(exp(TS(I + rand(Te, 5, 5))))
