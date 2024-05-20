@@ -855,8 +855,7 @@ function EnzymeRules.augmented_primal(config,
                                       func::Const{typeof(cholesky)},
                                       RT::Type,
                                       A::Annotation{<:Union{Matrix,
-                                                            LinearAlgebra.RealHermSym{<:Real,
-                                                                                      <:Matrix}}};
+                                                            LinearAlgebra.RealHermSymComplexHerm}};
                                       kwargs...)
     fact = if EnzymeRules.needs_primal(config) || !(RT <: Const)
         cholesky(A.val; kwargs...)
@@ -889,8 +888,7 @@ function EnzymeRules.reverse(config,
                              RT::Type,
                              cache,
                              A::Annotation{<:Union{Matrix,
-                                                   LinearAlgebra.RealHermSym{<:Real,
-                                                                             <:Matrix}}};
+                                                   LinearAlgebra.RealHermSymComplexHerm}};
                              kwargs...)
     if !(RT <: Const) && !isa(A, Const)
         fact, dfact = cache
@@ -898,7 +896,7 @@ function EnzymeRules.reverse(config,
         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
 
         for (dA, dfact) in zip(dAs, dfacts)
-            _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
+            _dA = dA isa LinearAlgebra.RealHermSymComplexHerm ? dA.data : dA
             if _dA !== dfact.factors
                 Ā = _cholesky_pullback_shared_code(fact, dfact)
                 _dA .+= Ā
@@ -914,10 +912,12 @@ end
 # Copyright (c) 2018: Jarrett Revels.
 # https://github.com/JuliaDiff/ChainRules.jl/blob/9f1817a22404259113e230bef149a54d379a660b/src/rulesets/LinearAlgebra/factorization.jl#L507-L528
 function _cholesky_pullback_shared_code(C, ΔC)
+    Δfactors = ΔC.factors
     Ā = similar(C.factors)
     if C.uplo === 'U'
         U = C.U
         Ū = ΔC.U
+        Ū = eltype(U) <: Real ? real(UpperTriangular(Δfactors)) : UpperTriangular(Δfactors)
         mul!(Ā, Ū, U')
         LinearAlgebra.copytri!(Ā, 'U', true)
         eltype(Ā) <: Real || _realifydiag!(Ā)
@@ -928,6 +928,7 @@ function _cholesky_pullback_shared_code(C, ΔC)
     else  # C.uplo === 'L'
         L = C.L
         L̄ = ΔC.L
+        L̄ = eltype(L) <: Real ? real(LowerTriangular(Δfactors)) : LowerTriangular(Δfactors)
         mul!(Ā, L', L̄)
         LinearAlgebra.copytri!(Ā, 'L', true)
         eltype(Ā) <: Real || _realifydiag!(Ā)
