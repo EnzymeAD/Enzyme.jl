@@ -2176,7 +2176,7 @@ end
     @test dmt2.x ≈ 1.2
     @test dmt2.y ≈ 2.4
 
-    function sf_for(v, fld, fld2, x)
+    function sf_for2(v, fld, fld2, x)
        setfield!(v, fld, 0.0)
        for i in 1:100
             setfield!(v, fld2, getfield(v, fld)::Float64 + x * i)
