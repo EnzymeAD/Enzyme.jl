@@ -141,6 +141,7 @@ end
         _square(A) = A * adjoint(A)
         @testset for (Te, TSs) in (
             Float64 => (Symmetric, Hermitian),
+            ComplexF64 => (Hermitian,),
         ), TA in activities, Tret in activities
             @testset "without wrapper arguments" begin
                 A = rand(Te, 5, 5)
