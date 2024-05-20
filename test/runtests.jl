@@ -2175,6 +2175,40 @@ end
     @test mt2.y ≈ 6.0
     @test dmt2.x ≈ 1.2
     @test dmt2.y ≈ 2.4
+
+    function sf_for2(v, fld, fld2, x)
+       setfield!(v, fld, 0.0)
+       for i in 1:100
+            setfield!(v, fld2, getfield(v, fld)::Float64 + x * i)
+       end
+       return getfield(v, fld)::Float64
+    end
+
+    mt2 = MyType2(0.0, 0.0)
+    dmt2 = MyType2(0.0, 0.0)
+
+    adres = Enzyme.autodiff(Reverse, sf_for2, Duplicated(mt2, dmt2), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+
+    mutable struct MyType3
+       x::Base.RefValue{Float64}
+       y::Base.RefValue{Float64}
+    end
+
+    function sf_for3(v, fld, fld2, x)
+       setfield!(v, fld, Ref(0.0))
+       for i in 1:100
+            setfield!(v, fld2, Base.Ref((getfield(v, fld)::Base.RefValue{Float64})[] + x * i))
+       end
+       return (getfield(v, fld)::Base.RefValue{Float64})[]
+    end
+
+    mt3 = MyType3(Ref(0.0), Ref(0.0))
+    dmt3 = MyType3(Ref(0.0), Ref(0.0))
+
+    adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+
 end
 
 

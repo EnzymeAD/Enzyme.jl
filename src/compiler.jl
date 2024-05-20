@@ -1194,6 +1194,13 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
     end
 end
 
+
+@inline function EnzymeCore.make_zero(x::FT)::FT where {FT <: AbstractFloat}
+    return Base.zero(x)
+end
+@inline function EnzymeCore.make_zero(x::Complex{FT})::Complex{FT} where {FT <: AbstractFloat}
+    return Base.zero(x)
+end
 @inline function EnzymeCore.make_zero(x::Array{FT, N})::Array{FT, N} where {FT <: AbstractFloat, N}
     return Base.zero(x)
 end
