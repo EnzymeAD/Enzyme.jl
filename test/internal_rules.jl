@@ -138,7 +138,11 @@ end
 @static if VERSION > v"1.8"
     @testset "cholesky" begin
         activities = (Const, Duplicated, BatchDuplicated)
-        _square(A) = A * adjoint(A)
+        function _square(A)
+            S = A * adjoint(A)
+            S[diagind(S)] .= real.(S[diagind(S)]) # workaround for issue #1456:
+            return S
+        end
         @testset for (Te, TSs) in (
             Float64 => (Symmetric, Hermitian),
             ComplexF64 => (Hermitian,),
@@ -146,9 +150,8 @@ end
             @testset "without wrapper arguments" begin
                 A = rand(Te, 5, 5)
                 are_activities_compatible(Tret, TA) || continue
-                # `Enzyme._realifydiag!` is a workaround for issue #1456:
-                test_forward(cholesky ∘ Enzyme._realifydiag! ∘ _square, Tret, (A, TA))
-                test_reverse(cholesky ∘ Enzyme._realifydiag! ∘ _square, Tret, (A, TA))
+                test_forward(cholesky ∘ _square, Tret, (A, TA))
+                test_reverse(cholesky ∘ _square, Tret, (A, TA))
             end
             @testset "with wrapper arguments" for TS in TSs, uplo in (:U, :L)
                 _A = collect(exp(TS(I + rand(Te, 5, 5))))
