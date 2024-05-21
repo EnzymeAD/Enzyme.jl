@@ -1784,6 +1784,8 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
         end
 
+        illegalVal = nothing
+
         function make_replacement(cur::LLVM.Value, prevbb)::LLVM.Value
             ncur = new_from_original(gutils, cur)
             if cur in keys(seen)
@@ -1820,6 +1822,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 else
                     "Unknown object of type"*" "*string(TT)
                 end
+                illegalVal = cur
                 illegal = true
                 return make_batched(ncur, prevbb)
             end
@@ -1861,6 +1864,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 end
 
                 cur2 = if changed
+                    illegalVal = cur
                     illegal = true
                     # TODO replace with correct insertions/splats
                     ncur
@@ -1880,6 +1884,40 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 end
             end
             
+            if isa(cur, LLVM.InsertValueInst)
+                lhs = make_replacement(operands(cur)[1], prevbb)
+                if illegal
+                    return ncur
+                end
+                rhs = make_replacement(operands(cur)[2], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(cur)[1] && rhs == operands(cur)[2]
+                    return make_batched(ncur, prevbb)
+                end
+                inds = LLVM.API.LLVMGetIndices(cur.ref)
+                ninds = LLVM.API.LLVMGetNumIndices(cur.ref)
+                jinds = Cuint[unsafe_load(inds, i) for i in 1:ninds]
+                if width == 1
+                    nv = API.EnzymeInsertValue(prevbb, lhs, rhs, jinds)
+                    push!(created, nv)
+                    seen[cur] = nv
+                    return nv
+                else
+                    shadowres = lhs
+                    for idx in 1:width
+                        jindsv = copy(jinds)
+                        pushfirst!(jindsv, idx-1)
+                        shadowres = API.EnzymeInsertValue(prevbb, shadowres, extract_value!(prevbb, rhs, idx-1), jindsv)
+                        if isa(shadowres, LLVM.Instruction)
+                            push!(created, shadowres)
+                        end
+                    end
+                    return shadowres
+                end
+            end
+            
             if isa(cur, LLVM.PHIInst)
                 Bphi = IRBuilder()
                 position!(Bphi, ncur)
@@ -1890,14 +1928,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 recsize = length(created)+1
                 for (v, bb) in LLVM.incoming(cur)
                     B2 = IRBuilder()
-                    position!(B2, last(instructions(bb)))
+                    position!(B2, new_from_original(gutils, last(instructions(bb))))
                     tmp = make_replacement(v, B2)
                     if illegal
                         changed = true
                         break
-                    end
-                    if value_type(tmp) != shadowty
-                        @show tmp, shadowty, v
                     end
                     @assert value_type(tmp) == shadowty
                     if tmp != new_from_original(gutils, v) && v != cur
@@ -1927,13 +1962,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             end
 
             illegal = true
+            illegalVal = cur
             return ncur
         end
 
-        newb = new_from_original(gutils, val)
-        while isa(newb, LLVM.PHIInst)
-            newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
-        end
         b = IRBuilder(B)
         replacement = make_replacement(data2, b)
 
@@ -1967,6 +1999,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 print(io, "Type tree: ")
                 println(io, Base.unsafe_string(st))
                 API.EnzymeStringFree(st)
+            end
+            if illegalVal !== nothing
+                println(io, " llvalue="*string(illegalVal))
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing

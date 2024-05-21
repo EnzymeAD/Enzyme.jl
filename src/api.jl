@@ -230,6 +230,8 @@ const CustomReversePass = Ptr{Cvoid}
 EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall((:EnzymeRegisterCallHandler, libEnzyme), Cvoid, (Cstring, CustomAugmentedForwardPass, CustomReversePass), name, fwdhandle, revhandle)
 EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall((:EnzymeRegisterFwdCallHandler, libEnzyme), Cvoid, (Cstring, CustomForwardPass), name, fwdhandle)
 
+EnzymeInsertValue(B::LLVM.IRBuilder, v::LLVM.Value, v2::LLVM.Value, insts::Vector{Cuint}, name="") = LLVM.Value(ccall((:EnzymeInsertValue, libEnzyme), LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Ptr{Cuint}, Int64, Cstring), B, v, v2, insts, length(insts), name))
+
 EnzymeSetCalledFunction(ci::LLVM.CallInst, fn::LLVM.Function, toremove) = ccall((:EnzymeSetCalledFunction, libEnzyme), Cvoid, (LLVMValueRef, LLVMValueRef, Ptr{Int64}, Int64), ci, fn, toremove, length(toremove))
 EnzymeCloneFunctionWithoutReturnOrArgs(fn::LLVM.Function, keepret, args) = ccall((:EnzymeCloneFunctionWithoutReturnOrArgs, libEnzyme), LLVMValueRef, (LLVMValueRef,UInt8,Ptr{Int64}, Int64), fn, keepret, args, length(args))
 EnzymeGetShadowType(width, T) = ccall((:EnzymeGetShadowType, libEnzyme), LLVMTypeRef, (UInt64,LLVMTypeRef), width, T)
