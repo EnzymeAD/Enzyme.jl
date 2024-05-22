@@ -2107,7 +2107,12 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return Any, true
         else
             e = LLVM.API.LLVMGetElementType(Type)
-            return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            tkind2 = LLVM.API.LLVMGetTypeKind(e)
+            if tkind2 == LLVM.API.LLVMFunctionTypeKind
+                return Core.LLVMPtr{Cvoid, Int(addrspace)}, false
+            else
+                return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            end
         end
     end
     if tkind == LLVM.API.LLVMArrayTypeKind
@@ -2170,7 +2175,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     if tkind == LLVM.API.LLVMFP128TypeKind
         return Float128, false
     end
-    error("Can't construct tape type for $Type")
+    error("Can't construct tape type for $Type $(string(Type)) $tkind")
 end
 
 function tape_type(LLVMType::LLVM.LLVMType)
