@@ -3197,68 +3197,13 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     retType = convert(API.CDIFFE_TYPE, rt)
 
     rules = Dict{String, API.CustomRuleType}(
-        "jl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.pointer_from_objref" => @cfunction(inout_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_wait" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_enq_work" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-
-        "enz_noop" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_inactive_inout" => @cfunction(inout_rule,
@@ -4979,15 +4924,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # fn, but it doesn't presently so for now we will ensure this by hand
         if func == typeof(Base.Checked.throw_overflowerr_binaryop)
             llvmfn = functions(mod)[k.specfunc]
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
@@ -5013,12 +4958,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == typeof(Base.enq_work) && length(sparam_vals) == 1 && first(sparam_vals) <: Task
-            handleCustom(llvmfn, "jl_enq_work")
+            handleCustom(llvmfn, "jl_enq_work", [StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
-                handleCustom(llvmfn, "jl_wait")
+                handleCustom(llvmfn, "jl_wait", [StringAttribute("enzyme_ta_norecur")])
             end
             continue
         end
@@ -5191,11 +5136,50 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.optimize_module!(parent_job, mod)
     end
 
+    seen = TypeTreeTable()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    dl = string(LLVM.datalayout(mod))
+    ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         if !isa(inst, LLVM.CallInst)
             continue
         end
+
         fn = LLVM.called_operand(inst)
+
+        if !API.HasFromStack(inst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+            legal, source_typ = abs_typeof(inst)
+            codegen_typ = value_type(inst)
+            if legal
+                typ = if codegen_typ isa LLVM.PointerType
+                    llvm_source_typ = convert(LLVMType, source_typ; allow_boxed=true)
+                    # pointers are used for multiple kinds of arguments
+                    # - literal pointer values
+                    if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                        source_typ
+                    elseif llvm_source_typ isa LLVM.PointerType
+                        #if llvm_source_typ != codegen_typ
+                        #    throw(AssertionError("llvmtype ($llvm_source_typ) is not codegen_typ ($codegen_typ), source_typ = $source_typ within $(string(inst))"))
+                        #end
+                        # push!(args, (cc=MUT_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    # - references to aggregates
+                    else
+                        @assert llvm_source_typ != codegen_typ
+                        # push!(args, (cc=BITS_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    end
+                else
+                    codegen_typ
+                end
+
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+            elseif codegen_typ == T_prjlvalue
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+            end
+        end
+
         if !isa(fn, LLVM.Function)
             continue
         end

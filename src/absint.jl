@@ -144,6 +144,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                              ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                             ("jl_box_float32", Float32), ("ijl_box_float32", Float32),
                             )
             if nm == fname
                 return (true, ty)
