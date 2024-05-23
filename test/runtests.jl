@@ -3051,6 +3051,79 @@ end
     end
 end
 
+const CUmemoryPool2 = Ptr{Float64} 
+
+struct CUmemPoolProps2
+    reserved::NTuple{31,Char}
+end
+
+mutable struct CuMemoryPool2
+    handle::CUmemoryPool2
+end
+
+function ccall_macro_lower(func, rettype, types, args, nreq)
+    # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
+    # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
+    # just around the inner ccall
+
+    cconvert_exprs = []
+    cconvert_args = []
+    for (typ, arg) in zip(types, args)
+        var = gensym("$(func)_cconvert")
+        push!(cconvert_args, var)
+        push!(cconvert_exprs, quote
+            $var = Base.cconvert($(esc(typ)), $(esc(arg)))
+        end)
+    end
+
+    unsafe_convert_exprs = []
+    unsafe_convert_args = []
+    for (typ, arg) in zip(types, cconvert_args)
+        var = gensym("$(func)_unsafe_convert")
+        push!(unsafe_convert_args, var)
+        push!(unsafe_convert_exprs, quote
+            $var = Base.unsafe_convert($(esc(typ)), $arg)
+        end)
+    end
+
+    quote
+        $(cconvert_exprs...)
+
+        $(unsafe_convert_exprs...)
+
+        ret = ccall($(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
+                    $(unsafe_convert_args...))
+    end
+end
+
+macro gcsafe_ccall(expr)
+    ccall_macro_lower(Base.ccall_macro_parse(expr)...)
+end
+
+function cuMemPoolCreate2(pool, poolProps)
+    # CUDA.initialize_context()
+    #CUDA.
+    gc_state = @ccall(jl_gc_safe_enter()::Int8)
+    @gcsafe_ccall cuMemPoolCreate(pool::Ptr{CUmemoryPool2},
+                                          poolProps::Ptr{CUmemPoolProps2})::Cvoid
+    @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
+end
+
+function cual()
+        props = Ref(CUmemPoolProps2( 
+            ntuple(i->Char(0), 31)
+        ))
+        handle_ref = Ref{CUmemoryPool2}()
+        cuMemPoolCreate2(handle_ref, props)
+
+        CuMemoryPool2(handle_ref[])
+end
+
+@testset "Unused shadow phi rev" begin
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
+
 const SEED = 42
 const N_SAMPLES = 500
 const N_COMPONENTS = 4
