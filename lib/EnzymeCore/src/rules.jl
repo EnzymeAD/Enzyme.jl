@@ -220,6 +220,21 @@ function is_inactive_noinl_from_sig(@nospecialize(TT);
 end
 
 """
+    noalias(func::typeof(f), args...)
+
+Mark a particular function as always being a fresh allocation which does not alias any other 
+accessible memory.
+"""
+function noalias end
+
+function noalias_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+    return isapplicable(noalias, TT; world, method_table, caller)
+end
+
+"""
     inactive_type(::Type{Ty})
 
 Mark a particular type `Ty` as always being inactive.

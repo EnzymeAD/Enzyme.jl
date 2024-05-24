@@ -4857,6 +4857,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if llvmfn == primalf
             actualRetType = k.ci.rettype
         end
+        
+        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
+            push!(attributes, EnumAttribute("noalias", 0))
+        end
 
         meth = mi.def
         name = meth.name
