@@ -371,6 +371,13 @@ end
     end)
 end
 
+@inline function active_reg_recur(::Type{ST}, seen::Seen, world, ::Val{justActive}, ::Val{UnionSret}) where {ST, Seen, justActive, UnionSret}
+    if ST isa Union
+        return forcefold(Val(active_reg_recur(ST.a, seen, world, Val(justActive), Val(UnionSret))), Val(active_reg_recur(ST.b, seen, world, Val(justActive), Val(UnionSret))))
+    end
+    return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -436,13 +443,7 @@ end
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
         if UnionSret && is_sret_union(T)
-            @inline function recur(::Type{ST}) where ST
-                if ST isa Union
-                    return forcefold(Val(recur(ST.a)), Val(recur(ST.b)))
-                end
-                return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
-            end
-            return recur(T)
+            return active_reg_recur(T, seen, world, Val(justActive), Val(UnionSret))
         else
             if justActive
                 return AnyState
