@@ -4859,7 +4859,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         
         if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
-            push!(attributes, EnumAttribute("noalias", 0))
+            push!(function_attributes(llvmfn), EnumAttribute("noalias"))
+            for u in LLVM.uses(llvmfn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_operand(c)
+                if cf == llvmfn
+                    LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
+                end
+            end
         end
 
         meth = mi.def
