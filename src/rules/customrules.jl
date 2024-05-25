@@ -243,8 +243,8 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
-function custom_rule_method_error(fn, args...)
-    throw(MethodError(fn, (args...)))
+function custom_rule_method_error(world, fn, args...) 
+    throw(MethodError(fn, (args...,), world))
 end
 
 function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
@@ -310,8 +310,9 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
             fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
         else
-            TT = Tuple{typeof(kwfunc), TT.parameters...}
+            TT = Tuple{typeof(kwfunc), TT.parameters..., typeof(world)}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
             fwd_RT = Union{}
         end
     else
@@ -320,8 +321,9 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
             fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
         else
-            TT = Tuple{typeof(EnzymeRules.forward), TT.parameters...}
+            TT = Tuple{typeof(EnzymeRules.forward), TT.parameters..., typeof(world)}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
             fwd_RT = Union{}
         end
     end
