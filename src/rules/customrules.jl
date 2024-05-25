@@ -310,7 +310,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
             fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
         else
-            TT = Tuple{typeof(kwfunc), TT.parameters..., typeof(world)}
+            TT = Tuple{typeof(world), typeof(kwfunc), TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
             pushfirst!(args, LLVM.ConstantInt(world))
             fwd_RT = Union{}
@@ -321,7 +321,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
             fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
         else
-            TT = Tuple{typeof(EnzymeRules.forward), TT.parameters..., typeof(world)}
+            TT = Tuple{typeof(world), typeof(EnzymeRules.forward), TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
             pushfirst!(args, LLVM.ConstantInt(world))
             fwd_RT = Union{}
@@ -347,7 +347,6 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     else
         sret = nothing
     end
-
 
     if length(args) != length(parameters(llvmf))
         GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
