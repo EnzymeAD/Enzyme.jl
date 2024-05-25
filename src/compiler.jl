@@ -1353,8 +1353,13 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
+    ct = if occursin("ptx", LLVM.triple(mod))
+        GPUCompiler.emit_exception!(B, string, orig)
+    else
+        call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
+    end
+
     # 2. Call error function and insert unreachable
-    ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
     return ct
