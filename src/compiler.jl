@@ -371,6 +371,13 @@ end
     end)
 end
 
+@inline function active_reg_recur(::Type{ST}, seen::Seen, world, ::Val{justActive}, ::Val{UnionSret}) where {ST, Seen, justActive, UnionSret}
+    if ST isa Union
+        return forcefold(Val(active_reg_recur(ST.a, seen, world, Val(justActive), Val(UnionSret))), Val(active_reg_recur(ST.b, seen, world, Val(justActive), Val(UnionSret))))
+    end
+    return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -436,13 +443,7 @@ end
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
         if UnionSret && is_sret_union(T)
-            @inline function recur(::Type{ST}) where ST
-                if ST isa Union
-                    return forcefold(Val(recur(ST.a)), Val(recur(ST.b)))
-                end
-                return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
-            end
-            return recur(T)
+            return active_reg_recur(T, seen, world, Val(justActive), Val(UnionSret))
         else
             if justActive
                 return AnyState
@@ -1194,6 +1195,13 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
     end
 end
 
+
+@inline function EnzymeCore.make_zero(x::FT)::FT where {FT <: AbstractFloat}
+    return Base.zero(x)
+end
+@inline function EnzymeCore.make_zero(x::Complex{FT})::Complex{FT} where {FT <: AbstractFloat}
+    return Base.zero(x)
+end
 @inline function EnzymeCore.make_zero(x::Array{FT, N})::Array{FT, N} where {FT <: AbstractFloat, N}
     return Base.zero(x)
 end
@@ -1755,92 +1763,228 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
+        gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
         # Ignore mismatched activity if phi/store of ghost
-        todo = LLVM.Value[data2]
-        seen = Set{LLVM.Value}()
+        seen = Dict{LLVM.Value, LLVM.Value}()
         illegal = false
-        while length(todo) != 0
-            cur = pop!(todo)
-            if cur in seen
-                continue
-            end
-            push!(seen, cur)
-            if isa(cur, LLVM.PHIInst)
-                for v in LLVM.incoming(cur)
-                    push!(todo, cur)
+        created = LLVM.Instruction[] 
+        world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+        width = get_width(gutils) 
+        function make_batched(cur, B)
+            if width == 1
+                return cur
+            else
+                shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))))
+                for idx in 1:width
+                    shadowres = insert_value!(B, shadowres, cur, idx-1)
+                    if isa(shadowres, LLVM.Instruction)
+                        push!(created, shadowres)
+                    end
                 end
-                continue
+                return shadowres
             end
+        end
 
+        illegalVal = nothing
+
+        function make_replacement(cur::LLVM.Value, prevbb)::LLVM.Value
+            ncur = new_from_original(gutils, cur)
+            if cur in keys(seen)
+                return seen[cur]
+            end
+            
             legal, TT = abs_typeof(cur, true)
             if legal
-                world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
                 if guaranteed_const_nongen(TT, world)
-                    continue
+                    return make_batched(ncur, prevbb)
                 end
+
                 legal2, obj = absint(cur)
+
+                # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
+                if legal2 && active_reg_inner(TT, (), world) == ActiveState && isa(cur, LLVM.ConstantExpr) && cur == data2
+                    if width == 1
+                        res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                        push!(created, res)
+                        return res
+                    else
+                        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))))
+                        for idx in 1:width
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            shadowres = insert_value!(prevbb, shadowres, res, idx-1)
+                            push!(created, shadowres)
+                        end
+                        return shadowres
+                    end
+                end
+
                 badval = if legal2
                     string(obj)*" of type"*" "*string(TT)
                 else
                     "Unknown object of type"*" "*string(TT)
                 end
+                illegalVal = cur
                 illegal = true
-                break
+                return make_batched(ncur, prevbb)
             end
+            
             if isa(cur, LLVM.PointerNull)
-                continue
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.UndefValue)
-                continue
+                return make_batched(ncur, prevbb)
             end
             @static if LLVM.version() >= v"12"
             if isa(cur, LLVM.PoisonValue)
-                continue
+                return make_batched(ncur, prevbb)
             end
             end
             if isa(cur, LLVM.ConstantAggregateZero)
-                continue
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantAggregate)
-                continue
-            end
-            if isa(cur, LLVM.ConstantDataSequential)
-                for v in collect(cur)
-                    push!(todo, v)
-                end
-                continue
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantInt)
-                if width(value_type(cur)) <= 8
-                    continue
+                if convert(UInt64, cur) == 0
+                    return make_batched(ncur, prevbb)
+                end
+            end
+            if isa(cur, LLVM.ConstantDataSequential)
+                cvals = LLVM.Value[] 
+                changed = false
+                for v in collect(cur)
+                    tmp = make_replacement(v, prevbb)
+                    if illegal
+                        return ncur
+                    end
+                    if v != tmp
+                        changed = true
+                    end
+                    push!(todo, tmp)
+                end
+
+                cur2 = if changed
+                    illegalVal = cur
+                    illegal = true
+                    # TODO replace with correct insertions/splats
+                    ncur
+                else
+                    make_batched(ncur, prevbb)
+                end
+                return cur2
+            end
+            if isa(cur, LLVM.ConstantInt)
+                if LLVM.width(value_type(cur)) <= 8
+                    return make_batched(ncur, prevbb)
                 end
                 # if storing a constant int as a non-pointer, presume it is not a GC'd var and is safe
                 # for activity state to mix
                 if isa(val, LLVM.StoreInst) operands(val)[1] == cur && !isa(value_type(operands(val)[1]), LLVM.PointerType)
-                    continue
+                    return make_batched(ncur, prevbb)
                 end
             end
+            
+            if isa(cur, LLVM.InsertValueInst)
+                lhs = make_replacement(operands(cur)[1], prevbb)
+                if illegal
+                    return ncur
+                end
+                rhs = make_replacement(operands(cur)[2], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(cur)[1] && rhs == operands(cur)[2]
+                    return make_batched(ncur, prevbb)
+                end
+                inds = LLVM.API.LLVMGetIndices(cur.ref)
+                ninds = LLVM.API.LLVMGetNumIndices(cur.ref)
+                jinds = Cuint[unsafe_load(inds, i) for i in 1:ninds]
+                if width == 1
+                    nv = API.EnzymeInsertValue(prevbb, lhs, rhs, jinds)
+                    push!(created, nv)
+                    seen[cur] = nv
+                    return nv
+                else
+                    shadowres = lhs
+                    for idx in 1:width
+                        jindsv = copy(jinds)
+                        pushfirst!(jindsv, idx-1)
+                        shadowres = API.EnzymeInsertValue(prevbb, shadowres, extract_value!(prevbb, rhs, idx-1), jindsv)
+                        if isa(shadowres, LLVM.Instruction)
+                            push!(created, shadowres)
+                        end
+                    end
+                    return shadowres
+                end
+            end
+            
+            if isa(cur, LLVM.PHIInst)
+                Bphi = IRBuilder()
+                position!(Bphi, ncur)
+                shadowty = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur)))
+                phi2 = phi!(Bphi, shadowty, "tempphi"*LLVM.name(cur))
+                seen[cur] = phi2
+                changed = false
+                recsize = length(created)+1
+                for (v, bb) in LLVM.incoming(cur)
+                    B2 = IRBuilder()
+                    position!(B2, new_from_original(gutils, last(instructions(bb))))
+                    tmp = make_replacement(v, B2)
+                    if illegal
+                        changed = true
+                        break
+                    end
+                    @assert value_type(tmp) == shadowty
+                    if tmp != new_from_original(gutils, v) && v != cur
+                        changed = true
+                    end
+                    push!(LLVM.incoming(phi2), (tmp, new_from_original(gutils, bb)))
+                end
+                if !changed || illegal
+                    LLVM.API.LLVMInstructionEraseFromParent(phi2)
+                    seen[cur] = ncur
+                    plen = length(created)
+                    for i in recsize:plen
+                        u = created[i]
+                        replace_uses!(u, LLVM.UndefValue(value_type(u)))
+                    end
+                    for i in recsize:plen
+                        u = created[i]
+                        LLVM.API.LLVMInstructionEraseFromParent(u)
+                    end
+                    for i in recsize:plen
+                        pop!(created)
+                    end
+                    return illegal ? ncur : make_batched(ncur, prevbb)
+                end
+                push!(created, phi2)
+                return phi2
+            end
+
             illegal = true
-            break
+            illegalVal = cur
+            return ncur
         end
+
+        b = IRBuilder(B)
+        replacement = make_replacement(data2, b)
 
         if !illegal
-            return C_NULL
+            return replacement.ref
         end
-
+        for u in created
+            replace_uses!(u, LLVM.UndefValue(value_type(u)))
+        end
+        for u in created
+            LLVM.API.LLVMInstructionEraseFromParent(u)
+        end
         if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
             mi, rt = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(val))::LLVM.Function, #=error=#false)
             if mi !== nothing && isghostty(rt)
                 return C_NULL
             end
         end
-
-        gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
-        newb = new_from_original(gutils, val)
-        while isa(newb, LLVM.PHIInst)
-            newb = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(newb))
-        end
-        b = IRBuilder(B)
         msg2 = sprint() do io
             print(io, msg)
             println(io)
@@ -1856,6 +2000,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 print(io, "Type tree: ")
                 println(io, Base.unsafe_string(st))
                 API.EnzymeStringFree(st)
+            end
+            if illegalVal !== nothing
+                println(io, " llvalue="*string(illegalVal))
             end
             println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
@@ -1961,7 +2108,12 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return Any, true
         else
             e = LLVM.API.LLVMGetElementType(Type)
-            return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            tkind2 = LLVM.API.LLVMGetTypeKind(e)
+            if tkind2 == LLVM.API.LLVMFunctionTypeKind
+                return Core.LLVMPtr{Cvoid, Int(addrspace)}, false
+            else
+                return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            end
         end
     end
     if tkind == LLVM.API.LLVMArrayTypeKind
@@ -2024,7 +2176,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     if tkind == LLVM.API.LLVMFP128TypeKind
         return Float128, false
     end
-    error("Can't construct tape type for $Type")
+    error("Can't construct tape type for $Type $(string(Type)) $tkind")
 end
 
 function tape_type(LLVMType::LLVM.LLVMType)
@@ -3049,68 +3201,13 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     retType = convert(API.CDIFFE_TYPE, rt)
 
     rules = Dict{String, API.CustomRuleType}(
-        "jl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.pointer_from_objref" => @cfunction(inout_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_wait" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_enq_work" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-
-        "enz_noop" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_inactive_inout" => @cfunction(inout_rule,
@@ -4831,15 +4928,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # fn, but it doesn't presently so for now we will ensure this by hand
         if func == typeof(Base.Checked.throw_overflowerr_binaryop)
             llvmfn = functions(mod)[k.specfunc]
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
@@ -4865,12 +4962,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == typeof(Base.enq_work) && length(sparam_vals) == 1 && first(sparam_vals) <: Task
-            handleCustom(llvmfn, "jl_enq_work")
+            handleCustom(llvmfn, "jl_enq_work", [StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
-                handleCustom(llvmfn, "jl_wait")
+                handleCustom(llvmfn, "jl_wait", [StringAttribute("enzyme_ta_norecur")])
             end
             continue
         end
@@ -5043,11 +5140,50 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.optimize_module!(parent_job, mod)
     end
 
+    seen = TypeTreeTable()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    dl = string(LLVM.datalayout(mod))
+    ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         if !isa(inst, LLVM.CallInst)
             continue
         end
+
         fn = LLVM.called_operand(inst)
+
+        if !API.HasFromStack(inst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+            legal, source_typ = abs_typeof(inst)
+            codegen_typ = value_type(inst)
+            if legal
+                typ = if codegen_typ isa LLVM.PointerType
+                    llvm_source_typ = convert(LLVMType, source_typ; allow_boxed=true)
+                    # pointers are used for multiple kinds of arguments
+                    # - literal pointer values
+                    if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                        source_typ
+                    elseif llvm_source_typ isa LLVM.PointerType
+                        #if llvm_source_typ != codegen_typ
+                        #    throw(AssertionError("llvmtype ($llvm_source_typ) is not codegen_typ ($codegen_typ), source_typ = $source_typ within $(string(inst))"))
+                        #end
+                        # push!(args, (cc=MUT_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    # - references to aggregates
+                    else
+                        @assert llvm_source_typ != codegen_typ
+                        # push!(args, (cc=BITS_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    end
+                else
+                    codegen_typ
+                end
+
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+            elseif codegen_typ == T_prjlvalue
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+            end
+        end
+
         if !isa(fn, LLVM.Function)
             continue
         end

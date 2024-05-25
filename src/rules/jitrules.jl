@@ -455,7 +455,11 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
 
@@ -504,7 +508,11 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
 
@@ -552,12 +560,17 @@ function generic_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
-    if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
 
-        @assert tape !== C_NULL
-        width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset, B, true; tape)
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
+        return nothing
     end
+
+    @assert tape !== C_NULL
+    width = get_width(gutils)
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset, B, true; tape)
     return nothing
 end
 
@@ -572,7 +585,11 @@ function generic_rev(B, orig, gutils, tape)::Cvoid
 end
 
 function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -613,7 +630,11 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
 
@@ -656,6 +677,13 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
 end
 
 function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
+        return nothing
+    end
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
         width = get_width(gutils)
         generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, B, true; tape)
@@ -690,10 +718,14 @@ function apply_latest_rev(B, orig, gutils, tape)
 end
 
 function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
-    
+
     v, isiter = absint(operands(orig)[offset+1])
     v2, istup = absint(operands(orig)[offset+2])
 
@@ -778,7 +810,11 @@ function error_if_active_iter(arg)
 end
 
 function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
 
@@ -859,7 +895,11 @@ function apply_iterate_rev(B, orig, gutils, tape)
 end
 
 function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
     
@@ -899,7 +939,11 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return true
     end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -946,10 +990,16 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function common_invoke_rev(offset, B, orig, gutils, tape)
-    if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
-        width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, B, true; tape)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
+        return nothing
     end
+    
+    width = get_width(gutils)
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, #=start=#offset+1, B, true; tape)
 
     return nothing
 end

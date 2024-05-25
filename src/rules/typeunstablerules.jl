@@ -714,17 +714,92 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
+
+function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T, isconst}
+    RT = Core.Typeof(val)
+    if active_reg(RT)
+        setfield!(dptr, idx, make_zero(val))
+    else
+        setfield!(dptr, idx, isconst ? val : dval)
+    end
+end
+
+function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T, isconst}
+    RT = Core.Typeof(val)
+    if active_reg(RT) && !isconst
+        dval[] += getfield(dptr, idx)
+        setfield!(dptr, idx, make_zero(val))
+    end
+end
+
 function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
+
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
     end
+
+    origops = collect(operands(orig))[offset:end]
+    if !is_constant_value(gutils, origops[2])
+        width = get_width(gutils)
+
+        shadowstruct = invert_pointer(gutils, origops[2], B)
+
+        shadowval = if !is_constant_value(gutils, origops[2])
+            invert_pointer(gutils, origops[4], B)
+        else
+            nothing
+        end
+
+        for idx in 1:width
+            vals = LLVM.Value[
+              (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1),
+              new_from_original(gutils, origops[3]),
+              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              new_from_original(gutils, origops[4]),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)),
+            ]
+            
+            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_aug))
+
+            cal = emit_apply_generic!(B, vals)
+
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
+
     return false
 end
 
 function common_setfield_rev(offset, B, orig, gutils, tape)
-  emit_error(B, orig, "Enzyme: unhandled reverse for jl_f_setfield")
+    origops = collect(operands(orig))[offset:end]
+    if !is_constant_value(gutils, origops[2])
+        width = get_width(gutils)
+
+        shadowstruct = invert_pointer(gutils, origops[2], B)
+
+        shadowval = if !is_constant_value(gutils, origops[2])
+            invert_pointer(gutils, origops[4], B)
+        else
+            nothing
+        end
+
+        for idx in 1:width
+            vals = LLVM.Value[
+              lookup_value(gutils, (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1), B),
+              lookup_value(gutils, new_from_original(gutils, origops[3]), B),
+              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              lookup_value(gutils, new_from_original(gutils, origops[4]), B),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : lookup_value(gutils, ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)), B),
+            ]
+            
+            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_rev))
+
+            cal = emit_apply_generic!(B, vals)
+
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
   return nothing
 end
 

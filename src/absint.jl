@@ -144,6 +144,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                              ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                             ("jl_box_float32", Float32), ("ijl_box_float32", Float32),
                             )
             if nm == fname
                 return (true, ty)
@@ -221,7 +222,11 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-        	return abs_typeof(operands(arg)[1], partial)
+        	legal, RT = abs_typeof(operands(arg)[1], partial)
+            if legal
+                @assert RT <: Array
+            end
+            return (legal, RT)
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
@@ -284,6 +289,9 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                                     fieldoffset(typ, i+1)
                                 end - offset
                                 if fsize == llsz(value_type(larg))
+                                    if Base.isconcretetype(subT) && is_concrete_tuple(subT) && length(subT.parameters) == 1
+                                        subT = subT.parameters[1]
+                                    end
                                     return (true, subT)
                                 end
                             end
