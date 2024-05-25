@@ -4857,9 +4857,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if llvmfn == primalf
             actualRetType = k.ci.rettype
         end
-        
+       
         if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
-            push!(function_attributes(llvmfn), EnumAttribute("noalias"))
+            push!(return_attributes(llvmfn), EnumAttribute("noalias"))
             for u in LLVM.uses(llvmfn)
                 c = LLVM.user(u)
                 if !isa(c, LLVM.CallInst)
