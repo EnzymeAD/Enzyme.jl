@@ -243,6 +243,10 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
+function custom_rule_method_error(fn, args...)
+    throw(MethodError(fn, (args...)))
+end
+
 function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -305,19 +309,21 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             @safe_debug "Applying custom forward rule (kwcall)" TT
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
             fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
+        else
+            TT = Tuple{typeof(kwfunc), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            fwd_RT = Union{}
         end
     else
         if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
             @safe_debug "Applying custom forward rule" TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
             fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+        else
+            TT = Tuple{typeof(EnzymeRules.forward), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            fwd_RT = Union{}
         end
-    end
-
-    if llvmf === nothing
-        @safe_debug "No custom forward rule is applicable for" TT
-        emit_error(B, orig, "Enzyme: No custom rule was applicable for " * string(TT))
-        return false
     end
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
