@@ -531,6 +531,11 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(kwfunc), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     else
         @assert kwtup === nothing
@@ -542,20 +547,19 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(EnzymeRules.augmented_primal), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     end
-    
-    if ami !== nothing
-        target = DefaultCompilerTarget()
-        params = PrimalCompilerParams(mode)
-        job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
-        interp = GPUCompiler.get_interpreter(job)
-        aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
-    else
-        @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-        emit_error(B, orig, "Enzyme: No custom augmented_primal rule was applicable for " * string(augprimal_TT))
-        return C_NULL
-    end
+
+    target = DefaultCompilerTarget()
+    params = PrimalCompilerParams(mode)
+    aug_RT = something(Core.Compiler.typeinf_type(GPUCompiler.get_interpreter(CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)), ami.def, ami.specTypes, ami.sparam_vals), Any)
+
+    @assert ami !== nothing
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
@@ -603,19 +607,23 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(rkwfunc), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
                 @safe_debug "Applying custom reverse rule" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(EnzymeRules.reverse), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
-        end
-
-        if llvmf == nothing
-            @safe_debug "No custom reverse rule is applicable for" rev_TT
-            emit_error(B, orig, "Enzyme: No custom reverse rule was applicable for " * string(rev_TT))
-            return C_NULL
         end
     end
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
