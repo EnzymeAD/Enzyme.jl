@@ -181,6 +181,10 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     subchanged = false
                     for lval in LLVM.inputs(bunduse)
                         llty = value_type(lval)
+                        if !isa(llty, LLVM.PointerType) || LLVM.addrspace(llty) != 10
+                            push!(uservals, lval)
+                            continue
+                        end
                         vals = get_julia_inner_types(B, nothing, lval)
                         for v in vals
                             if isa(v, LLVM.PointerNull)
@@ -201,6 +205,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     changed = true
                     push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
                 end
+                changed = false
                 if changed
                     prevname = LLVM.name(inst)
                     LLVM.name!(inst, "")
@@ -222,7 +227,6 @@ function rewrite_ccalls!(mod::LLVM.Module)
             end
         end
         for (inst, newinst) in replaceAndErase
-            @show "replace", inst, newinst
             replace_uses!(inst, newinst)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
