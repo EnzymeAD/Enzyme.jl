@@ -1710,6 +1710,7 @@ metaconcat3(x, y, z) = concat(x..., y..., z...)
 
     Enzyme.autodiff(Forward, metaconcat, Const(a))
 
+@static if VERSION ≥ v"1.7-" 
     dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Duplicated(a, da))
     @test length(dres) == 5
     @test dres[1] ≈ 7.0
@@ -1755,6 +1756,7 @@ metaconcat3(x, y, z) = concat(x..., y..., z...)
     @test dres[3] == "b"
     @test dres[4] == "c"
     @test dres[5] == "d"
+end
 
     y = [(-92.0, -93.0), (-97.9, -911.2)]
     dy = [(-913.7, -915.2), (-9100.02, -9304.1)]
