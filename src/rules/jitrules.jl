@@ -306,11 +306,270 @@ end
     return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
 end
 
+@inline concat() = ()
+@inline concat(a) = a
+@inline concat(a, b) = (a..., b...)
+@inline concat(a, b, c...) = concat(concat(a, b), c...)
+
+@inline iterate_unwrap_inner_fwd(x::Const) = (map(Const, x.val)...,)
+@inline iterate_unwrap_inner_fwd(x::Duplicated) = (map(Duplicated, x.val, x.dval)...,)
+@inline batch_dup_tuple(x, vals...) = BatchDuplicated(x, (vals...,))
+@inline iterate_unwrap_inner_fwd(x::BatchDuplicated) = (map(batch_dup_tuple, x.val, x.dval...)...,)
+
+@inline function iterate_unwrap_fwd(args...)
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        iterate_unwrap_inner_fwd(args[i])
+    end
+end
+
+# This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
+function fwddiff_with_return(::Val{width}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {width, Nargs}
+    tt′   = Enzyme.vaTypeof(args...)
+    ReturnPrimal = Val(true)
+    RT = A
+    ModifiedBetween = Val(Enzyme.falses_from_args(Nargs+1))
+    
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
+    world = codegen_world_age(Core.Typeof(f.val), tt)
+
+    thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI)(f, args...)
+end
+
+function body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(res[1]), Val(Width+1))
+    ModifiedBetween = ntuple(i->false, Val(N+1))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+    return quote
+        args0 = ($(wrapped...),)
+        args = concat(iterate_unwrap_fwd(args0...)...)
+
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && guaranteed_const(FT)
+            dupClosure = false
+        end
+
+        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
+        rt = Core.Compiler.return_type(f, tt)
+        annotation0 = guess_activity(rt, API.DEM_ForwardMode)
+
+        annotation = @static if $Width != 1
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                BatchDuplicated{rt, $Width}
+            else
+                Const{rt}
+            end
+        else
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                Duplicated{rt}
+            else
+                Const{rt}
+            end
+        end
+
+        res = fwddiff_with_return(Val($Width), dupClosure ? Duplicated(f, df) : Const(f), annotation, args...)
+        return if annotation <: Const
+            ReturnType(($(nres...),))
+        else
+            if $Width == 1
+                ReturnType((res[1], res[2]))
+            else
+                ReturnType((res[1], res[2]...))
+            end
+        end
+    end
+end
+
+function func_runtime_iterate_fwd(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _ = setup_macro_wraps(true, N, Width)
+    body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+
+    quote
+        function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+    N = div(length(allargs)+2, Width+1)-1
+    _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(true, N, Width, :allargs)
+    return body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+end
+
+function body_runtime_iterate_augfwd(N, Width, wrapped, primttypes)
+    nnothing = ntuple(i->nothing, Val(Width+1))
+    nres = ntuple(i->:(origRet), Val(Width+1))
+    nzeros = ntuple(i->:(Ref(zero(resT))), Val(Width))
+    nres3 = ntuple(i->:(res[3]), Val(Width))
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+
+    return quote
+        args = ($(wrapped...),)
+        throw(AssertionError("Runtime iterate augmented forward pass unhandled, f=$f df=$df args=$args"))
+        
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt′ = Tuple{$(Types...)}
+        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
+        annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && guaranteed_const(FT)
+            dupClosure = false
+        end
+
+        world = codegen_world_age(FT, Tuple{$(ElTypes...)})
+
+        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
+                                 annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+
+        internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
+        resT = typeof(origRet)
+        if annotation <: Const
+            shadow_return = nothing
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType(($(nres...), tape))
+        elseif annotation <: Active
+            if $Width == 1
+                shadow_return = Ref(make_zero(origRet))
+            else
+                shadow_return = ($(nzeros...),)
+            end
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            if $Width == 1
+                return ReturnType((origRet, shadow_return, tape))
+            else
+                return ReturnType((origRet, shadow_return..., tape))
+            end
+        end
+
+        @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
+
+        shadow_return = nothing
+        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+        if $Width == 1
+            return ReturnType((origRet, initShadow, tape))
+        else
+            return ReturnType((origRet, initShadow..., tape))
+        end
+    end
+end
+
+function func_runtime_iterate_augfwd(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _ = setup_macro_wraps(false, N, Width)
+    body = body_runtime_iterate_augfwd(N, Width, wrapped, primtypes)
+
+    quote
+        function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+    N = div(length(allargs)+2, Width+1)-1
+    _, _, primtypes, _, _, wrapped, _ = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_iterate_augfwd(N, Width, wrapped, primtypes)
+end
+
+function body_runtime_iterate_rev(N, Width, wrapped, primttypes, shadowargs)
+    outs = []
+    for i in 1:N
+        for w in 1:Width
+            expr = if Width == 1
+                :(tup[$i])
+            else
+                :(tup[$i][$w])
+            end
+            shad = shadowargs[i][w]
+            out = :(if tup[$i] === nothing
+              elseif $shad isa Base.RefValue
+                  $shad[] = recursive_add($shad[], $expr)
+                else
+                  error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
+                end
+               )
+            push!(outs, out)
+        end
+    end
+    shadow_ret = nothing
+    if Width == 1
+        shadowret = :(tape.shadow_return[])
+    else
+        shadowret = []
+        for w in 1:Width
+            push!(shadowret, :(tape.shadow_return[$w][]))
+        end
+        shadowret = :(($(shadowret...),))
+    end
+
+    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
+    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+
+    quote
+        args = ($(wrapped...),)
+        throw(AssertionError("Runtime iterate reverse pass unhandled, f=$f df=$df args=$args"))
+
+        # TODO: Annotation of return value
+        # tt0 = Tuple{$(primtypes...)}
+        tt = Tuple{$(ElTypes...)}
+        tt′ = Tuple{$(Types...)}
+        rt = Core.Compiler.return_type(f, tt)
+        annotation = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+        dupClosure = ActivityTup[1]
+        FT = Core.Typeof(f)
+        if dupClosure && guaranteed_const(FT)
+            dupClosure = false
+        end
+        world = codegen_world_age(FT, tt)
+
+        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+        if tape.shadow_return !== nothing
+            args = (args..., $shadowret)
+        end
+
+        tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
+
+        $(outs...)
+        return nothing
+    end
+end
+
+function func_runtime_iterate_rev(N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width)
+    body = body_runtime_iterate_rev(N, Width, wrapped, primtypes, batchshadowargs)
+
+    quote
+        function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+    N = div(length(allargs)+2, Width+1)-1
+    _, _, primtypes, _, _, wrapped, batchshadowargs = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
+end
+
 # Create specializations
 for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_generic_fwd(N, Width))
     eval(func_runtime_generic_augfwd(N, Width))
     eval(func_runtime_generic_rev(N, Width))
+    eval(func_runtime_iterate_fwd(N, Width))
+    eval(func_runtime_iterate_augfwd(N, Width))
+    eval(func_runtime_iterate_rev(N, Width))
 end
 
 function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
@@ -776,24 +1035,42 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         unsafe_store!(shadowR, shadowres.ref)
         return false
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented, forward for jl_f__apply_iterate")
-    if unsafe_load(shadowR) != C_NULL
-        cal =  new_from_original(gutils, orig)
-        width = get_width(gutils)
-        if width == 1
-            shadow = cal
-        else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-            shadow = LLVM.UndefValue(ST)
-            for i in 1:width
-                shadow = insert_value!(B, shadow, cal, i-1)
-                if i == 1
-                    API.moveBefore(cal, shadow, B)
+
+    if v && isiter == Base.iterate
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+        sret = generic_setup(orig, runtime_iterate_fwd, AnyArray(1+Int(width)), gutils, #=start=#offset+2, B, false)
+        AT = LLVM.ArrayType(T_prjlvalue, 1+Int(width))
+        if unsafe_load(shadowR) != C_NULL
+            if width == 1
+                gep = LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
+                shadow = LLVM.load!(B, T_prjlvalue, gep)
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                shadow = LLVM.UndefValue(ST)
+                for i in 1:width
+                    gep = LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(i)])
+                    ld = LLVM.load!(B, T_prjlvalue, gep)
+                    shadow = insert_value!(B, shadow, ld, i-1)
                 end
             end
+            unsafe_store!(shadowR, shadow.ref)
         end
-        unsafe_store!(shadowR, shadow.ref)
+
+        if unsafe_load(normalR) != C_NULL
+            normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
+            unsafe_store!(normalR, normal.ref)
+        else
+            # Delete the primal code
+            ni = new_from_original(gutils, orig)
+            erase_with_placeholder(gutils, ni, orig)
+        end
+        return false
     end
+
+    emit_error(B, orig, "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate "*string((v, v2, isiter, istup, length(operands(orig)), offset+4)))
+
     return false
 end
 
