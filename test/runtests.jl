@@ -1647,6 +1647,231 @@ end
 
 end
 
+
+concat() = ()
+concat(a) = a
+concat(a, b) = (a..., b...)
+concat(a, b, c...) = concat(concat(a, b), c...)
+
+metaconcat(x) = concat(x...)
+
+metaconcat2(x, y) = concat(x..., y...)
+
+midconcat(x, y) = (x, concat(y...)...)
+
+metaconcat3(x, y, z) = concat(x..., y..., z...)
+
+@testset "Forward Apply iterate" begin
+    x = [(2.0, 3.0), (7.9, 11.2)]
+    dx = [(13.7, 15.2), (100.02, 304.1)]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(x, dx))
+    @test length(dres) == 4
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(x, dx))
+    @test length(res) == 4
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test length(dres) == 4
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+
+    a = [("a", "b"), ("c", "d")]
+    da = [("e", "f"), ("g", "h")]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(a, da))
+    @test length(dres) == 4
+    @test dres[1] == "a"
+    @test dres[2] == "b"
+    @test dres[3] == "c"
+    @test dres[4] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(a, da))
+    @test length(res) == 4
+    @test res[1] == "a"
+    @test res[2] == "b"
+    @test res[3] == "c"
+    @test res[4] == "d"
+    @test length(dres) == 4
+    @test dres[1] == "a"
+    @test dres[2] == "b"
+    @test dres[3] == "c"
+    @test dres[4] == "d"
+
+
+    Enzyme.autodiff(Forward, metaconcat, Const(a))
+
+    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Duplicated(a, da))
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Duplicated(a, da))
+    @test length(res) == 5
+    @test res[1] ≈ 1.0
+    @test res[2] == "a"
+    @test res[3] == "b"
+    @test res[4] == "c"
+    @test res[5] == "d"
+
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+
+    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Const(a))
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Const(a))
+    @test length(res) == 5
+    @test res[1] ≈ 1.0
+    @test res[2] == "a"
+    @test res[3] == "b"
+    @test res[4] == "c"
+    @test res[5] == "d"
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+    y = [(-92.0, -93.0), (-97.9, -911.2)]
+    dy = [(-913.7, -915.2), (-9100.02, -9304.1)]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat2, Duplicated(x, dx), Duplicated(y, dy))
+    @test length(dres) == 8
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+    @test dres[5] ≈ -913.7
+    @test dres[6] ≈ -915.2
+    @test dres[7] ≈ -9100.02
+    @test dres[8] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat2, Duplicated, Duplicated(x, dx), Duplicated(y, dy))
+    @test length(res) == 8
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test res[5] ≈ -92.0
+    @test res[6] ≈ -93.0
+    @test res[7] ≈ -97.9
+    @test res[8] ≈ -911.2
+    @test length(dres) == 8
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+    @test dres[5] ≈ -913.7
+    @test dres[6] ≈ -915.2
+    @test dres[7] ≈ -9100.02
+    @test dres[8] ≈ -9304.1
+
+
+    dres, = Enzyme.autodiff(Forward, metaconcat3, Duplicated(x, dx), Const(a), Duplicated(y, dy))
+    @test length(dres) == 12
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    @test dres[5] == "a"
+    @test dres[6] == "b"
+    @test dres[7] == "c"
+    @test dres[8] == "d"
+
+    @test dres[9] ≈ -913.7
+    @test dres[10] ≈ -915.2
+    @test dres[11] ≈ -9100.02
+    @test dres[12] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat3, Duplicated, Duplicated(x, dx), Const(a), Duplicated(y, dy))
+    @test length(res) == 12
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+
+    @test res[5] == "a"
+    @test res[6] == "b"
+    @test res[7] == "c"
+    @test res[8] == "d"
+
+    @test res[9] ≈ -92.0
+    @test res[10] ≈ -93.0
+    @test res[11] ≈ -97.9
+    @test res[12] ≈ -911.2
+
+    @test length(dres) == 12
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    @test dres[5] == "a"
+    @test dres[6] == "b"
+    @test dres[7] == "c"
+    @test dres[8] == "d"
+
+    @test dres[9] ≈ -913.7
+    @test dres[10] ≈ -915.2
+    @test dres[11] ≈ -9100.02
+    @test dres[12] ≈ -9304.1
+
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, BatchDuplicated(x, (dx, dy)))
+    @test length(dres[1]) == 4
+    @test dres[1][1] ≈ 13.7
+    @test dres[1][2] ≈ 15.2
+    @test dres[1][3] ≈ 100.02
+    @test dres[1][4] ≈ 304.1
+    @test length(dres[2]) == 4
+    @test dres[2][1] ≈ -913.7
+    @test dres[2][2] ≈ -915.2
+    @test dres[2][3] ≈ -9100.02
+    @test dres[2][4] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, BatchDuplicated(x, (dx, dy)))
+    @test length(res) == 4
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test length(dres[1]) == 4
+    @test dres[1][1] ≈ 13.7
+    @test dres[1][2] ≈ 15.2
+    @test dres[1][3] ≈ 100.02
+    @test dres[1][4] ≈ 304.1
+    @test length(dres[2]) == 4
+    @test dres[2][1] ≈ -913.7
+    @test dres[2][2] ≈ -915.2
+    @test dres[2][3] ≈ -9100.02
+    @test dres[2][4] ≈ -9304.1
+end
+
 @testset "Dynamic Val Construction" begin
 
     dyn_f(::Val{D}) where D = prod(D)
