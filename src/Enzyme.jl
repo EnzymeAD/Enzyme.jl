@@ -2,8 +2,8 @@ module Enzyme
 
 import EnzymeCore
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
-export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode
+import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 
 import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
 export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
@@ -48,30 +48,14 @@ include("internal_rules.jl")
 
 import .Compiler: CompilationException
 
-# @inline annotate() = ()
-# @inline annotate(arg::A, args::Vararg{Any, N}) where {A<:Annotation, N} = (arg, annotate(args...)...)
-# @inline annotate(arg, args::Vararg{Any, N}) where N = (Const(arg), annotate(args...)...)
-
-@inline function falses_from_args(::Val{add}, args::Vararg{Any, N}) where {add,N}
-    ntuple(Val(add+N)) do i
+@inline function falses_from_args(N)
+    ntuple(Val(N)) do i
         Base.@_inline_meta
         false
     end
 end
 
-@inline function annotate(args::Vararg{Any, N}) where N
-    ntuple(Val(N)) do i
-        Base.@_inline_meta
-        arg = @inbounds args[i]
-        if arg isa Annotation
-            return arg
-        else
-            return Const(arg)
-        end
-    end
-end
-
-@inline function any_active(args::Vararg{Any, N}) where N
+@inline function any_active(args::Vararg{Annotation, N}) where N
     any(ntuple(Val(N)) do i
         Base.@_inline_meta
         arg = @inbounds args[i]
@@ -81,6 +65,13 @@ end
             return false
         end
     end)
+end
+
+@inline function vaTypeof(args::Vararg{Any, N}) where N
+    return Tuple{(ntuple(Val(N)) do i
+        Base.@_inline_meta
+        Core.Typeof(args[i])
+    end)...}
 end
 
 @inline function same_or_one_helper(current, next)
@@ -108,17 +99,60 @@ end
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
 
-@inline function same_or_one(args...)
-    res = same_or_one_rec(-1, args...)
-    if res == -1
-        return 1
+@inline function same_or_one(defaultVal, args...)
+    local_soo_res = same_or_one_rec(-1, args...)
+    if local_soo_res == -1
+        defaultVal
     else
-        return res
+        local_soo_res
+    end
+end
+
+
+@inline function refn_seed(x::T) where T
+    if T <: Complex
+        return conj(x) / 2
+    else
+        return x
+    end
+end
+
+@inline function imfn_seed(x::T) where T
+    if T <: Complex
+        return im * conj(x) / 2
+    else
+        return T(0)
+    end
+end
+
+@inline function seed_complex_args(seen, seen2, args::Vararg{Annotation, Nargs}) where {Nargs}
+    return ntuple(Val(Nargs)) do i
+        Base.@_inline_meta
+        arg = args[i]
+        if arg isa Const || arg isa Active
+            arg
+        elseif arg isa Duplicated || arg isa DuplicatedNoNeed
+            RT = eltype(Core.Typeof(arg))
+            BatchDuplicated(arg.val, (arg.dval, make_zero(RT, seen, arg.dval), make_zero(RT, seen2, arg.dval)))
+        else
+            throw(ErrorException("Active Complex return does not yet support batching in combined reverse mode"))
+        end
+    end
+end
+
+@inline function fuse_complex_results(results, args::Vararg{Annotation, Nargs}) where {Nargs}
+    ntuple(Val(Nargs)) do i
+        Base.@_inline_meta
+        if args[i] isa Active
+            Compiler.recursive_add(Compiler.recursive_add(results[1][i][1], results[1][i][2], refn_seed), results[1][i][3], imfn_seed)
+        else
+            results[1][i]
+        end
     end
 end
 
 """
-    autodiff(::ReverseMode, f, Activity, args...)
+    autodiff(::ReverseMode, f, Activity, args::Vararg{<:Annotation, Nargs})
 
 Auto-differentiate function `f` at arguments `args` using reverse mode.
 
@@ -135,7 +169,7 @@ on. Enzyme will only differentiate in respect to arguments that are wrapped
 in an [`Active`](@ref) (for arguments whose derivative result must be returned
 rather than mutated in place, such as primitive types and structs thereof)
 or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
-thereof). Non-annotated arguments will automatically be treated as [`Const`](@ref).
+thereof).
 
 `Activity` is the Activity of the return value, it may be `Const` or `Active`.
 
@@ -147,7 +181,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
-∂f_∂a, _, _, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), c, Active(d))[1]
+∂f_∂a, _, _, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), Const(c), Active(d))[1]
 
 # output
 
@@ -177,51 +211,96 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(::ReverseMode{ReturnPrimal, RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RABI<:ABI}
-    args′  = annotate(args...)
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args...)
+@inline function autodiff(::ReverseMode{ReturnPrimal, RABI,Holomorphic}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RABI<:ABI,Holomorphic, Nargs}
+    tt′   = vaTypeof(args...)
+    width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
 
-    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    ModifiedBetween = Val(falses_from_args(Nargs+1))
 
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     world = codegen_world_age(Core.Typeof(f.val), tt)
     
+    rt = if A isa UnionAll
+        Core.Compiler.return_type(f.val, tt)
+    else
+        eltype(A)    
+    end
+
     if A <: Active
-        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt)
         if !allocatedinline(rt) || rt isa Union
             forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
-            res = forward(f, args′...)
+            res = forward(f, args...)
             tape = res[1]
             if ReturnPrimal
-                return (adjoint(f, args′..., tape)[1], res[2])
+                return (adjoint(f, args..., tape)[1], res[2])
             else
-                return adjoint(f, args′..., tape)
+                return adjoint(f, args..., tape)
             end
         end
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed || A <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    if A <: Active
-        tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
-        rt = Core.Compiler.return_type(f.val, tt)
-        args′ = (args′..., one(rt))
+
+    if A <: Active && rt <: Complex
+        if Holomorphic
+            seen = IdDict()
+            seen2 = IdDict()
+
+            f = if f isa Const || f isa Active
+                f
+            elseif f isa Duplicated || f isa DuplicatedNoNeed
+                BatchDuplicated(f.val, (f.dval, make_zero(typeof(f), seen, f.dval), make_zero(typeof(f), seen2, f.dval)))
+            else
+                throw(ErrorException("Active Complex return does not yet support batching in combined reverse mode"))
+            end
+
+            width = same_or_one(3, args...)
+            args = seed_complex_args(seen, seen2, args...)
+            tt′   = vaTypeof(args...)
+
+            thunk = Enzyme.Compiler.thunk(Val(world), typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+
+            results = thunk(f, args..., (rt(0), rt(1), rt(im)))
+
+            # compute the correct complex derivative in reverse mode by propagating the conjugate return values
+            # then subtracting twice the imaginary component to get the correct result
+
+            for (k, v) in seen
+                Compiler.recursive_accumulate(k, v, refn_seed)
+            end
+            for (k, v) in seen2
+                Compiler.recursive_accumulate(k, v, imfn_seed)
+            end
+
+            fused = fuse_complex_results(results, args...)
+
+            return (fused, results[2:end]...)
+        end
+
+        throw(ErrorException("Reverse-mode Active Complex return is ambiguous and requires more information to specify the desired result. See https://enzyme.mit.edu/julia/stable/faq/#Complex-numbers for more details."))
     end
-    thunk(f, args′...)
+
+    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+
+    if A <: Active
+        args = (args..., Compiler.default_adjoint(rt))
+    end
+    thunk(f, args...)
 end
 
 """
-    autodiff(mode::Mode, f, ::Type{A}, args...)
+    autodiff(mode::Mode, f, ::Type{A}, args::Vararg{Annotation, Nargs})
 
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff(mode::CMode, f::F, args...) where {F, CMode<:Mode}
+@inline function autodiff(mode::CMode, f::F, args::Vararg{Annotation, Nargs}) where {F, CMode<:Mode, Nargs}
     autodiff(mode, Const(f), args...)
+end
+@inline function autodiff(mode::CMode, f::F, ::Type{RT}, args::Vararg{Annotation, Nargs}) where {F, RT<:Annotation, CMode<:Mode, Nargs}
+    autodiff(mode, Const(f), RT, args...)
 end
 
 """
@@ -229,24 +308,21 @@ end
 
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
-@inline function autodiff(mode::CMode, f::FA, args...) where {FA<:Annotation, CMode<:Mode}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+@inline function autodiff(mode::CMode, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, CMode<:Mode, Nargs}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     rt    = Core.Compiler.return_type(f.val, tt)
     A     = guess_activity(rt, mode)
-    autodiff(mode, f, A, args′...)
+    autodiff(mode, f, A, args...)
 end
 
 """
-    autodiff(::ForwardMode, f, Activity, args...)
+    autodiff(::ForwardMode, f, Activity, args::Vararg{<:Annotation, Nargs})
 
 Auto-differentiate function `f` at arguments `args` using forward mode.
 
 `args` may be numbers, arrays, structs of numbers, structs of arrays and so
 on. Enzyme will only differentiate in respect to arguments that are wrapped
-in a [`Duplicated`](@ref) or similar argument. Non-annotated arguments will
-automatically be treated as [`Const`](@ref). Unlike reverse mode in
+in a [`Duplicated`](@ref) or similar argument. Unlike reverse mode in
 [`autodiff`](@ref), [`Active`](@ref) arguments are not allowed here, since
 all derivative results of immutable objects will be returned and should
 instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
@@ -284,13 +360,12 @@ f(x) = x*x
 (6.28,)
 ```
 """
-@inline function autodiff(::ForwardMode{RABI}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI}
-    args′  = annotate(args...)
-    if any_active(args′...)
+@inline function autodiff(::ForwardMode{RABI}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI, Nargs}
+    if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
-    tt′    = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args′...)
+    tt′   = vaTypeof(args...)
+    width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -314,30 +389,29 @@ f(x) = x*x
         A
     end
     
-    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     world = codegen_world_age(Core.Typeof(f.val), tt)
 
     thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
-    thunk(f, args′...)
+    thunk(f, args...)
 end
 
 """
-    autodiff_deferred(::ReverseMode, f, Activity, args...)
+    autodiff_deferred(::ReverseMode, f, Activity, args::Vararg{<:Annotation, Nargs})
 
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal}
-    args′ = annotate(args...)
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args...)
+@inline function autodiff_deferred(::ReverseMode{ReturnPrimal}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, Nargs}
+    tt′   = vaTypeof(args...)
+    width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    tt = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
         
     world = codegen_world_age(Core.Typeof(f.val), tt)
     
@@ -353,32 +427,31 @@ code, as well as high-order differentiation.
         error("Return type inferred to be Union{}. Giving up.")
     end
 
-    ModifiedBetween = Val(falses_from_args(Val(1), args...))
-    
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
-    @assert primal_ptr === nothing
-    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
+    ModifiedBetween = Val(falses_from_args(Nargs+1))
+
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
+
+    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     if rt <: Active
-        args′ = (args′..., one(eltype(rt)))
+        args = (args..., Compiler.default_adjoint(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk(f, args′...)
+    thunk(f, args...)
 end
 
 """
-    autodiff_deferred(::ForwardMode, f, Activity, args...)
+    autodiff_deferred(::ForwardMode, f, Activity, args::Vararg{<:Annotation, Nargs})
 
-Same as `autodiff(::ForwardMode, ...)` but uses deferred compilation to support usage in GPU
+Same as `autodiff(::ForwardMode, f, Activity, args)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation}
-    args′ = annotate(args...)
-    if any_active(args′...)
+@inline function autodiff_deferred(::ForwardMode, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, Nargs}
+    if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
-    tt′   = Tuple{map(Core.Typeof, args′)...}
-    width = same_or_one(args...)
+    tt′   = vaTypeof(args...)
+    width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -397,7 +470,7 @@ code, as well as high-order differentiation.
     else
         A
     end
-    tt = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+    tt = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     
     world = codegen_world_age(Core.Typeof(f.val), tt)
     
@@ -417,44 +490,45 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
-    ModifiedBetween = Val(falses_from_args(Val(1), args...))
-
+    ReturnPrimal = RT <: Duplicated || RT <: BatchDuplicated
+    ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    @assert primal_ptr === nothing
-    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
-    thunk(f, args′...)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
+    thunk(f, args...)
 end
 
 """
-    autodiff_deferred(mode::Mode, f, ::Type{A}, args...)
+    autodiff_deferred(mode::Mode, f, ::Type{A}, args)
 
 Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
 """
-@inline function autodiff_deferred(mode::CMode, f::F, args...) where {F, CMode<:Mode}
+@inline function autodiff_deferred(mode::CMode, f::F, args::Vararg{Annotation, Nargs}) where {F, CMode<:Mode, Nargs}
     autodiff_deferred(mode, Const(f), args...)
 end
+@inline function autodiff_deferred(mode::CMode, f::F, ::Type{RT}, args::Vararg{Annotation, Nargs}) where {F, RT<:Annotation, CMode<:Mode, Nargs}
+    autodiff_deferred(mode, Const(f), RT, args...)
+end
+
 """
     autodiff_deferred(mode, f, args...)
 
 Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
 """
 
-@inline function autodiff_deferred(mode::M, f::FA, args...) where {FA<:Annotation, M<:Mode}
-    args′ = annotate(args...)
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args′)...}
+@inline function autodiff_deferred(mode::M, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, M<:Mode, Nargs}
+    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     world = codegen_world_age(Core.Typeof(f.val), tt)
     rt    = Core.Compiler.return_type(f.val, tt)
     if rt === Union{}
         error("return type is Union{}, giving up.")
     end
     rt    = guess_activity(rt, mode)
-    autodiff_deferred(mode, f, rt, args′...)
+    autodiff_deferred(mode, f, rt, args...)
 end
 
 """
-    autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)
+    autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation, Nargs})
 
 Provide the split forward and reverse pass functions for annotated function type
 ftype when called with args of type `argtypes` when using reverse mode.
@@ -496,10 +570,9 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI}
-    # args′  = annotate(args...)
+@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI, Nargs}
     width = if Width == 0
-        w = same_or_one(args...)
+        w = same_or_one(1, args...)
         if w == 0
             throw(ErrorException("Cannot differentiate with a batch size of 0"))
         end
@@ -509,7 +582,7 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+        ModifiedBetween = Val(falses_from_args(Nargs+1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -525,7 +598,7 @@ result, ∂v, ∂A
 end
 
 """
-    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes...)
+    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
 
 Provide the thunk forward mode function for annotated function type
 ftype when called with args of type `argtypes`.
@@ -568,9 +641,8 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 (6.28,)
 ```
 """
-@inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, RABI<:ABI}
-    # args′  = annotate(args...)
-    width = same_or_one(A, args...)
+@inline function autodiff_thunk(::ForwardMode{RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs}
+    width = same_or_one(1, A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
@@ -578,7 +650,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
     ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
-    ModifiedBetween = Val(falses_from_args(Val(1), args...))
+    ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(eltype, args)...}
         
@@ -587,10 +659,9 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
 end
 
-@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
-    # args′  = annotate(args...)
+@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
     width = if Width == 0
-        w = same_or_one(args...)
+        w = same_or_one(1, args...)
         if w == 0
             throw(ErrorException("Cannot differentiate with a batch size of 0"))
         end
@@ -600,7 +671,7 @@ end
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+        ModifiedBetween = Val(falses_from_args(Nargs+1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -615,8 +686,73 @@ end
     return TapeType
 end
 
+const tape_cache = Dict{UInt, Type}()
+
+const tape_cache_lock = ReentrantLock()
+
+import .Compiler: fspec, remove_innerty, UnknownTapeType
+
+@inline function tape_type(
+    parent_job::Union{GPUCompiler.CompilerJob,Nothing}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
+    ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}
+) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
+    width = if Width == 0
+        w = same_or_one(1, args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = falses_from_args(Val(1), args...)
+    else
+        ModifiedBetween = ModifiedBetweenT
+    end
+
+    @assert ReturnShadow
+    TT = Tuple{args...}
+
+    primal_tt = Tuple{map(eltype, args)...}
+
+    world = codegen_world_age(eltype(FA), primal_tt)
+
+    mi = Compiler.fspec(eltype(FA), TT, world)
+
+    target = Compiler.EnzymeTarget()
+    params = Compiler.EnzymeCompilerParams(
+        Tuple{FA, TT.parameters...}, API.DEM_ReverseModeGradient, width,
+        Compiler.remove_innerty(A), true, #=abiwrap=#false, ModifiedBetweenT,
+        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI
+    )
+    job    = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel=false))
+
+
+    key = hash(parent_job, hash(job))
+
+    # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
+    lock(tape_cache_lock)
+
+    try
+        obj = get(tape_cache, key, nothing)
+        if obj === nothing
+
+            Compiler.JuliaContext() do ctx
+                _, meta = Compiler.codegen(:llvm, job; optimize=false, parent_job)
+                obj = meta.TapeType
+                tape_cache[key] = obj
+            end
+        end
+        obj
+    finally
+        unlock(tape_cache_lock)
+    end
+end
+
 """
-    autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes...)
+    autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
 
 Provide the split forward and reverse pass functions for annotated function type
 ftype when called with args of type `argtypes` when using reverse mode.
@@ -646,7 +782,8 @@ function f(A, v)
     res
 end
 
-forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+TapeType = tape_type(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
+forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active{Float64}, Duplicated{typeof(A)}, Active{typeof(v)})
 
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
@@ -658,11 +795,10 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args...) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI}
+@inline function autodiff_deferred_thunk(mode::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, tt::Type{TapeType}, fa::Type{FA}, a2::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
     @assert RABI == FFIABI
-    # args′  = annotate(args...)
     width = if Width == 0
-        w = same_or_one(args...)
+        w = same_or_one(1, args...)
         if w == 0
             throw(ErrorException("Cannot differentiate with a batch size of 0"))
         end
@@ -672,28 +808,50 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Val(1), args...))
+        ModifiedBetween = Val(falses_from_args(Nargs+1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
 
     @assert ReturnShadow
     TT = Tuple{args...}
-   
+
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
-    # TODO this assumes that the thunk here has the correct parent/etc things for getting the right cuda instructions -> same caching behavior
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = EnzymeRules.tape_type(nondef[1])
-    A2 = Compiler.return_type(typeof(nondef[1]))
+    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
 
-    adjoint_ptr, primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(A2), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType)
-    AugT = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, Val(ReturnPrimal), TapeType}
-    @assert AugT == typeof(nondef[1])
-    AdjT = Compiler.AdjointThunk{Ptr{Cvoid}, FA, A2, TT, Val{width}, TapeType}
-    @assert AdjT == typeof(nondef[2])
-    AugT(primal_ptr), AdjT(adjoint_ptr)
+    RT = if A2 <: Duplicated && width != 1
+        if A2 isa UnionAll
+            BatchDuplicated{T, width} where T
+        else
+            BatchDuplicated{eltype(A2), width}
+        end
+    elseif A2 <: DuplicatedNoNeed && width != 1
+        if A2 isa UnionAll
+            BatchDuplicatedNoNeed{T, width} where T
+        else
+            BatchDuplicatedNoNeed{eltype(A2), width}
+        end
+    else
+        A2
+    end
+    
+    rt = if RT isa UnionAll
+        @static if VERSION < v"1.8-"
+            throw(MethodError(autodiff_deferred_thunk, (mode, tt, fa, a2, args...)))
+        else
+            RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
+        end
+    else
+        @assert RT isa DataType
+        RT
+    end
+
+    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, width, ReturnPrimal, TapeType}(primal_ptr)
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, width, TapeType}(adjoint_ptr)
+    aug_thunk, adj_thunk
 end
 
 # White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
@@ -783,12 +941,17 @@ end
 """
     gradient(::ReverseMode, f, x)
 
-Compute the gradient of an array-input function `f` using reverse mode.
-This will allocate and return new array with the gradient result.
+Compute the gradient of a real-valued function `f` using reverse mode.
+This will allocate and return new array `make_zero(x)` with the gradient result.
 
-Example:
+Besides arrays, for struct `x` it returns another instance of the same type,
+whose fields contain the components of the gradient.
+In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
+while `grad.c == x.c` for other types.
 
-```jldoctest
+Examples:
+
+```jldoctest gradient
 f(x) = x[1]*x[2]
 
 grad = gradient(Reverse, f, [2.0, 3.0])
@@ -799,11 +962,25 @@ grad = gradient(Reverse, f, [2.0, 3.0])
  3.0
  2.0
 ```
+
+```jldoctest gradient
+grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
+
+# output
+
+(a = 3.0, b = [2.0], c = "str")
+```
 """
-@inline function gradient(::ReverseMode, f, x)
-    dx = zero(x)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    dx
+@inline function gradient(rm::ReverseMode, f::F, x::X) where {F, X}
+    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        dx = Ref(make_zero(x))
+        autodiff(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff(rm, f, Active, Duplicated(x, dx))
+        return dx
+    end
 end
 
 
@@ -812,6 +989,7 @@ end
 
 Compute the gradient of an array-input function `f` using reverse mode,
 storing the derivative result in an existing array `dx`.
+Both `x` and `dx` must be `Array`s of the same type.
 
 Example:
 
@@ -828,7 +1006,7 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient!(::ReverseMode, dx, f, x)
+@inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
     dx .= 0
     autodiff(Reverse, f, Active, Duplicated(x, dx))
     dx
@@ -876,7 +1054,7 @@ end
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
 """
-    gradient(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
+    gradient(::ForwardMode, f, x::Union{Array,NTuple}, ::Val{chunk}; shadow=onehot(x))
 
 Compute the gradient of an array-input function `f` using vector forward mode.
 Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
@@ -904,7 +1082,7 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
     tupleconcat(tmp...)
 end
 
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
     ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
@@ -1017,7 +1195,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
         j = 0
         for shadow in res[3]
             j += 1
-            @inbounds shadow[(i-1)*chunk+j] += one(eltype(typeof(shadow)))
+            @inbounds shadow[(i-1)*chunk+j] += Compiler.default_adjoint(eltype(typeof(shadow)))
         end
         (i == num ? adjoint2 : adjoint)(Const(f), BatchDuplicated(x, dx), tape)
         return dx
@@ -1040,12 +1218,74 @@ end
         dx = zero(x)
         res = primal(Const(f), Duplicated(x, dx))
         tape = res[1]
-        @inbounds res[3][i] += one(eltype(typeof(res[3])))
+        @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
         adjoint(Const(f), Duplicated(x, dx), tape)
         return dx
     end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
+function _import_frule end # defined in EnzymeChainRulesCoreExt extension
+
+"""
+    import_frule(::fn, tys...)
+
+Automatically import a `ChainRulesCore.frule`` as a custom forward mode `EnzymeRule`. When called in batch mode, this
+will end up calling the primal multiple times, which may result in incorrect behavior if the function mutates,
+and slow code, always. Importing the rule from `ChainRules` is also likely to be slower than writing your own rule,
+and may also be slower than not having a rule at all.
+
+Use with caution.
+
+```julia
+Enzyme.@import_frule(typeof(Base.sort), Any);
+
+x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
+
+# output
+
+(var"1" = [0.0, 1.0, 2.0], var"2" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]))
+(var"1" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]),)
+(var"1" = [0.3, 0.1, 0.2],)
+(var"1" = [0.0, 1.0, 2.0], var"2" = [0.3, 0.1, 0.2])
+
+```
+"""
+macro import_frule(args...)
+    return _import_frule(args...)
+end 
+
+function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
+
+"""
+    import_rrule(::fn, tys...)
+
+Automatically import a ChainRules.rrule as a custom reverse mode EnzymeRule. When called in batch mode, this
+will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
+function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
+inputs permit a .+= operation and that the output has a valid Enzyme.make_zero function defined. It also assumes
+that overwritten(x) accurately describes if there is any non-preserved data from forward to reverse, not just
+the outermost data structure being overwritten as provided by the specification.
+
+Finally, this macro falls back to almost always caching all of the inputs, even if it may not be needed for the
+derivative computation.
+
+As a result, this auto importer is also likely to be slower than writing your own rule, and may also be slower
+than not having a rule at all.
+
+Use with caution.
+
+```julia
+Enzyme.@import_rrule(typeof(Base.sort), Any);
+```
+"""
+macro import_rrule(args...)
+    return _import_rrule(args...)
+end
 
 end # module

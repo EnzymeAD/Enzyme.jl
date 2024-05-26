@@ -164,7 +164,10 @@ function EnzymeRules.reverse(
 end
 
 @testset "Complex values" begin
-    @test Enzyme.autodiff(Enzyme.Reverse, foo, Active(1.0+3im))[1][1] ≈ 1.0+13.0im
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(foo)}, Active, Active{ComplexF64})
+    z = 1.0+3im
+    grad_u = rev(Const(foo), Active(z), 1.0 + 0.0im, fwd(Const(foo), Active(z))[1])[1][1]
+    @test grad_u ≈ 1.0+13.0im
 end
 
 _scalar_dot(x, y) = conj(x) * y
@@ -258,4 +261,48 @@ end
     autodiff(Reverse, Const(cprimal), Active, Duplicated(x, dx), Duplicated(y, dy))
 end
 
+function remultr(arg)
+    arg * arg
+end
+
+function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+    ::Type{<:Active}, args::Vararg{Active,N}) where {N}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(args[1].val)
+    else
+        nothing
+    end
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+    dret::Active, tape, args::Vararg{Active,N}) where {N}
+
+    dargs = ntuple(Val(N)) do i
+        7 * args[1].val * dret.val
+    end
+    return dargs
+end
+
+function plaquette_sum(U)
+    p = eltype(U)(0)
+
+    for site in 1:length(U)
+        p += remultr(@inbounds U[site])
+    end
+
+    return real(p)
+end
+
+
+@static if VERSION >= v"1.9"
+@testset "No caching byref julia" begin
+    U = Complex{Float64}[3.0 + 4.0im]
+    dU = Complex{Float64}[0.0]
+
+    autodiff(Reverse, plaquette_sum, Active, Duplicated(U, dU))
+
+    @test dU[1] ≈ 7 * ( 3.0 + 4.0im )
+end
+end
 end # ReverseRules

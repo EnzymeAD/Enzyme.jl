@@ -61,7 +61,7 @@ end
 
 # Test that this errors due to missing kwargs in rule definition
 g2(x, y) = f_kw2(x; val=y)
-@test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, g2, Active(2.0), Const(42.0))[1][1]
+@test_throws MethodError autodiff(Reverse, g2, Active(2.0), Const(42.0))[1][1]
 
 
 function f_kw3(x; val=nothing)

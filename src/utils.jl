@@ -1,16 +1,43 @@
-unsafe_to_pointer(ptr) = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), ptr)
+"""
+    unsafe_to_pointer
+
+!!! warning
+    Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
+    Only use inside Enzyme.jl should be for Types.
+"""
+@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
 export unsafe_to_pointer
+
+@inline is_concrete_tuple(x::T2) where T2 = (x <: Tuple) && !(x === Tuple) && !(x isa UnionAll)
+export is_concrete_tuple
 
 const Tracked = 10
 const Derived = 11
 export Tracked, Derived
 
+const captured_constants = Base.IdSet{Any}()
+
+# This mimicks literal_pointer_val / literal_pointer_val_slot
 function unsafe_to_llvm(val)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-    fill_val = unsafe_to_pointer(val)
-    fill_val = LLVM.ConstantInt(convert(UInt, fill_val))
+    # XXX: This prevents code from being runtime relocatable
+    #      We likely should emit global variables and use something
+    #      like `absolute_symbol_materialization` and write out cache-files
+    #      that have relocation tables.
+    # TODO: What about things like `nothing`
+    if !Base.ismutable(val)
+        val = Core.Box(val) # FIXME many objects could be leaked here
+        @assert Base.ismutable(val)
+        push!(captured_constants, val) # Globally root
+        ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Base.pointer_from_objref(val)))
+    else
+        @assert Base.ismutable(val)
+        push!(captured_constants, val) # Globally root
+        ptr = Base.pointer_from_objref(val)
+    end
+    fill_val = LLVM.ConstantInt(convert(UInt, ptr))
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end

@@ -6,8 +6,24 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
 
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+
     @assert is_constant_value(gutils, origops[offset])
     icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+    abs = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
+
+    legal = true
+    for (icv, (found, typ)) in zip(icvs, abs)
+        if icv
+            if found
+                if guaranteed_const_nongen(typ, world)
+                    continue
+                end
+            end
+            legal = false
+        end
+    end
+
     # if all(icvs)
     #     shadowres = new_from_original(gutils, orig)
     #     if width != 1
@@ -20,8 +36,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     #     unsafe_store!(shadowR, shadowres.ref)
     #     return false
     # end
-    if any(icvs)
-        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig))
+    if !legal
+        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig)*" "*string(abs)*" "*string([v for v in origops[offset+1:end-1]]))
     end
 
     shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:end-1] ]
@@ -52,6 +68,15 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
     common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
+function error_if_active_newstruct(::Type{T}, ::Type{Y}) where {T, Y}
+    seen = ()
+    areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
+    if areg == ActiveState
+        throw(AssertionError("Found unhandled active variable ($T) in reverse mode of jl_newstruct constructor for $Y"))
+    end
+    nothing
+end
+
 function common_newstructv_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return true
@@ -65,7 +90,22 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
 	if !needsShadow
 		return
 	end
-    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_new_struct "*string(orig)*" "*string(operands(orig)[offset])*"\n"*string(LLVM.parent(orig)))
+    
+    origops = collect(operands(orig))
+    width = get_width(gutils)
+
+    world = enzyme_extract_world(LLVM.parent(position(B)))
+
+    @assert is_constant_value(gutils, origops[offset])
+    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+    abs = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
+
+
+    ty = lookup_value(gutils, new_from_original(gutils, origops[offset]), B)
+    for v in origops[offset+1:end-1]
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active_newstruct), emit_jltypeof!(B, lookup_value(gutils, new_from_original(gutils, v), B)), ty])
+    end
+
     return nothing
 end
 
@@ -209,11 +249,12 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
-setfield_idx(v, idx, rhs) = ccall(:jl_set_nth_field, Cvoid, (Any, UInt, Any), v, idx, rhs)
-
 function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    res = getfield(dptr, symname)
+    res = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname)
+    else
+	   Base.getfield(dptr, symname)
+    end
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
@@ -231,7 +272,11 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
 end
 
 function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    res = getfield_idx(dptr, symname)
+    res = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname+1)
+    else
+	   Base.getfield(dptr, symname+1)
+    end
     RT = Core.Typeof(res)
     if active_reg(RT)
         if length(dptrs) == 0
@@ -249,7 +294,11 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
 end
 
 function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    cur = getfield(dptr, symname)
+    cur = if dptr isa Base.RefValue
+	   getfield(dptr[], symname)
+    else
+	   getfield(dptr, symname)
+    end
 
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
@@ -265,16 +314,20 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     return nothing
 end
 function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
-    cur = getfield_idx(dptr, symname)
+    cur = if dptr isa Base.RefValue
+	   Base.getfield(dptr[], symname+1)
+    else
+	   Base.getfield(dptr, symname+1)
+    end
 
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield_idx(dptr, symname, recursive_add(cur, dret[]))
+            setfield!(dptr, symname+1, recursive_add(cur, dret[]))
         else
-            setfield_idx(dptr, symname, recursive_add(cur, dret[1][]))
+            setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
             for i in 1:length(dptrs)
-                setfield_idx(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
+                setfield!(dptrs[i], symname+1, recursive_add(cur, dret[1+i][]))
             end
         end
     end
@@ -661,17 +714,92 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
+
+function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T, isconst}
+    RT = Core.Typeof(val)
+    if active_reg(RT)
+        setfield!(dptr, idx, make_zero(val))
+    else
+        setfield!(dptr, idx, isconst ? val : dval)
+    end
+end
+
+function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T, isconst}
+    RT = Core.Typeof(val)
+    if active_reg(RT) && !isconst
+        dval[] += getfield(dptr, idx)
+        setfield!(dptr, idx, make_zero(val))
+    end
+end
+
 function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_setfield")
+
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
     end
+
+    origops = collect(operands(orig))[offset:end]
+    if !is_constant_value(gutils, origops[2])
+        width = get_width(gutils)
+
+        shadowstruct = invert_pointer(gutils, origops[2], B)
+
+        shadowval = if !is_constant_value(gutils, origops[2])
+            invert_pointer(gutils, origops[4], B)
+        else
+            nothing
+        end
+
+        for idx in 1:width
+            vals = LLVM.Value[
+              (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1),
+              new_from_original(gutils, origops[3]),
+              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              new_from_original(gutils, origops[4]),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)),
+            ]
+            
+            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_aug))
+
+            cal = emit_apply_generic!(B, vals)
+
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
+
     return false
 end
 
 function common_setfield_rev(offset, B, orig, gutils, tape)
-  emit_error(B, orig, "Enzyme: unhandled reverse for jl_f_setfield")
+    origops = collect(operands(orig))[offset:end]
+    if !is_constant_value(gutils, origops[2])
+        width = get_width(gutils)
+
+        shadowstruct = invert_pointer(gutils, origops[2], B)
+
+        shadowval = if !is_constant_value(gutils, origops[2])
+            invert_pointer(gutils, origops[4], B)
+        else
+            nothing
+        end
+
+        for idx in 1:width
+            vals = LLVM.Value[
+              lookup_value(gutils, (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1), B),
+              lookup_value(gutils, new_from_original(gutils, origops[3]), B),
+              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              lookup_value(gutils, new_from_original(gutils, origops[4]), B),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : lookup_value(gutils, ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)), B),
+            ]
+            
+            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_rev))
+
+            cal = emit_apply_generic!(B, vals)
+
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
   return nothing
 end
 

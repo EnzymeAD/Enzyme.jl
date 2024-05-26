@@ -329,7 +329,7 @@ autodiff(Reverse,
     Duplicated([Tbar; Sbar], dstate_old), 
     Duplicated(out_now, dout_now), 
     Duplicated(out_old, dout_old),
-    parameters,
+    Const(parameters),
     Const(10*parameters.day)
 )
 
@@ -373,7 +373,7 @@ autodiff(Reverse,
     Duplicated([Tbar; Sbar], dstate_old_new), 
     Duplicated(out_now, dout_now), 
     Duplicated(out_old, dout_old),
-    parameters, 
+    Const(parameters), 
     Const(10*parameters.day)
 )
 
@@ -438,7 +438,7 @@ function compute_adjoint_values(states_before_smoother, states_after_smoother, M
             Duplicated(states_after_smoother[j], dstate_old), 
             Duplicated(zeros(6), dout_now), 
             Duplicated(zeros(6), dout_old),
-            parameters, 
+            Const(parameters), 
             Const(10*parameters.day)
         )
         

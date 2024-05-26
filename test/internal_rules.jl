@@ -2,10 +2,12 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
+using EnzymeTestUtils
 using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
 using Test
+import Random
 
 struct TPair
     a::Float64
@@ -42,6 +44,30 @@ end
     @test autodiff(Forward, f2, Duplicated(2.0, 1.0))[1] == -3
     @test autodiff(Forward, f2, BatchDuplicated(2.0, (1.0, 2.0)))[1] == (var"1"=-3.0, var"2"=-6.0)
     @test autodiff(Reverse, f2, Active, Active(2.0))[1][1] == -3
+
+    function f3(x)
+        a = [2.0, 2.5, x, 1.0]
+        return partialsort(a, 2)
+    end
+
+    @test autodiff(Forward, f3, Duplicated(1.5, 1.0))[1] == 1.0
+    @test autodiff(Forward, f3, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.0, var"2"=2.0)
+    @test autodiff(Reverse, f3, Active(1.5))[1][1] == 1.0
+    @test autodiff(Reverse, f3, Active(2.5))[1][1] == 0.0
+
+    function f4(x)
+        a = [2.0, 2.5, x, x / 2]
+        y = partialsort(a, 1:2)
+        return sum(y)
+    end
+
+    @test autodiff(Forward, f4, Duplicated(1.5, 1.0))[1] == 1.5
+    @static if VERSION < v"1.7-" || VERSION >= v"1.8-"
+        @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
+    end
+    @test autodiff(Reverse, f4, Active(1.5))[1][1] == 1.5
+    @test autodiff(Reverse, f4, Active(4.0))[1][1] == 0.5
+    @test autodiff(Reverse, f4, Active(6.0))[1][1] == 0.0
 
     dd = Duplicated([TPair(1, 2), TPair(2, 3), TPair(0, 1)], [TPair(0, 0), TPair(0, 0), TPair(0, 0)])
     res = Enzyme.autodiff(Reverse, sorterrfn, dd, Active(1.0))
@@ -134,9 +160,29 @@ end
         fact = cholesky(A)
         divdriver_NC(x, fact, b)
     end
+
+    function divdriver_herm(x, A, b)
+        fact = cholesky(Hermitian(A))
+        divdriver_NC(x, fact, b)
+    end
+
+    function divdriver_sym(x, A, b)
+        fact = cholesky(Symmetric(A))
+        divdriver_NC(x, fact, b)
+    end
     
     function ldivdriver(x, A, b)
         fact = cholesky(A)
+        ldivdriver_NC(x, fact, b)
+    end
+
+    function ldivdriver_herm(x, A, b)
+        fact = cholesky(Hermitian(A))
+        ldivdriver_NC(x, fact, b)
+    end
+
+    function ldivdriver_sym(x, A, b)
+        fact = cholesky(Symmetric(A))
         ldivdriver_NC(x, fact, b)
     end
 
@@ -178,7 +224,7 @@ end
                 Forward,
                 driver,
                 dx,
-                A,
+                Const(A),
                 db
             )
             adJ[i, :] = dx.dval
@@ -248,7 +294,7 @@ end
                 Reverse,
                 driver,
                 dx,
-                A,
+                Const(A),
                 db
             )
             adJ[i, :] = db.dval
@@ -306,7 +352,14 @@ end
         return J
     end
     
-    @testset "Testing $op" for (op, driver, driver_NC) in ((:\, divdriver, divdriver_NC), (:ldiv!, ldivdriver, ldivdriver_NC))
+    @testset "Testing $op" for (op, driver, driver_NC) in (
+        (:\, divdriver, divdriver_NC),
+        (:\, divdriver_herm, divdriver_NC),
+        (:\, divdriver_sym, divdriver_NC),
+        (:ldiv!, ldivdriver, ldivdriver_NC),
+        (:ldiv!, ldivdriver_herm, ldivdriver_NC),
+        (:ldiv!, ldivdriver_sym, ldivdriver_NC)
+    )
         A, b = symmetric_definite(10)
         n = length(b)
         A = Matrix(A)
@@ -341,7 +394,78 @@ end
             @test isapprox(fwdJ, fdJ)
         end
         @test isapprox(fwdJ, revJ)
+
+        function h(A, b)
+            C = cholesky(A)
+            b2 = copy(b)
+            ldiv!(C, b2)
+            @inbounds b2[1]
+        end
+
+        A = [1.3 0.5; 0.5 1.5]
+        b = [1., 2.]
+        V = [1.0 0.0; 0.0 0.0]
+        dA = zero(A)
+        Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
+
+        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
+        @test isapprox(dA, dA_sym)
+    end
+end
+
+@testset "Linear solve for triangular matrices" begin
+    @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
+        TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
+        n = sizeB[1]
+        M = rand(TE, n, n)
+        B = rand(TE, sizeB...)
+        Y = zeros(TE, sizeB...)
+        A = T(M)
+        @testset "test through constructor" begin
+            _A = T(A)
+            f!(Y, A, B, ::T) where {T} = ldiv!(Y, T(A), B)
+            for TY in (Const, Duplicated, BatchDuplicated),
+                TM in (Const, Duplicated, BatchDuplicated),
+                TB in (Const, Duplicated, BatchDuplicated)
+                are_activities_compatible(Const, TY, TM, TB) || continue
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
+            end
+        end
+        @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
+            # Test that we get the same derivative for `M` as for the adjoint of its
+            # (materialized) transpose. It's the same matrix, but represented differently
+            function f!(Y, A, B)
+                ldiv!(Y, A, B)
+                return nothing
+            end
+            A1 = T(M)
+            A2 = T(conj(permutedims(M))')
+            dA1 = make_zero(A1)
+            dA2 = make_zero(A2)
+            dB1 = make_zero(B)
+            dB2 = make_zero(B)
+            dY1 = rand(TE, sizeB...)
+            dY2 = copy(dY1)
+            autodiff(Reverse, f!, Duplicated(Y, dY1), Duplicated(A1, dA1), Duplicated(B, dB1))
+            autodiff(Reverse, f!, Duplicated(Y, dY2), Duplicated(A2, dA2), Duplicated(B, dB2))
+            @test dA1.data ≈ dA2.data
+            @test dB1 ≈ dB2
+        end
     end
 end
 end
+
+@testset "rand and randn rules" begin
+    # Distributed as x + unit normal + uniform
+    struct MyDistribution
+        x::Float64
+    end
+
+    Random.rand(rng::Random.AbstractRNG, d::MyDistribution) = d.x + randn() + rand()
+    Random.rand(d::MyDistribution) = rand(Random.default_rng(), d)
+
+    # Outer rand should be differentiated through, and inner rand and randn should be ignored.
+    @test autodiff(Enzyme.Reverse, x -> rand(MyDistribution(x)), Active, Active(1.0)) == ((1.0,),)
+end
+
 end # InternalRules

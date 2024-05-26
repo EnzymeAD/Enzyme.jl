@@ -243,6 +243,10 @@ function enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
+function custom_rule_method_error(world, fn, args...) 
+    throw(MethodError(fn, (args...,), world))
+end
+
 function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -305,19 +309,23 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             @safe_debug "Applying custom forward rule (kwcall)" TT
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
             fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
+        else
+            TT = Tuple{typeof(world), typeof(kwfunc), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
+            fwd_RT = Union{}
         end
     else
         if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
             @safe_debug "Applying custom forward rule" TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
             fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+        else
+            TT = Tuple{typeof(world), typeof(EnzymeRules.forward), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
+            fwd_RT = Union{}
         end
-    end
-
-    if llvmf === nothing
-        @safe_debug "No custom forward rule is applicable for" TT
-        emit_error(B, orig, "Enzyme: No custom rule was appliable for " * string(TT))
-        return false
     end
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -339,7 +347,6 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     else
         sret = nothing
     end
-
 
     if length(args) != length(parameters(llvmf))
         GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
@@ -490,6 +497,12 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
+    needsShadowJL = if RT <: Active
+        false
+    else
+        needsShadow
+    end
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
@@ -497,7 +510,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadow), Int(width), overwritten}
+    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
     
     mode = get_mode(gutils)
 
@@ -518,6 +531,11 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(kwfunc), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     else
         @assert kwtup === nothing
@@ -529,20 +547,19 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(EnzymeRules.augmented_primal), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     end
-    
-    if ami !== nothing
-        target = DefaultCompilerTarget()
-        params = PrimalCompilerParams(mode)
-        job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
-        interp = GPUCompiler.get_interpreter(job)
-        aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
-    else
-        @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-        emit_error(B, orig, "Enzyme: No custom augmented_primal rule was appliable for " * string(augprimal_TT))
-        return C_NULL
-    end
+
+    target = DefaultCompilerTarget()
+    params = PrimalCompilerParams(mode)
+    aug_RT = something(Core.Compiler.typeinf_type(GPUCompiler.get_interpreter(CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)), ami.def, ami.specTypes, ami.sparam_vals), Any)
+
+    @assert ami !== nothing
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
@@ -590,19 +607,23 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(rkwfunc), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
                 @safe_debug "Applying custom reverse rule" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(EnzymeRules.reverse), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
-        end
-
-        if llvmf == nothing
-            @safe_debug "No custom reverse rule is applicable for" rev_TT
-            emit_error(B, orig, "Enzyme: No custom reverse rule was appliable for " * string(rev_TT))
-            return C_NULL
         end
     end
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -774,7 +795,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         if width != 1
             ShadT = NTuple{Int(width), RealRt}
         end
-        ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, TapeT}
+        ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, TapeT}
         if aug_RT != ST
             if aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
                 if convert(LLVMType, EnzymeRules.shadow_type(aug_RT); allow_boxed=true) !=
@@ -782,11 +803,11 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                     emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " flex shadow ABI return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
                     return tapeV
                 end
-                ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadow ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
+                ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadowJL ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
             end
         end
         if aug_RT != ST
-            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadow ? ShadT : Nothing, Any}
+            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
             emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
             return tapeV
         end
@@ -805,24 +826,26 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             idx+=1
         end
         if needsShadow
-            @assert !isghostty(RealRt)
-            shadowV = extract_value!(B, res, idx)
-            if get_return_info(RealRt)[2] !== nothing
-                dval = invert_pointer(gutils, operands(orig)[1], B)
+            if needsShadowJL
+                @assert !isghostty(RealRt)
+                shadowV = extract_value!(B, res, idx)
+                if get_return_info(RealRt)[2] !== nothing
+                    dval = invert_pointer(gutils, operands(orig)[1], B)
 
-                for idx in 1:width
-                    to_store = (width == 1) ? shadowV : extract_value!(B, shadowV, idx-1)
+                    for idx in 1:width
+                        to_store = (width == 1) ? shadowV : extract_value!(B, shadowV, idx-1)
 
-                    store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx-1)
+                        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx-1)
 
-                    store!(B, to_store, store_ptr)
+                        store!(B, to_store, store_ptr)
+                    end
+                    shadowV = C_NULL
+                else
+                    @assert value_type(shadowV) == shadowType
+                    shadowV = shadowV.ref
                 end
-                shadowV = C_NULL
-            else
-                @assert value_type(shadowV) == shadowType
-                shadowV = shadowV.ref
+                idx+=1
             end
-            idx+=1
         end
         if needsTape
             tapeV = extract_value!(B, res, idx).ref
@@ -842,9 +865,10 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
         idx = 0
         dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig)))))
-        Tys2 = (eltype(A) for A in activity[2+isKWCall:end] if A <: Active)
+        Tys2 = (eltype(A) for A in activity[(2 + isKWCall):end] if A <: Active)
+        seen = TypeTreeTable()
         for (v, Ty) in zip(actives, Tys2)
-            TT = typetree(Ty, ctx, dl)
+            TT = typetree(Ty, ctx, dl, seen)
             Typ = C_NULL
             ext = extract_value!(B, res, idx)
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(v)))

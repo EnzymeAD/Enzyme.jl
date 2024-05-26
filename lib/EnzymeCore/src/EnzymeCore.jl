@@ -1,7 +1,7 @@
 module EnzymeCore
 
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
-export ReverseSplitModified, ReverseSplitWidth
+export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
@@ -49,6 +49,7 @@ struct Active{T} <: Annotation{T}
 end
 
 Active(i::Integer) = Active(float(i))
+Active(ci::Complex{T}) where T <: Integer = Active(float(ci))
 
 """
     Duplicated(x, ∂f_∂x)
@@ -178,14 +179,18 @@ Abstract type for what differentiation mode will be used.
 abstract type Mode{ABI} end
 
 """
-    struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI}
+    struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI}
 
 Reverse mode differentiation.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
+- `ABI`: What runtime ABI to use
+- `Holomorphic`: Whether the complex result function is holomorphic and we should compute d/dz
 """
-struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI} end
-const Reverse = ReverseMode{false,DefaultABI}()
-const ReverseWithPrimal = ReverseMode{true,DefaultABI}()
+struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI} end
+const Reverse = ReverseMode{false,DefaultABI, false}()
+const ReverseWithPrimal = ReverseMode{true,DefaultABI, false}()
+const ReverseHolomorphic = ReverseMode{false,DefaultABI, true}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true}()
 
 """
     struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}
@@ -234,6 +239,26 @@ end
 
 function tape_type end
 
+"""
+    compiler_job_from_backend(::KernelAbstractions.Backend, F::Type, TT:Type)::GPUCompiler.CompilerJob
+
+Returns a GPUCompiler CompilerJob from a backend as specified by the first argument to the function.
+
+For example, in CUDA one would do:
+
+```julia
+function EnzymeCore.compiler_job_from_backend(::CUDABackend, @nospecialize(F::Type), @nospecialize(TT::Type))
+    mi = GPUCompiler.methodinstance(F, TT)
+    return GPUCompiler.CompilerJob(mi, CUDA.compiler_config(CUDA.device()))
+end
+```
+"""
+function compiler_job_from_backend end
+
 include("rules.jl")
+
+if !isdefined(Base, :get_extension)
+    include("../ext/AdaptExt.jl")
+end
 
 end # module EnzymeCore

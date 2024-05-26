@@ -27,48 +27,63 @@ function julia_activity_rule(f::LLVM.Function)
     if mi.specTypes.parameters[end] === Vararg{Any}
         return
     end
-
     world = enzyme_extract_world(f)
 
-    if  expectLen != length(parameters(f))
-        println(string(f))
-        @show expectLen, swiftself, sret, returnRoots, mi.specTypes.parameters, retRemoved, parmsRemoved
-    end
     # TODO fix the attributor inlining such that this can assert always true
-    @assert expectLen == length(parameters(f))
+    if expectLen != length(parameters(f))
+          msg = sprint() do io::IO
+              println(io, "Enzyme Internal Error (expectLen != length(parameters(f)))")
+              println(io, string(f))
+              println(io, "expectLen=", string(expectLen))
+              println(io, "swiftself=", string(swiftself))
+              println(io, "sret=", string(sret))
+              println(io, "returnRoots=", string(returnRoots))
+              println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
+              println(io, "retRemoved=", string(retRemoved))
+              println(io, "parmsRemoved=", string(parmsRemoved))
+          end
+          throw(AssertionError(msg))
+    end
 
     jlargs = classify_arguments(mi.specTypes, function_type(f), sret !== nothing, returnRoots !== nothing, swiftself, parmsRemoved)
 
-    for arg in jlargs
-        if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-            continue
-        end
+    if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
+        for arg in jlargs
+            if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                continue
+            end
 
-        op_idx = arg.codegen.i
+            op_idx = arg.codegen.i
+            
+            typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
+            @assert typ == arg.typ
 
-        if guaranteed_const_nongen(arg.typ, world)
-            push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzyme_inactive"))
+            if guaranteed_const_nongen(arg.typ, world)
+                push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzyme_inactive"))
+            end
         end
     end
 
-    if sret !== nothing
-        idx = 0
-        if !in(0, parmsRemoved)
+    if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[2]
+        if sret !== nothing
+            idx = 0
+            if !in(0, parmsRemoved)
+                if guaranteed_const_nongen(RT, world)
+                    push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_inactive"))
+                end
+                idx+=1
+            end
+            if returnRoots !== nothing
+                if !in(idx, parmsRemoved)
+                    push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_inactive"))
+                end
+            end
+        end
+
+        if llRT !== nothing && LLVM.return_type(function_type(f)) != LLVM.VoidType()
             if guaranteed_const_nongen(RT, world)
-                push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_inactive"))
+                push!(return_attributes(f), StringAttribute("enzyme_inactive"))
             end
-            idx+=1
-        end
-        if returnRoots !== nothing
-            if !in(idx, parmsRemoved)
-                push!(parameter_attributes(f, idx+1), StringAttribute("enzyme_inactive"))
-            end
-        end
-    end
-
-    if llRT !== nothing && LLVM.return_type(function_type(f)) != LLVM.VoidType()
-        if guaranteed_const_nongen(RT, world)
-            push!(return_attributes(f), StringAttribute("enzyme_inactive"))
         end
     end
 end
