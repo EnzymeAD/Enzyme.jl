@@ -1483,7 +1483,7 @@ end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    if ece.ir !== nothing && !occursin("No create nofree of empty function", ece.msg)
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
