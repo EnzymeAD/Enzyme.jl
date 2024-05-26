@@ -4863,7 +4863,23 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if llvmfn == primalf
             actualRetType = k.ci.rettype
         end
+       
+        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
+            push!(return_attributes(llvmfn), EnumAttribute("noalias"))
+            for u in LLVM.uses(llvmfn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_operand(c)
+                if cf == llvmfn
+                    LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
+                end
+            end
+        end
 
+        func = mi.specTypes.parameters[1]
+        
         meth = mi.def
         name = meth.name
         jlmod  = meth.module
@@ -4891,7 +4907,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        func = mi.specTypes.parameters[1]
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == typeof(Base.eps) || func == typeof(Base.nextfloat) || func == typeof(Base.prevfloat)
@@ -4910,6 +4925,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                                   ])
+            continue
+        end
+        if func == typeof(Base.mightalias)
+            handleCustom(llvmfn, "jl_mightalias",
+                   [EnumAttribute("readonly", 0),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("nofree"),
+                    StringAttribute("enzyme_ta_norecur"),
+                                  ], true, false)
             continue
         end
         if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
