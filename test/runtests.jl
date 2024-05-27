@@ -2289,6 +2289,68 @@ end
     end
 end
 
+function bc0_test_function(ps)
+    z = view(ps, 26:30)
+    C = Matrix{Float64}(undef, 5, 1)
+    C .= z
+    return C[1]
+end
+
+@noinline function bc1_bcs2(x, y)
+    x != y && error(2)
+    return x
+end
+
+@noinline function bc1_affine_normalize(x::AbstractArray)
+    # _axes = broadcast_shape(axes(x), axes(x)) #Broadcast.combine_axes(x, x)
+    _axes = bc1_bcs2(axes(x), axes(x))
+    i = Broadcast.Broadcasted(Base.Broadcast.DefaultArrayStyle{2}(), +, (x,), _axes)
+
+    dest = similar(Array{Float32}, _axes)
+    bc = convert(Broadcast.Broadcasted{Nothing}, i)
+
+    # mycopyto!(dest, bc)
+    copyto!(dest, bc)
+    return x
+end
+
+function bc1_loss_function(x)
+    return bc1_affine_normalize(x)[1]
+end
+
+function bc2_affine_normalize(::typeof(identity), x::AbstractArray, xmean, xvar,
+    scale::AbstractArray, bias::AbstractArray, epsilon::Real)
+    _scale = @. scale / sqrt(xvar + epsilon)
+    _bias = @. bias - xmean * _scale
+    return @. x * _scale + _bias
+end
+
+function bc2_loss_function(x, scale, bias)
+    x_ = reshape(x, 6, 6, 3, 2, 2)
+    scale_ = reshape(scale, 1, 1, 3, 2, 1)
+    bias_ = reshape(bias, 1, 1, 3, 2, 1)
+
+    xmean = mean(x_, dims=(1, 2, 5))
+    xvar = var(x_, corrected=false, mean=xmean, dims=(1, 2, 5))
+
+    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
+end
+
+@testset "Broadcast noalias" begin
+
+    x = ones(30)
+    autodiff(Reverse, bc0_test_function, Active, Const(x))
+    
+    x = rand(Float32, 2, 3)
+    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+
+    x = rand(Float32, 6, 6, 6, 2)
+    sc = rand(Float32, 6)
+    bi = rand(Float32, 6)
+    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+end
+
 @testset "GetField" begin
     mutable struct MyType
        x::Float64
