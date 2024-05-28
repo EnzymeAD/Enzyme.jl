@@ -375,7 +375,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
+        GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, string(value_type(llvmf)), orig, isKWCall, kwtup, TT, sret, returnRoots
         return false
     end
 
@@ -502,7 +502,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-@inline function aug_fwd_mi(orig::LLVM.CallInst, gutils::GradientUtils, forward=false)
+@inline function aug_fwd_mi(orig::LLVM.CallInst, gutils::GradientUtils, forward=false, B=nothing)
     width = get_width(gutils)
 
     # 1) extract out the MI from attributes
@@ -510,7 +510,7 @@ end
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(#=B=#nothing, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     needsShadowJL = if RT <: Active
@@ -566,7 +566,7 @@ end
             end
         end
     end
-    return ami, augprimal_TT
+    return ami, augprimal_TT, (args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal)
 end
 
 @inline function has_aug_fwd_rule(orig, gutils)
@@ -591,8 +591,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
-    RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
+    ami, augprimal_TT, setup = aug_fwd_mi(orig, gutils, forward, B)
+    args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal  = setup 
 
     needsShadowJL = if RT <: Active
         false
@@ -610,20 +610,6 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     world = enzyme_extract_world(fn)
 
     mode = get_mode(gutils)
-
-    ami, augprimal_TT = aug_fwd_mi(orig, gutils, forward)
-    
-    if ami !== nothing
-        target = DefaultCompilerTarget()
-        params = PrimalCompilerParams(mode)
-        job    = CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)
-        interp = GPUCompiler.get_interpreter(job)
-        aug_RT = something(Core.Compiler.typeinf_type(interp, ami.def, ami.specTypes, ami.sparam_vals), Any)
-    else
-        @safe_debug "No custom augmented_primal rule is applicable for" augprimal_TT
-        emit_error(B, orig, "Enzyme: No custom augmented_primal rule was applicable for " * string(augprimal_TT))
-        return C_NULL
-    end
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
