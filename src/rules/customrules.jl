@@ -502,7 +502,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-@inline function aug_fwd_mi(orig::LLVM.CallInst, gutils::GradientUtils)
+@inline function aug_fwd_mi(orig::LLVM.CallInst, gutils::GradientUtils, forward=false)
     width = get_width(gutils)
 
     # 1) extract out the MI from attributes
@@ -611,7 +611,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     mode = get_mode(gutils)
 
-    ami, augprimal_TT = aug_fwd_mi(orig, gutils)
+    ami, augprimal_TT = aug_fwd_mi(orig, gutils, forward)
     
     if ami !== nothing
         target = DefaultCompilerTarget()
