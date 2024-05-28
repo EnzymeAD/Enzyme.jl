@@ -2331,6 +2331,7 @@ function bc2_loss_function(x, scale, bias)
     return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
 end
 
+@static if VERSION ≥ v"1.8-"
 @testset "Broadcast noalias" begin
 
     x = ones(30)
@@ -2344,6 +2345,7 @@ end
     bi = rand(Float32, 6)
     Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
         Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+end
 end
 
 @testset "GetField" begin
