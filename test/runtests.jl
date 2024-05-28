@@ -2302,14 +2302,9 @@ end
 end
 
 @noinline function bc1_affine_normalize(x::AbstractArray)
-    # _axes = broadcast_shape(axes(x), axes(x)) #Broadcast.combine_axes(x, x)
     _axes = bc1_bcs2(axes(x), axes(x))
-    i = Broadcast.Broadcasted(Base.Broadcast.DefaultArrayStyle{2}(), +, (x,), _axes)
-
     dest = similar(Array{Float32}, _axes)
-    bc = convert(Broadcast.Broadcasted{Nothing}, i)
-
-    # mycopyto!(dest, bc)
+    bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(Base.broadcasted(+, x, x)))
     copyto!(dest, bc)
     return x
 end
