@@ -5543,7 +5543,9 @@ end
 end
 
 @inline function default_adjoint(T)
-    if T <: AbstractFloat
+    if T == Union{}
+        return nothing
+    elseif T <: AbstractFloat
         return one(T)
     elseif T <: Complex
         error("Attempted to use automatic pullback (differential return value) deduction on a either a type unstable function returning an active complex number, or autodiff_deferred returning an active complex number. For the first case, please type stabilize your code, e.g. by specifying autodiff(Reverse, f->f(x)::Complex, ...). For the second case, please use regular non-deferred autodiff")

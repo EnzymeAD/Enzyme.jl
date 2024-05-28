@@ -2602,6 +2602,15 @@ end
     @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), Const(true))[1][1]
 end
 
+
+function assured_err(x)
+    throw(AssertionError("foo"))
+end
+
+@testset "UnionAll" begin
+    @test_throws AssertionError Enzyme.autodiff(Reverse, assured_err, Active, Active(2.0))
+end
+
 struct MyFlux
 end
 
