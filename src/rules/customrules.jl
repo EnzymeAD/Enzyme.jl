@@ -269,6 +269,10 @@ function enzyme_custom_setup_ret(gutils::GradientUtils, orig::LLVM.CallInst, mi,
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
+function custom_rule_method_error(world, fn, args...) 
+    throw(MethodError(fn, (args...,), world))
+end
+
 function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -331,19 +335,23 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             @safe_debug "Applying custom forward rule (kwcall)" TT
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
             fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
+        else
+            TT = Tuple{typeof(world), typeof(kwfunc), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
+            fwd_RT = Union{}
         end
     else
         if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
             @safe_debug "Applying custom forward rule" TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
             fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+        else
+            TT = Tuple{typeof(world), typeof(EnzymeRules.forward), TT.parameters...}
+            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
+            fwd_RT = Union{}
         end
-    end
-
-    if llvmf === nothing
-        @safe_debug "No custom forward rule is applicable for" TT
-        emit_error(B, orig, "Enzyme: No custom rule was applicable for " * string(TT))
-        return false
     end
     
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -365,7 +373,6 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     else
         sret = nothing
     end
-
 
     if length(args) != length(parameters(llvmf))
         GPUCompiler.@safe_error "Calling convention mismatch", args, llvmf, orig, isKWCall, kwtup, TT, sret, returnRoots
@@ -536,6 +543,11 @@ end
             ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule (kwcall)" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(kwfunc), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     else
         @assert kwtup === nothing
@@ -547,6 +559,11 @@ end
             ami = GPUCompiler.methodinstance(Core.Typeof(EnzymeRules.augmented_primal), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule" TT=augprimal_TT
         catch e
+            augprimal_TT = Tuple{typeof(world), typeof(EnzymeRules.augmented_primal), augprimal_TT.parameters...}
+            ami = GPUCompiler.methodinstance(typeof(custom_rule_method_error), augprimal_TT, world)
+            if forward
+                pushfirst!(args, LLVM.ConstantInt(world))
+            end
         end
     end
     return ami, augprimal_TT
@@ -654,19 +671,23 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 @safe_debug "Applying custom reverse rule (kwcall)" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(rkwfunc), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
                 @safe_debug "Applying custom reverse rule" TT=rev_TT
                 llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
                 rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+            else
+                rev_TT = Tuple{typeof(world), typeof(EnzymeRules.reverse), rev_TT.parameters...}
+                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                pushfirst!(args, LLVM.ConstantInt(world))
+                rev_RT = Union{}
             end
-        end
-
-        if llvmf == nothing
-            @safe_debug "No custom reverse rule is applicable for" rev_TT
-            emit_error(B, orig, "Enzyme: No custom reverse rule was applicable for " * string(rev_TT))
-            return C_NULL
         end
     end
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))

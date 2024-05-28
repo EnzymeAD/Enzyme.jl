@@ -103,6 +103,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_array_grow_at", "jl_array_grow_at",
     "ijl_try_substrtod", "jl_try_substrtod",
     "jl_f__apply_iterate",
     "ijl_field_index", "jl_field_index",
@@ -371,6 +372,13 @@ end
     end)
 end
 
+@inline function active_reg_recur(::Type{ST}, seen::Seen, world, ::Val{justActive}, ::Val{UnionSret}) where {ST, Seen, justActive, UnionSret}
+    if ST isa Union
+        return forcefold(Val(active_reg_recur(ST.a, seen, world, Val(justActive), Val(UnionSret))), Val(active_reg_recur(ST.b, seen, world, Val(justActive), Val(UnionSret))))
+    end
+    return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
+end
+
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
 
     if T === Any
@@ -436,13 +444,7 @@ end
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
         if UnionSret && is_sret_union(T)
-            @inline function recur(::Type{ST}) where ST
-                if ST isa Union
-                    return forcefold(Val(recur(ST.a)), Val(recur(ST.b)))
-                end
-                return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
-            end
-            return recur(T)
+            return active_reg_recur(T, seen, world, Val(justActive), Val(UnionSret))
         else
             if justActive
                 return AnyState
@@ -572,6 +574,10 @@ struct AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType} <: A
 end
 
 struct AdjointThunk{PT, FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT, Width}
+    adjoint::PT
+end
+
+struct PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World} <: AbstractThunk{FA, RT, TT, Width}
     adjoint::PT
 end
 
@@ -1352,8 +1358,13 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
+    ct = if occursin("ptx", LLVM.triple(mod))
+        GPUCompiler.emit_exception!(B, string, orig)
+    else
+        call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
+    end
+
     # 2. Call error function and insert unreachable
-    ct = call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
     return ct
@@ -1477,7 +1488,7 @@ end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    if ece.ir !== nothing && !occursin("No create nofree of empty function", ece.msg)
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
@@ -2107,7 +2118,12 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
             return Any, true
         else
             e = LLVM.API.LLVMGetElementType(Type)
-            return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            tkind2 = LLVM.API.LLVMGetTypeKind(e)
+            if tkind2 == LLVM.API.LLVMFunctionTypeKind
+                return Core.LLVMPtr{Cvoid, Int(addrspace)}, false
+            else
+                return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
+            end
         end
     end
     if tkind == LLVM.API.LLVMArrayTypeKind
@@ -2170,7 +2186,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     if tkind == LLVM.API.LLVMFP128TypeKind
         return Float128, false
     end
-    error("Can't construct tape type for $Type")
+    error("Can't construct tape type for $Type $(string(Type)) $tkind")
 end
 
 function tape_type(LLVMType::LLVM.LLVMType)
@@ -2236,7 +2252,10 @@ end
 function get_julia_inner_types(B, p, startvals...; added=[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    vals = LLVM.Value[p]
+    vals = LLVM.Value[]
+    if p != nothing
+        push!(vals, p)
+    end
     todo = LLVM.Value[startvals...]
     while length(todo) != 0
         cur = popfirst!(todo)
@@ -3192,68 +3211,13 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     retType = convert(API.CDIFFE_TYPE, rt)
 
     rules = Dict{String, API.CustomRuleType}(
-        "jl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_apply_generic" => @cfunction(ptr_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "julia.gc_alloc_obj" => @cfunction(alloc_obj_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_float32" => @cfunction(f32_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_int64" => @cfunction(i64_box_rule,
-                                           UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                   Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_box_uint64" => @cfunction(i64_box_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "ijl_array_copy" => @cfunction(inout_rule,
                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_1d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_2d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "ijl_alloc_array_3d" => @cfunction(alloc_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "julia.pointer_from_objref" => @cfunction(inout_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_wait" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-        "jl_enq_work" => @cfunction(noop_rule,
-                                            UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
-                                                    Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
-
-        "enz_noop" => @cfunction(noop_rule,
                                             UInt8, (Cint, API.CTypeTreeRef, Ptr{API.CTypeTreeRef},
                                                     Ptr{API.IntList}, Csize_t, LLVM.API.LLVMValueRef)),
         "jl_inactive_inout" => @cfunction(inout_rule,
@@ -4907,7 +4871,23 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if llvmfn == primalf
             actualRetType = k.ci.rettype
         end
+       
+        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
+            push!(return_attributes(llvmfn), EnumAttribute("noalias"))
+            for u in LLVM.uses(llvmfn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                cf = LLVM.called_operand(c)
+                if cf == llvmfn
+                    LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
+                end
+            end
+        end
 
+        func = mi.specTypes.parameters[1]
+        
         meth = mi.def
         name = meth.name
         jlmod  = meth.module
@@ -4935,7 +4915,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        func = mi.specTypes.parameters[1]
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == typeof(Base.eps) || func == typeof(Base.nextfloat) || func == typeof(Base.prevfloat)
@@ -4956,6 +4935,17 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                   ])
             continue
         end
+        if func == typeof(Base.mightalias)
+            handleCustom(llvmfn, "jl_mightalias",
+                   [EnumAttribute("readonly", 0),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("nofree"),
+                    StringAttribute("enzyme_ta_norecur"),
+                                  ], true, false)
+            continue
+        end
         if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
             name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
             handleCustom(llvmfn, name,
@@ -4974,15 +4964,15 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # fn, but it doesn't presently so for now we will ensure this by hand
         if func == typeof(Base.Checked.throw_overflowerr_binaryop)
             llvmfn = functions(mod)[k.specfunc]
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")])
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation")], false, false)
+            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
                     if isa(inst, LLVM.CallInst)
@@ -5008,12 +4998,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
         if func == typeof(Base.enq_work) && length(sparam_vals) == 1 && first(sparam_vals) <: Task
-            handleCustom(llvmfn, "jl_enq_work")
+            handleCustom(llvmfn, "jl_enq_work", [StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
-                handleCustom(llvmfn, "jl_wait")
+                handleCustom(llvmfn, "jl_wait", [StringAttribute("enzyme_ta_norecur")])
             end
             continue
         end
@@ -5186,11 +5176,50 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.optimize_module!(parent_job, mod)
     end
 
+    seen = TypeTreeTable()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    dl = string(LLVM.datalayout(mod))
+    ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         if !isa(inst, LLVM.CallInst)
             continue
         end
+
         fn = LLVM.called_operand(inst)
+
+        if !API.HasFromStack(inst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+            legal, source_typ = abs_typeof(inst)
+            codegen_typ = value_type(inst)
+            if legal
+                typ = if codegen_typ isa LLVM.PointerType
+                    llvm_source_typ = convert(LLVMType, source_typ; allow_boxed=true)
+                    # pointers are used for multiple kinds of arguments
+                    # - literal pointer values
+                    if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                        source_typ
+                    elseif llvm_source_typ isa LLVM.PointerType
+                        #if llvm_source_typ != codegen_typ
+                        #    throw(AssertionError("llvmtype ($llvm_source_typ) is not codegen_typ ($codegen_typ), source_typ = $source_typ within $(string(inst))"))
+                        #end
+                        # push!(args, (cc=MUT_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    # - references to aggregates
+                    else
+                        @assert llvm_source_typ != codegen_typ
+                        # push!(args, (cc=BITS_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                        Ptr{source_typ}
+                    end
+                else
+                    codegen_typ
+                end
+
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+            elseif codegen_typ == T_prjlvalue
+                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+            end
+        end
+
         if !isa(fn, LLVM.Function)
             continue
         end
@@ -5252,7 +5281,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                             cf = LLVM.called_operand(tmp)
                             if isa(cf, LLVM.Function)
                                 nm = LLVM.name(cf)
-                                if nm == "gpu_signal_exception" || nm == "gpu_report_exception"
+                                if nm == "gpu_signal_exception" || nm == "gpu_report_exception" || nm == "ijl_throw" || nm == "jl_throw"
                                     shouldemit = false
                                     break
                                 end
@@ -5408,6 +5437,9 @@ struct CompileResult{AT, PT}
     TapeType::Type
 end
 
+@inline (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World})(fn::FA, args...) where {PT, FA, RT, TT, Width, ReturnPrimal, World} =
+enzyme_call(Val(false), thunk.adjoint, PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
+
 @inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
@@ -5511,7 +5543,9 @@ end
 end
 
 @inline function default_adjoint(T)
-    if T <: AbstractFloat
+    if T == Union{}
+        return nothing
+    elseif T <: AbstractFloat
         return one(T)
     elseif T <: Complex
         error("Attempted to use automatic pullback (differential return value) deduction on a either a type unstable function returning an active complex number, or autodiff_deferred returning an active complex number. For the first case, please type stabilize your code, e.g. by specifying autodiff(Reverse, f->f(x)::Complex, ...). For the second case, please use regular non-deferred autodiff")
@@ -5534,7 +5568,7 @@ end
 
     JuliaContext() do ctx
         F = eltype(FA)
-        is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk
+        is_forward = CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
         is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
         is_split   = CC <: AdjointThunk || CC <: AugmentedForwardThunk
         needs_tape = CC <: AdjointThunk
@@ -5544,23 +5578,33 @@ end
         argtypes = DataType[argtt.parameters...]
         argexprs = Union{Expr, Symbol}[:(args[$i]) for i in 1:N]
 
-        if !RawCall
+        if false && CC <: PrimalErrorThunk
+            primargs = [quote
+                            convert($(eltype(T)), $(argexprs[i]).val)
+                        end for (i, T) in enumerate(argtypes)]
+            return quote
+                fn.val($(primargs...))
+                error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+            end
+        end
+
+        if !RawCall && !(CC <: PrimalErrorThunk)
             if rettype <: Active
                 if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
                     return quote
-                        throw(MethodError($CC($fptr), $args))
+                        throw(MethodError($CC(fptr), $args))
                     end
                 end
             elseif rettype <: Const
                 if length(argtypes)              + needs_tape != length(argexprs)
                     return quote
-                        throw(MethodError($CC($fptr), $args))
+                        throw(MethodError($CC(fptr), $args))
                     end
                 end
             else
                 if length(argtypes)              + needs_tape != length(argexprs)
                     return quote
-                        throw(MethodError($CC($fptr), $args))
+                        throw(MethodError($CC(fptr), $args))
                     end
                 end
             end
@@ -5568,8 +5612,10 @@ end
 
         types = DataType[]
 
-        if eltype(rettype) === Union{}
-            error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+        if eltype(rettype) === Union{} && false
+            return quote
+                error("Function to differentiate is guaranteed to return an error and doesn't make sense to autodiff. Giving up")
+            end
         end
         if !(rettype <: Const) && (isghostty(eltype(rettype)) || Core.Compiler.isconstType(eltype(rettype)) || eltype(rettype) === DataType)
             rrt = eltype(rettype)
@@ -5640,7 +5686,9 @@ end
                 end
                 continue
             end
-
+            if CC <: PrimalErrorThunk
+                continue
+            end
             if T <: Active
                 if is_adjoint
                     if width == 1
@@ -5727,8 +5775,10 @@ end
             end
             push!(sret_types, NT)
         end
-
-        @assert i == length(argexprs)+1
+        
+        if !(CC <: PrimalErrorThunk)
+            @assert i == length(argexprs)+1
+        end
 
         # Tape
         if CC <: AugmentedForwardThunk
@@ -5760,7 +5810,7 @@ end
 
         T_void = convert(LLVMType, Nothing)
 
-        combinedReturn = Tuple{sret_types...}
+        combinedReturn = (CC <: PrimalErrorThunk && eltype(rettype) == Union{}) ? Union{} : Tuple{sret_types...}
         if any(any_jltypes(convert(LLVM.LLVMType, T; allow_boxed=true)) for T in sret_types)
             combinedReturn = AnonymousStruct(combinedReturn)
         end
@@ -5978,29 +6028,30 @@ end
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
         tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
-        sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
-
         interp = GPUCompiler.get_interpreter(tmp_job)
 
         # TODO check compile return here, early
         # rrt = Core.Compiler.return_type(f, primal.tt) # nothing
         rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
+        rrt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+
+        run_enzyme = true
 
         if rrt == Union{}
-            estr = "Function to differentiate `$mi` is guaranteed to return an error and doesn't make sense to autodiff. Giving up"
-			return quote
-				error($estr)
-			end
+            run_enzyme = false
+            A = Const
         end
         
-        if !(A <: Const) && guaranteed_const_nongen(rrt, World)
+        if run_enzyme && !(A <: Const) && guaranteed_const_nongen(rrt, World)
 			estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
             return quote
 				error($estr)
 			end
         end
 
-        rt2 = if A isa UnionAll
+        rt2 = if !run_enzyme
+            Const{rrt}
+        elseif A isa UnionAll
             A{rrt}
         else
             @assert A isa DataType
@@ -6009,7 +6060,7 @@ end
             A
         end
        
-        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+        params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         # We need to use primal as the key, to lookup the right method
@@ -6020,7 +6071,13 @@ end
 
 
         compile_result = cached_compilation(job)
-        if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+        if !run_enzyme
+            ErrT = PrimalErrorThunk{typeof(compile_result.adjoint), FA, rt2, TT, width, ReturnPrimal, World}
+            return quote
+                Base.@_inline_meta
+                $ErrT($(compile_result.adjoint))
+            end
+        elseif Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             TapeType = compile_result.TapeType
             AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal, TapeType}
             AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, TapeType}
@@ -6061,7 +6118,6 @@ import GPUCompiler: deferred_codegen_jobs
             params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
             tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
             
-            sig = Tuple{eltype(FA), map(eltype, TT.parameters)...}
             interp = GPUCompiler.get_interpreter(tmp_job)
 
             rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)

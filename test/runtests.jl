@@ -1647,6 +1647,233 @@ end
 
 end
 
+
+concat() = ()
+concat(a) = a
+concat(a, b) = (a..., b...)
+concat(a, b, c...) = concat(concat(a, b), c...)
+
+metaconcat(x) = concat(x...)
+
+metaconcat2(x, y) = concat(x..., y...)
+
+midconcat(x, y) = (x, concat(y...)...)
+
+metaconcat3(x, y, z) = concat(x..., y..., z...)
+
+@testset "Forward Apply iterate" begin
+    x = [(2.0, 3.0), (7.9, 11.2)]
+    dx = [(13.7, 15.2), (100.02, 304.1)]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(x, dx))
+    @test length(dres) == 4
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(x, dx))
+    @test length(res) == 4
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test length(dres) == 4
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+
+    a = [("a", "b"), ("c", "d")]
+    da = [("e", "f"), ("g", "h")]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(a, da))
+    @test length(dres) == 4
+    @test dres[1] == "a"
+    @test dres[2] == "b"
+    @test dres[3] == "c"
+    @test dres[4] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(a, da))
+    @test length(res) == 4
+    @test res[1] == "a"
+    @test res[2] == "b"
+    @test res[3] == "c"
+    @test res[4] == "d"
+    @test length(dres) == 4
+    @test dres[1] == "a"
+    @test dres[2] == "b"
+    @test dres[3] == "c"
+    @test dres[4] == "d"
+
+
+    Enzyme.autodiff(Forward, metaconcat, Const(a))
+
+@static if VERSION ≥ v"1.7-" 
+    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Duplicated(a, da))
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Duplicated(a, da))
+    @test length(res) == 5
+    @test res[1] ≈ 1.0
+    @test res[2] == "a"
+    @test res[3] == "b"
+    @test res[4] == "c"
+    @test res[5] == "d"
+
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+
+    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Const(a))
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+
+    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Const(a))
+    @test length(res) == 5
+    @test res[1] ≈ 1.0
+    @test res[2] == "a"
+    @test res[3] == "b"
+    @test res[4] == "c"
+    @test res[5] == "d"
+    @test length(dres) == 5
+    @test dres[1] ≈ 7.0
+    @test dres[2] == "a"
+    @test dres[3] == "b"
+    @test dres[4] == "c"
+    @test dres[5] == "d"
+end
+
+    y = [(-92.0, -93.0), (-97.9, -911.2)]
+    dy = [(-913.7, -915.2), (-9100.02, -9304.1)]
+
+    dres, = Enzyme.autodiff(Forward, metaconcat2, Duplicated(x, dx), Duplicated(y, dy))
+    @test length(dres) == 8
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+    @test dres[5] ≈ -913.7
+    @test dres[6] ≈ -915.2
+    @test dres[7] ≈ -9100.02
+    @test dres[8] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat2, Duplicated, Duplicated(x, dx), Duplicated(y, dy))
+    @test length(res) == 8
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test res[5] ≈ -92.0
+    @test res[6] ≈ -93.0
+    @test res[7] ≈ -97.9
+    @test res[8] ≈ -911.2
+    @test length(dres) == 8
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+    @test dres[5] ≈ -913.7
+    @test dres[6] ≈ -915.2
+    @test dres[7] ≈ -9100.02
+    @test dres[8] ≈ -9304.1
+
+
+    dres, = Enzyme.autodiff(Forward, metaconcat3, Duplicated(x, dx), Const(a), Duplicated(y, dy))
+    @test length(dres) == 12
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    @test dres[5] == "a"
+    @test dres[6] == "b"
+    @test dres[7] == "c"
+    @test dres[8] == "d"
+
+    @test dres[9] ≈ -913.7
+    @test dres[10] ≈ -915.2
+    @test dres[11] ≈ -9100.02
+    @test dres[12] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat3, Duplicated, Duplicated(x, dx), Const(a), Duplicated(y, dy))
+    @test length(res) == 12
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+
+    @test res[5] == "a"
+    @test res[6] == "b"
+    @test res[7] == "c"
+    @test res[8] == "d"
+
+    @test res[9] ≈ -92.0
+    @test res[10] ≈ -93.0
+    @test res[11] ≈ -97.9
+    @test res[12] ≈ -911.2
+
+    @test length(dres) == 12
+    @test dres[1] ≈ 13.7
+    @test dres[2] ≈ 15.2
+    @test dres[3] ≈ 100.02
+    @test dres[4] ≈ 304.1
+
+    @test dres[5] == "a"
+    @test dres[6] == "b"
+    @test dres[7] == "c"
+    @test dres[8] == "d"
+
+    @test dres[9] ≈ -913.7
+    @test dres[10] ≈ -915.2
+    @test dres[11] ≈ -9100.02
+    @test dres[12] ≈ -9304.1
+
+
+    dres, = Enzyme.autodiff(Forward, metaconcat, BatchDuplicated(x, (dx, dy)))
+    @test length(dres[1]) == 4
+    @test dres[1][1] ≈ 13.7
+    @test dres[1][2] ≈ 15.2
+    @test dres[1][3] ≈ 100.02
+    @test dres[1][4] ≈ 304.1
+    @test length(dres[2]) == 4
+    @test dres[2][1] ≈ -913.7
+    @test dres[2][2] ≈ -915.2
+    @test dres[2][3] ≈ -9100.02
+    @test dres[2][4] ≈ -9304.1
+
+    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, BatchDuplicated(x, (dx, dy)))
+    @test length(res) == 4
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+    @test res[3] ≈ 7.9
+    @test res[4] ≈ 11.2
+    @test length(dres[1]) == 4
+    @test dres[1][1] ≈ 13.7
+    @test dres[1][2] ≈ 15.2
+    @test dres[1][3] ≈ 100.02
+    @test dres[1][4] ≈ 304.1
+    @test length(dres[2]) == 4
+    @test dres[2][1] ≈ -913.7
+    @test dres[2][2] ≈ -915.2
+    @test dres[2][3] ≈ -9100.02
+    @test dres[2][4] ≈ -9304.1
+end
+
 @testset "Dynamic Val Construction" begin
 
     dyn_f(::Val{D}) where D = prod(D)
@@ -2062,6 +2289,63 @@ end
     end
 end
 
+function bc0_test_function(ps)
+    z = view(ps, 26:30)
+    C = Matrix{Float64}(undef, 5, 1)
+    C .= z
+    return C[1]
+end
+
+@noinline function bc1_bcs2(x, y)
+    x != y && error(2)
+    return x
+end
+
+@noinline function bc1_affine_normalize(x::AbstractArray)
+    _axes = bc1_bcs2(axes(x), axes(x))
+    dest = similar(Array{Float32}, _axes)
+    bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(Base.broadcasted(+, x, x)))
+    copyto!(dest, bc)
+    return x
+end
+
+function bc1_loss_function(x)
+    return bc1_affine_normalize(x)[1]
+end
+
+function bc2_affine_normalize(::typeof(identity), x::AbstractArray, xmean, xvar,
+    scale::AbstractArray, bias::AbstractArray, epsilon::Real)
+    _scale = @. scale / sqrt(xvar + epsilon)
+    _bias = @. bias - xmean * _scale
+    return @. x * _scale + _bias
+end
+
+function bc2_loss_function(x, scale, bias)
+    x_ = reshape(x, 6, 6, 3, 2, 2)
+    scale_ = reshape(scale, 1, 1, 3, 2, 1)
+    bias_ = reshape(bias, 1, 1, 3, 2, 1)
+
+    xmean = mean(x_, dims=(1, 2, 5))
+    xvar = var(x_, corrected=false, mean=xmean, dims=(1, 2, 5))
+
+    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
+end
+
+@testset "Broadcast noalias" begin
+
+    x = ones(30)
+    autodiff(Reverse, bc0_test_function, Active, Const(x))
+    
+    x = rand(Float32, 2, 3)
+    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+
+    x = rand(Float32, 6, 6, 6, 2)
+    sc = rand(Float32, 6)
+    bi = rand(Float32, 6)
+    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+end
+
 @testset "GetField" begin
     mutable struct MyType
        x::Float64
@@ -2373,6 +2657,15 @@ end
     out = Ref(0.0)
     dout = Ref(1.0)
     @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), Const(true))[1][1]
+end
+
+
+function assured_err(x)
+    throw(AssertionError("foo"))
+end
+
+@testset "UnionAll" begin
+    @test_throws AssertionError Enzyme.autodiff(Reverse, assured_err, Active, Active(2.0))
 end
 
 struct MyFlux
@@ -3050,6 +3343,79 @@ end
         @test res == 2
     end
 end
+
+const CUmemoryPool2 = Ptr{Float64} 
+
+struct CUmemPoolProps2
+    reserved::NTuple{31,Char}
+end
+
+mutable struct CuMemoryPool2
+    handle::CUmemoryPool2
+end
+
+function ccall_macro_lower(func, rettype, types, args, nreq)
+    # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
+    # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
+    # just around the inner ccall
+
+    cconvert_exprs = []
+    cconvert_args = []
+    for (typ, arg) in zip(types, args)
+        var = gensym("$(func)_cconvert")
+        push!(cconvert_args, var)
+        push!(cconvert_exprs, quote
+            $var = Base.cconvert($(esc(typ)), $(esc(arg)))
+        end)
+    end
+
+    unsafe_convert_exprs = []
+    unsafe_convert_args = []
+    for (typ, arg) in zip(types, cconvert_args)
+        var = gensym("$(func)_unsafe_convert")
+        push!(unsafe_convert_args, var)
+        push!(unsafe_convert_exprs, quote
+            $var = Base.unsafe_convert($(esc(typ)), $arg)
+        end)
+    end
+
+    quote
+        $(cconvert_exprs...)
+
+        $(unsafe_convert_exprs...)
+
+        ret = ccall($(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
+                    $(unsafe_convert_args...))
+    end
+end
+
+macro gcsafe_ccall(expr)
+    ccall_macro_lower(Base.ccall_macro_parse(expr)...)
+end
+
+function cuMemPoolCreate2(pool, poolProps)
+    # CUDA.initialize_context()
+    #CUDA.
+    gc_state = @ccall(jl_gc_safe_enter()::Int8)
+    @gcsafe_ccall cuMemPoolCreate(pool::Ptr{CUmemoryPool2},
+                                          poolProps::Ptr{CUmemPoolProps2})::Cvoid
+    @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
+end
+
+function cual()
+        props = Ref(CUmemPoolProps2( 
+            ntuple(i->Char(0), 31)
+        ))
+        handle_ref = Ref{CUmemoryPool2}()
+        cuMemPoolCreate2(handle_ref, props)
+
+        CuMemoryPool2(handle_ref[])
+end
+
+@testset "Unused shadow phi rev" begin
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
 
 const SEED = 42
 const N_SAMPLES = 500

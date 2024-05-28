@@ -230,7 +230,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
 
     if A <: Active
-        if !allocatedinline(rt) || rt isa Union
+        if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args...)
             tape = res[1]
@@ -244,7 +244,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
-    if A <: Active && rt <: Complex
+    if (A <: Active && rt <: Complex) && rt != Union{}
         if Holomorphic
             seen = IdDict()
             seen2 = IdDict()
