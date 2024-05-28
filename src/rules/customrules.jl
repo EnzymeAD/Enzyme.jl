@@ -510,7 +510,7 @@ end
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
+    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt)
 
     needsShadowJL = if RT <: Active
@@ -611,6 +611,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     mode = get_mode(gutils)
 
+    @assert ami !== nothing
+    aug_RT = something(Core.Compiler.typeinf_type(GPUCompiler.get_interpreter(CompilerJob(ami, CompilerConfig(target, params; kernel=false), world)), ami.def, ami.specTypes, ami.sparam_vals), Any)
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
         emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(augprimal_TT))
