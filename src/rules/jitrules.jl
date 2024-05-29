@@ -192,7 +192,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
         rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
         annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
-        annotation = if $Width != 1 && annotation <: Duplicated
+        annotation = if $Width != 1 && annotation0 <: Duplicated
             BatchDuplicated{rt, $Width}
         else
             annotation0
@@ -212,10 +212,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 
         internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
         resT = typeof(origRet)
-        @show "aug generic", f, args
-        @show "generic", origRet, resT, annotation
-        @show width
-        @show initShadow
         if annotation <: Const
             shadow_return = nothing
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
@@ -226,7 +222,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
             else
                 shadow_return = ($(nzeros...),)
             end
-            @show "generic", shadow_return
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             if $Width == 1
                 return ReturnType((origRet, shadow_return, tape))
@@ -295,12 +290,6 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
         shadowret = :(($(shadowret...),))
     end
 
-    shadowsplat = Expr[]
-    for s in shadowargs
-        for v in s
-            push!(shadowsplat, :(@show $v))
-        end
-    end
     ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
     Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
 
@@ -314,7 +303,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
         rt = Core.Compiler.return_type(f, tt)
         annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
-        annotation = if $Width != 1 && annotation <: Duplicated
+        annotation = if $Width != 1 && annotation0 <: Duplicated
             BatchDuplicated{rt, $Width}
         else
             annotation0
@@ -333,12 +322,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
         if tape.shadow_return !== nothing
             args = (args..., $shadowret)
         end
-        @show "gen rev", f, args
-        @show tape.shadow_return
-        $(shadowsplat...)
 
         tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
-        @show tup
 
         $(outs...)
         return nothing
@@ -708,8 +693,6 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
             end
         end
     end
-
-    @show "idx rev", tup
 
     ntuple(Val(Nargs)) do i
         Base.@_inline_meta
