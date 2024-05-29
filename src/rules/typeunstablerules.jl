@@ -288,7 +288,7 @@ function idx_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptr
         if length(dptrs) == 0
             return res
         else
-            return (res, (getfield(dv, symname) for dv in dptrs)...)
+            return (res, (getfield(dv isa Base.RefValue ? dv[] : dv, symname+1) for dv in dptrs)...)
         end
     end
 end
@@ -323,11 +323,59 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield!(dptr, symname+1, recursive_add(cur, dret[]))
+            @show dptr, cur, dret
+            if dptr isa Base.RefValue
+                vload = dptr[]
+                dRT = Core.Typeof(vload)
+                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do i
+                    Base.@_inline_meta
+                    prev = getfield(vload, i)
+                    if i == symname+1
+                        recursive_add(prev, dret[])
+                    else
+                        prev
+                    end
+                end)
+            else
+                setfield!(dptr, symname+1, recursive_add(cur, dret[]))
+            end
         else
-            setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
+            if dptr isa Base.RefValue
+                vload = dptr[]
+                dRT = Core.Typeof(vload)
+                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
+                    Base.@_inline_meta
+                    prev = getfield(vload, j)
+                    if j == symname+1
+                        recursive_add(prev, dret[1][])
+                    else
+                        prev
+                    end
+                end)
+            else
+                setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
+            end
             for i in 1:length(dptrs)
-                setfield!(dptrs[i], symname+1, recursive_add(cur, dret[1+i][]))
+                if dptrs[i] isa Base.RefValue
+                    vload = dptr[]
+                    dRT = Core.Typeof(vload)
+                    dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
+                        Base.@_inline_meta
+                        prev = getfield(vload, j)
+                        if j == symname+1
+                            recursive_add(prev, dret[1+i][])
+                        else
+                            prev
+                        end
+                    end)
+                else
+                    curi = if dptr isa Base.RefValue
+                       Base.getfield(dptrs[i][], symname+1)
+                    else
+                       Base.getfield(dptrs[i], symname+1)
+                    end
+                    setfield!(dptrs[i], symname+1, recursive_add(curi, dret[1+i][]))
+                end
             end
         end
     end
