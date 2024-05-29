@@ -77,14 +77,14 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
                         iterate_unwrap_augfwd_act($(primargs[i])...)
                  else
                      $((Width == 1) ? quote
-                        iterate_unwrap_augfwd_dup($(primargs[i]), $(shadowargs[i]))
+                        iterate_unwrap_augfwd_dup(Val($forwardMode), $(primargs[i]), $(shadowargs[i]))
                     end : quote
-                        iterate_unwrap_augfwd_batchdup(Val($Width), $(primargs[i]), $(shadowargs[i]))
+                        iterate_unwrap_augfwd_batchdup(Val($forwardMode), Val($Width), $(primargs[i]), $(shadowargs[i]))
                     end
                     )
                  end
              else
-                 map(Const, $(primargs[i])...)
+                 map(Const, $(primargs[i]))
              end
             )
         else
@@ -139,7 +139,6 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         end
 
         world = codegen_world_age(FT, tt)
-
         forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
@@ -417,14 +416,14 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
     ModifiedBetween = Val(Enzyme.falses_from_args(Nargs+1))
 
     dupClosure = dupClosure0 && !guaranteed_const(FT)
-    FA = dupClosure ? Const{FT} : Duplicated{FT}
+    FA = dupClosure ? Duplicated{FT} : Const{FT}
 
     tt    = Enzyme.vaEltypes(tt′)
 
     rt = Core.Compiler.return_type(f, tt)
     annotation0 = guess_activity(rt, API.DEM_ForwardMode)
 
-    annotation = @static if width != 1
+    annotation = if width != 1
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             BatchDuplicated{rt, width}
         else
@@ -438,10 +437,18 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
         end
     end
 
-    world = codegen_world_age(FRT, tt)
-
+    world = codegen_world_age(FT, tt)
+    fa = if dupClosure
+        if width == 1
+            Duplicated(f, df)
+        else
+            BatchDuplicated(f, df)
+        end
+    else
+        Const(f)
+    end
     res = thunk(Val(world), FA, annotation, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI)(f, args...)
+                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI)(fa, args...)
     return if annotation <: Const
         ReturnType(allFirst(Val(width+1), res))
     else
@@ -458,12 +465,13 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
     return quote
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
+        FT = Core.Typeof(f)
         fwddiff_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, FT, tt′, f, df, args...)::ReturnType
     end
 end
 
 function func_runtime_iterate_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _ = setup_macro_wraps(true, N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _, _ = setup_macro_wraps(true, N, Width, #=base=#nothing, #=iterate=#true)
     body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
 
     quote
@@ -475,7 +483,7 @@ end
 
 @generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _, _ = setup_macro_wraps(true, N, Width, :allargs)
+    _, _, primtypes, _, _, wrapped, _, _ = setup_macro_wraps(true, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
 end
 
@@ -487,14 +495,14 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     ModifiedBetween = Val(ModifiedBetween0)
 
     dupClosure = dupClosure0 && !guaranteed_const(FT)
-    FA = dupClosure ? Const{FT} : Duplicated{FT}
+    FA = dupClosure ? Duplicated{FT} : Const{FT}
 
     tt    = Enzyme.vaEltypes(tt′)
 
     rt = Core.Compiler.return_type(f, tt)
     annotation0 = guess_activity(rt)
 
-    annotation = @static if width != 1
+    annotation = if width != 1
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             BatchDuplicated{rt, width}
         else
@@ -508,13 +516,22 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
         end
     end
 
-    world = codegen_world_age(FRT, tt)
+    world = codegen_world_age(FT, tt)
 
+    fa = if dupClosure
+        if width == 1
+            Duplicated(f, df)
+        else
+            BatchDuplicated(f, df)
+        end
+    else
+        Const(f)
+    end
     forward, adjoint = thunk(Val(world), FA,
                              RT, tt′, Val(API.DEM_ReverseModePrimal), width,
                              ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
-    internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
+    internal_tape, origRet, initShadow = forward(fa, args...)
     resT = typeof(origRet)
     if annotation <: Const
         shadow_return = nothing
@@ -551,6 +568,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
     return quote
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
+        FT = Core.Typeof(f)
         augfwd_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, FT, tt′, f, df, args...)::ReturnType
     end
 end
@@ -581,14 +599,14 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
     ModifiedBetween = Val(ModifiedBetween0)
 
     dupClosure = dupClosure0 && !guaranteed_const(FT)
-    FA = dupClosure ? Const{FT} : Duplicated{FT}
+    FA = dupClosure ? Duplicated{FT} : Const{FT}
 
     tt    = Enzyme.vaEltypes(tt′)
 
     rt = Core.Compiler.return_type(f, tt)
     annotation0 = guess_activity(rt)
 
-    annotation = @static if width != 1
+    annotation = if width != 1
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             BatchDuplicated{rt, width}
         else
@@ -602,13 +620,22 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         end
     end
 
-    world = codegen_world_age(FRT, tt)
+    world = codegen_world_age(FT, tt)
 
+    fa = if dupClosure
+        if width == 1
+            Duplicated(f, df)
+        else
+            BatchDuplicated(f, df)
+        end
+    else
+        Const(f)
+    end
     forward, adjoint = thunk(Val(world), FA,
                              RT, tt′, Val(API.DEM_ReverseModePrimal), width,
                              ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
-    args2 = if tape.shadow_return !== nothing
+    args = if tape.shadow_return !== nothing
         if width == 1
             (args..., tape.shadow_return[])
         else
@@ -621,7 +648,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         args
     end
 
-    tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args2..., tape.internal_tape)[1]
+    tup = adjoint(fa, args2..., tape.internal_tape)[1]
 
     ntuple(Val(Nargs)) do i
         Base.@_inline_meta
@@ -631,7 +658,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
 
             if tup[i] == nothing
             else
-                expr = @static if width == 1
+                expr = if width == 1
                     tup[i]
                 else
                     tup[i][w]
@@ -716,6 +743,7 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
     quote
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
+        FT = Core.Typeof(f)
         rev_with_return(Val($Width), Val(ActivityTup[1]), Val(concat($(lengths...))), FT, tt′, f, df, tape, ($(shadowargs...),), args...)
         return nothing
     end
