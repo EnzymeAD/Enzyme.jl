@@ -31,6 +31,9 @@ function jlcall_fwd(B, orig, gutils, normalR, shadowR)
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_fwd(2, B, orig, gutils, normalR, shadowR)
+        end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
         end
@@ -68,6 +71,9 @@ function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f__svec_rev", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+        end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
@@ -113,6 +119,10 @@ function jlcall_rev(B, orig, gutils, tape)
         end
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             common_f_svec_ref_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            common_finalizer_rev(2, B, orig, gutils, tape)
             return nothing
         end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
@@ -1103,7 +1113,7 @@ function finalizer_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -1117,9 +1127,9 @@ function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    # err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    # newo = new_from_original(gutils, orig)
-    # API.moveBefore(newo, err, B)
+    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
