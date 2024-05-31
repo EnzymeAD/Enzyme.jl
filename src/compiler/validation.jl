@@ -175,7 +175,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     uservals = LLVM.Value[]
                     for lval in collect(arguments(inst))
                         llty = value_type(lval)
-                        if !isa(llty, LLVM.PointerType) || LLVM.addrspace(llty) != 10
+                        if isa(llty, LLVM.PointerType)
                             push!(uservals, lval)
                             continue
                         end
@@ -223,7 +223,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     subchanged = false
                     for lval in LLVM.inputs(bunduse)
                         llty = value_type(lval)
-                        if !isa(llty, LLVM.PointerType) || LLVM.addrspace(llty) != 10
+                        if isa(llty, LLVM.PointerType)
                             push!(uservals, lval)
                             continue
                         end
