@@ -37,11 +37,11 @@ end
     mode::API.CDerivativeMode
 end
 
-function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
+function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
     @assert world <= Base.get_world_counter()
 
     return EnzymeInterpreter(
-        cache,
+        cache_or_token,
         mt,
 
         # Initially empty cache
