@@ -18,6 +18,9 @@ branch = nothing
 
 args = (ARGS...,)
 while length(args) > 0
+    global args
+    global branch
+    global source_dir
     if length(args) >= 2 && args[1] == "--branch"
         branch = args[2]
         source_dir = nothing
