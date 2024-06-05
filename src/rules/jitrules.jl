@@ -685,7 +685,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
                 else
                     ntuple(Val(width)) do w
                         Base.@_inline_meta
-                        tape.shadow_return[w][i]
+                        tape.shadow_return[w][][i]
                     end
                 end
             else
