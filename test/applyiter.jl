@@ -146,8 +146,6 @@ end
     @test tupapprox(dx, [[4.0, 6.0], [15.8, 22.4]])
 end
 
-# GC Segfault .. needs investigation. Disabling now
-@static if false
 @testset "BatchReverse Apply iterate" begin
     x = [(2.0, 3.0), (7.9, 11.2)]
     dx = [(0.0, 0.0), (0.0, 0.0)]
@@ -237,7 +235,6 @@ end
     res = Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(metasumsq4), Active, Const(metaconcat2), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
     @test tupapprox(dx, [[4.0, 6.0], [15.8, 22.4]])
     @test tupapprox(dx2, [[4.0, 6.0], [15.8, 22.4]])
-end
 end
 
 @testset "Forward Apply iterate" begin

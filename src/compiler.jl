@@ -5985,7 +5985,6 @@ function _thunk(job, postopt::Bool=true)
     if postopt 
         if job.config.params.ABI <: FFIABI
             post_optimze!(mod, JIT.get_tm())
-            println(string(mod))
         else
             propagate_returned!(mod)
         end
