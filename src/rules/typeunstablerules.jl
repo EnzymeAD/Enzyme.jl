@@ -279,17 +279,14 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
     end
     RT = Core.Typeof(res)
     actreg = active_reg(RT)
-    @show actreg, RT 
     if actreg
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
         else
-            fval0 = NT(ntuple(Val(1+length(dptrs))) do i
+            return NT(ntuple(Val(1+length(dptrs))) do i
                 Base.@_inline_meta
                 Ref{RT}(make_zero(res))
             end)
-            @show fval0
-            return fval0
         end
     else
         if length(dptrs) == 0
@@ -335,7 +332,6 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            @show dptr, cur, dret
             if dptr isa Base.RefValue
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
@@ -599,7 +595,8 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         inps = [new_from_original(gutils, ops[1])]
     end
 
-    vals = LLVM.Value[unsafe_to_llvm(Val(AnyArray(Int(width))))]
+    AA = Val(AnyArray(Int(width)))
+    vals = LLVM.Value[unsafe_to_llvm(AA)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[2])
@@ -619,9 +616,6 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 
     debug_from_orig!(gutils, cal, orig)
 
-    emit_jl!(B, unsafe_to_llvm("Result of call to idx_jl_getfield_aug"))
-    emit_jl!(B, cal)
-
     if width == 1
         shadowres = cal
     else
@@ -638,7 +632,6 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
             if !is_constant_value(gutils, ops[1])
                 gep = LLVM.inbounds_gep!(B, AT, forgep, [LLVM.ConstantInt(0), LLVM.ConstantInt(i-1)])
                 ld = LLVM.load!(B, T_prjlvalue, gep)
-                emit_jl!(B, ld)
             else
                 ld = forgep
             end

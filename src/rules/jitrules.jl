@@ -178,7 +178,7 @@ end
 function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(origRet), Val(Width+1))
-    nzeros = ntuple(i->:(Ref(make_zero(resT))), Val(Width))
+    nzeros = ntuple(i->:(Ref(make_zero(origRet))), Val(Width))
     nres3 = ntuple(i->:(res[3]), Val(Width))
     ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
     Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
@@ -247,13 +247,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _, _= setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
@@ -948,7 +948,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     debug_from_orig!(gutils, cal, orig)
-
+    
     if tape === nothing
         llty = convert(LLVMType, ReturnType)
         cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
@@ -1029,7 +1029,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     width = get_width(gutils)
     sret = generic_setup(orig, runtime_generic_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset, B, false)
     AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
-
+    
      if unsafe_load(shadowR) != C_NULL
         if width == 1
             gep = LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
