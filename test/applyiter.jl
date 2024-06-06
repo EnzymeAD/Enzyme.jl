@@ -154,18 +154,18 @@ end
     dout = Ref(1.0)
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
-    @show dx, dx2, dout, dout2
     @test tupapprox(dx, [(4.0, 6.0), (15.8, 22.4)])
     @test tupapprox(dx2, [(3*4.0, 3*6.0), (3*15.8, 3*22.4)])
 
     dx = [(0.0, 0.0), (0.0, 0.0)]
+    dx2 = [(0.0, 0.0), (0.0, 0.0)]
     out = Ref(0.0)
     dout = Ref(1.0)
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
     @test out[] ≈ 200.84999999999997
     @test tupapprox(dx, [(4.0, 6.0), (15.8, 22.4)])
-    @test tupapprox(dx2, [(4.0, 6.0), (15.8, 22.4)])
+    @test tupapprox(dx2, [(3*4.0, 3*6.0), (3*15.8, 3*22.4)])
 
     x = [[2.0, 3.0], [7.9, 11.2]]
     dx = [[0.0, 0.0], [0.0, 0.0]]
@@ -176,10 +176,10 @@ end
 
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq2), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
     @test dx ≈ [[4.0, 6.0], [15.8, 22.4]]
-    @test dx2 ≈ [[4.0, 6.0], [15.8, 22.4]]
+    @test dx2 ≈ [[3*4.0, 3*6.0], [3*15.8, 3*22.4]]
 
     dx = [[0.0, 0.0], [0.0, 0.0]]
-    d2 = [[0.0, 0.0], [0.0, 0.0]]
+    dx2 = [[0.0, 0.0], [0.0, 0.0]]
     out = Ref(0.0)
     dout = Ref(1.0)
     dout2 = Ref(3.0)
@@ -187,6 +187,7 @@ end
 
     @test out[] ≈ 200.84999999999997
     @test tupapprox(dx, [[4.0, 6.0], [15.8, 22.4]])
+    @test tupapprox(dx2, [[3*4.0, 3*6.0], [3*15.8, 3*22.4]])
 
 
     x = [(2.0, 3.0), (7.9, 11.2)]
@@ -199,6 +200,7 @@ end
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq3), Const(metaconcat2), BatchDuplicated(x, (dx, dx2)), Const(y))
     @test tupapprox(dx, [(4.0, 6.0), (15.8, 22.4)])
+    @test tupapprox(dx2, [(3*4.0, 3*6.0), (3*15.8, 3*22.4)])
 
 
     x = [(2.0, 3.0), (7.9, 11.2)]
@@ -212,18 +214,19 @@ end
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq3),Const(metaconcat2), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
     @test tupapprox(dx, [(4.0, 6.0), (15.8, 22.4)])
-    @test tupapprox(dx2, [(4.0, 6.0), (15.8, 22.4)])
+    @test tupapprox(dx2, [(3*4.0, 3*6.0), (3*15.8, 3*22.4)])
 
 
     x = [[2.0, 3.0], [7.9, 11.2]]
     dx = [[0.0, 0.0], [0.0, 0.0]]
+    dx2 = [[0.0, 0.0], [0.0, 0.0]]
     y = [[13, 17], [25, 31]]
     out = Ref(0.0)
     dout = Ref(1.0)
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(metasumsq4),  Const(metaconcat2), BatchDuplicated(x, (dx, dx2)), Const(y))
     @test tupapprox(dx, [[4.0, 6.0], [15.8, 22.4]])
-    @test tupapprox(dx2, [(4.0, 6.0), (15.8, 22.4)])
+    @test tupapprox(dx2, [[3*4.0, 3*6.0], [3*15.8, 3*22.4]])
 
     x = [[2.0, 3.0], [7.9, 11.2]]
     dx = [[0.0, 0.0], [0.0, 0.0]]
@@ -235,7 +238,7 @@ end
     dout2 = Ref(3.0)
     Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(metasumsq4), Const(metaconcat2), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
     @test tupapprox(dx, [[4.0, 6.0], [15.8, 22.4]])
-    @test tupapprox(dx2, [[4.0, 6.0], [15.8, 22.4]])
+    @test tupapprox(dx2, [[3*4.0, 3*6.0], [3*15.8, 3*22.4]])
 end
 
 @testset "Forward Apply iterate" begin

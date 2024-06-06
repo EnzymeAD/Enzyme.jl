@@ -1647,6 +1647,34 @@ end
 
 end
 
+
+function batchgf(out, args)
+	res = 0.0
+    x = Base.inferencebarrier((args[1][1],))
+	for v in x
+		v = v::Float64
+		res += v
+        break
+	end
+    out[] = res
+	nothing
+end
+
+@testset "Batch Getfield" begin
+    x = [(2.0, 3.0)]
+    dx = [(0.0, 0.0)]
+    dx2 = [(0.0, 0.0)]
+    dx3 = [(0.0, 0.0)]
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(3.0)
+    dout3 = Ref(5.0)
+    Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
+    @test dx[1] ≈ (4.0, 6.0)
+    @test dx2[1] ≈ (3*4.0, 3*6.0)
+    @test dx3[1] ≈ (5*4.0, 5*6.0)
+end
+
 include("applyiter.jl")
 
 @testset "Dynamic Val Construction" begin
