@@ -226,7 +226,14 @@ function autodiff_deferred_thunk end
     Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
     what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
 """
-function make_zero end
+function make_zero
+
+"""
+    make_zero!(prev::T)::T
+
+    Recursively set a variables differentiable fields to zero. Only applicable for mutable types `T`.
+"""
+function make_zero! end
 
 """
     make_zero(prev::T)
