@@ -1669,7 +1669,7 @@ end
     dout = Ref(1.0)
     dout2 = Ref(3.0)
     dout3 = Ref(5.0)
-    Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
+    Enzyme.autodiff(Reverse, batchgf, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
     @test dx[1] ≈ (4.0, 6.0)
     @test dx2[1] ≈ (3*4.0, 3*6.0)
     @test dx3[1] ≈ (5*4.0, 5*6.0)
