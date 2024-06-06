@@ -507,6 +507,32 @@ function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
     end
 end
 
+function shadow_tuple(::Val{1}, args::Vararg{Annotation, Nargs}) where Nargs
+    ntuple(Val(Nargs)) do i
+        Base.@_inline_meta
+        @assert !(args[i] isa Active)
+        if args[i] isa Const
+            args[i].val
+        else 
+            args[i].dval
+        end
+    end
+end
+
+function shadow_tuple(::Val{width}, args::Vararg{Annotation, Nargs}) where {width, Nargs}
+    ntuple(Val(width)) do w
+    ntuple(Val(Nargs)) do i
+        Base.@_inline_meta
+        @assert !(args[i] isa Active)
+        if args[i] isa Const
+            args[i].val
+        else 
+            args[i].dval[w]
+        end
+    end
+    end
+end
+
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
 function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}, ::Val{ModifiedBetween0}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, args::Vararg{Annotation, Nargs})::ReturnType where {width, dupClosure0, ReturnType, ModifiedBetween0, FT, tt′, DF, Nargs}
     ReturnPrimal = Val(true)
@@ -553,7 +579,7 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         forward(fa, args...)
     else
-        nothing, primal_tuple(args...), nothing
+        nothing, primal_tuple(args...), annotation <: Active ? nothing : shadow_tuple(Val(width), args...)
     end
 
     resT = typeof(origRet)
