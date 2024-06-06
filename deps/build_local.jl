@@ -23,7 +23,6 @@ while length(args) > 0
     global source_dir
     if length(args) >= 2 && args[1] == "--branch"
         branch = args[2]
-        source_dir = nothing
         args = (args[3:end]...,)
         continue
     end
@@ -37,8 +36,13 @@ while length(args) > 0
         args = (args[2:end]...,)
         continue
     end
-    @assert length(args) == 1
-    source_dir = args[1]
+    if source_dir == nothing
+        source_dir = args[1]
+        args = (args[2:end]...,)
+        continue
+    end
+    @show args
+    @assert length(args) == 0
     break
 end
 

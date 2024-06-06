@@ -879,7 +879,7 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f__svec_ref")
+    emit_error(B, orig, "Enzyme: unhandled forward for jl_f__svec_ref")
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -954,6 +954,34 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 end
 
 function common_f_svec_ref_rev(offset, B, orig, gutils, tape)
+    return nothing
+end
+
+function common_finalizer_fwd(offset, B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    emit_error(B, orig, "Enzyme: unhandled forward for jl_f_finalizer")
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return false
+end
+
+function common_finalizer_augfwd(offset, B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_finalizer")
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return false
+end
+
+function common_finalizer_rev(offset, B, orig, gutils, tape)
     return nothing
 end
 
