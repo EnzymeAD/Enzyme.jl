@@ -5,6 +5,7 @@ using Enzyme_jll
 using Libdl
 using LLVM
 using CEnum
+using Pkg
 
 const EnzymeLogicRef = Ptr{Cvoid}
 const EnzymeTypeAnalysisRef = Ptr{Cvoid}
@@ -15,6 +16,7 @@ const EnzymeGradientUtilsRef = Ptr{Cvoid}
 const UP = Cint(1)
 const DOWN = Cint(2)
 const BOTH = Cint(3)
+const LLVM_JL_VERSION = Pkg.installed()["LLVM"]
 
 struct IntList
     data::Ptr{Int64}
@@ -103,7 +105,7 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
-
+@static if LLVM_JL_VERSION < v"7.2.0"
 Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
 	ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
 
@@ -115,6 +117,7 @@ function Base.getindex(md::LLVM.InstructionMetadataDict, kind::String)
 
 Base.setindex!(md::LLVM.InstructionMetadataDict, node::LLVM.Metadata, kind::String) =
 	ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), md.inst, kind, LLVM.Value(node))
+end
 
 @cenum(CDIFFE_TYPE,
   DFT_OUT_DIFF = 0,  # add differential to an output struct
