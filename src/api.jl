@@ -104,6 +104,7 @@ struct CFnTypeInfo
 end
 
 
+@static isdefined(LLVM, InstructionMetadataDict)
 Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
 	ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
 
@@ -115,6 +116,7 @@ function Base.getindex(md::LLVM.InstructionMetadataDict, kind::String)
 
 Base.setindex!(md::LLVM.InstructionMetadataDict, node::LLVM.Metadata, kind::String) =
 	ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), md.inst, kind, LLVM.Value(node))
+end
 
 @cenum(CDIFFE_TYPE,
   DFT_OUT_DIFF = 0,  # add differential to an output struct
