@@ -365,9 +365,9 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
             end
             for i in 1:length(dptrs)
                 if dptrs[i] isa Base.RefValue
-                    vload = dptr[]
+                    vload = dptrs[i][]
                     dRT = Core.Typeof(vload)
-                    dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
+                    dptrs[i][] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
                         Base.@_inline_meta
                         prev = getfield(vload, j)
                         if j == symname+1
