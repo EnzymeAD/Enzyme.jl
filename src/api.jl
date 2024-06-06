@@ -104,7 +104,7 @@ struct CFnTypeInfo
 end
 
 
-@static isdefined(LLVM, InstructionMetadataDict)
+@static if isdefined(LLVM, InstructionMetadataDict)
 Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
 	ccall((:EnzymeGetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring), md.inst, kind) != C_NULL
 
