@@ -28,7 +28,6 @@ jobs:
       - name: CompatHelper.main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}
         shell: julia --color=yes {0}
         run: |
           import CompatHelper
