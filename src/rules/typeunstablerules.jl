@@ -249,7 +249,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
+function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname)
     else
@@ -271,7 +271,7 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
     end
 end
 
-function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {NT, T, symname, isconst}
+function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {NT, T, T2, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname+1)
     else
@@ -302,7 +302,7 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
     end
 end
 
-function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
+function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
     cur = if dptr isa Base.RefValue
 	   getfield(dptr[], symname)
     else
@@ -312,17 +312,65 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     RT = Core.Typeof(cur)
     if active_reg(RT) && !isconst
         if length(dptrs) == 0
-            setfield!(dptr, symname, recursive_add(cur, dret[]))
+            if dptr isa Base.RefValue
+                vload = dptr[]
+                dRT = Core.Typeof(vload)
+                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do i
+                    Base.@_inline_meta
+                    prev = getfield(vload, i)
+                    if fieldname(dRT, i) == symname
+                        recursive_add(prev, dret[])
+                    else
+                        prev
+                    end
+                end)
+            else
+                setfield!(dptr, symname+1, recursive_add(cur, dret[]))
+            end
         else
-            setfield!(dptr, symname, recursive_add(cur, dret[1][]))
+            if dptr isa Base.RefValue
+                vload = dptr[]
+                dRT = Core.Typeof(vload)
+                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
+                    Base.@_inline_meta
+                    prev = getfield(vload, j)
+                    if fieldname(dRT, j) == symname
+                        recursive_add(prev, dret[1][])
+                    else
+                        prev
+                    end
+                end)
+            else
+                setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
+            end
             for i in 1:length(dptrs)
-                setfield!(dptrs[i], symname, recursive_add(cur, dret[1+i][]))
+                if dptrs[i] isa Base.RefValue
+                    vload = dptrs[i][]
+                    dRT = Core.Typeof(vload)
+                    dptrs[i][] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
+                        Base.@_inline_meta
+                        prev = getfield(vload, j)
+                        if fieldname(dRT, j) == symname
+                            recursive_add(prev, dret[1+i][])
+                        else
+                            prev
+                        end
+                    end)
+                else
+                    curi = if dptr isa Base.RefValue
+                       Base.getfield(dptrs[i][], symname)
+                    else
+                       Base.getfield(dptrs[i], symname)
+                    end
+                    setfield!(dptrs[i], symname, recursive_add(curi, dret[1+i][]))
+                end
             end
         end
     end
     return nothing
 end
-function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs...) where {T, symname, isconst}
+
+function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
     cur = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname+1)
     else
