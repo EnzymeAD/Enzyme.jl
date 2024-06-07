@@ -59,7 +59,6 @@ makedocs(;
         ]
     ],
     doctest = true,
-    strict = true,
 )
 
 deploydocs(;
