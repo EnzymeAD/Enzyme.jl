@@ -249,7 +249,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
+function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {NT, T, T2, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname)
     else
@@ -260,13 +260,21 @@ function rt_jl_getfield_aug(dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
         else
-            return ( (Ref{RT}(make_zero(res)) for _ in 1:(1+length(dptrs)))..., )
+            return NT(ntuple(Val(1+length(dptrs))) do i
+                Base.@_inline_meta
+                Ref{RT}(make_zero(res))
+            end)
         end
     else
         if length(dptrs) == 0
             return res
         else
-            return (res, (getfield(dv, symname) for dv in dptrs)...)
+            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                dv = dptrs[i]
+                getfield(dv isa Base.RefValue ? dv[] : dv, symname)
+            end)...))
+            return fval
         end
     end
 end
@@ -466,7 +474,8 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
         inps = [new_from_original(gutils, ops[2])]
     end
 
-    vals = LLVM.Value[]
+    AA = Val(AnyArray(Int(width)))
+    vals = LLVM.Value[unsafe_to_llvm(AA)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
