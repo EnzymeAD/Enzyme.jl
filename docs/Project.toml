@@ -4,5 +4,5 @@ Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
-Documenter = "0.27.8"
 Literate = "2"
+Documenter = "0.27.8, 1"

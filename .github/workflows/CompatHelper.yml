@@ -32,4 +32,4 @@ jobs:
         shell: julia --color=yes {0}
         run: |
           import CompatHelper
-          CompatHelper.main(; include_jll = true, subdirs = ["", "docs", "test", "deps", "lib/EnzymeCore", "lib/EnzymeCore/test", "lib/EnzymeTestUtils", "lib/EnzymeTestUtils/test"])
+          CompatHelper.main(; include_jll = true, subdirs = ["", "docs", "deps", "lib/EnzymeCore", "lib/EnzymeTestUtils"])
