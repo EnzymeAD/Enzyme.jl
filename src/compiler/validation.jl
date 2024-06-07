@@ -426,7 +426,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                     flib = Base.unsafe_pointer_to_objref(ld)
                 end
             end
-            if isa(flib, GlobalRef)
+            if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
                 flib = getfield(flib.mod, flib.name)
             end
 
