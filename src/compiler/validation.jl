@@ -879,10 +879,15 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
             end
         end
 
+        if isa(cur, LLVM.ConstantArray)
+            push!(todo, (cur[off[1]], off[2:end]))
+            continue
+        end
+
           msg = sprint() do io::IO
               println(io, "Enzyme Internal Error (rewrite_union_returns_as_ref[2])")
               println(io, string(enzymefn))
-              println(io, "cur=", cur)
+              println(io, "cur=", string(cur))
               println(io, "off=", off)
           end
           throw(AssertionError(msg))
