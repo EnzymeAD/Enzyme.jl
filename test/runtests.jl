@@ -182,6 +182,28 @@ end
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
+    #
+    z = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z)
+    @test z[1] ≈ [0.0, 0.0, 0.0]
+    @test z[2][1] == 0
+    @test z[2][2] == 1
+    @test z[3] ≈ [0.0, 0.0]
+    
+    z2 = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z2)
+    @test z2[1] ≈ [0.0, 0.0, 0.0]
+    @test z2[2][1] == 0
+    @test z2[2][2] == 1
+    @test z2[3] ≈ [0.0, 0.0]
+    
+    z3 = [3.4, "foo"]
+    Enzyme.make_zero!(z3)
+    @test z3[1] ≈ 0.0
+    @test z3[2] == "foo"
+
+    z4 = sin
+    Enzyme.make_zero!(z4)
 end
 
 @testset "Reflection" begin

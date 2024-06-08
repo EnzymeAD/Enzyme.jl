@@ -14,8 +14,8 @@ export BatchDuplicatedFunc
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 
 export jacobian, gradient, gradient!
 export markType, batch_size, onehot, chunkedonehot
@@ -1014,7 +1014,7 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 ```
 """
 @inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
-    dx .= 0
+    make_zero!(dx)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
