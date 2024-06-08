@@ -229,6 +229,13 @@ function autodiff_deferred_thunk end
 function make_zero end
 
 """
+    make_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+
+    Recursively set a variables differentiable fields to zero. Only applicable for mutable types `T`.
+"""
+function make_zero! end
+
+"""
     make_zero(prev::T)
 
     Helper function to recursively make zero.
