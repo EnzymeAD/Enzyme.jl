@@ -333,7 +333,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     end
                 end)
             else
-                setfield!(dptr, symname+1, recursive_add(cur, dret[]))
+                setfield!(dptr, symname, recursive_add(cur, dret[]))
             end
         else
             if dptr isa Base.RefValue
@@ -349,7 +349,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     end
                 end)
             else
-                setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
+                setfield!(dptr, symname, recursive_add(cur, dret[1][]))
             end
             for i in 1:length(dptrs)
                 if dptrs[i] isa Base.RefValue
