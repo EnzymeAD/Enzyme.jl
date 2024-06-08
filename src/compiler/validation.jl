@@ -743,7 +743,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
         end
     end
 
-    seen = Dict{LLVM.Value,Tuple}()
+    seen = Set{Tuple{LLVM.Value,Tuple}}()
     while length(todo) != 0
         cur, off = pop!(todo)
 
@@ -751,11 +751,10 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
             cur = operands(cur)[1]
         end
 
-        if cur in keys(seen)
-            @assert seen[cur] == off
+        if cur in seen
             continue
         end
-        seen[cur] = off
+        push!(seen, (cur, off))
 
         if isa(cur, LLVM.PHIInst)
             for (v, _) in LLVM.incoming(cur)
@@ -781,7 +780,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
 
             # if inserting at the current desired offset, we have found the value we need
             if ind == off[1]
-                push!(todo, (operands(cur)[2], -1))
+                push!(todo, (operands(cur)[2], off[2:end]))
             # otherwise it must be inserted at a different point
             else
                 push!(todo, (operands(cur)[1], off))
@@ -880,10 +879,15 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
             end
         end
 
+        if isa(cur, LLVM.ConstantArray)
+            push!(todo, (cur[off[1]], off[2:end]))
+            continue
+        end
+
           msg = sprint() do io::IO
               println(io, "Enzyme Internal Error (rewrite_union_returns_as_ref[2])")
               println(io, string(enzymefn))
-              println(io, "cur=", cur)
+              println(io, "cur=", string(cur))
               println(io, "off=", off)
           end
           throw(AssertionError(msg))

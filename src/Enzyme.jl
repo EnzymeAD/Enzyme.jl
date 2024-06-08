@@ -74,6 +74,13 @@ end
     end)...}
 end
 
+@inline function vaEltypes(args::Type{Ty}) where {Ty <: Tuple}
+    return Tuple{(ntuple(Val(length(Ty.parameters))) do i
+        Base.@_inline_meta
+        eltype(Ty.parameters[i])
+    end)...}
+end
+
 @inline function same_or_one_helper(current, next)
     if current == -1
         return next

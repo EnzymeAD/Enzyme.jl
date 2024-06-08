@@ -137,6 +137,7 @@ end
     @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Tuple{Any,Int64}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Tuple{S,Int64} where S, (), Base.get_world_counter()) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
@@ -1670,231 +1671,37 @@ end
 end
 
 
-concat() = ()
-concat(a) = a
-concat(a, b) = (a..., b...)
-concat(a, b, c...) = concat(concat(a, b), c...)
-
-metaconcat(x) = concat(x...)
-
-metaconcat2(x, y) = concat(x..., y...)
-
-midconcat(x, y) = (x, concat(y...)...)
-
-metaconcat3(x, y, z) = concat(x..., y..., z...)
-
-@testset "Forward Apply iterate" begin
-    x = [(2.0, 3.0), (7.9, 11.2)]
-    dx = [(13.7, 15.2), (100.02, 304.1)]
-
-    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(x, dx))
-    @test length(dres) == 4
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(x, dx))
-    @test length(res) == 4
-    @test res[1] ≈ 2.0
-    @test res[2] ≈ 3.0
-    @test res[3] ≈ 7.9
-    @test res[4] ≈ 11.2
-    @test length(dres) == 4
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-
-
-    a = [("a", "b"), ("c", "d")]
-    da = [("e", "f"), ("g", "h")]
-
-    dres, = Enzyme.autodiff(Forward, metaconcat, Duplicated(a, da))
-    @test length(dres) == 4
-    @test dres[1] == "a"
-    @test dres[2] == "b"
-    @test dres[3] == "c"
-    @test dres[4] == "d"
-
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(a, da))
-    @test length(res) == 4
-    @test res[1] == "a"
-    @test res[2] == "b"
-    @test res[3] == "c"
-    @test res[4] == "d"
-    @test length(dres) == 4
-    @test dres[1] == "a"
-    @test dres[2] == "b"
-    @test dres[3] == "c"
-    @test dres[4] == "d"
-
-
-    Enzyme.autodiff(Forward, metaconcat, Const(a))
-
-@static if VERSION ≥ v"1.7-" 
-    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Duplicated(a, da))
-    @test length(dres) == 5
-    @test dres[1] ≈ 7.0
-    @test dres[2] == "a"
-    @test dres[3] == "b"
-    @test dres[4] == "c"
-    @test dres[5] == "d"
-
-    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Duplicated(a, da))
-    @test length(res) == 5
-    @test res[1] ≈ 1.0
-    @test res[2] == "a"
-    @test res[3] == "b"
-    @test res[4] == "c"
-    @test res[5] == "d"
-
-    @test length(dres) == 5
-    @test dres[1] ≈ 7.0
-    @test dres[2] == "a"
-    @test dres[3] == "b"
-    @test dres[4] == "c"
-    @test dres[5] == "d"
-
-
-    dres, = Enzyme.autodiff(Forward, midconcat, Duplicated(1.0, 7.0), Const(a))
-    @test length(dres) == 5
-    @test dres[1] ≈ 7.0
-    @test dres[2] == "a"
-    @test dres[3] == "b"
-    @test dres[4] == "c"
-    @test dres[5] == "d"
-
-    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Const(a))
-    @test length(res) == 5
-    @test res[1] ≈ 1.0
-    @test res[2] == "a"
-    @test res[3] == "b"
-    @test res[4] == "c"
-    @test res[5] == "d"
-    @test length(dres) == 5
-    @test dres[1] ≈ 7.0
-    @test dres[2] == "a"
-    @test dres[3] == "b"
-    @test dres[4] == "c"
-    @test dres[5] == "d"
+function batchgf(out, args)
+	res = 0.0
+    x = Base.inferencebarrier((args[1][1],))
+	for v in x
+		v = v::Float64
+		res += v
+        break
+	end
+    out[] = res
+	nothing
 end
 
-    y = [(-92.0, -93.0), (-97.9, -911.2)]
-    dy = [(-913.7, -915.2), (-9100.02, -9304.1)]
-
-    dres, = Enzyme.autodiff(Forward, metaconcat2, Duplicated(x, dx), Duplicated(y, dy))
-    @test length(dres) == 8
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-    @test dres[5] ≈ -913.7
-    @test dres[6] ≈ -915.2
-    @test dres[7] ≈ -9100.02
-    @test dres[8] ≈ -9304.1
-
-    res, dres = Enzyme.autodiff(Forward, metaconcat2, Duplicated, Duplicated(x, dx), Duplicated(y, dy))
-    @test length(res) == 8
-    @test res[1] ≈ 2.0
-    @test res[2] ≈ 3.0
-    @test res[3] ≈ 7.9
-    @test res[4] ≈ 11.2
-    @test res[5] ≈ -92.0
-    @test res[6] ≈ -93.0
-    @test res[7] ≈ -97.9
-    @test res[8] ≈ -911.2
-    @test length(dres) == 8
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-    @test dres[5] ≈ -913.7
-    @test dres[6] ≈ -915.2
-    @test dres[7] ≈ -9100.02
-    @test dres[8] ≈ -9304.1
-
-
-    dres, = Enzyme.autodiff(Forward, metaconcat3, Duplicated(x, dx), Const(a), Duplicated(y, dy))
-    @test length(dres) == 12
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-
-    @test dres[5] == "a"
-    @test dres[6] == "b"
-    @test dres[7] == "c"
-    @test dres[8] == "d"
-
-    @test dres[9] ≈ -913.7
-    @test dres[10] ≈ -915.2
-    @test dres[11] ≈ -9100.02
-    @test dres[12] ≈ -9304.1
-
-    res, dres = Enzyme.autodiff(Forward, metaconcat3, Duplicated, Duplicated(x, dx), Const(a), Duplicated(y, dy))
-    @test length(res) == 12
-    @test res[1] ≈ 2.0
-    @test res[2] ≈ 3.0
-    @test res[3] ≈ 7.9
-    @test res[4] ≈ 11.2
-
-    @test res[5] == "a"
-    @test res[6] == "b"
-    @test res[7] == "c"
-    @test res[8] == "d"
-
-    @test res[9] ≈ -92.0
-    @test res[10] ≈ -93.0
-    @test res[11] ≈ -97.9
-    @test res[12] ≈ -911.2
-
-    @test length(dres) == 12
-    @test dres[1] ≈ 13.7
-    @test dres[2] ≈ 15.2
-    @test dres[3] ≈ 100.02
-    @test dres[4] ≈ 304.1
-
-    @test dres[5] == "a"
-    @test dres[6] == "b"
-    @test dres[7] == "c"
-    @test dres[8] == "d"
-
-    @test dres[9] ≈ -913.7
-    @test dres[10] ≈ -915.2
-    @test dres[11] ≈ -9100.02
-    @test dres[12] ≈ -9304.1
-
-
-    dres, = Enzyme.autodiff(Forward, metaconcat, BatchDuplicated(x, (dx, dy)))
-    @test length(dres[1]) == 4
-    @test dres[1][1] ≈ 13.7
-    @test dres[1][2] ≈ 15.2
-    @test dres[1][3] ≈ 100.02
-    @test dres[1][4] ≈ 304.1
-    @test length(dres[2]) == 4
-    @test dres[2][1] ≈ -913.7
-    @test dres[2][2] ≈ -915.2
-    @test dres[2][3] ≈ -9100.02
-    @test dres[2][4] ≈ -9304.1
-
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, BatchDuplicated(x, (dx, dy)))
-    @test length(res) == 4
-    @test res[1] ≈ 2.0
-    @test res[2] ≈ 3.0
-    @test res[3] ≈ 7.9
-    @test res[4] ≈ 11.2
-    @test length(dres[1]) == 4
-    @test dres[1][1] ≈ 13.7
-    @test dres[1][2] ≈ 15.2
-    @test dres[1][3] ≈ 100.02
-    @test dres[1][4] ≈ 304.1
-    @test length(dres[2]) == 4
-    @test dres[2][1] ≈ -913.7
-    @test dres[2][2] ≈ -915.2
-    @test dres[2][3] ≈ -9100.02
-    @test dres[2][4] ≈ -9304.1
+@testset "Batch Getfield" begin
+    x = [(2.0, 3.0)]
+    dx = [(0.0, 0.0)]
+    dx2 = [(0.0, 0.0)]
+    dx3 = [(0.0, 0.0)]
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(3.0)
+    dout3 = Ref(5.0)
+    Enzyme.autodiff(Reverse, batchgf, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
+    @test dx[1][1] ≈ 1.0
+    @test dx[1][2] ≈ 0.0
+    @test dx2[1][1] ≈ 3.0
+    @test dx2[1][2] ≈ 0.0
+    @test dx3[1][1] ≈ 5.0
+    @test dx2[1][2] ≈ 0.0
 end
+
+include("applyiter.jl")
 
 @testset "Dynamic Val Construction" begin
 
@@ -2564,41 +2371,6 @@ end
     GFlogpdf(d, p)
     autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
     Enzyme.API.runtimeActivity!(false)
-end
-
-@testset "apply iterate" begin
-    function mktup(v)
-        tup = tuple(v...)
-        return tup[1][1] * tup[3][1]
-    end
-
-    data = [[3.0], nothing, [2.0]]
-    ddata = [[0.0], nothing, [0.0]]
-
-    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 2.0
-    @test ddata[3][1] ≈ 3.0
-
-    function mktup2(v)
-        tup = tuple(v...)
-        return (tup[1][1] * tup[3])::Float64
-    end
-
-    data = [[3.0], nothing, 2.0]
-    ddata = [[0.0], nothing, 0.0]
-
-    @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
-
-    function mktup3(v)
-        tup = tuple(v..., v...)
-        return tup[1][1] * tup[1][1]
-    end
-
-    data = [[3.0]]
-    ddata = [[0.0]]
-
-    Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 6.0
 end
 
 @testset "BLAS" begin
