@@ -379,14 +379,6 @@ end
     return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
 end
 
-@inline function unionall_body(::Type{T}) where T
-    if T isa UnionAll
-        unionall_body(T.body)
-    else
-        T
-    end
-end
-
 @inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
     if T === Any
         return DupState
@@ -489,10 +481,10 @@ end
     @static if VERSION < v"1.7.0"
         nT = T
     else
-        nT = if T <: Tuple && T != Tuple
-            Tuple{(ntuple(length(unionall_body(T).parameters)) do i
+        nT = if T <: Tuple && T != Tuple && !(T isa UnionAll)
+            Tuple{(ntuple(length(T.parameters)) do i
                 Base.@_inline_meta
-                sT = unionall_body(T.parameters[i])
+                sT = T.parameters[i]
                 if sT isa TypeVar
                     Any
                 elseif sT isa Core.TypeofVararg
