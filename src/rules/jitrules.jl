@@ -22,7 +22,7 @@ function func_mixed_call(N)
     quote
         @inline function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
             if RefTypes[1]
-              @inline f[]($(exprs2...))
+              @inline (f[])($(exprs2...))
             else
               @inline f($(exprs2...))
             end
@@ -318,7 +318,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             world = codegen_world_age(FT, tt)
 
             forward, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
-                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
+                                     annotationA, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                      ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
             forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)..., annotationA
