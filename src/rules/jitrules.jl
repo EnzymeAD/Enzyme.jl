@@ -416,6 +416,13 @@ end
     end
 end
 
+@inline function allSame(::Val{Width}, res) where Width
+    ntuple(Val(Width)) do i
+        Base.@_inline_meta
+        res
+    end
+end
+
 @inline function allZero(::Val{Width}, res) where Width
     ntuple(Val(Width)) do i
         Base.@_inline_meta
@@ -586,7 +593,7 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     if annotation <: Const
         shadow_return = nothing
         tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-        return ReturnType((allFirst(Val(width+1), origRet)..., tape))
+        return ReturnType((allSame(Val(width+1), origRet)..., tape))
     elseif annotation <: Active
         if width == 1
             shadow_return = Ref(make_zero(origRet))

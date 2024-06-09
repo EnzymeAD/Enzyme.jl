@@ -5838,7 +5838,11 @@ end
             end
 
             push!(ccexprs, argexpr)
-            if !(FA <: Const)
+            if (FA <: Active)
+                return quote
+                    error("Cannot have function with Active annotation, $FA")
+                end
+            elseif !(FA <: Const)
                 argexpr = :(fn.dval)
                 if isboxed
                     push!(types, Any)
