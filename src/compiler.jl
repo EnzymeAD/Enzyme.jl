@@ -474,7 +474,7 @@ end
     end
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || is_concrete_tuple(T) || T isa UnionAll)
+    if !(Base.isconcretetype(T) || (T isa Tuple && T != Tuple) || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
