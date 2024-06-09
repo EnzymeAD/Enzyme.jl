@@ -18,17 +18,14 @@ function func_mixed_call(N)
         end
         push!(exprs2, inarg)
     end
-
-    fexpr = quote
-        if RefTypes[1]
-            fexpr = f[]
-        else
-            f
-        end
-    end
+    
     quote
         @inline function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
-            @inline $fexpr($(exprs2...))
+            if RefTypes[1]
+              @inline f[]($(exprs2...))
+            else
+              @inline f($(exprs2...))
+            end
         end
     end
 end
