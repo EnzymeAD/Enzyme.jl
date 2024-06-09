@@ -1,3 +1,61 @@
+function func_mixed_call(N)
+    allargs = Expr[]
+    typeargs = Union{Symbol,Expr}[]
+    exprs2 = Union{Symbol,Expr}[]
+    for i in 1:N
+        arg = Symbol("arg_$i")
+        targ = Symbol("T$i")
+        e = :($arg::$targ)
+        push!(allargs, e)
+        push!(typeargs, targ)
+
+        inarg = quote
+            if RefTypes[1+$i]
+                $arg[]
+            else
+                $arg
+            end
+        end
+        push!(exprs2, inarg)
+    end
+
+    fexpr = quote
+        if RefTypes[1]
+            fexpr = f[]
+        else
+            f
+        end
+    end
+    quote
+        @inline function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
+            @inline $fexpr($(exprs2...))
+        end
+    end
+end
+
+@generated function runtime_mixed_call(::Val{RefTypes}, f::F, allargs::Vararg{Any, N}) where {RefTypes, F, N}
+    fexpr = :f
+    if RefTypes[1]
+        fexpr = :(($fexpr)[])
+    end
+    exprs2 = Union{Symbol,Expr}[]
+    for i in 1:N
+        inarg = if RefTypes[1+i]
+            :(allargs[$i][])
+        else
+            :(allargs[$i])
+        end
+        push!(exprs2, inarg)
+    end
+    return quote
+        Base.@_inline_meta
+        @inline $fexpr($(exprs2...))
+    end
+end
+
+for N in 0:30
+    eval(func_mixed_call(N))
+end
 
 function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, iterate=false)
     primargs = Union{Symbol,Expr}[]
@@ -60,6 +118,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
     @assert length(primtypes) == N
     wrapped = Expr[]
     modbetween = Expr[:(MB[1])]
+    active_refs = Expr[]
     for i in 1:N
         if iterate
             push!(modbetween, quote
@@ -69,6 +128,10 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
                 end
             end)
         end
+        aref = Symbol("active_ref_$i")
+        push!(active_refs, quote
+            $aref = active_reg_nothrow($(primtypes[i]), Val(nothing));
+        end)
         expr = if iterate
             :(
                  if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
@@ -88,23 +151,47 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
              end
             )
         else
-            :(
-                 if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
-                   @assert $(primtypes[i]) !== DataType
-                    if !$forwardMode && active_reg($(primtypes[i]))
-                    Active($(primargs[i]))
-                 else
-                     $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
-                 end
-             else
-                 Const($(primargs[i]))
-             end
-
-            )
+            if forwardMode
+                quote
+                    if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
+                        $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
+                    else
+                        Const($(primargs[i]))
+                    end
+                end
+            else
+                quote
+                    if ActivityTup[$i+1] && $aref != AnyState
+                        @assert $(primtypes[i]) !== DataType
+                        if $aref == ActiveState
+                            Active($(primargs[i]))
+                        elseif $aref == MixedState
+                            $((Width == 1) ? :Duplicated : :BatchDuplicated)(Ref($(primargs[i])), $(shadowargs[i]))
+                        else
+                            $((Width == 1) ? :Duplicated : :BatchDuplicated)($(primargs[i]), $(shadowargs[i]))
+                        end
+                    else
+                        Const($(primargs[i]))
+                    end
+                end
+            end
         end
         push!(wrapped, expr)
     end
-    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween
+
+    any_mixed = quote false end
+    for i in 1:N
+        aref = Symbol("active_ref_$i")
+        any_mixed = :($any_mixed || $aref == MixedState)
+    end
+
+    push!(active_refs, quote
+        active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState) for i in 1:N)...))
+    end)
+    push!(active_refs, quote
+        any_mixed = $any_mixed
+    end)
+    return primargs, shadowargs, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween, active_refs
 end
 
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -159,7 +246,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
 
 function func_runtime_generic_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _ = setup_macro_wraps(true, N, Width)
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, _ = setup_macro_wraps(true, N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
@@ -171,46 +258,75 @@ end
 
 @generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _, _ = setup_macro_wraps(true, N, Width, :allargs)
+    _, _, primtypes, _, _, wrapped, _, _, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
 
-function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
+function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
     nnothing = ntuple(i->nothing, Val(Width+1))
     nres = ntuple(i->:(origRet), Val(Width+1))
     nzeros = ntuple(i->:(Ref(make_zero(origRet))), Val(Width))
     nres3 = ntuple(i->:(res[3]), Val(Width))
-    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
-    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
+
+    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
+
+    Types = ntuple(i->Symbol("type_$i"), Val(N))
+
+    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
 
     return quote
+        $(active_refs...)
         args = ($(wrapped...),)
+        $(MakeTypes...)
         
-        # TODO: Annotation of return value
-        # tt0 = Tuple{$(primtypes...)}
-        tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
-        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-        annotation = if $Width != 1 && annotation0 <: Duplicated
-            BatchDuplicated{rt, $Width}
-        else
-            annotation0
-        end
-
-        dupClosure = ActivityTup[1]
         FT = Core.Typeof(f)
-        if dupClosure && guaranteed_const(FT)
-            dupClosure = false
+        dupClosure0 = if ActivityTup[1]
+            !guaranteed_const(FT)
+        else
+            false
         end
 
-        world = codegen_world_age(FT, Tuple{$(ElTypes...)})
 
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT},
-                                 annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+        internal_tape, origRet, initShadow, annotation = if any_mixed
+            ttM = Tuple{Val{active_refs}, FT, $(ElTypes...)}
+            rtM = Core.Compiler.return_type(runtime_mixed_call, ttM)
+            annotation0M = guess_activity(rtM, API.DEM_ReverseModePrimal)
 
-        internal_tape, origRet, initShadow = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
+            annotationM = if $Width != 1 && annotation0M <: Duplicated
+                BatchDuplicated{rt, $Width}
+            else
+                annotation0M
+            end
+            worldM = codegen_world_age(typeof(runtime_mixed_call), ttM)
+            ModifiedBetweenM = Val((false, false, element(ModifiedBetween)...))
+
+            forward, adjoint = thunk(Val(worldM), 
+                                     Const{typeof(runtime_mixed_call)},
+                                     annotationM, Tuple{Const{Val{active_refs}}, dupClosure0 ? Duplicated{FT} : Const{FT}, $(Types...)}, Val(API.DEM_ReverseModePrimal), width,
+                                     ModifiedBetweenM, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+
+            forward(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args...)..., annotationM
+
+        else
+            tt = Tuple{$(ElTypes...)}
+            rt = Core.Compiler.return_type(f, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+            annotationA = if $Width != 1 && annotation0 <: Duplicated
+                BatchDuplicated{rt, $Width}
+            else
+                annotation0
+            end
+            world = codegen_world_age(FT, tt)
+
+            forward, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
+                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
+                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+
+            forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)..., annotationA
+        end
+
         resT = typeof(origRet)
         if annotation <: Const
             shadow_return = nothing
@@ -243,8 +359,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes)
 end
 
 function func_runtime_generic_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _ = setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs = setup_macro_wraps(false, N, Width)
+    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
 
     quote
         function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
@@ -255,11 +371,11 @@ end
 
 @generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _, _= setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_generic_augfwd(N, Width, wrapped, primtypes)
+    _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
 end
 
-function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
+function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
     outs = []
     for i in 1:N
         for w in 1:Width
@@ -290,49 +406,81 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs)
         shadowret = :(($(shadowret...),))
     end
 
-    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
-    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
+
+    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
+
+    Types = ntuple(i->Symbol("type_$i"), Val(N))
+
+    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
 
     quote
+        $(active_refs...)
         args = ($(wrapped...),)
-
-        # TODO: Annotation of return value
-        # tt0 = Tuple{$(primtypes...)}
-        tt = Tuple{$(ElTypes...)}
-        tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, tt)
-        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-        annotation = if $Width != 1 && annotation0 <: Duplicated
-            BatchDuplicated{rt, $Width}
-        else
-            annotation0
-        end
-
-        dupClosure = ActivityTup[1]
+        $(MakeTypes...)
+        
         FT = Core.Typeof(f)
-        if dupClosure && guaranteed_const(FT)
-            dupClosure = false
-        end
-        world = codegen_world_age(FT, tt)
-
-        forward, adjoint = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
-        if tape.shadow_return !== nothing
-            args = (args..., $shadowret)
+        dupClosure0 = if ActivityTup[1]
+            !guaranteed_const(FT)
+        else
+            false
         end
 
-        tup = adjoint(dupClosure ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
+        if any_mixed
+            ttM = Tuple{Val{active_refs}, FT, $(ElTypes...)}
+            rtM = Core.Compiler.return_type(runtime_mixed_call, ttM)
+            annotation0M = guess_activity(rtM, API.DEM_ReverseModePrimal)
 
-        $(outs...)
+            annotationM = if $Width != 1 && annotation0M <: Duplicated
+                BatchDuplicated{rt, $Width}
+            else
+                annotation0M
+            end
+            worldM = codegen_world_age(typeof(runtime_mixed_call), ttM)
+            ModifiedBetweenM = Val((false, false, element(ModifiedBetween)...))
+
+            _, adjoint = thunk(Val(worldM), 
+                                     Const{typeof(runtime_mixed_call)},
+                                     annotationM, Tuple{Const{Val{active_refs}}, dupClosure0 ? Duplicated{FT} : Const{FT}, $(Types...)}, Val(API.DEM_ReverseModePrimal), width,
+                                     ModifiedBetweenM, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+            if tape.shadow_return !== nothing
+                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
+            else
+                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
+            end
+            nothing
+        else
+            tt = Tuple{$(ElTypes...)}
+            rt = Core.Compiler.return_type(f, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+            annotation = if $Width != 1 && annotation0 <: Duplicated
+                BatchDuplicated{rt, $Width}
+            else
+                annotation0
+            end
+
+            world = codegen_world_age(FT, tt)
+
+            _, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
+                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
+                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+
+            tup = if tape.shadow_return !== nothing
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
+            else
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
+            end
+
+            $(outs...)
+        end
         return nothing
     end
 end
 
 function func_runtime_generic_rev(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _ = setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
+    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width)
+    body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
 
     quote
         function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
@@ -343,8 +491,8 @@ end
 
 @generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, batchshadowargs, _ = setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs)
+    _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
 end
 
 @inline concat() = ()
@@ -491,7 +639,7 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
 end
 
 function func_runtime_iterate_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _ = setup_macro_wraps(true, N, Width, #=base=#nothing, #=iterate=#true)
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs = setup_macro_wraps(true, N, Width, #=base=#nothing, #=iterate=#true)
     body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
 
     quote
@@ -503,7 +651,7 @@ end
 
 @generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _, _ = setup_macro_wraps(true, N, Width, :allargs, #=iterate=#true)
+    _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(true, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
 end
 
@@ -630,7 +778,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
 end
 
 function func_runtime_iterate_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, modbetween = setup_macro_wraps(false, N, Width, #=base=#nothing, #=iterate=#true)
+    _, _, primtypes, allargs, typeargs, wrapped, _, modbetween, active_refs = setup_macro_wraps(false, N, Width, #=base=#nothing, #=iterate=#true)
     body = body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
 
     quote
@@ -642,7 +790,7 @@ end
 
 @generated function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _ , modbetween, = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
+    _, _, primtypes, _, _, wrapped, _ , modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
 end
 
@@ -842,7 +990,7 @@ end
 
 @generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs)
 end
 
