@@ -1701,6 +1701,7 @@ end
     @test dx2[1][2] ≈ 0.0
 end
 
+include("mixed.jl")
 include("applyiter.jl")
 
 @testset "Dynamic Val Construction" begin

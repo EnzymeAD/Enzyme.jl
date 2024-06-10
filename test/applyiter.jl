@@ -89,6 +89,20 @@ function tupapprox(a, b)
 	return a ≈ b
 end
 
+@testset "Const Apply iterate" begin
+    function extiter() 
+        vals = Any[3,]
+        extracted = Tuple(vals)
+        return extracted
+    end
+
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(extiter)}, Duplicated)
+
+    tape, res, dres = fwd(Const(extiter))
+    @test res == (3,)
+    @test dres == (3,)
+end
+
 @testset "Reverse Apply iterate" begin
     x = [(2.0, 3.0), (7.9, 11.2)]
     dx = [(0.0, 0.0), (0.0, 0.0)]
