@@ -62,8 +62,8 @@ Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
 get_inference_world(interp::EnzymeInterpreter) = interp.world
 Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
-if HAS_INTEGRATED_CACHE
-    CC.cache_owner(interp::EnzymeInterpreter) = interp.token
+@static if HAS_INTEGRATED_CACHE
+    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
 else
     Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.global_cache, interp.world)
 end
