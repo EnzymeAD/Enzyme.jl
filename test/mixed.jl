@@ -26,6 +26,7 @@ end
 	@test 6.2 ≈ Enzyme.autodiff(Reverse, outmixedmul2, Const, Duplicated(res, dres), Active(3.1))[1][2]
 end
 
+@static if VERSION >= v"1.8-"
 @testset "Batched Byref Mixed Activity" begin
 	res = Ref(4.7)
 	dres = Ref(1.0)
@@ -33,6 +34,7 @@ end
 	sig = Enzyme.autodiff(Reverse, outmixedmul2, Const, BatchDuplicated(res, (dres, dres2)), Active(3.1))
 	@test 6.2 ≈ sig[1][2][1]
 	@test 3*6.2 ≈ sig[1][2][2]
+end
 end
 
 function tupmixedmul(x::Float64)
@@ -57,6 +59,7 @@ end
 	@test 6.2 ≈ Enzyme.autodiff(Reverse, outtupmixedmul, Const, Duplicated(res, dres), Active(3.1))[1][2]
 end
 
+@static if VERSION >= v"1.8-"
 @testset "Batched Byref Tuple Mixed Activity" begin
 	res = Ref(4.7)
 	dres = Ref(1.0)
@@ -64,4 +67,5 @@ end
 	sig = Enzyme.autodiff(Reverse, outtupmixedmul, Const, BatchDuplicated(res, (dres, dres2)), Active(3.1))
 	@test 6.2 ≈ sig[1][2][1]
 	@test 3*6.2 ≈ sig[1][2][2]
+end
 end

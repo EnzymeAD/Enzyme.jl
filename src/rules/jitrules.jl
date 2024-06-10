@@ -20,18 +20,30 @@ function func_mixed_call(N)
     end
     
     quote
-        @inline function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
-            @static if VERSION ≥ v"1.8-"
-                if RefTypes[1]
-                  @inline (f[])($(exprs2...))
+        @generated function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
+            fexpr = :f
+            if RefTypes[1]
+                fexpr = :(($fexpr)[])
+            end
+            exprs2 = Union{Symbol,Expr}[]
+            for i in 1:$N
+                arg = Symbol("arg_$i")
+                inarg = if RefTypes[1+i]
+                    :($arg[])
                 else
-                  @inline f($(exprs2...))
+                    :($arg)
+                end
+                push!(exprs2, inarg)
+            end
+            @static if VERSION ≥ v"1.8-"
+                return quote
+                    Base.@_inline_meta
+                    @inline $fexpr($(exprs2...))
                 end
             else
-                if RefTypes[1]
-                  (f[])($(exprs2...))
-                else
-                  f($(exprs2...))
+                return quote
+                    Base.@_inline_meta
+                    $fexpr($(exprs2...))
                 end
             end
         end
@@ -65,7 +77,7 @@ end
     end
 end
 
-for N in 0:30
+for N in 0:10
     eval(func_mixed_call(N))
 end
 
