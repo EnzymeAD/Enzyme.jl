@@ -13,12 +13,18 @@ function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, b
         for w in 1:Width
             sref = Symbol("shadow_"*string(i)*"_"*string(w))
             push!(shadow_rets_i, quote
-                $sref = if !ActivityTup[$i] || $aref == AnyState 
+                $sref = if $aref == AnyState 
                     $(primargs[i]);
-                elseif $aref == DupState
-                    $(batchshadowargs[i][w])
                 else
-                    $(batchshadowargs[i][w])[]
+                    if !ActivityTup[$i]
+                        prim = $(primargs[i])
+                        throw("Error cannot store inactive but differentiable variable $prim into active tuple")
+                    end
+                    if $aref == DupState
+                        $(batchshadowargs[i][w])
+                    else
+                        $(batchshadowargs[i][w])[]
+                    end
                 end
             end)
         end
