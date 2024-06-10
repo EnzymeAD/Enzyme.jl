@@ -719,6 +719,17 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4]))
             innerTy = value_type(parameters(llvmf)[tape_idx+(sret !== nothing)+(RT <: Active)])
             if innerTy != value_type(tape)
+                if isabstracttype(TapeT)
+                    msg = sprint() do io
+                        println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
+                        println(io, "tape_idx=", tape_idx)
+                        println(io, "sret=", sret)
+                        println(io, "RT=", RT)
+                        println(io, "tape=", tape)
+                        println(io, "llvmf=", string(llvmf))
+                    end
+                    throw(AssertionError(msg))
+                end
                 llty = convert(LLVMType, TapeT; allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
