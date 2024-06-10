@@ -1111,7 +1111,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_iterate_rev(N, Width))
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true)
+function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true, firstconst_after_tape=true)
     width = get_width(gutils)
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1132,7 +1132,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    if firstconst
+    if firstconst && !firstconst_after_tape
         val = new_from_original(gutils, operands(orig)[start])
         if lookup
             val = lookup_value(gutils, val, B)
@@ -1195,6 +1195,14 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         end
     else
         pushfirst!(vals, unsafe_to_llvm(Val(ReturnType)))
+    end
+    
+    if firstconst && firstconst_after_tape
+        val = new_from_original(gutils, operands(orig)[start])
+        if lookup
+            val = lookup_value(gutils, val, B)
+        end
+        pushfirst!(vals, val)
     end
 
     if mode != API.DEM_ForwardMode
