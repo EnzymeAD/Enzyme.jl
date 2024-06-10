@@ -21,10 +21,15 @@ function func_mixed_call(N)
     
     quote
         @inline function runtime_mixed_call(::Val{RefTypes}, f::F, $(allargs...)) where {RefTypes, F, $(typeargs...)}
-            if RefTypes[1]
-              @inline (f[])($(exprs2...))
+            @static if VERSION ≥ v"1.8-"
+                if RefTypes[1]
+                  @inline (f[])($(exprs2...))
+                else
+                  @inline f($(exprs2...))
+                end
             else
-              @inline f($(exprs2...))
+                @assert !RefTypes[1]
+                @inline f($(exprs2...))
             end
         end
     end
