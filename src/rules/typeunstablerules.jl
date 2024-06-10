@@ -17,8 +17,10 @@ function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, b
                     $(primargs[i]);
                 else
                     if !ActivityTup[$i]
-                        prim = $(primargs[i])
-                        throw("Error cannot store inactive but differentiable variable $prim into active tuple")
+                        if $aref == DupState || $aref == MixedState
+                            prim = $(primargs[i])
+                            throw("Error cannot store inactive but differentiable variable $prim into active tuple")
+                        end
                     end
                     if $aref == DupState
                         $(batchshadowargs[i][w])
