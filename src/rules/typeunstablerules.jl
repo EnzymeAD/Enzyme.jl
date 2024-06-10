@@ -1,4 +1,4 @@
-function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+function body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs, tuple)
     shadow_rets = Vector{Expr}[]
     results = quote
         $(active_refs...)
@@ -43,9 +43,16 @@ function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, b
         for i in 1:N
             push!(combined, shadow_rets[i][w])
         end
-        results = quote
-            $results
-            $sres = ($(combined...),)
+        if tuple
+            results = quote
+                $results
+                $sres = ($(combined...),)
+            end
+        else
+            results = quote
+                $results
+                $sres = $(Expr(:new, :NewType, combined...))
+            end
         end
         push!(refs, quote
             $ref_res = Ref($sres)
@@ -77,29 +84,17 @@ function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, b
     end
 end
 
-function func_runtime_tuple_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width; func=false, mixed_or_active=true)
-    body = body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 
-    quote
-        function runtime_tuple_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, $(typeargs...)}
-            $body
-        end
-    end
-end
-
-@generated function runtime_tuple_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType}
-    N = div(length(allargs), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs; func=false, mixed_or_active=true)
-    return body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
-end
-
-function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+function body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, tuple)
     outs = []
     for i in 1:N
         for w in 1:Width
             tsym = Symbol("tval_$w")
-            expr = :($tsym[$i])
+            expr = if tuple
+                :($tsym[$i])
+            else
+                :(getfield($tsym, $i))
+            end
             shad = batchshadowargs[i][w]
             out = :(if $(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState
               if $shad isa Base.RefValue
@@ -131,6 +126,38 @@ function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batc
     end
 end
 
+
+function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+end
+
+function body_runtime_newstruct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, false)
+end
+
+
+function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+    body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+end
+
+function func_runtime_tuple_augfwd(N, Width)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width; func=false, mixed_or_active=true)
+    body = body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+
+    quote
+        function runtime_tuple_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, $(typeargs...)}
+            $body
+        end
+    end
+end
+
+@generated function runtime_tuple_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType}
+    N = div(length(allargs), Width)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs; func=false, mixed_or_active=true)
+    return body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+end
+
+
 function func_runtime_tuple_rev(N, Width)
     primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width; mixed_or_active=true)
     body = body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
@@ -148,108 +175,43 @@ end
     return body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 end
 
-function body_runtime_newstruct_augfwd(N, Width, wrapped, primttypes, active_refs)
-    nnothing = ntuple(i->nothing, Val(Width+1))
-    nres = ntuple(i->:(origRet), Val(Width+1))
-    nzeros = ntuple(i->:(Ref(make_zero(origRet))), Val(Width))
-    nres3 = ntuple(i->:(res[3]), Val(Width))
-    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
 
-    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
-
-    Types = ntuple(i->Symbol("type_$i"), Val(N))
-
-    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
-
-    return quote
-        $(active_refs...)
-        args = ($(wrapped...),)
-        @show args
-        error("Enzyme: unhandled newstruct augfwd, please open an issue with an MWE so we can add this")
-    end
+function body_runtime_newstruct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+    body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs, false)
 end
 
 function func_runtime_newstruct_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs = setup_macro_wraps(false, N, Width)
-    body = body_runtime_newstruct_augfwd(N, Width, wrapped, primtypes, active_refs)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width)
+    body = body_runtime_newstruct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 
     quote
-        function runtime_newstruct_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_newstruct_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Type{NewType}, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, NewType, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_newstruct_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_newstruct_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, ::Type{NewType}, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType, NewType}
     N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_newstruct_augfwd(N, Width, wrapped, primtypes, active_refs)
-end
-
-function body_runtime_newstruct_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
-    outs = []
-    for i in 1:N
-        for w in 1:Width
-            expr = if Width == 1
-                :(tup[$i])
-            else
-                :(tup[$i][$w])
-            end
-            shad = shadowargs[i][w]
-            out = :(if tup[$i] === nothing
-              elseif $shad isa Base.RefValue
-                  $shad[] = recursive_add($shad[], $expr)
-                else
-                  error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
-                end
-               )
-            push!(outs, out)
-        end
-    end
-    shadow_ret = nothing
-    if Width == 1
-        shadowret = :(tape.shadow_return[])
-    else
-        shadowret = []
-        for w in 1:Width
-            push!(shadowret, :(tape.shadow_return[$w][]))
-        end
-        shadowret = :(($(shadowret...),))
-    end
-
-    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
-
-    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
-
-    Types = ntuple(i->Symbol("type_$i"), Val(N))
-
-    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
-
-    quote
-        $(active_refs...)
-        args = ($(wrapped...),)
-        $(MakeTypes...)
-        @show args
-        error("Newstruct rev")
-        return nothing
-    end
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
+    return body_runtime_newstruct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 end
 
 function func_runtime_newstruct_rev(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width)
-    body = body_runtime_newstruct_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width; mixed_or_active=true)
+    body = body_runtime_newstruct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 
     quote
-        function runtime_newstruct_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_newstruct_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, ::Type{NewStruct}, tape::TapeType,  $(allargs...)) where {ActivityTup, MB, NewStruct, TapeType, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_newstruct_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
-    N = div(length(allargs)+2, Width+1)-1
-    _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_newstruct_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+@generated function runtime_newstruct_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, ::Type{NewStruct}, tape::TapeType, allargs...) where {ActivityTup, MB, Width, NewStruct, TapeType}
+    N = div(length(allargs)-(Width-1), Width)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs; mixed_or_active=true)
+    return body_runtime_newstruct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 end
 
 for (N, Width) in Iterators.product(0:30, 1:10)
@@ -362,49 +324,32 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 
 
         width = get_width(gutils)
-        sret = generic_setup(orig, runtime_newstruct_augfwd, AnyArray(2+Int(width)), gutils, #=start=#offset, B, false)
-        AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
+
+        sret = generic_setup(orig, runtime_newstruct_augfwd, width == 1 ? Any : AnyArray(Int(width)), gutils, #=start=#offset, B, false; firstconst=true, endcast = false)
         
-         if unsafe_load(shadowR) != C_NULL
-            if width == 1
-                gep = LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
-                shadow = LLVM.load!(B, T_prjlvalue, gep)
-            else
-                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-                shadow = LLVM.UndefValue(ST)
-                for i in 1:width
-                    gep = LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(i)])
-                    ld = LLVM.load!(B, T_prjlvalue, gep)
-                    shadow = insert_value!(B, shadow, ld, i-1)
-                end
-            end
-            unsafe_store!(shadowR, shadow.ref)
-        end
-
-        tape = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1+width)]))
-        unsafe_store!(tapeR, tape.ref)
-
-        if normalR != C_NULL
-            normal = LLVM.load!(B, T_prjlvalue, LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(0)]))
-            unsafe_store!(normalR, normal.ref)
+        if width == 1
+            shadow = sret
         else
-            # Delete the primal code
-            ni = new_from_original(gutils, orig)
-            erase_with_placeholder(gutils, ni, orig)
+            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
+            llty = convert(LLVMType, AnyArray(Int(width)))
+            cal = sret
+            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
+            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            shadow = LLVM.UndefValue(ST)
+            for i in 1:width
+                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0), LLVM.ConstantInt(i-1)])
+                ld = LLVM.load!(B, T_prjlvalue, gep)
+                shadow = insert_value!(B, shadow, ld, i-1)
+            end
         end
+        unsafe_store!(shadowR, shadow.ref)
+
+        unsafe_store!(tapeR, sret.ref)
         return false
     end
 
     return false
-end
-
-function error_if_active_newstruct(::Type{T}, ::Type{Y}) where {T, Y}
-    seen = ()
-    areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
-    if areg == ActiveState
-        throw(AssertionError("Found unhandled active variable ($T) in reverse mode of jl_newstruct constructor for $Y"))
-    end
-    nothing
 end
 
 function common_newstructv_rev(offset, B, orig, gutils, tape)
@@ -421,11 +366,10 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
 		return
 	end
 
-
-    if !newstruct_common(#=fwd=#false, #=run=#false, offset, B, orig, gutils, normalR, shadowR)
+    if !newstruct_common(#=fwd=#false, #=run=#false, offset, B, orig, gutils, #=normalR=#nothing, #=shadowR=#nothing)
         @assert tape !== C_NULL
         width = get_width(gutils)
-        generic_setup(orig, runtime_newstruct_rev, Nothing, gutils, #=start=#offset, B, true; tape)
+        generic_setup(orig, runtime_newstruct_rev, Nothing, gutils, #=start=#offset, B, true; firstconst=true, tape)
     end
 
     return nothing

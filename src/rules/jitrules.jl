@@ -28,8 +28,11 @@ function func_mixed_call(N)
                   @inline f($(exprs2...))
                 end
             else
-                @assert !RefTypes[1]
-                @inline f($(exprs2...))
+                if RefTypes[1]
+                  (f[])($(exprs2...))
+                else
+                  f($(exprs2...))
+                end
             end
         end
     end
@@ -49,9 +52,16 @@ end
         end
         push!(exprs2, inarg)
     end
-    return quote
-        Base.@_inline_meta
-        @inline $fexpr($(exprs2...))
+    @static if VERSION ≥ v"1.8-"
+        return quote
+            Base.@_inline_meta
+            @inline $fexpr($(exprs2...))
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            $fexpr($(exprs2...))
+        end
     end
 end
 
