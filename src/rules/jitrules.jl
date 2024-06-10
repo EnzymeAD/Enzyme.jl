@@ -54,7 +54,7 @@ for N in 0:30
     eval(func_mixed_call(N))
 end
 
-function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, iterate=false)
+function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, iterate=false; func=true, mixed_or_active = false)
     primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
     batchshadowargs = Vector{Union{Symbol,Expr}}[]
@@ -63,18 +63,20 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
     typeargs = Symbol[]
     dfns = Union{Symbol,Expr}[:df]
     base_idx = 1
-    for w in 2:Width
-        if base === nothing
-            shad = Symbol("df_$w")
-            t = Symbol("DF__$w*")
-            e = :($shad::$t)
-            push!(allargs, e)
-            push!(typeargs, t)
-        else
-            shad = :($base[$base_idx])
-            base_idx += 1
+    if func
+        for w in 2:Width
+            if base === nothing
+                shad = Symbol("df_$w")
+                t = Symbol("DF__$w*")
+                e = :($shad::$t)
+                push!(allargs, e)
+                push!(typeargs, t)
+            else
+                shad = :($base[$base_idx])
+                base_idx += 1
+            end
+            push!(dfns, shad)
         end
-        push!(dfns, shad)
     end
     for i in 1:N
         if base === nothing
@@ -179,12 +181,22 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
     any_mixed = quote false end
     for i in 1:N
         aref = Symbol("active_ref_$i")
-        any_mixed = :($any_mixed || $aref == MixedState)
+        if mixed_or_active
+            any_mixed = :($any_mixed || $aref == MixedState || $aref == ActiveState)
+        else
+            any_mixed = :($any_mixed || $aref == MixedState)
+        end
     end
 
-    push!(active_refs, quote
-        active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState) for i in 1:N)...))
-    end)
+    if mixed_or_active
+        push!(active_refs, quote
+            active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState) for i in 1:N)...))
+        end)
+    else
+        push!(active_refs, quote
+            active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState) for i in 1:N)...))
+        end)
+    end
     push!(active_refs, quote
         any_mixed = $any_mixed
     end)
@@ -1001,7 +1013,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_iterate_rev(N, Width))
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false)
+function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true)
     width = get_width(gutils)
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1013,8 +1025,6 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     ActivityList = LLVM.Value[]
-
-    to_preserve = LLVM.Value[]
 
     @assert length(ops) != 0
     fill_val = unsafe_to_llvm(nothing)
@@ -1070,9 +1080,6 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
                 else
                     ev = extract_value!(B, inverted, w-1)
                 end
-                if tape !== nothing
-                    push!(to_preserve, ev)
-                end
             end
 
             push!(vals, ev)
@@ -1127,7 +1134,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
 
     debug_from_orig!(gutils, cal, orig)
     
-    if tape === nothing
+    if tape === nothing && endcast
         llty = convert(LLVMType, ReturnType)
         cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
         cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
