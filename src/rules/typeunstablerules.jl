@@ -164,85 +164,8 @@ function body_runtime_newstruct_augfwd(N, Width, wrapped, primttypes, active_ref
     return quote
         $(active_refs...)
         args = ($(wrapped...),)
-        $(MakeTypes...)
-        
-        FT = Core.Typeof(f)
-        dupClosure0 = if ActivityTup[1]
-            !guaranteed_const(FT)
-        else
-            false
-        end
-
         @show args
-        error("newstruct augfwd")
-
-        internal_tape, origRet, initShadow, annotation = if any_mixed
-            ttM = Tuple{Val{active_refs}, FT, $(ElTypes...)}
-            rtM = Core.Compiler.return_type(runtime_mixed_call, ttM)
-            annotation0M = guess_activity(rtM, API.DEM_ReverseModePrimal)
-
-            annotationM = if $Width != 1 && annotation0M <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0M
-            end
-            worldM = codegen_world_age(typeof(runtime_mixed_call), ttM)
-            ModifiedBetweenM = Val((false, false, element(ModifiedBetween)...))
-
-            forward, adjoint = thunk(Val(worldM), 
-                                     Const{typeof(runtime_mixed_call)},
-                                     annotationM, Tuple{Const{Val{active_refs}}, dupClosure0 ? Duplicated{FT} : Const{FT}, $(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetweenM, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
-            forward(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args...)..., annotationM
-
-        else
-            tt = Tuple{$(ElTypes...)}
-            rt = Core.Compiler.return_type(f, tt)
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-            annotationA = if $Width != 1 && annotation0 <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0
-            end
-            world = codegen_world_age(FT, tt)
-
-            forward, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
-                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
-            forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)..., annotationA
-        end
-
-        resT = typeof(origRet)
-        if annotation <: Const
-            shadow_return = nothing
-            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            return ReturnType(($(nres...), tape))
-        elseif annotation <: Active
-            if $Width == 1
-                shadow_return = Ref(make_zero(origRet))
-            else
-                shadow_return = ($(nzeros...),)
-            end
-            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            if $Width == 1
-                return ReturnType((origRet, shadow_return, tape))
-            else
-                return ReturnType((origRet, shadow_return..., tape))
-            end
-        end
-
-        @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
-
-        shadow_return = nothing
-        tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-        if $Width == 1
-            return ReturnType((origRet, initShadow, tape))
-        else
-            return ReturnType((origRet, initShadow..., tape))
-        end
+        error("Enzyme: unhandled newstruct augfwd, please open an issue with an MWE so we can add this")
     end
 end
 
@@ -308,62 +231,6 @@ function body_runtime_newstruct_rev(N, Width, wrapped, primttypes, shadowargs, a
         $(MakeTypes...)
         @show args
         error("Newstruct rev")
-        
-        FT = Core.Typeof(f)
-        dupClosure0 = if ActivityTup[1]
-            !guaranteed_const(FT)
-        else
-            false
-        end
-
-        if any_mixed
-            ttM = Tuple{Val{active_refs}, FT, $(ElTypes...)}
-            rtM = Core.Compiler.return_type(runtime_mixed_call, ttM)
-            annotation0M = guess_activity(rtM, API.DEM_ReverseModePrimal)
-
-            annotationM = if $Width != 1 && annotation0M <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0M
-            end
-            worldM = codegen_world_age(typeof(runtime_mixed_call), ttM)
-            ModifiedBetweenM = Val((false, false, element(ModifiedBetween)...))
-
-            _, adjoint = thunk(Val(worldM), 
-                                     Const{typeof(runtime_mixed_call)},
-                                     annotationM, Tuple{Const{Val{active_refs}}, dupClosure0 ? Duplicated{FT} : Const{FT}, $(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetweenM, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-            if tape.shadow_return !== nothing
-                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
-            else
-                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
-            end
-            nothing
-        else
-            tt = Tuple{$(ElTypes...)}
-            rt = Core.Compiler.return_type(f, tt)
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-            annotation = if $Width != 1 && annotation0 <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0
-            end
-
-            world = codegen_world_age(FT, tt)
-
-            _, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
-                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
-            tup = if tape.shadow_return !== nothing
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
-            else
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
-            end
-
-            $(outs...)
-        end
         return nothing
     end
 end

@@ -398,7 +398,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
               elseif $shad isa Base.RefValue
                   $shad[] = recursive_add($shad[], $expr)
                 else
-                  error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
+                    error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad)*" tup[i]="*string(tup[$i])*" i="*string($i)*" w="*string($w)*" tup="*string(tup))
                 end
                )
             push!(outs, out)
@@ -476,9 +476,9 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                                      ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
             tup = if tape.shadow_return !== nothing
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
             else
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
             end
 
             $(outs...)
