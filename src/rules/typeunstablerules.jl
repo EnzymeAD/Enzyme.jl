@@ -13,7 +13,7 @@ function body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, b
         for w in 1:Width
             sref = Symbol("shadow_"*string(i)*"_"*string(w))
             push!(shadow_rets_i, quote
-                $sref = if ActivityTup[$i] || $aref == AnyState 
+                $sref = if !ActivityTup[$i] || $aref == AnyState 
                     $(primargs[i]);
                 elseif $aref == DupState
                     $(batchshadowargs[i][w])
@@ -81,110 +81,42 @@ function func_runtime_tuple_augfwd(N, Width)
 end
 
 @generated function runtime_tuple_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType}
-    N = div(length(allargs)+2, Width+1)-1
+    N = div(length(allargs), Width)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs; func=false, mixed_or_active=true)
     return body_runtime_tuple_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 end
 
-function body_runtime_tuple_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
+function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
     outs = []
     for i in 1:N
         for w in 1:Width
-            expr = if Width == 1
-                :(tup[$i])
-            else
-                :(tup[$i][$w])
-            end
-            shad = shadowargs[i][w]
-            out = :(if tup[$i] === nothing
-              elseif $shad isa Base.RefValue
-                  $shad[] = recursive_add($shad[], $expr)
+            tsym = Symbol("tval_$w")
+            expr = :($tsym[$i])
+            shad = batchshadowargs[i][w]
+            out = :(if $(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState
+              if $shad isa Base.RefValue
+              $shad[] = recursive_add($shad[], $expr)
                 else
                   error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
-               )
+            end
+            )
             push!(outs, out)
         end
     end
-    shadow_ret = nothing
-    if Width == 1
-        shadowret = :(tape.shadow_return[])
-    else
-        shadowret = []
-        for w in 1:Width
-            push!(shadowret, :(tape.shadow_return[$w][]))
-        end
-        shadowret = :(($(shadowret...),))
+
+    tapes = Expr[:(tval_1 = tape[])]    
+    for w in 2:Width
+        sym = Symbol("tval_$w")
+        df = Symbol("df_$w")
+        push!(tapes, :($sym = $df[]))
     end
-
-    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
-
-    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
-
-    Types = ntuple(i->Symbol("type_$i"), Val(N))
-
-    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
 
     quote
         $(active_refs...)
-        args = ($(wrapped...),)
-        $(MakeTypes...)
-        @show args
-        error("tuple rev")
-        
-        FT = Core.Typeof(f)
-        dupClosure0 = if ActivityTup[1]
-            !guaranteed_const(FT)
-        else
-            false
-        end
 
         if any_mixed
-            ttM = Tuple{Val{active_refs}, FT, $(ElTypes...)}
-            rtM = Core.Compiler.return_type(runtime_mixed_call, ttM)
-            annotation0M = guess_activity(rtM, API.DEM_ReverseModePrimal)
-
-            annotationM = if $Width != 1 && annotation0M <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0M
-            end
-            worldM = codegen_world_age(typeof(runtime_mixed_call), ttM)
-            ModifiedBetweenM = Val((false, false, element(ModifiedBetween)...))
-
-            _, adjoint = thunk(Val(worldM), 
-                                     Const{typeof(runtime_mixed_call)},
-                                     annotationM, Tuple{Const{Val{active_refs}}, dupClosure0 ? Duplicated{FT} : Const{FT}, $(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetweenM, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-            if tape.shadow_return !== nothing
-                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
-            else
-                adjoint(Const(runtime_mixed_call), Const(Val(active_refs)), dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
-            end
-            nothing
-        else
-            tt = Tuple{$(ElTypes...)}
-            rt = Core.Compiler.return_type(f, tt)
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-            annotation = if $Width != 1 && annotation0 <: Duplicated
-                BatchDuplicated{rt, $Width}
-            else
-                annotation0
-            end
-
-            world = codegen_world_age(FT, tt)
-
-            _, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
-                                     annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
-            tup = if tape.shadow_return !== nothing
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)
-            else
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)
-            end
-
+            $(tapes...)
             $(outs...)
         end
         return nothing
@@ -192,24 +124,21 @@ function body_runtime_tuple_rev(N, Width, wrapped, primttypes, shadowargs, activ
 end
 
 function func_runtime_tuple_rev(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width)
-    body = body_runtime_tuple_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width; mixed_or_active=true)
+    body = body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 
     quote
-        function runtime_tuple_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_tuple_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, $(allargs...)) where {ActivityTup, MB, TapeType, $(typeargs...)}
             $body
         end
     end
 end
 
 @generated function runtime_tuple_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, allargs...) where {ActivityTup, MB, Width, TapeType}
-    N = div(length(allargs), Width+1)-1
-    _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_tuple_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+    N = div(length(allargs)-(Width-1), Width)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs; mixed_or_active=true)
+    return body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
 end
-
-
-
 
 function body_runtime_newstruct_augfwd(N, Width, wrapped, primttypes, active_refs)
     nnothing = ntuple(i->nothing, Val(Width+1))
@@ -636,7 +565,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
 
-    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0 
         return true
     end
 
@@ -651,8 +580,6 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         width = get_width(gutils)
 
         sret = generic_setup(orig, runtime_tuple_augfwd, width == 1 ? Any : AnyArray(Int(width)), gutils, #=start=#offset+1, B, false; endcast = false)
-
-        AT = LLVM.ArrayType(T_prjlvalue, 2+Int(width))
         
         if width == 1
             shadow = sret
@@ -665,7 +592,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
             ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
             for i in 1:width
-                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0), LLVM.ConstantInt(i)])
+                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0), LLVM.ConstantInt(i-1)])
                 ld = LLVM.load!(B, T_prjlvalue, gep)
                 shadow = insert_value!(B, shadow, ld, i-1)
             end
@@ -679,9 +606,6 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function common_f_tuple_rev(offset, B, orig, gutils, tape)
-    if is_constant_value(gutils, orig)
-        return true
-    end
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
@@ -692,10 +616,36 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
         return
     end
 
+    if is_constant_value(gutils, orig)
+        return true
+    end
+
     if !newstruct_common(#=fwd=#false, #=run=#false, offset, B, orig, gutils, #=normalR=#nothing, #=shadowR=#nothing)
         @assert tape !== C_NULL
         width = get_width(gutils)
-        generic_setup(orig, runtime_tuple_rev, Nothing, gutils, #=start=#offset, B, true; tape)
+        tape2 = if width != 1
+            res = LLVM.Value[]
+
+            T_jlvalue = LLVM.StructType(LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
+            llty = convert(LLVMType, AnyArray(Int(width)))
+            cal = tape
+            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
+            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+
+            for i in 1:width
+                gep = LLVM.inbounds_gep!(B, AT, cal, [LLVM.ConstantInt(0), LLVM.ConstantInt(i-1)])
+                ld = LLVM.load!(B, T_prjlvalue, gep)
+                push!(res, ld)
+            end
+            res
+        else
+            tape
+        end
+        generic_setup(orig, runtime_tuple_rev, Nothing, gutils, #=start=#offset+1, B, true; tape=tape2)
     end
     return nothing
 end

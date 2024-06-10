@@ -1088,7 +1088,13 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     @assert length(ActivityList) == length(ops)
 
     if tape !== nothing
-        pushfirst!(vals, tape)
+        if tape isa Vector
+            for t in reverse(tape)
+                pushfirst!(vals, t)
+            end
+        else
+            pushfirst!(vals, tape)
+        end
     else
         pushfirst!(vals, unsafe_to_llvm(Val(ReturnType)))
     end
