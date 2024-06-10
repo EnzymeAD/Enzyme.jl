@@ -122,11 +122,14 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg(arg.typ, world) )
+        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg_inner(arg.typ, (), world, #=justActive=#Val(true)) == ActiveState)
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty)
             arty = convert(LLVMType, arg.typ; allow_boxed=true)
             if B !== nothing
+                if active_reg_inner(arg.typ, (), world, #=justActive=#Val(false)) == MixedState
+                    emit_error(B, orig, "Enzyme: Argument type $(arg.typ) has mixed internal activity types in evaluation of custom rule for $mi. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information")
+                end
                 al0 = al = emit_allocobj!(B, Ty)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
@@ -716,6 +719,17 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4]))
             innerTy = value_type(parameters(llvmf)[tape_idx+(sret !== nothing)+(RT <: Active)])
             if innerTy != value_type(tape)
+                if isabstracttype(TapeT)
+                    msg = sprint() do io
+                        println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
+                        println(io, "tape_idx=", tape_idx)
+                        println(io, "sret=", sret)
+                        println(io, "RT=", RT)
+                        println(io, "tape=", tape)
+                        println(io, "llvmf=", string(llvmf))
+                    end
+                    throw(AssertionError(msg))
+                end
                 llty = convert(LLVMType, TapeT; allow_boxed=true)
                 al0 = al = emit_allocobj!(B, TapeT)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
