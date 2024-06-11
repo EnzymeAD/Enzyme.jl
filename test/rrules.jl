@@ -345,4 +345,5 @@ end
     @test cl.v[1] ≈ 0.0
 end
 
+include("mixedrrule.jl")
 end # ReverseRules

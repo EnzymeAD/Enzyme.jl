@@ -122,14 +122,11 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg_inner(arg.typ, (), world, #=justActive=#Val(true)) == ActiveState)
+        elseif activep == API.DFT_OUT_DIFF || (mode != API.DEM_ForwardMode && active_reg_inner(arg.typ, (), world) == ActiveState)
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty)
             arty = convert(LLVMType, arg.typ; allow_boxed=true)
-            if B !== nothing
-                if active_reg_inner(arg.typ, (), world, #=justActive=#Val(false)) == MixedState
-                    emit_error(B, orig, "Enzyme: Argument type $(arg.typ) has mixed internal activity types in evaluation of custom rule for $mi. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information")
-                end
+            if B !== nothings
                 al0 = al = emit_allocobj!(B, Ty)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
@@ -157,25 +154,41 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                     ival = lookup_value(gutils, ival, B)
                 end
             end
+            shadowty = arg.typ
             if width == 1
-                if activep == API.DFT_DUP_ARG
-                    Ty = Duplicated{arg.typ}
+
+                if active_reg_inner(arg.typ, (), world) == MixedState
+                    # TODO mixedupnoneed
+                    shadowty = Base.RefValue{shadowty}
+                    Ty = MixedDuplicated{arg.typ}
                 else
-                    @assert activep == API.DFT_DUP_NONEED
-                    Ty = DuplicatedNoNeed{arg.typ}
+                    if activep == API.DFT_DUP_ARG
+                        Ty = Duplicated{arg.typ}
+                    else
+                        @assert activep == API.DFT_DUP_NONEED
+                        Ty = DuplicatedNoNeed{arg.typ}
+                    end
                 end
             else
-                if activep == API.DFT_DUP_ARG
-                    Ty = BatchDuplicated{arg.typ, Int(width)}
+                if active_reg_inner(arg.typ, (), world) == MixedState
+                    # TODO batchmixedupnoneed
+                    shadowty = Base.RefValue{shadowty}
+                    Ty = BatchMixedDuplicated{arg.typ, Int(width)}
                 else
-                    @assert activep == API.DFT_DUP_NONEED
-                    Ty = BatchDuplicatedNoNeed{arg.typ, Int(width)}
+                    if activep == API.DFT_DUP_ARG
+                        Ty = BatchDuplicated{arg.typ, Int(width)}
+                    else
+                        @assert activep == API.DFT_DUP_NONEED
+                        Ty = BatchDuplicatedNoNeed{arg.typ, Int(width)}
+                    end
                 end
             end
 
             llty = convert(LLVMType, Ty)
             arty = convert(LLVMType, arg.typ; allow_boxed=true)
+            iarty = convert(LLVMType, shadowty; allow_boxed=true)
             sarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, arty))
+            siarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, iarty))
             if B !== nothing
                 al0 = al = emit_allocobj!(B, Ty)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
@@ -184,17 +197,21 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
                 if value_type(val) != eltype(value_type(ptr))
                     val = load!(B, arty, val)
-                    ptr_val = ival
-                    ival = UndefValue(sarty)
-                    for idx in 1:width
-                        ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
-                        ld = load!(B, arty, ev)
-                        ival = (width == 1 ) ? ld : insert_value!(B, ival, ld, idx-1)
-                    end
                 end
                 store!(B, val, ptr)
 
                 iptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 1)])
+                
+                if value_type(ival) != eltype(value_type(iptr))
+                    ptr_val = ival
+                    ival = UndefValue(siarty)
+                    for idx in 1:width
+                        ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                        ld = load!(B, iarty, ev)
+                        ival = (width == 1 ) ? ld : insert_value!(B, ival, ld, idx-1)
+                    end
+                end
+
                 store!(B, ival, iptr)
 
                 if any_jltypes(llty)
