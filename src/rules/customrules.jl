@@ -687,7 +687,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             end
         end
     end
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+
+    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -715,9 +716,9 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
     _, sret, returnRoots = get_return_info(miRT)
 
     if !forward
+        funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
         if needsTape
             @assert tape != C_NULL
-            funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])) + !isghostty(funcTy)
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself+(RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
@@ -764,7 +765,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
             else
                 llety = convert(LLVMType, eltype(RT))
-                ptr_val = invert_pointer(gutils, operands(orig)[1], B)
+                ptr_val = invert_pointer(gutils, operands(orig)[1 + !isghostty(funcTy)], B)
                 val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
                 for idx in 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
@@ -784,8 +785,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             if any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
-
-            insert!(args, 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])), al)
+            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])), al)
         end
     end
 
