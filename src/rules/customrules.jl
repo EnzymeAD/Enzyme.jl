@@ -711,22 +711,37 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
 
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    miRT = enzyme_custom_extract_mi(llvmf)[2]
+    _, sret, returnRoots = get_return_info(miRT)
 
     if !forward
         if needsTape
             @assert tape != C_NULL
-            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4]))
-            innerTy = value_type(parameters(llvmf)[tape_idx+(sret !== nothing)+(RT <: Active)])
+            funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
+            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])) + !isghostty(funcTy)
+            trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself+(RT <: Active)
+            innerTy = value_type(parameters(llvmf)[trueidx])
             if innerTy != value_type(tape)
-                if isabstracttype(TapeT)
+                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL
                     msg = sprint() do io
                         println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
                         println(io, "tape_idx=", tape_idx)
+                        println(io, "true_idx=", trueidx)
+                        println(io, "isKWCall=", isKWCall)
+                        println(io, "kwtup=", kwtup)
+                        println(io, "funcTy=", funcTy)
+                        println(io, "isghostty(funcTy)=", isghostty(funcTy))
+                        println(io, "miRT=", miRT)
                         println(io, "sret=", sret)
+                        println(io, "returnRoots=", returnRoots)
+                        println(io, "swiftself=", swiftself)
                         println(io, "RT=", RT)
                         println(io, "tape=", tape)
-                        println(io, "llvmf=", string(llvmf))
+                        println(io, "llvmf=", string(LLVM.function_type(llvmf)))
+                        println(io, "TapeT=", TapeT)
+                        println(io, "mi=", mi)
+                        println(io, "ami=", ami)
+                        println(io, "rev_TT =", rev_TT)
                     end
                     throw(AssertionError(msg))
                 end
