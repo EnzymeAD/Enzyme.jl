@@ -1017,7 +1017,6 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             idx+=1
         end
 
-        # @show mixeds
         for (ptr_val, argTyp, refal) in mixeds
             RefTy = argTyp
             if width != 1
@@ -1030,7 +1029,6 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 evcur = (width == 1) ? curs : extract_value!(B, curs, idx-1)
                 store_nonjl_types!(B, evcur, evp)
             end
-            @show curs, ptr_val, argTyp, refal
         end
     end
 

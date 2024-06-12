@@ -2450,7 +2450,7 @@ else
     end
 end
 
-function store_nonjl_types!(B, p, startval)
+function store_nonjl_types!(B, startval, p)
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     vals = LLVM.Value[]
@@ -2476,8 +2476,8 @@ function store_nonjl_types!(B, p, startval)
             end
         end
         if isa(ty, LLVM.StructType)
-            for (i, t) in enumerate(LLVM.elements(ty))
-                if any_jltypes(t)
+            if any_jltypes(ty)
+                for (i, t) in enumerate(LLVM.elements(ty))
                     ev = extract_value!(B, cur, i-1)
                     push!(todo, ((path..., i-1), ev))
                 end
@@ -2488,8 +2488,8 @@ function store_nonjl_types!(B, p, startval)
         for v in path
             push!(parray, LLVM.ConstantInt(LLVM.IntType(32), v))
         end
-        gptr = gep!(B, p, parray)
-        store!(B, cur, gptr)
+        gptr = gep!(B, value_type(startval), p, parray)
+        st = store!(B, cur, gptr)
     end
     return
 end
