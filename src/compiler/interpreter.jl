@@ -65,7 +65,7 @@ Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cach
 @static if HAS_INTEGRATED_CACHE
     Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
 else
-    Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.cache, interp.world)
+    Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
