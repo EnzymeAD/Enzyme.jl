@@ -5388,6 +5388,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)
     end
+    cleanup_global_loads!(mod)
 
     seen = TypeTreeTable()
     T_jlvalue = LLVM.StructType(LLVMType[])

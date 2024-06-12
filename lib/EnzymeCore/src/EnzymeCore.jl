@@ -262,6 +262,8 @@ end
 """
 function compiler_job_from_backend end
 
+const GlobalInlinedLoads = Set{Any}(())
+
 include("rules.jl")
 
 if !isdefined(Base, :get_extension)
