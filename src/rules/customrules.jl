@@ -12,6 +12,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
 
     actives = LLVM.Value[]
 
+    mixeds = Tuple{LLVM.Value, Type, LLVM.Value}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
     
@@ -126,7 +127,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty)
             arty = convert(LLVMType, arg.typ; allow_boxed=true)
-            if B !== nothings
+            if B !== nothing
                 al0 = al = emit_allocobj!(B, Ty)
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
@@ -155,12 +156,14 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 end
             end
             shadowty = arg.typ
+            mixed = false
             if width == 1
 
                 if active_reg_inner(arg.typ, (), world) == MixedState
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
+                    mixed = true
                 else
                     if activep == API.DFT_DUP_ARG
                         Ty = Duplicated{arg.typ}
@@ -174,6 +177,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ, Int(width)}
+                    mixed = true
                 else
                     if activep == API.DFT_DUP_ARG
                         Ty = BatchDuplicated{arg.typ, Int(width)}
@@ -195,21 +199,46 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
+                needsload = false
                 if value_type(val) != eltype(value_type(ptr))
                     val = load!(B, arty, val)
+                    if !mixed
+                        ptr_val = ival
+                        ival = UndefValue(siarty)
+                        for idx in 1:width
+                            ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                            ld = load!(B, iarty, ev)
+                            ival = (width == 1 ) ? ld : insert_value!(B, ival, ld, idx-1)
+                        end
+                    end
+                    needsload = true
                 end
                 store!(B, val, ptr)
 
                 iptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 1)])
                 
-                if value_type(ival) != eltype(value_type(iptr))
+                if mixed
+                    RefTy = arg.typ
+                    if width != 1
+                        RefTy = NTuple{N, RefTy}
+                    end
+                    llrty = convert(LLVMType, RefTy)
+                    RefTy = Base.RefValue{RefTy}
+                    refal0 = refal = emit_allocobj!(B, RefTy)
+                    refal = bitcast!(B, refal, LLVM.PointerType(llrty, addrspace(value_type(refal))))
+
+                    @assert needsload
                     ptr_val = ival
-                    ival = UndefValue(siarty)
+                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
                     for idx in 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
-                        ld = load!(B, iarty, ev)
+                        ld = load!(B, llrty, ev)
                         ival = (width == 1 ) ? ld : insert_value!(B, ival, ld, idx-1)
                     end
+                    store!(B, ival, refal)
+                    emit_writebarrier!(B, get_julia_inner_types(B, refal0, ival))
+                    ival = refal0
+                    push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
                 store!(B, ival, iptr)
@@ -224,7 +253,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
         end
 
     end
-    return args, activity, (overwritten...,), actives, kwtup
+    return args, activity, (overwritten...,), actives, kwtup, mixeds
 end
 
 function enzyme_custom_setup_ret(gutils::GradientUtils, orig::LLVM.CallInst, mi, @nospecialize(RealRt), B)
@@ -321,7 +350,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     end
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
+    args, activity, overwritten, actives, kwtup, _ = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
 
     alloctx = LLVM.IRBuilder()
@@ -534,7 +563,7 @@ end
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
+    args, activity, overwritten, actives, kwtup, mixeds = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#!forward, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
 
     needsShadowJL = if RT <: Active
@@ -590,7 +619,7 @@ end
             end
         end
     end
-    return ami, augprimal_TT, (args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal)
+    return ami, augprimal_TT, (args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal, mixeds)
 end
 
 @inline function has_aug_fwd_rule(orig, gutils)
@@ -616,7 +645,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     # 2) Create activity, and annotate function spec
     ami, augprimal_TT, setup = aug_fwd_mi(orig, gutils, forward, B)
-    args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal  = setup 
+    args, activity, overwritten, actives, kwtup, RT, needsPrimal, needsShadow, origNeedsPrimal, mixeds  = setup 
 
     needsShadowJL = if RT <: Active
         false
@@ -986,6 +1015,22 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 API.EnzymeGradientUtilsAddToDiffe(gutils, v, ext, B, Typ)
             end
             idx+=1
+        end
+
+        # @show mixeds
+        for (ptr_val, argTyp, refal) in mixeds
+            RefTy = argTyp
+            if width != 1
+                RefTy = NTuple{N, RefTy}
+            end
+            curs = load!(B, convert(LLVMType, RefTy), refal)
+
+            for idx in 1:width
+                evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx-1)
+                evcur = (width == 1) ? curs : extract_value!(B, curs, idx-1)
+                store_nonjl_types!(B, evcur, evp)
+            end
+            @show curs, ptr_val, argTyp, refal
         end
     end
 

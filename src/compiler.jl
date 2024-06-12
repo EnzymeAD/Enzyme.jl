@@ -2450,6 +2450,50 @@ else
     end
 end
 
+function store_nonjl_types!(B, p, startval)
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    vals = LLVM.Value[]
+    if p != nothing
+        push!(vals, p)
+    end
+    todo = Tuple{Tuple, LLVM.Value}[((), startval)]
+    while length(todo) != 0
+        path, cur = popfirst!(todo)
+        ty = value_type(cur)
+        if isa(ty, LLVM.PointerType)
+            if any_jltypes(ty)
+                continue
+            end
+        end
+        if isa(ty, LLVM.ArrayType)
+            if any_jltypes(ty)
+                for i=1:length(ty)
+                    ev = extract_value!(B, cur, i-1)
+                    push!(todo, ((path..., i-1), ev))
+                end
+                continue
+            end
+        end
+        if isa(ty, LLVM.StructType)
+            for (i, t) in enumerate(LLVM.elements(ty))
+                if any_jltypes(t)
+                    ev = extract_value!(B, cur, i-1)
+                    push!(todo, ((path..., i-1), ev))
+                end
+                continue
+            end
+        end
+        parray = LLVM.Value[LLVM.ConstantInt(LLVM.IntType(64), 0)]
+        for v in path
+            push!(parray, LLVM.ConstantInt(LLVM.IntType(32), v))
+        end
+        gptr = gep!(B, p, parray)
+        store!(B, cur, gptr)
+    end
+    return
+end
+
 function get_julia_inner_types(B, p, startvals...; added=[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
