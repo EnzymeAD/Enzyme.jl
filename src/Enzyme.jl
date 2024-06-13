@@ -11,6 +11,9 @@ export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
 
+import EnzymeCore: MixedDuplicated, BatchMixedDuplicated
+export MixedDuplicated, BatchMixedDuplicated
+
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
