@@ -1,12 +1,28 @@
 module Interpreter
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
-using GPUCompiler: CodeCache, WorldView, @safe_debug
+using GPUCompiler: @safe_debug
+if VERSION < v"1.11.0-DEV.1552"
+    using GPUCompiler: CodeCache, WorldView, @safe_debug
+end
+const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
+
 import ..Enzyme
 import ..EnzymeRules
 
+@static if VERSION ≥ v"1.11.0-DEV.1498"
+    import Core.Compiler: get_inference_world
+    using Base: get_world_counter
+else
+    import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
+end
+
 struct EnzymeInterpreter <: AbstractInterpreter
-    global_cache::CodeCache
+@static if HAS_INTEGRATED_CACHE
+    token::Any
+else
+    code_cache::CodeCache
+end
     method_table::Union{Nothing,Core.MethodTable}
 
     # Cache of inference results for this particular interpreter
@@ -19,34 +35,38 @@ struct EnzymeInterpreter <: AbstractInterpreter
     opt_params::OptimizationParams
 
     mode::API.CDerivativeMode
+end
 
-    function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
-        @assert world <= Base.get_world_counter()
+function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
+    @assert world <= Base.get_world_counter()
 
-        return new(
-            cache,
-            mt,
+    return EnzymeInterpreter(
+        cache_or_token,
+        mt,
 
-            # Initially empty cache
-            Vector{InferenceResult}(),
+        # Initially empty cache
+        Vector{InferenceResult}(),
 
-            # world age counter
-            world,
+        # world age counter
+        world,
 
-            # parameters for inference and optimization
-            InferenceParams(unoptimize_throw_blocks=false),
-            VERSION >= v"1.8.0-DEV.486" ? OptimizationParams() :
-                                          OptimizationParams(unoptimize_throw_blocks=false),
-            mode
-        )
-    end
+        # parameters for inference and optimization
+        InferenceParams(unoptimize_throw_blocks=false),
+        VERSION >= v"1.8.0-DEV.486" ? OptimizationParams() :
+                                        OptimizationParams(unoptimize_throw_blocks=false),
+        mode
+    )
 end
 
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
-Core.Compiler.get_world_counter(interp::EnzymeInterpreter) = interp.world
+get_inference_world(interp::EnzymeInterpreter) = interp.world
 Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
-Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.global_cache, interp.world)
+@static if HAS_INTEGRATED_CACHE
+    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
+else
+    Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
+end
 
 # No need to do any locking since we're not putting our results into the runtime cache
 Core.Compiler.lock_mi_inference(interp::EnzymeInterpreter, mi::MethodInstance) = nothing

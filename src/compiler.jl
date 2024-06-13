@@ -2992,8 +2992,27 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 # provide a specific interpreter to use.
+if VERSION >= v"1.11.0-DEV.1552"
+struct EnzymeCacheToken
+    target_type::Type
+    always_inline
+    method_table::Core.MethodTable
+    param_type::Type
+    mode::API.CDerivativeMode
+end
+
+GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    EnzymeCacheToken(
+        typeof(job.config.target), job.config.always_inline, GPUCompiler.method_table(job),
+        typeof(job.config.params), job.config.params.mode,
+    )
+
+GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    Interpreter.EnzymeInterpreter(GPUCompiler.ci_cache_token(job), GPUCompiler.method_table(job), job.world, job.config.params.mode)
+else
 GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
     Interpreter.EnzymeInterpreter(GPUCompiler.ci_cache(job), GPUCompiler.method_table(job), job.world, job.config.params.mode)
+end
 
 include("compiler/passes.jl")
 include("compiler/optimize.jl")
