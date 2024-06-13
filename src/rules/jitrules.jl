@@ -76,23 +76,51 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
             $aref = active_reg_nothrow($(primtypes[i]), Val(nothing));
         end)
         expr = if iterate
-            :(
-                 if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
-                   @assert $(primtypes[i]) !== DataType
-                    if !$forwardMode && active_reg($(primtypes[i]))
-                        iterate_unwrap_augfwd_act($(primargs[i])...)
-                 else
-                     $((Width == 1) ? quote
-                        iterate_unwrap_augfwd_dup(Val($forwardMode), $(primargs[i]), $(shadowargs[i]))
-                    end : quote
-                        iterate_unwrap_augfwd_batchdup(Val($forwardMode), Val($Width), $(primargs[i]), $(shadowargs[i]))
+            if forwardMode
+                dupexpr = if Width == 1
+                    quote
+                        iterate_unwrap_fwd_dup($(primargs[i]), $(shadowargs[i]))
                     end
-                    )
-                 end
-             else
-                 map(Const, $(primargs[i]))
-             end
-            )
+                else
+                    quote
+                        iterate_unwrap_fwd_batchdup(Val($Width), $(primargs[i]), $(shadowargs[i]))
+                    end
+                end
+                :(
+                if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
+                    @assert $(primtypes[i]) !== DataType
+                    $dupexpr
+                else
+                     map(Const, $(primargs[i]))
+                end
+                )
+            else
+                dupexpr = if Width == 1
+                    quote
+                        iterate_unwrap_augfwd_dup($(primargs[i]), $(shadowargs[i]))
+                    end
+                else
+                    quote
+                        iterate_unwrap_augfwd_batchdup(Val($Width), $(primargs[i]), $(shadowargs[i]))
+                    end
+                end
+                :(
+                    if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
+                        @assert $(primtypes[i]) !== DataType
+                        if $aref == ActiveState
+                            Active($(primargs[i]))
+                            iterate_unwrap_augfwd_act($(primargs[i])...)
+                        elseif $aref == MixedState
+                            T = $(primtypes[i])
+                            throw(AssertionError("Mixed State of type $T is unsupported in apply iterate"))
+                        else
+                            $dupexpr
+                        end
+                    else
+                        map(Const, $(primargs[i]))
+                    end
+                )
+            end
         else
             if forwardMode
                 quote
@@ -130,16 +158,6 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
         else
             any_mixed = :($any_mixed || $aref == MixedState)
         end
-    end
-
-    if mixed_or_active
-        push!(active_refs, quote
-            active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState) for i in 1:N)...))
-        end)
-    else
-        push!(active_refs, quote
-            active_refs = (false, $(collect(:($(Symbol("active_ref_$i")) == MixedState) for i in 1:N)...))
-        end)
     end
     push!(active_refs, quote
         any_mixed = $any_mixed
@@ -493,30 +511,69 @@ end
     end
 end
 
-@inline function iterate_unwrap_augfwd_dup(::Val{forwardMode}, args, dargs) where forwardMode
+@inline function iterate_unwrap_fwd_dup(args, dargs)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
         ty = Core.Typeof(arg)
         if guaranteed_const(ty)
             Const(arg)
-        elseif !forwardMode && active_reg(ty)
-            Active(arg)
         else
             Duplicated(arg, dargs[i])
         end
     end
 end
 
-@inline function iterate_unwrap_augfwd_batchdup(::Val{forwardMode}, ::Val{Width}, args, dargs) where {forwardMode, Width}
+
+@inline function iterate_unwrap_fwd_batchdup(::Val{Width}, args, dargs) where {Width}
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
         ty = Core.Typeof(arg)
         if guaranteed_const(ty)
             Const(arg)
-        elseif !forwardMode && active_reg(ty)
+        else
+            BatchDuplicated(arg, ntuple(Val(Width)) do j
+                Base.@_inline_meta
+                dargs[j][i]
+            end)
+        end
+    end
+end
+
+@inline function iterate_unwrap_augfwd_dup(args, dargs)
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        arg = args[i]
+        ty = Core.Typeof(arg)
+        actreg = active_reg_nothrow(ty, Val(nothing))
+        if actreg == AnyState
+            Const(arg)
+        elseif actreg == ActiveState
             Active(arg)
+        elseif actreg == MixedState
+            MixedDuplicated(arg, dargs[i])
+        else
+            Duplicated(arg, dargs[i])
+        end
+    end
+end
+
+@inline function iterate_unwrap_augfwd_batchdup(::Val{Width}, args, dargs) where {Width}
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        arg = args[i]
+        ty = Core.Typeof(arg)
+        actreg = active_reg_nothrow(ty, Val(nothing))
+        if actreg == AnyState
+            Const(arg)
+        elseif actreg == ActiveState
+            Active(arg)
+        elseif actreg == MixedState
+            BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
+                Base.@_inline_meta
+                dargs[j][i]
+            end)
         else
             BatchDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
@@ -597,9 +654,10 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
     end
 end
 
-function body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
     wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
     return quote
+        $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
@@ -609,7 +667,7 @@ end
 
 function func_runtime_iterate_fwd(N, Width)
     _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs = setup_macro_wraps(true, N, Width, #=base=#nothing, #=iterate=#true)
-    body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+    body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 
     quote
         function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
@@ -621,7 +679,7 @@ end
 @generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(true, N, Width, :allargs, #=iterate=#true)
-    return body_runtime_iterate_fwd(N, Width, wrapped, primtypes)
+    return body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 end
 
 function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
@@ -736,9 +794,10 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     end
 end
 
-function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
+function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
     wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
     return quote
+        $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
@@ -748,7 +807,7 @@ end
 
 function func_runtime_iterate_augfwd(N, Width)
     _, _, primtypes, allargs, typeargs, wrapped, _, modbetween, active_refs = setup_macro_wraps(false, N, Width, #=base=#nothing, #=iterate=#true)
-    body = body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
+    body = body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
 
     quote
         function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
@@ -760,7 +819,7 @@ end
 @generated function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _ , modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
-    return body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes)
+    return body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
 end
 
 
