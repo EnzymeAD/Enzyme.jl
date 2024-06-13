@@ -3873,14 +3873,23 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 push!(realparms, params[i])
                 i += 1
             elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
-                pv = params[i]
+                parmsi = params[i]
+
+                if T <: BatchMixedDuplicated
+                    if GPUCompiler.deserves_argbox(NTuple{width, Base.RefValue{T′}})
+                        njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
+                        parmsi = bitcast!(builder, parmsi, LLVM.PointerType(njlvalue, addrspace(value_type(parmsi))))
+                        parmsi = load!(builder, njlvalue, parmsi)
+                    end
+                end
+
                 isboxed = GPUCompiler.deserves_argbox(T′)
 
                 resty = isboxed ? llty : LLVM.PointerType(llty, Derived)
 
                 ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, LLVM.PointerType(llty, Derived))))
                 for idx in 1:width
-                    pv = (width == 1) ? params[i] : extract_value!(builder, params[i], idx-1)
+                    pv = (width == 1) ? parmsi : extract_value!(builder, parmsi, idx-1)
                     pv = bitcast!(builder, pv, LLVM.PointerType(llty, addrspace(value_type(pv))))
                     pv = addrspacecast!(builder, pv, LLVM.PointerType(llty, Derived))
                     if isboxed
@@ -6079,7 +6088,12 @@ end
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                push!(types, NTuple{width, Base.RefValue})
+                isboxedvec = GPUCompiler.deserves_argbox(NTuple{width, Base.RefValue{source_typ}})
+                if isboxedvec
+                    push!(types, Any)
+                else
+                    push!(types, NTuple{width, Base.RefValue{source_typ}})
+                end
                 if is_adjoint
                     push!(ActiveRetTypes, Nothing)
                 end
