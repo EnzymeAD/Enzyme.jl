@@ -3887,7 +3887,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
                 resty = isboxed ? llty : LLVM.PointerType(llty, Derived)
 
-                ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, LLVM.PointerType(llty, Derived))))
+                ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, resty)))
                 for idx in 1:width
                     pv = (width == 1) ? parmsi : extract_value!(builder, parmsi, idx-1)
                     pv = bitcast!(builder, pv, LLVM.PointerType(llty, addrspace(value_type(pv))))
@@ -4479,7 +4479,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             push!(wrapper_types, typ)
             push!(wrapper_attrs, LLVM.Attribute[])
         elseif arg.cc != GPUCompiler.BITS_REF
-            if TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated
+            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated)
                 push!(boxedArgs, arg.arg_i)
                 push!(raisedArgs, arg.arg_i)
                 push!(wrapper_types, LLVM.PointerType(typ, Derived))
@@ -4490,7 +4490,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
         else
             # bits ref, and not boxed
-            if TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated
+            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated)
                 push!(boxedArgs, arg.arg_i)
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
