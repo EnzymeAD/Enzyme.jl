@@ -39,7 +39,7 @@ end
 @testset "MixedDuplicated float64 call" begin
     tup = 2.7
     dtup = Ref(0.0)
-    res = autodiff(Reverse, mix_square, Active, MixedDuplicated(tup, dtup))[1]
+    res = autodiff(Reverse, mix_square, Active, MixedDuplicated(tup, dtup))
     @test res[1] == (nothing,)
     @test dtup[] ≈ 2 * 2.7
 end
@@ -55,8 +55,8 @@ end
     dtup = (Ref(0.0), Ref(0.0))
     out = Ref(0.0)
     dout = (Ref(1.0), Ref(3.0))
-    res = autodiff(Reverse, mix_square, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))[1]
-    @test res[1] == (nothing,)
+    res = autodiff(Reverse, mix_square_byref, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
+    @test res[1] == (nothing,nothing)
     @test dtup[1][] ≈ 2 * 2.7
     @test dtup[2][] ≈ 3 * 2 * 2.7
 end
@@ -84,8 +84,8 @@ end
     dtup = (Ref([0.0, 0.0]), Ref([0.0, 0.0]))
     out = Ref(0.0)
     dout = (Ref(1.0), Ref(3.0))
-    res = autodiff(Reverse, mix_ar, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
-    @test res[1] == (nothing,)
+    res = autodiff(Reverse, mix_ar_byref, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
+    @test res[1] == (nothing,nothing)
     @test dtup[1][] ≈ [3.14, 2.7]
     @test dtup[2][] ≈ [3*3.14, 3*2.7]
 end
