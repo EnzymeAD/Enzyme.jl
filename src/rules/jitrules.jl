@@ -950,7 +950,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
     nothing
 end
 
-function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shadowargs)
+function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shadowargs, active_refs)
     outs = []
     for i in 1:N
         for w in 1:Width
@@ -997,6 +997,7 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
         push!(shadowsplat, :(($(s...),)))
     end
     quote
+        $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
@@ -1006,8 +1007,8 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
 end
 
 function func_runtime_iterate_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween = setup_macro_wraps(false, N, Width, #=body=#nothing, #=iterate=#true)
-    body = body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, #=body=#nothing, #=iterate=#true)
+    body = body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
 
     quote
         function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
@@ -1019,7 +1020,7 @@ end
 @generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
-    return body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs)
+    return body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
 end
 
 # Create specializations
