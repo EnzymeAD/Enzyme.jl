@@ -252,13 +252,13 @@ end
     ActivityState(Int(a1) | Int(a2))
 end
 
-struct Merger{seen,worldT,justActive,UnionSret}
+struct Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed}
     world::worldT
 end
 
 @inline element(::Val{T}) where T = T
 
-@inline function (c::Merger{seen,worldT,justActive,UnionSret})(f::Int) where {seen,worldT,justActive,UnionSret}
+@inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(f::Int) where {seen,worldT,justActive,UnionSret,AbstractIsMixed}
     T = element(first(seen))
 
     reftype = ismutabletype(T) || T isa UnionAll
@@ -273,7 +273,7 @@ end
         return Val(AnyState)
     end
 
-    sub = active_reg_inner(subT, seen, c.world, Val(justActive), Val(UnionSret))
+    sub = active_reg_inner(subT, seen, c.world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))
 
     if sub == AnyState
         Val(AnyState)
@@ -372,16 +372,23 @@ end
     end)
 end
 
-@inline function active_reg_recur(::Type{ST}, seen::Seen, world, ::Val{justActive}, ::Val{UnionSret}) where {ST, Seen, justActive, UnionSret}
+@inline function active_reg_recur(::Type{ST}, seen::Seen, world, ::Val{justActive}, ::Val{UnionSret}, ::Val{AbstractIsMixed}) where {ST, Seen, justActive, UnionSret, AbstractIsMixed}
     if ST isa Union
-        return forcefold(Val(active_reg_recur(ST.a, seen, world, Val(justActive), Val(UnionSret))), Val(active_reg_recur(ST.b, seen, world, Val(justActive), Val(UnionSret))))
+        return forcefold(Val(active_reg_recur(ST.a, seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))), Val(active_reg_recur(ST.b, seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))))
     end
-    return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret))
+    return active_reg_inner(ST, seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))
 end
 
-@inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false))::ActivityState where {ST,T, justActive, UnionSret}
+@inline is_vararg_tup(x) = false
+@inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where T2 = true
+
+@inline function active_reg_inner(::Type{T}, seen::ST, world::Union{Nothing, UInt}, ::Val{justActive}=Val(false), ::Val{UnionSret}=Val(false), ::Val{AbstractIsMixed}=Val(false))::ActivityState where {ST,T, justActive, UnionSret, AbstractIsMixed}
     if T === Any
-        return DupState
+        if AbstractIsMixed
+            return MixedState
+        else
+            return DupState
+        end
     end
 
     if T === Union{}
@@ -389,7 +396,7 @@ end
     end
 
     if T <: Complex && !(T isa UnionAll)
-        return active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret))
+        return active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))
     end
 
     if T <: AbstractFloat
@@ -401,10 +408,14 @@ end
             return AnyState
         end
 
-        if is_arrayorvararg_ty(T) && active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret)) == AnyState
+        if is_arrayorvararg_ty(T) && active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed)) == AnyState
             return AnyState
         else
-            return DupState
+            if AbstractIsMixed && is_vararg_tup(T)
+                return MixedState
+            else
+                return DupState
+            end
         end
     end
 
@@ -434,10 +445,18 @@ end
     if T isa UnionAll
         aT = Base.argument_datatype(T)
         if aT === nothing
-            return DupState
+            if AbstractIsMixed
+                return MixedState
+            else
+                return DupState
+            end
         end
         if datatype_fieldcount(aT) === nothing
-            return DupState
+            if AbstractIsMixed
+                return MixedState
+            else
+                return DupState
+            end
         end
     end
 
@@ -445,16 +464,24 @@ end
         # if sret union, the data is stored in a stack memory location and is therefore
         # not unique'd preventing the boxing of the union in the default case
         if UnionSret && is_sret_union(T)
-            return active_reg_recur(T, seen, world, Val(justActive), Val(UnionSret))
+            return active_reg_recur(T, seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))
         else
             if justActive
                 return AnyState
             end
             if active_reg_inner(T.a, seen, world, Val(justActive), Val(UnionSret)) != AnyState
-                return DupState
+                if AbstractIsMixed
+                    return MixedState
+                else
+                    return DupState
+                end
             end
             if active_reg_inner(T.b, seen, world, Val(justActive), Val(UnionSret)) != AnyState
-                return DupState
+                if AbstractIsMixed
+                    return MixedState
+                else
+                    return DupState
+                end
             end
         end
         return AnyState
@@ -462,7 +489,11 @@ end
 
     # if abstract it must be by reference
     if Base.isabstracttype(T)
-        return DupState
+        if AbstractIsMixed
+            return MixedState
+        else
+            return DupState
+        end
     end
 
     if ismutabletype(T)
@@ -504,7 +535,7 @@ end
 
     seen2 = (Val(nT), seen...)
 
-    fty = Merger{seen2,typeof(world),justActive, UnionSret}(world)
+    fty = Merger{seen2,typeof(world),justActive, UnionSret, AbstractIsMixed}(world)
 
     ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(nT)))...)
 
