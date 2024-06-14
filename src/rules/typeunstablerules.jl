@@ -776,7 +776,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                     end
                 end)
             else
-                setfield!(dptr, symname+1, recursive_add(cur, dret[]), identity, guaranteed_nonactive)
+                setfield!(dptr, symname+1, recursive_add(cur, dret[], identity, guaranteed_nonactive))
             end
         else
             if dptr isa Base.RefValue
