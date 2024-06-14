@@ -539,13 +539,14 @@ end
         elseif actreg == ActiveState
             Active(arg)
         elseif actreg == MixedState
-            if dargs[i] isa Base.RefValue
-                MixedDuplicated(arg, dargs[i])
+            darg = Base.inferencebarrier(dargs[i])
+            if darg isa Base.RefValue
+                MixedDuplicated(arg, darg)
             else
                 rval = if reverse
                     popfirst!(vals)
                 else
-                    tmp = Ref(dargs[i])
+                    tmp = Ref(darg)
                     push!(vals, tmp)
                     tmp
                 end
@@ -570,13 +571,14 @@ end
         elseif actreg == MixedState
             BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
-                if dargs[j][i] isa Base.RefValue
-                    dargs[j][i]
+                darg = Base.inferencebarrier(dargs[j][i])
+                if darg isa Base.RefValue
+                    darg
                 else
                     if reverse
                         popfirst!(vals)
                     else
-                        tmp = Ref(dargs[j][i])
+                        tmp = Ref(darg)
                         push!(vals, tmp)
                         tmp
                     end
