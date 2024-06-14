@@ -1,4 +1,4 @@
-function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, iterate=false; func=true, mixed_or_active = false)
+function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, iterate=false; func=true, mixed_or_active = false, reverse=false)
     primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
     batchshadowargs = Vector{Union{Symbol,Expr}}[]
@@ -97,18 +97,17 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
             else
                 dupexpr = if Width == 1
                     quote
-                        iterate_unwrap_augfwd_dup($(primargs[i]), $(shadowargs[i]))
+                        iterate_unwrap_augfwd_dup(Val($reverse), refs, $(primargs[i]), $(shadowargs[i]))
                     end
                 else
                     quote
-                        iterate_unwrap_augfwd_batchdup(Val($Width), $(primargs[i]), $(shadowargs[i]))
+                        iterate_unwrap_augfwd_batchdup(Val($reverse), refs, Val($Width), $(primargs[i]), $(shadowargs[i]))
                     end
                 end
                 :(
                     if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
                         @assert $(primtypes[i]) !== DataType
                         if $aref == ActiveState
-                            Active($(primargs[i]))
                             iterate_unwrap_augfwd_act($(primargs[i])...)
                         elseif $aref == MixedState
                             T = $(primtypes[i])
@@ -436,8 +435,14 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
-        tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
+        tup = if annotation0 <: Active
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
+        elseif annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
+            if $Width == 1
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
+            else
+                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret..., tape.internal_tape)[1]
+            end
         else
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
         end
@@ -523,7 +528,7 @@ end
     end
 end
 
-@inline function iterate_unwrap_augfwd_dup(args, dargs)
+@inline function iterate_unwrap_augfwd_dup(::Val{reverse}, vals, args, dargs) where reverse
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -537,7 +542,14 @@ end
             if dargs[i] isa Base.RefValue
                 MixedDuplicated(arg, dargs[i])
             else
-                MixedDuplicated(arg, Ref(dargs[i]))
+                rval = if reverse
+                    popfirst!(vals)
+                else
+                    tmp = Ref(dargs[i])
+                    push!(vals, tmp)
+                    tmp
+                end
+                MixedDuplicated(arg, rval)
             end
         else
             Duplicated(arg, dargs[i])
@@ -545,7 +557,7 @@ end
     end
 end
 
-@inline function iterate_unwrap_augfwd_batchdup(::Val{Width}, args, dargs) where {Width}
+@inline function iterate_unwrap_augfwd_batchdup(::Val{reverse}, vals, ::Val{Width}, args, dargs) where {reverse, Width}
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -561,7 +573,13 @@ end
                 if dargs[j][i] isa Base.RefValue
                     dargs[j][i]
                 else
-                    Ref(dargs[j][i])
+                    if reverse
+                        popfirst!(vals)
+                    else
+                        tmp = Ref(dargs[j][i])
+                        push!(vals, tmp)
+                        tmp
+                    end
                 end
             end)
         else
@@ -679,29 +697,43 @@ function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
     end
 end
 
-function shadow_tuple(::Val{1}, args::Vararg{Annotation, Nargs}) where Nargs
-    ntuple(Val(Nargs)) do i
+function shadow_tuple(::Type{Ann}, ::Val{1}, args::Vararg{Annotation, Nargs}) where {Ann, Nargs}
+    res = ntuple(Val(Nargs)) do i
         Base.@_inline_meta
         @assert !(args[i] isa Active)
         if args[i] isa Const
             args[i].val
+        elseif args[i] isa MixedDuplicated
+            args[i].dval[]
         else 
             args[i].dval
         end
     end
+    if Ann <: MixedDuplicated
+        Ref(res)
+    else
+        res
+    end
 end
 
-function shadow_tuple(::Val{width}, args::Vararg{Annotation, Nargs}) where {width, Nargs}
+function shadow_tuple(::Type{Ann}, ::Val{width}, args::Vararg{Annotation, Nargs}) where {Ann, width, Nargs}
     ntuple(Val(width)) do w
-    ntuple(Val(Nargs)) do i
-        Base.@_inline_meta
-        @assert !(args[i] isa Active)
-        if args[i] isa Const
-            args[i].val
-        else 
-            args[i].dval[w]
+        res = ntuple(Val(Nargs)) do i
+            Base.@_inline_meta
+            @assert !(args[i] isa Active)
+            if args[i] isa Const
+                args[i].val
+            elseif args[i] isa BatchMixedDuplicated
+                args[i].dval[w][]
+            else 
+                args[i].dval[w]
+            end
         end
-    end
+        if Ann <: BatchMixedDuplicated
+            Ref(res)
+        else
+            res
+        end
     end
 end
 
@@ -755,7 +787,7 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         forward(fa, args...)
     else
-        nothing, primal_tuple(args...), annotation <: Active ? nothing : shadow_tuple(Val(width), args...)
+        nothing, primal_tuple(args...), annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
     end
 
     resT = typeof(origRet)
@@ -803,12 +835,18 @@ end
 
 function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
     wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
+    results = Expr[]
+    for i in 1:(Width+1)
+        push!(results, :(tmpvals[$i]))
+    end
     return quote
+        refs = Base.RefValue[]
         $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
-        augfwd_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, Val(concat($(modbetween...))), FT, tt′, f, df, args...)::ReturnType
+        tmpvals = augfwd_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, Val(concat($(modbetween...))), FT, tt′, f, df, args...)::ReturnType
+        ReturnType(($(results...), (tmpvals[$(Width+2)], refs)))
     end
 end
 
@@ -886,10 +924,15 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
             if width == 1
                 (args..., tape.shadow_return[])
             else
-                (args..., ntuple(Val(width)) do w
+                shads = ntuple(Val(width)) do w
                     Base.@_inline_meta
                     tape.shadow_return[w][]
-                end)
+                end
+                if annotation <: MixedDuplicated || annotation <: BatchMixedDuplicated
+                    (args..., shads...,)
+                else
+                    (args..., shads)
+                end
             end
         else
             args
@@ -900,6 +943,15 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         ntuple(Val(Nargs)) do i
             Base.@_inline_meta
             if args[i] isa Active
+                if width == 1
+                    tape.shadow_return[][i]
+                else
+                    ntuple(Val(width)) do w
+                        Base.@_inline_meta
+                        tape.shadow_return[w][][i]
+                    end
+                end
+            elseif args[i] isa MixedDuplicated || args[i] isa BatchMixedDuplicated
                 if width == 1
                     tape.shadow_return[][i]
                 else
@@ -919,14 +971,20 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
 
         ntuple(Val(width)) do w
             Base.@_inline_meta
-
-            if tup[i] == nothing
-            else
-                expr = if width == 1
-                    tup[i]
+            if args[i] isa Active || args[i] isa MixedDuplicated || args[i] isa BatchMixedDuplicated
+                expr = if args[i] isa Active || f == Base.tuple
+                    if width == 1
+                        tup[i]
+                    else
+                        tup[i][w]
+                    end
+                elseif args[i] isa MixedDuplicated
+                    args[i].dval[]
                 else
-                    tup[i][w]
+                    # if args[i] isa BatchMixedDuplicated
+                    args[i].dval[w][]
                 end
+
                 idx_of_vec, idx_in_vec = lengths[i]
                 vec = @inbounds shadowargs[idx_of_vec][w]
                 if vec isa Base.RefValue
@@ -962,25 +1020,6 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
 end
 
 function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shadowargs, active_refs)
-    outs = []
-    for i in 1:N
-        for w in 1:Width
-            expr = if Width == 1
-                :(tup[$i])
-            else
-                :(tup[$i][$w])
-            end
-            shad = shadowargs[i][w]
-            out = :(if tup[$i] === nothing
-              elseif $shad isa Base.RefValue
-                  $shad[] = recursive_add($shad[], $expr)
-                else
-                  error("Enzyme Mutability Error: Cannot add in place to immutable value "*string($shad))
-                end
-               )
-            push!(outs, out)
-        end
-    end
     shadow_ret = nothing
     if Width == 1
         shadowret = :(tape.shadow_return[])
@@ -1008,17 +1047,18 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
         push!(shadowsplat, :(($(s...),)))
     end
     quote
+        (tape0, refs) = tape
         $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
-        rev_with_return(Val($Width), Val(ActivityTup[1]), Val(concat($(modbetween...))), Val(concat($(lengths...))), FT, tt′, f, df, tape, ($(shadowsplat...),), args...)
+        rev_with_return(Val($Width), Val(ActivityTup[1]), Val(concat($(modbetween...))), Val(concat($(lengths...))), FT, tt′, f, df, tape0, ($(shadowsplat...),), args...)
         return nothing
     end
 end
 
 function func_runtime_iterate_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, #=body=#nothing, #=iterate=#true)
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, #=body=#nothing, #=iterate=#true; reverse=true)
     body = body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
 
     quote
@@ -1030,7 +1070,7 @@ end
 
 @generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true; reverse=true)
     return body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
 end
 

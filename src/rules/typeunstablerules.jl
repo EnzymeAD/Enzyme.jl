@@ -618,7 +618,7 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
         if length(dptrs) == 0
             return Ref{RT}(res)
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
@@ -660,7 +660,7 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
         if length(dptrs) == 0
             return Ref{RT}(res)::Any
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname+1))
