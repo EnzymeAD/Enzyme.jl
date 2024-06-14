@@ -528,6 +528,20 @@ end
     end
 end
 
+function push_if_not_ref(::Val{reverse}, vals, darg, ::Type{T2}) where {reverse, T2}
+    if reverse
+        return popfirst!(vals)
+    else
+        tmp = Base.RefValue{T2}(darg)
+        push!(vals, tmp)
+        return tmp
+    end
+end
+
+function push_if_not_ref(::Val{reverse}, vals, darg::Base.RefValue{T2}, ::Type{T2}) where {reverse, T2}
+    return darg
+end
+
 @inline function iterate_unwrap_augfwd_dup(::Val{reverse}, vals, args, dargs) where reverse
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
@@ -540,18 +554,7 @@ end
             Active(arg)
         elseif actreg == MixedState
             darg = Base.inferencebarrier(dargs[i])
-            if darg isa Base.RefValue
-                MixedDuplicated(arg, darg)
-            else
-                rval = if reverse
-                    popfirst!(vals)
-                else
-                    tmp = Ref(darg)
-                    push!(vals, tmp)
-                    tmp
-                end
-                MixedDuplicated(arg, rval)
-            end
+            MixedDuplicated(arg, push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty})
         else
             Duplicated(arg, dargs[i])
         end
@@ -572,17 +575,7 @@ end
             BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
                 darg = Base.inferencebarrier(dargs[j][i])
-                if darg isa Base.RefValue
-                    darg
-                else
-                    if reverse
-                        popfirst!(vals)
-                    else
-                        tmp = Ref(darg)
-                        push!(vals, tmp)
-                        tmp
-                    end
-                end
+                MixedDuplicated(arg, push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty})
             end)
         else
             BatchDuplicated(arg, ntuple(Val(Width)) do j
