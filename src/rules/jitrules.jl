@@ -575,7 +575,7 @@ end
             BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
                 darg = Base.inferencebarrier(dargs[j][i])
-                MixedDuplicated(arg, push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty})
+                push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty}
             end)
         else
             BatchDuplicated(arg, ntuple(Val(Width)) do j

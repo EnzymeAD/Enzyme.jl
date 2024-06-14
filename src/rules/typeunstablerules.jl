@@ -743,7 +743,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     else
                        Base.getfield(dptrs[i], symname)
                     end
-                    setfield!(dptrs[i], symname, recursive_add(curi, dret[1+i][]), identity, guaranteed_nonactive)
+                    setfield!(dptrs[i], symname, recursive_add(curi, dret[1+i][], identity, guaranteed_nonactive))
                 end
             end
         end
