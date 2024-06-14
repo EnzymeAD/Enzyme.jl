@@ -64,6 +64,10 @@ end
         arg = @inbounds args[i]
         if arg isa Active
             return true
+        elseif arg isa MixedDuplicated
+            return true
+        elseif arg isa BatchMixedDuplicated
+            return true
         else
             return false
         end
@@ -95,6 +99,10 @@ end
 end
 
 @inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchMixedDuplicated{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchMixedDuplicated{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T,N} =
@@ -843,6 +851,12 @@ result, ∂v, ∂A
             BatchDuplicatedNoNeed{T, width} where T
         else
             BatchDuplicatedNoNeed{eltype(A2), width}
+        end
+    elseif A2 <: MixedDuplicated && width != 1
+        if A2 isa UnionAll
+            BatchMixedDuplicated{T, width} where T
+        else
+            BatchMixedDuplicated{eltype(A2), width}
         end
     else
         A2

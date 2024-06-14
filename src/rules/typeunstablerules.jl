@@ -681,13 +681,6 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
     end
 end
 
-# check if a value is guaranteed to be not contain active[register] data
-# (aka not either mixed or active)
-@inline function guaranteed_nonactive(::Type{T}) where T
-    rt = Enzyme.Compiler.active_reg_nothrow(T, Val(nothing))
-    return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
-end
-
 function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
     cur = if dptr isa Base.RefValue
 	   getfield(dptr[], symname)

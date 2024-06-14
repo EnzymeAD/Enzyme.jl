@@ -248,8 +248,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
 
     ending = if Width == 1
         quote
-            if active_reg_nothrow(resT, Val(nothing)) == MixedState && !(initShadow isa Base.RefValue)
-                shadow_return = Ref(initShadow)
+            if annotation <: MixedDuplicated
+                shadow_return = initShadow
                 tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
                 return ReturnType((origRet, shadow_return, tape))
             else
@@ -259,23 +259,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             end
         end
     else
-        expr = :()
-        shads = Expr[]
-        for i in 1:Width
-            if i == 1
-                expr = quote !(initShadow[$i] isa Base.RefValue) end
-            else
-                expr = quote $expr || !(initShadow[$i] isa Base.RefValue) end
-            end
-            push!(shads, quote
-                Ref(initShadow[$i])
-            end)
-        end
         quote
-            if active_reg_nothrow(resT, Val(nothing)) == MixedState && ($expr)
-                shadow_return = ($(shads...),)
+            if annotation <: BatchMixedDuplicated
+                shadow_return = (initShadow...,)
                 tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-                return ReturnType((origRet, shadow_return..., tape))
+                return ReturnType((origRet, initShadow..., tape))
             else
                 shadow_return = nothing
                 tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
@@ -302,6 +290,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
 
         annotationA = if $Width != 1 && annotation0 <: Duplicated
             BatchDuplicated{rt, $Width}
+        elseif $Width != 1 && annotation0 <: MixedDuplicated
+            BatchMixedDuplicated{rt, $Width}
         else
             annotation0
         end
@@ -332,8 +322,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
                 return ReturnType((origRet, shadow_return..., tape))
             end
         end
-
-        @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
 
         $ending
     end
@@ -448,13 +436,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
-        if tape.shadow_return !== nothing
-            if !(annotation0 <: Active) && nonzero_active_data(($shadowret,))
-                ET = ($(ElTypes...),)
-                throw(AssertionError("Shadow value "*string(($shadowret,))*" returned from type unstable call to $f($(ET...)) has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"))
-            end
-        end
-        tup = if annotation0 <: Active
+        tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
         else
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
@@ -552,7 +534,11 @@ end
         elseif actreg == ActiveState
             Active(arg)
         elseif actreg == MixedState
-            MixedDuplicated(arg, dargs[i])
+            if dargs[i] isa Base.RefValue
+                MixedDuplicated(arg, dargs[i])
+            else
+                MixedDuplicated(arg, Ref(dargs[i]))
+            end
         else
             Duplicated(arg, dargs[i])
         end
@@ -572,7 +558,11 @@ end
         elseif actreg == MixedState
             BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
-                dargs[j][i]
+                if dargs[j][i] isa Base.RefValue
+                    dargs[j][i]
+                else
+                    Ref(dargs[j][i])
+                end
             end)
         else
             BatchDuplicated(arg, ntuple(Val(Width)) do j
@@ -727,6 +717,8 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     annotation = if width != 1
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             BatchDuplicated{rt, width}
+        elseif annotation0 <: MixedDuplicated
+            BatchMixedDuplicated{rt, width}
         elseif annotation0 <: Active
             Active{rt}
         else
@@ -735,6 +727,8 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     else
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             Duplicated{rt}
+        elseif annotation0 <: MixedDuplicated
+            MixedDuplicated{rt}
         elseif annotation0 <: Active
             Active{rt}
         else
@@ -765,15 +759,16 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
     end
 
     resT = typeof(origRet)
+
     if annotation <: Const
         shadow_return = nothing
         tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
         return ReturnType((allSame(Val(width+1), origRet)..., tape))
     elseif annotation <: Active
-        if width == 1
-            shadow_return = Ref(make_zero(origRet))
+        shadow_return = if width == 1
+            Ref(make_zero(origRet))
         else
-            shadow_return = allZero(Val(width), origRet)
+            allZero(Val(width), origRet)
         end
         tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
         if width == 1
@@ -783,14 +778,26 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
         end
     end
 
-    @assert annotation <: Duplicated || annotation <: DuplicatedNoNeed || annotation <: BatchDuplicated || annotation <: BatchDuplicatedNoNeed
-
-    shadow_return = nothing
-    tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
     if width == 1
-        return ReturnType((origRet, initShadow, tape))
+        if annotation <: MixedDuplicated
+            shadow_return = initShadow
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType((origRet, initShadow, tape))
+        else
+            shadow_return = nothing
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType((origRet, initShadow, tape))
+        end
     else
-        return ReturnType((origRet, initShadow..., tape))
+        if annotation <: BatchMixedDuplicated
+            shadow_return = initShadow
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType((origRet, initShadow..., tape))
+        else
+            shadow_return = nothing
+            tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
+            return ReturnType((origRet, initShadow..., tape))
+        end
     end
 end
 
@@ -840,6 +847,8 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
     annotation = if width != 1
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             BatchDuplicated{rt, width}
+        elseif annotation0 <: MixedDuplicated
+            BatchMixedDuplicated{rt, width}
         elseif annotation0 <: Active
             Active{rt}
         else
@@ -848,6 +857,8 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
     else
         if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
             Duplicated{rt}
+        elseif annotation0 <: MixedDuplicated
+            MixedDuplicated{rt}
         elseif annotation0 <: Active
             Active{rt}
         else
@@ -870,7 +881,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         forward, adjoint = thunk(Val(world), FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
-
+        
         args2 = if tape.shadow_return !== nothing
             if width == 1
                 (args..., tape.shadow_return[])
@@ -925,7 +936,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
                         Base.@_inline_meta
                         prev = getfield(vecld, i)
                         if i == idx_in_vec
-                            recursive_add(prev, expr)
+                            recursive_add(prev, expr, identity, guaranteed_nonactive)
                         else
                             prev
                         end
@@ -935,7 +946,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
                     if val isa Base.RefValue
                         val[] = recursive_add(val[], expr)
                     elseif ismutable(vec)
-                        @inbounds vec[idx_in_vec] = recursive_add(val, expr)
+                        @inbounds vec[idx_in_vec] = recursive_add(val, expr, identity, guaranteed_nonactive)
                     else
                       error("Enzyme Mutability Error: Cannot in place to immutable value vec[$idx_in_vec] = $val, vec=$vec")
                     end
