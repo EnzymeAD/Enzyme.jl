@@ -503,3 +503,5 @@ end
     Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
     @test ddata[1][1] ≈ 6.0
 end
+
+include("mixedapplyiter.jl")

@@ -603,7 +603,9 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
 	   Base.getfield(dptr, symname)
     end
     RT = Core.Typeof(res)
-    if active_reg(RT)
+
+    actreg = active_reg_nothrow(RT, Val(nothing))
+    if actreg == ActiveState
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
         else
@@ -611,6 +613,17 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
                 Base.@_inline_meta
                 Ref{RT}(make_zero(res))
             end)
+        end
+    elseif actreg == MixedState
+        if length(dptrs) == 0
+            return Ref{RT}(res)
+        else
+            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                dv = dptrs[i]
+                Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
+            end)...))
+            return fval
         end
     else
         if length(dptrs) == 0
@@ -633,8 +646,8 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
 	   Base.getfield(dptr, symname+1)
     end
     RT = Core.Typeof(res)
-    actreg = active_reg(RT)
-    if actreg
+    actreg = active_reg_nothrow(RT, Val(nothing))
+    if actreg == ActiveState
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
         else
@@ -642,6 +655,17 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
                 Base.@_inline_meta
                 Ref{RT}(make_zero(res))
             end)
+        end
+    elseif actreg == MixedState
+        if length(dptrs) == 0
+            return Ref{RT}(res)::Any
+        else
+            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                dv = dptrs[i]
+                Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname+1))
+            end)...))
+            return fval
         end
     else
         if length(dptrs) == 0
@@ -665,7 +689,9 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
     end
 
     RT = Core.Typeof(cur)
-    if active_reg(RT) && !isconst
+
+    actreg = active_reg_nothrow(RT, Val(nothing))
+    if (actreg == ActiveState || actreg == MixedState) && !isconst
         if length(dptrs) == 0
             if dptr isa Base.RefValue
                 vload = dptr[]
@@ -674,13 +700,13 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     Base.@_inline_meta
                     prev = getfield(vload, i)
                     if fieldname(dRT, i) == symname
-                        recursive_add(prev, dret[])
+                        recursive_add(prev, dret[], identity, guaranteed_nonactive)
                     else
                         prev
                     end
                 end)
             else
-                setfield!(dptr, symname, recursive_add(cur, dret[]))
+                setfield!(dptr, symname, recursive_add(cur, dret[], identity, guaranteed_nonactive))
             end
         else
             if dptr isa Base.RefValue
@@ -690,7 +716,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     Base.@_inline_meta
                     prev = getfield(vload, j)
                     if fieldname(dRT, j) == symname
-                        recursive_add(prev, dret[1][])
+                        recursive_add(prev, dret[1][], identity, guaranteed_nonactive)
                     else
                         prev
                     end
@@ -706,7 +732,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                         Base.@_inline_meta
                         prev = getfield(vload, j)
                         if fieldname(dRT, j) == symname
-                            recursive_add(prev, dret[1+i][])
+                            recursive_add(prev, dret[1+i][], identity, guaranteed_nonactive)
                         else
                             prev
                         end
@@ -717,7 +743,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                     else
                        Base.getfield(dptrs[i], symname)
                     end
-                    setfield!(dptrs[i], symname, recursive_add(curi, dret[1+i][]))
+                    setfield!(dptrs[i], symname, recursive_add(curi, dret[1+i][], identity, guaranteed_nonactive))
                 end
             end
         end
@@ -733,7 +759,9 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     end
 
     RT = Core.Typeof(cur)
-    if active_reg(RT) && !isconst
+
+    actreg = active_reg_nothrow(RT, Val(nothing))
+    if (actreg == ActiveState || actreg == MixedState) && !isconst
         if length(dptrs) == 0
             if dptr isa Base.RefValue
                 vload = dptr[]
@@ -742,13 +770,13 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                     Base.@_inline_meta
                     prev = getfield(vload, i)
                     if i == symname+1
-                        recursive_add(prev, dret[])
+                        recursive_add(prev, dret[], identity, guaranteed_nonactive)
                     else
                         prev
                     end
                 end)
             else
-                setfield!(dptr, symname+1, recursive_add(cur, dret[]))
+                setfield!(dptr, symname+1, recursive_add(cur, dret[], identity, guaranteed_nonactive))
             end
         else
             if dptr isa Base.RefValue
@@ -758,13 +786,13 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                     Base.@_inline_meta
                     prev = getfield(vload, j)
                     if j == symname+1
-                        recursive_add(prev, dret[1][])
+                        recursive_add(prev, dret[1][], identity, guaranteed_nonactive)
                     else
                         prev
                     end
                 end)
             else
-                setfield!(dptr, symname+1, recursive_add(cur, dret[1][]))
+                setfield!(dptr, symname+1, recursive_add(cur, dret[1][], identity, guaranteed_nonactive))
             end
             for i in 1:length(dptrs)
                 if dptrs[i] isa Base.RefValue
@@ -774,7 +802,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                         Base.@_inline_meta
                         prev = getfield(vload, j)
                         if j == symname+1
-                            recursive_add(prev, dret[1+i][])
+                            recursive_add(prev, dret[1+i][], identity, guaranteed_nonactive)
                         else
                             prev
                         end
@@ -785,7 +813,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                     else
                        Base.getfield(dptrs[i], symname+1)
                     end
-                    setfield!(dptrs[i], symname+1, recursive_add(curi, dret[1+i][]))
+                    setfield!(dptrs[i], symname+1, recursive_add(curi, dret[1+i][], identity, guaranteed_nonactive))
                 end
             end
         end

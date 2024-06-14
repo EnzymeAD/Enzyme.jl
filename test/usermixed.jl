@@ -1,6 +1,122 @@
 using Enzyme
 using Test
 
+########## MixedDuplicated of Return
+
+function user_mixret(x, y)
+    return (x, y)
+end
+
+@testset "MixedDuplicated struct return" begin
+    x = 2.7
+    y = [3.14]
+    dy = [0.0]
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(user_mixret)}, MixedDuplicated, Active{Float64}, Duplicated{Vector{Float64}})
+
+    tape, res, dres = fwd(Const(user_mixret), Active(x), Duplicated(y, dy))
+
+    @test res[1] ≈ x
+    @test res[2] === y
+
+    @test dres[][1] ≈ 0.0
+    @test dres[][2] === dy
+
+    outs = rev(Const(user_mixret), Active(x), Duplicated(y, dy), (47.56, dy), tape)
+
+    @test outs[1][1] ≈ 47.56
+end
+
+@testset "BatchMixedDuplicated struct return" begin
+    x = 2.7
+    y = [3.14]
+    dy = [0.0]
+    dy2 = [0.0]
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(user_mixret)}, BatchMixedDuplicated, Active{Float64}, BatchDuplicated{Vector{Float64}, 2})
+
+    tape, res, dres = fwd(Const(user_mixret), Active(x), BatchDuplicated(y, (dy, dy2)))
+
+    @test res[1] ≈ x
+    @test res[2] === y
+
+    @test dres[1][][1] ≈ 0.0
+    @test dres[1][][2] === dy
+    @test dres[2][][1] ≈ 0.0
+    @test dres[2][][2] === dy2
+
+    outs = rev(Const(user_mixret), Active(x), BatchDuplicated(y, (dy, dy2)), (47.0, dy), (56.0, dy), tape)
+
+    @test outs[1][1][1] ≈ 47.0
+    @test outs[1][1][2] ≈ 56.0
+end
+
+
+function user_fltret(x, y)
+    return x
+end
+
+@testset "MixedDuplicated float return" begin
+    x = 2.7
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(identity)}, MixedDuplicated, Active{Float64})
+
+    tape, res, dres = fwd(Const(identity), Active(x))
+
+    @test res ≈ x
+    @test dres[] ≈ 0.0
+
+    outs = rev(Const(identity), Active(x), 47.56, tape)
+
+    @test outs[1][1] ≈ 47.56
+end
+
+@testset "BatchMixedDuplicated float return" begin
+    x = 2.7
+    y = [3.14]
+    dy = [0.0]
+    dy2 = [0.0]
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(user_fltret)}, BatchMixedDuplicated, Active{Float64}, BatchDuplicated{Vector{Float64}, 2})
+
+    tape, res, dres = fwd(Const(user_fltret), Active(x), BatchDuplicated(y, (dy, dy2)))
+
+    @test res ≈ x
+
+    @test dres[1][] ≈ 0.0
+    @test dres[2][] ≈ 0.0
+
+    outs = rev(Const(user_fltret), Active(x), BatchDuplicated(y, (dy, dy2)), 47.0, 56.0, tape)
+
+    @test outs[1][1][1] ≈ 47.0
+    @test outs[1][1][2] ≈ 56.0
+end
+
+function vecsq(x)
+    x[2] = x[1] * x[1]
+    return x
+end
+
+@testset "MixedDuplicated vector return" begin
+    y = [3.14, 0.0]
+    dy = [0.0, 2.7]
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(vecsq)}, MixedDuplicated, Duplicated{Vector{Float64}})
+
+    tape, res, dres = fwd(Const(vecsq), Duplicated(y, dy))
+
+    @test res === y
+
+    @test dres[] === dy
+
+    outs = rev(Const(vecsq), Duplicated(y, dy), dy, tape)
+
+    @test dy ≈ [3.14 * 2.7 * 2, 0.0]
+end
+
+
+########## MixedDuplicated of Argument
+
 function user_mixfnc(tup)
     return tup[1] * tup[2][1]
 end
