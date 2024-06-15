@@ -38,6 +38,8 @@ function grad_exp_kernel(A, dA)
     return nothing
 end
 
+Enzyme.API.printall!(true)
+
 @testset "exp_kernel" begin
     A = AMDGPU.ones(64,)
     @roc groupsize=length(A)  exp_kernel(A)
