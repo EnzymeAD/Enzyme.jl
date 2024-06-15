@@ -1632,7 +1632,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
-    ct = if occursin("ptx", LLVM.triple(mod))
+    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         GPUCompiler.emit_exception!(B, string, orig)
     else
         call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
