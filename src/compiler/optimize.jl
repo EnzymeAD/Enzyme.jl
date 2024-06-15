@@ -41,6 +41,30 @@ function run_jl_pipeline(pm, tm; kwargs...)
     add!(pm, ModulePass("JLPipeline", jl_pipeline))
 end
 
+@static if VERSION < v"1.11.0-DEV.428"
+else
+    barrier_noop!(pm) = nothing
+end
+
+@static if VERSION < v"1.11-"
+    function gc_invariant_verifier_tm!(pm, tm, cond)
+        gc_invariant_verifier!(pm, cond)
+    end
+else
+    function gc_invariant_verifier_tm!(pm, tm, cond)
+        function gc_invariant_verifier(f)
+            @dispose pb=PassBuilder(tm) begin
+                NewPMFunctionPassManager(pb) do fpm
+                    add!(fpm, GCInvariantVerifierPass(GCInvariantVerifierPassOptions(;strong=cond)))
+                    run!(fpm, f, tm)
+                end
+            end
+            return true
+        end
+        add!(pm, FunctionPass("GCInvariantVerifier", gc_invariant_verifier))
+    end
+end
+
 @static if VERSION < v"1.11-"
     function propagate_julia_addrsp_tm!(pm, tm)
         propagate_julia_addrsp!(pm)
@@ -1972,7 +1996,7 @@ end
 
         # GC passes
         barrier_noop!(pm)
-        gc_invariant_verifier!(pm, false)
+        gc_invariant_verifier_tm!(pm, tm, false)
 
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
@@ -2130,7 +2154,7 @@ function addJuliaLegalizationPasses!(pm, tm, lower_intrinsics=true)
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         lower_exc_handlers_tm!(pm, tm)
         # BUDE.jl demonstrates a bug here TODO
-        gc_invariant_verifier!(pm, false)
+        gc_invariant_verifier!(pm, tm, false)
         verifier!(pm)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12
