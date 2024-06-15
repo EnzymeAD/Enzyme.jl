@@ -1,4 +1,4 @@
-mutable struct PipelineConfig
+struct PipelineConfig
     Speedup::Cint
     Size::Cint
     lower_intrinsics::Cint
@@ -17,13 +17,28 @@ end
 
 const RunAttributor = Ref(true) 
 
-function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enalbe_early_simplifications=true,
+function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enable_early_simplifications=true,
+       enable_early_optimizations=true,
        enable_scalar_optimizations=true,
        enable_loop_optimizations=true,
        enable_vector_pipeline=true,
        remove_ni=true,
        cleanup=true, Size=0, Speedup=3)
     return PipelineConfig(Speedup, Size, lower_intrinsics, dump_native, external_use, llvm_only, always_inline, enable_early_simplifications, enable_early_optimizations, enable_scalar_optimizations, enable_loop_optimizations, enable_vector_pipeline, remove_ni, cleanup)
+end
+
+function run_jl_pipeline(pm, tm; kwargs...) 
+    config = Ref(pipeline_options(;kwargs...))
+    function jl_pipeline(m)
+        @dispose pb=PassBuilder(tm) begin
+            NewPMModulePassManager(pb) do mpm
+                @ccall jl_build_newpm_pipeline(mpm.ref::Ptr{Cvoid}, pb.ref::Ptr{Cvoid}, config::Ptr{PipelineConfig})::Cvoid
+                run!(mpm, m, tm)
+            end
+        end
+        return true
+    end
+    add!(pm, ModulePass("JLPipeline", jl_pipeline))
 end
 
 @static if VERSION < v"1.11-"
@@ -1907,13 +1922,19 @@ end
         alloc_opt_tm!(pm, tm)
         loop_idiom!(pm)
         loop_rotate!(pm)
-        lower_simdloop_tm!(pm, tm)
-        licm!(pm)
-        if LLVM.version() >= v"15"                      
-            simple_loop_unswitch_legacy!(pm)
+        
+        if VERSION < v"1.11-"
+            lower_simdloop_tm!(pm, tm)
+            licm!(pm)
+            if LLVM.version() >= v"15"                      
+                simple_loop_unswitch_legacy!(pm)
+            else
+                loop_unswitch!(pm)
+            end
         else
-            loop_unswitch!(pm)
+            run_jl_pipeline(pm, tm; lower_intrinsics=false, dump_native=false, external_use=false, llvm_only=false, always_inline=false, enable_early_simplifications=false, enable_early_optimizations=false, enable_scalar_optimizations=false, enable_loop_optimizations=true, enable_vector_pipeline=false, remove_ni=false, cleanup=false)
         end
+
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
         ind_var_simplify!(pm)
@@ -2013,20 +2034,42 @@ function addOptimizationPasses!(pm, tm)
     # Load forwarding above can expose allocations that aren't actually used
     # remove those before optimizing loops.
     alloc_opt_tm!(pm, tm)
-    loop_rotate!(pm)
-    # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
-    loop_idiom!(pm)
 
-    # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-    lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
-    licm!(pm)
-    julia_licm_tm!(pm)
-    # Subsequent passes not stripping metadata from terminator
-    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
-    jl_inst_simplify!(pm)
-    ind_var_simplify!(pm)
-    loop_deletion!(pm)
-    loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
+
+    if VERSION < v"1.11-"
+		loop_rotate!(pm)
+		# moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
+		loop_idiom!(pm)
+
+		# LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
+		lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+		licm!(pm)
+		julia_licm_tm!(pm, tm)
+		# Subsequent passes not stripping metadata from terminator
+		instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+		jl_inst_simplify!(pm)
+		
+		ind_var_simplify!(pm)
+		loop_deletion!(pm)
+		loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
+	else
+		# LowerSIMDLoopPass
+		# LoopRotatePass [opt >= 2]
+		# LICMPass
+		# JuliaLICMPass
+		# SimpleLoopUnswitchPass
+		# LICMPass
+		# JuliaLICMPass
+		# IRCEPass
+		# LoopInstSimplifyPass
+		#   - in ours this is instcombine with jlinstsimplify
+		# LoopIdiomRecognizePass
+		# IndVarSimplifyPass
+		# LoopDeletionPass
+		# LoopFullUnrollPass
+        run_jl_pipeline(pm, tm; lower_intrinsics=false, dump_native=false, external_use=false, llvm_only=false, always_inline=false, enable_early_simplifications=false, enable_early_optimizations=false, enable_scalar_optimizations=false, enable_loop_optimizations=true, enable_vector_pipeline=false, remove_ni=false, cleanup=false)
+	end
+
 
     # Run our own SROA on heap objects before LLVM's
     alloc_opt_tm!(pm, tm)
