@@ -261,7 +261,7 @@ end
 @inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(f::Int) where {seen,worldT,justActive,UnionSret,AbstractIsMixed}
     T = element(first(seen))
 
-    reftype = ismutabletype(T) || T isa UnionAll
+    reftype = ismutabletype(T) || (T isa UnionAll && !AbstractIsMixed)
 
     if justActive && reftype
         return Val(AnyState)
