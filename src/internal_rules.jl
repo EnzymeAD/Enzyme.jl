@@ -18,6 +18,9 @@ end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message), args...)
     return nothing
 end
+function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message), args...; kwargs...)
+    return nothing
+end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.logging_error), args...)
     return nothing
 end
