@@ -258,6 +258,20 @@ end
 
 @inline element(::Val{T}) where T = T
 
+# From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
+@inline function isghostty(ty)
+    if ty === Union{}
+        return true
+    end
+    if Base.isconcretetype(ty) && !ismutabletype(ty)
+        if sizeof(ty) == 0
+            return true
+        end
+        # TODO consider struct_to_llvm ?
+    end
+    return false
+end
+
 @inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(f::Int) where {seen,worldT,justActive,UnionSret,AbstractIsMixed}
     T = element(first(seen))
 
@@ -1187,20 +1201,6 @@ function permit_inlining!(f::LLVM.Function)
             end
         end
     end
-end
-
-# From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
-@inline function isghostty(ty)
-    if ty === Union{}
-        return true
-    end
-    if Base.isconcretetype(ty) && !ismutabletype(ty)
-        if sizeof(ty) == 0
-            return true
-        end
-        # TODO consider struct_to_llvm ?
-    end
-    return false
 end
 
 struct Tape{TapeTy,ShadowTy,ResT}

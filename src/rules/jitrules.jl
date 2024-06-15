@@ -95,6 +95,15 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
                 end
                 )
             else
+                mixexpr = if Width == 1
+                    quote
+                        iterate_unwrap_augfwd_mix(Val($reverse), refs, $(primargs[i]), $(shadowargs[i]))
+                    end
+                else
+                    quote
+                        iterate_unwrap_augfwd_batchmix(Val($reverse), refs, Val($Width), $(primargs[i]), $(shadowargs[i]))
+                    end
+                end
                 dupexpr = if Width == 1
                     quote
                         iterate_unwrap_augfwd_dup(Val($reverse), refs, $(primargs[i]), $(shadowargs[i]))
@@ -110,8 +119,7 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
                         if $aref == ActiveState
                             iterate_unwrap_augfwd_act($(primargs[i])...)
                         elseif $aref == MixedState
-                            T = $(primtypes[i])
-                            throw(AssertionError("Mixed State of type $T is unsupported in apply iterate"))
+                            $mixexpr
                         else
                             $dupexpr
                         end
@@ -581,6 +589,51 @@ end
             BatchDuplicated(arg, ntuple(Val(Width)) do j
                 Base.@_inline_meta
                 dargs[j][i]
+            end)
+        end
+    end
+end
+
+@inline function iterate_unwrap_augfwd_mix(::Val{reverse}, vals, args, dargs0) where reverse
+    dargs = dargs0[]
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        arg = args[i]
+        ty = Core.Typeof(arg)
+        actreg = active_reg_nothrow(ty, Val(nothing))
+        if actreg == AnyState
+            Const(arg)
+        elseif actreg == ActiveState
+            Active(arg)
+        elseif actreg == MixedState
+            darg = Base.inferencebarrier(dargs[i])
+            MixedDuplicated(arg, push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty})
+        else
+            Duplicated(arg, dargs[i])
+        end
+    end
+end
+
+@inline function iterate_unwrap_augfwd_batchmix(::Val{reverse}, vals, ::Val{Width}, args, dargs) where {reverse, Width}
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        arg = args[i]
+        ty = Core.Typeof(arg)
+        actreg = active_reg_nothrow(ty, Val(nothing))
+        if actreg == AnyState
+            Const(arg)
+        elseif actreg == ActiveState
+            Active(arg)
+        elseif actreg == MixedState
+            BatchMixedDuplicated(arg, ntuple(Val(Width)) do j
+                Base.@_inline_meta
+                darg = Base.inferencebarrier(dargs[j][][i])
+                push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty}
+            end)
+        else
+            BatchDuplicated(arg, ntuple(Val(Width)) do j
+                Base.@_inline_meta
+                dargs[j][][i]
             end)
         end
     end

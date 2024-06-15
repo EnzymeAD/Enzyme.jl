@@ -17,7 +17,7 @@ function body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batch
                     $(primargs[i]);
                 else
                     if !ActivityTup[$i]
-                        if $aref == DupState || $aref == MixedState
+                        if ($aref == DupState || $aref == MixedState) && $(batchshadowargs[i][w]) === nothing
                             prim = $(primargs[i])
                             throw("Error cannot store inactive but differentiable variable $prim into active tuple")
                         end
