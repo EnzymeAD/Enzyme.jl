@@ -15,9 +15,6 @@ end
 function EnzymeRules.inactive(::typeof(Base.fixup_stdlib_path), args...)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message), args...)
-    return nothing
-end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message), args...; kwargs...)
     return nothing
 end
