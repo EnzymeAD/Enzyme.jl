@@ -11,13 +11,13 @@ function body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batch
         shadow_rets_i = Expr[]
         aref = Symbol("active_ref_$i")
         for w in 1:Width
-            sref = Symbol("shadow_"*string(i)*"_"*string(w))
+            sref = Symbol("sub_shadow_"*string(i)*"_"*string(w))
             push!(shadow_rets_i, quote
                 $sref = if $aref == AnyState 
                     $(primargs[i]);
                 else
                     if !ActivityTup[$i]
-                        if $aref == DupState || $aref == MixedState
+                        if ($aref == DupState || $aref == MixedState) && $(batchshadowargs[i][w]) === nothing
                             prim = $(primargs[i])
                             throw("Error cannot store inactive but differentiable variable $prim into active tuple")
                         end
@@ -98,7 +98,7 @@ function body_construct_rev(N, Width, primtypes, active_refs, primargs, batchsha
             shad = batchshadowargs[i][w]
             out = :(if $(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState
               if $shad isa Base.RefValue
-              $shad[] = recursive_add($shad[], $expr)
+              $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
                 else
                   error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
@@ -248,10 +248,10 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         # if any active [e.g. ActiveState / MixedState] data could exist
         # err
         if !fwd
-            if !found
+            if !found_partial
                 return false
             end
-            act = active_reg_inner(typ, (), world)
+            act = active_reg_inner(typ_partial, (), world, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true))
             if act == MixedState || act == ActiveState
                 return false
             end
@@ -306,7 +306,7 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)::Bool
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
@@ -379,7 +379,7 @@ function common_f_tuple_fwd(offset, B, orig, gutils, normalR, shadowR)
     common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
-function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)::Bool
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
@@ -420,8 +420,8 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 
         unsafe_store!(tapeR, sret.ref)
 
-        return false
     end
+    return false
 end
 
 function common_f_tuple_rev(offset, B, orig, gutils, tape)
@@ -474,7 +474,7 @@ function f_tuple_fwd(B, orig, gutils, normalR, shadowR)
     common_f_tuple_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function f_tuple_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+function f_tuple_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     common_f_tuple_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
@@ -487,7 +487,7 @@ function new_structv_fwd(B, orig, gutils, normalR, shadowR)
     common_newstructv_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function new_structv_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+function new_structv_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     common_newstructv_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
@@ -525,7 +525,7 @@ function new_structt_fwd(B, orig, gutils, normalR, shadowR)
     unsafe_store!(shadowR, shadowres.ref)
     return false
 end
-function new_structt_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+function new_structt_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     new_structt_fwd(B, orig, gutils, normalR, shadowR)
 end
 
@@ -821,7 +821,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
     return nothing
 end
 
-function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)::Bool
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end

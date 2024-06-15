@@ -142,3 +142,26 @@ end
     @test tupapprox(dx, [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]])
     @test tupapprox(dx2, [[(3*4.0, [3*5.4]), (3*6.0, [3*6.28])], [(3*15.8, [3*94.0]), (3*22.4, [3*112.0])]])
 end
+
+struct MyRectilinearGrid5{FT,FZ}
+    x :: FT
+    z :: FZ
+end
+
+
+@inline flatten_tuple(a::Tuple) = @inbounds a[2:end]
+@inline flatten_tuple(a::Tuple{<:Any}) = tuple() #inner_flatten_tuple(a[1])...)
+
+function myupdate_state!(model)
+    tupled = Base.inferencebarrier((model,model))
+    flatten_tuple(tupled)
+    return nothing
+end
+
+@testset "Abstract type allocation" begin
+    model = MyRectilinearGrid5{Float64, Vector{Float64}}(0.0, [0.0])
+    dmodel = MyRectilinearGrid5{Float64, Vector{Float64}}(0.0, [0.0])
+    autodiff(Enzyme.Reverse,
+                 myupdate_state!,
+                 MixedDuplicated(model, Ref(dmodel)))
+end
