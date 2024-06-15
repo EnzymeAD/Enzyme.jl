@@ -1053,7 +1053,7 @@ function prop_global!(g)
 end
 
 # From https://llvm.org/doxygen/IR_2Instruction_8cpp_source.html#l00959
-function mayWriteToMemory(inst::LLVM.Instruction)::Bool
+function mayWriteToMemory(inst::LLVM.Instruction; err_is_readonly=false)::Bool
     # we will ignore fense here
     if isa(inst, LLVM.StoreInst)
         return true
@@ -1088,8 +1088,13 @@ function mayWriteToMemory(inst::LLVM.Instruction)::Bool
                 return false
             end
             # Note out of spec, and only legal in context of removing unused calls
-            if kind(attr) == kind(StringAttribute("enzyme_error"))
+            if kind(attr) == kind(StringAttribute("enzyme_error")) && err_is_readonly
                 return false
+            end
+            if kind(attr) == kind(StringAttribute("memory"))
+                if is_readonly(MemoryEffect(value(attr)))
+                    return false
+                end
             end
         end
         Libc.free(Attrs)
@@ -1137,8 +1142,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         end
         push!(done, cur)
 
-        attrs = collect(function_attributes(cur))
-        if any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) || any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+        if is_readonly(cur)
             continue
         end
 
@@ -1151,7 +1155,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         end
         for bb in blocks(cur)
             for inst in instructions(bb)
-                if !mayWriteToMemory(inst)
+                if !mayWriteToMemory(inst; err_is_readonly=true)
                     continue
                 end
                 if isa(inst, LLVM.CallInst)
@@ -1167,17 +1171,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         end
     end
     
-    changed = false
-    attrs = collect(function_attributes(fn))
-    if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
-        if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
-            delete!(function_attributes(fn), EnumAttribute("writeonly"))
-            push!(function_attributes(fn), EnumAttribute("readnone"))
-        else
-            push!(function_attributes(fn), EnumAttribute("readonly"))
-        end
-        changed = true
-    end
+    changed = set_readonly!(fn)
 
     if length(calls) == 0 || hasUser
         return changed
@@ -1781,10 +1775,16 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
     end
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
-    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
-    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
-    sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
-
+    if LLVM.version().major <= 16
+        func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
+        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+    else
+        func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("memory", NoEffects.data), EnumAttribute("nofree")])
+        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("memory", ReadOnlyEffects.data), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("memory", ReadOnlyEffects.data), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+    end
+    
     for fn in functions(mod)
         if isempty(blocks(fn))
             continue
@@ -2154,7 +2154,7 @@ function addJuliaLegalizationPasses!(pm, tm, lower_intrinsics=true)
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         lower_exc_handlers_tm!(pm, tm)
         # BUDE.jl demonstrates a bug here TODO
-        gc_invariant_verifier!(pm, tm, false)
+        gc_invariant_verifier_tm!(pm, tm, false)
         verifier!(pm)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12

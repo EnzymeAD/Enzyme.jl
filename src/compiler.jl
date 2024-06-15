@@ -3205,7 +3205,11 @@ function annotate!(mod, mode)
     for fname in ("julia.typeof",)
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+            end
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
@@ -3213,15 +3217,18 @@ function annotate!(mod, mode)
     for fname in ("jl_excstack_state","ijl_excstack_state")
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
-            push!(function_attributes(fn), LLVM.StringAttribute("inaccessiblememonly"))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                push!(function_attributes(fn), LLVM.StringAttribute("inaccessiblememonly"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
+            end
         end
     end
 
     for fname in ("jl_types_equal", "ijl_types_equal")
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
@@ -3245,7 +3252,12 @@ function annotate!(mod, mode)
                 if operands(c)[1] != fn
                     continue
                 end
-                LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), LLVM.EnumAttribute("readonly", 0))
+                attr = if LLVM.version().major <= 16
+                    LLVM.EnumAttribute("readonly")
+                else
+                    EnumAttribute("memory", MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data)
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), attr)
             end
         end
     end
@@ -3254,7 +3266,11 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
-            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+            end
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
@@ -3287,7 +3303,11 @@ function annotate!(mod, mode)
     for fname in ("julia.pointer_from_objref",)
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readnone", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+            end
         end
     end
 
@@ -3315,7 +3335,12 @@ function annotate!(mod, mode)
                 if cf == fn
                     LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
                     if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
-                        LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), LLVM.EnumAttribute("inaccessiblememonly", 0))
+                        attr = if LLVM.version().major <= 16
+                            LLVM.EnumAttribute("inaccessiblememonly")
+                        else
+                            EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data)
+                        end
+                        LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), attr)
                     end
                 end
                 if !isa(cf, LLVM.Function)
@@ -3330,7 +3355,12 @@ function annotate!(mod, mode)
                 LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
                 LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
                 if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
-                    LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), LLVM.EnumAttribute("inaccessiblememonly", 0))
+                    attr = if LLVM.version().major <= 16
+                        LLVM.EnumAttribute("inaccessiblememonly")
+                    else
+                        EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data)
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), attr)
                 end
             end
         end
@@ -3339,14 +3369,22 @@ function annotate!(mod, mode)
     for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
         if haskey(fns, gc)
             fn = fns[gc]
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
+            end
         end
     end
 
     for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
         if haskey(fns, rfn)
             fn = fns[rfn]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+            end
         end
     end
 
@@ -3355,8 +3393,12 @@ function annotate!(mod, mode)
         if haskey(fns, rfn)
             fn = fns[rfn]
             push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
+            end
         end
     end
     # Key of jl_eqtable_get/put is inactive, definitionally
@@ -3367,15 +3409,23 @@ function annotate!(mod, mode)
             push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
             push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
             push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
-            push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_ModRef << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
+            end
         end
     end
 
     for rfn in ("jl_in_threaded_region_", "jl_in_threaded_region")
         if haskey(fns, rfn)
             fn = fns[rfn]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
-            push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0))
+            if LLVM.version().major <= 16
+                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
+            else
+                push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
+            end
         end
     end
 end
@@ -4869,6 +4919,11 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         if kind(prev) == kind(EnumAttribute("argmemonly"))
             push!(attributes, prev)
         end
+        if kind(prev) == kind(EnumAttribute("memory"))
+            old = MemoryEffect(value(attr))
+            mem = MemoryEffect(( set_writing(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) | (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) | (getModRef(old, Other) << getLocationPos(Other)))
+            push!(attributes, EnumAttribute("memory", mem.data))
+        end
         if kind(prev) == kind(EnumAttribute("inaccessiblememonly"))
             push!(attributes, prev)
         end
@@ -5349,44 +5404,85 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
         if func == typeof(Base.eps) || func == typeof(Base.nextfloat) || func == typeof(Base.prevfloat)
-            handleCustom(llvmfn, "jl_inactive_inout", [StringAttribute("enzyme_inactive"),
-                                      EnumAttribute("readnone", 0),
-                                      EnumAttribute("speculatable", 0),
+            if LLVM.version().major <= 16
+                handleCustom(llvmfn, "jl_inactive_inout", [StringAttribute("enzyme_inactive"),
+                                      EnumAttribute("readnone"),
+                                      EnumAttribute("speculatable"),
                                       StringAttribute("enzyme_shouldrecompute")
                                                       ])
+            else
+                handleCustom(llvmfn, "jl_inactive_inout", [StringAttribute("enzyme_inactive"),
+                                                           EnumAttribute("memory", NoEffects.data),
+                                      EnumAttribute("speculatable"),
+                                      StringAttribute("enzyme_shouldrecompute")
+                                                      ])
+            end
             continue
         end
         if func == typeof(Base.to_tuple_type)
-            handleCustom(llvmfn, "jl_to_tuple_type",
-                   [EnumAttribute("readonly", 0),
-                    EnumAttribute("inaccessiblememonly", 0),
-                    EnumAttribute("speculatable", 0),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                                  ])
+            if LLVM.version().major <= 16
+                handleCustom(llvmfn, "jl_to_tuple_type",
+                       [EnumAttribute("readonly"),
+                        EnumAttribute("inaccessiblememonly", 0),
+                        EnumAttribute("speculatable", 0),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                                      ])
+            else
+                handleCustom(llvmfn, "jl_to_tuple_type",
+                       [
+                        EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data),
+                        EnumAttribute("inaccessiblememonly", 0),
+                        EnumAttribute("speculatable", 0),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                                      ])
+            end
             continue
         end
         if func == typeof(Base.mightalias)
-            handleCustom(llvmfn, "jl_mightalias",
-                   [EnumAttribute("readonly", 0),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                    EnumAttribute("nofree"),
-                    StringAttribute("enzyme_ta_norecur"),
-                                  ], true, false)
+            if LLVM.version().major <= 16
+                handleCustom(llvmfn, "jl_mightalias",
+                       [EnumAttribute("readonly"),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                        StringAttribute("enzyme_no_escaping_allocation"),
+                        EnumAttribute("nofree"),
+                        StringAttribute("enzyme_ta_norecur"),
+                                      ], true, false)
+            else
+                handleCustom(llvmfn, "jl_mightalias",
+                       [
+                        EnumAttribute("memory", ReadOnlyEffects.data),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                        StringAttribute("enzyme_no_escaping_allocation"),
+                        EnumAttribute("nofree"),
+                        StringAttribute("enzyme_ta_norecur"),
+                                      ], true, false)
+            end
             continue
         end
         if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
             name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
-            handleCustom(llvmfn, name,
-                   [EnumAttribute("readonly", 0),
-                    EnumAttribute("inaccessiblememonly", 0),
-                    EnumAttribute("speculatable", 0),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation")
-                                  ])
+            if LLVM.version().major <= 16
+                handleCustom(llvmfn, name,
+                       [EnumAttribute("readonly"),
+                        EnumAttribute("inaccessiblememonly"),
+                        EnumAttribute("speculatable"),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                        StringAttribute("enzyme_no_escaping_allocation")
+                                      ])
+            else
+                handleCustom(llvmfn, name,
+                     [EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data),
+                        EnumAttribute("speculatable"),
+                        StringAttribute("enzyme_shouldrecompute"),
+                        StringAttribute("enzyme_inactive"),
+                        StringAttribute("enzyme_no_escaping_allocation")
+                                      ])
+            end
             continue
         end
         # Since this is noreturn and it can't write to any operations in the function
@@ -5395,7 +5491,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         # fn, but it doesn't presently so for now we will ensure this by hand
         if func == typeof(Base.Checked.throw_overflowerr_binaryop)
             llvmfn = functions(mod)[k.specfunc]
-            handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
+            if LLVM.version().major <= 16
+                handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
+            else
+                handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"),
+                                                  EnumAttribute("memory", ReadOnlyEffects.data),
+                                                  StringAttribute("enzyme_ta_norecur")])
+            end
             continue
         end
         if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
