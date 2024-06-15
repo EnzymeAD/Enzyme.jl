@@ -98,7 +98,7 @@ function body_construct_rev(N, Width, primtypes, active_refs, primargs, batchsha
             shad = batchshadowargs[i][w]
             out = :(if $(Symbol("active_ref_$i")) == MixedState || $(Symbol("active_ref_$i")) == ActiveState
               if $shad isa Base.RefValue
-              $shad[] = recursive_add($shad[], $expr)
+              $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
                 else
                   error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad))
                 end
