@@ -108,7 +108,7 @@ function is_readonly(f::LLVM.Function)
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
         end
-        if LLVM.version().major > 16
+        if LLVM.version().major > 15
         if kind(attr) == kind(EnumAttribute("memory"))
             if is_readonly(MemoryEffect(value(attr)))
                 return true
@@ -124,7 +124,7 @@ function is_readnone(f::LLVM.Function)
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
         end
-        if LLVM.version().major > 16
+        if LLVM.version().major > 15
         if kind(attr) == kind(EnumAttribute("memory"))
             if is_readnone(MemoryEffect(value(attr)))
                 return true
@@ -143,7 +143,7 @@ function is_writeonly(f::LLVM.Function)
         if kind(attr) == kind(EnumAttribute("writeonly"))
             return true
         end
-        if LLVM.version().major > 16
+        if LLVM.version().major > 15
         if kind(attr) == kind(EnumAttribute("memory"))
             if is_writeonly(MemoryEffect(value(attr)))
                 return true
