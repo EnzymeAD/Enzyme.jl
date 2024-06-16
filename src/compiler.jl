@@ -1087,6 +1087,7 @@ end
 
 
 function get_array_struct()
+@static if VERSION < v"1.11-"
 # JL_EXTENSION typedef struct {
 #     JL_DATA_TYPE
 #     void *data;
@@ -1117,6 +1118,41 @@ function get_array_struct()
     nrows = LLVM.IntType(8*sizeof(Csize_t))
 
     return LLVM.StructType([ptrty, sizeT, arrayFlags, elsz, off, nrows]; packed=true)
+else
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     size_t length;
+#     void *ptr;
+#     // followed by padding and inline data, or owner pointer
+# #ifdef _P64
+#     // union {
+#     //     jl_value_t *owner;
+#     //     T inl[];
+#     // };
+# #else
+#     //
+#     // jl_value_t *owner;
+#     // size_t padding[1];
+#     // T inl[];
+# #endif
+# } jl_genericmemory_t;
+# 
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     void *ptr_or_offset;
+#     jl_genericmemory_t *mem;
+# } jl_genericmemoryref_t;
+# 
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     jl_genericmemoryref_t ref;
+#     size_t dimsize[]; // length for 1-D, otherwise length is mem->length
+# } jl_array_t;
+    i8 = LLVM.IntType(8)
+    ptrty = LLVM.PointerType(i8, 10)
+    sizeT = LLVM.IntType(8*sizeof(Csize_t))
+    return LLVM.StructType([ptrty, sizeT]; packed=true)
+end
 end
 
 function get_array_data(B, array)
@@ -1170,9 +1206,6 @@ function get_array_nrows(B, array)
     nrows = LLVM.IntType(8*sizeof(Csize_t))
     return LLVM.load!(B, nrows, v)
 end
-
-dedupargs() = ()
-dedupargs(a, da, args...) = (a, dedupargs(args...)...)
 
 # Force sret
 struct Return2
@@ -5398,11 +5431,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
-        if EnzymeRules.is_inactive_from_sig(mi.specTypes; world, method_table, caller)
+        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) && has_method(Tuple{typeof(EnzymeRules.inactive), specTypes.parameters...}, world, method_table)
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
-        if EnzymeRules.is_inactive_noinl_from_sig(mi.specTypes; world, method_table, caller)
+        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller) && has_method(Tuple{typeof(EnzymeRules.inactive_noinl), specTypes.parameters...}, world, method_table)
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)

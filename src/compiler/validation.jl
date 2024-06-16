@@ -345,6 +345,7 @@ end
 end
 
 @inline function is_inactive(tys, world::UInt, mt)
+    specTypes = Interpreter.simplify_kw(Tuple{tys...})
     if has_method(Tuple{typeof(EnzymeRules.inactive), tys...}, world, mt)
         return true
     end
