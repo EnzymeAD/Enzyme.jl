@@ -224,7 +224,7 @@ end
         combine_mul_add!(pm)
     end
 else
-    function combine_mul_add!(pm, tm)
+    function combine_mul_add_tm!(pm, tm)
         function combine_mul_add(f)
             @dispose pb=PassBuilder(tm) begin
                 NewPMFunctionPassManager(pb) do fpm
@@ -243,11 +243,11 @@ end
         late_lower_gc_frame!(pm)
     end
 else
-    function late_lower_gc_frame!(pm, tm)
+    function late_lower_gc_frame_tm!(pm, tm)
         function late_lower_gc_frame(f)
             @dispose pb=PassBuilder(tm) begin
                 NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, LateLowerGCFramePass())
+                    add!(fpm, LateLowerGCPass())
                     run!(fpm, f, tm)
                 end
             end
@@ -266,7 +266,7 @@ else
         function final_lower_gc(f)
             @dispose pb=PassBuilder(tm) begin
                 NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, FinalLowerGCFramePass())
+                    add!(fpm, FinalLowerGCPass())
                     run!(fpm, f, tm)
                 end
             end

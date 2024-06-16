@@ -24,6 +24,9 @@ end
 function Base.:|(lhs::ModRefInfo, rhs::ModRefInfo)
     ModRefInfo(UInt32(lhs) | UInt32(rhs))
 end
+function Base.:&(lhs::ModRefInfo, rhs::ModRefInfo)
+    ModRefInfo(UInt32(lhs) & UInt32(rhs))
+end
 const AllEffects = MemoryEffect((MRI_ModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_ModRef << getLocationPos(Other)))
 const ReadOnlyEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_Ref << getLocationPos(Other)))
 const NoEffects = MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
@@ -56,24 +59,24 @@ function setModRef(effect::MemoryEffect)::MemoryEffect
 end
 
 function set_readonly(mri::ModRefInfo)
-    return ModRefInfo(mri & 1)
+    return mri & MRI_Ref
 end
 function set_writeonly(mri::ModRefInfo)
-    return ModRefInfo(mri & 2)
+    return mri & MRI_Mod
 end
 function set_reading(mri::ModRefInfo)
-    return ModRefInfo(mri | 1)
+    return mri | MRI_Ref
 end
 function set_writing(mri::ModRefInfo)
-    return ModRefInfo(mri | 2)
+    return mri | MRI_Mod
 end
 
 function set_readonly(effect::MemoryEffect)
-    data = 0::UInt32
-    for loc in (ArgMem, InacessibleMem, Other)
+    data = UInt32(0)
+    for loc in (ArgMem, InaccessibleMem, Other)
         data = UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
     end
-    return MemoryEffect(effect)
+    return MemoryEffect(data)
 end
 
 function is_readonly(mri::ModRefInfo)
@@ -162,7 +165,7 @@ function set_readonly!(fn::LLVM.Function)
             if kind(attr) == kind(EnumAttribute("memory"))
                 old = MemoryEffect(value(attr))
                 eff = set_readonly(old)
-                push!(function_attributes(fn), eff)
+                push!(function_attributes(fn), EnumAttribute("memory", eff.data))
                 return old != eff
             end
         end
