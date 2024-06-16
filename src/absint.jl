@@ -323,12 +323,17 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
 end
 
 function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
-
     if isa(arg, ConstantExpr)
         ce = arg
 	    while isa(ce, ConstantExpr)
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
+            elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
+                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                    ce = operands(ce)[1]
+                else
+                    break
+                end
 	        else
 	            break
 	        end
@@ -336,7 +341,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	    if isa(ce, LLVM.GlobalVariable)
 	        ce = LLVM.initializer(ce)
 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)])))
+	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
 		    end
 
 	    end

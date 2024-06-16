@@ -473,6 +473,54 @@ function arrayreshape_rev(B, orig, gutils, tape)
     return nothing
 end
 
+function gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 )
+        return true
+    end
+    
+    origops = LLVM.operands(orig)
+    if is_constant_value(gutils, origops[1])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)")
+    end
+    if is_constant_value(gutils, origops[2])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(2)")
+    end
+
+    width = get_width(gutils)
+
+    shadowin1 = invert_pointer(gutils, origops[1], B)
+    shadowin2 = invert_pointer(gutils, origops[2], B)
+    if width == 1
+        args = LLVM.Value[shadowin1, shadowin2]
+        shadowres = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx in 1:width
+            args = LLVM.Value[
+                              extract_value!(B, shadowin1, idx-1)
+                              extract_value!(B, shadowin2, idx-1)
+                              ]
+            tmp = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+            shadowres = insert_value!(B, shadowres, tmp, idx-1)
+        end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+
+	return false
+end
+
+function gcloaded_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+end
+
+function gcloaded_rev(B, orig, gutils, tape)
+    return nothing
+end
+
 function boxfloat_fwd(B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
@@ -1205,6 +1253,12 @@ end
         @augfunc(jlcall2_augfwd),
         @revfunc(jlcall2_rev),
         @fwdfunc(jlcall2_fwd),
+    )
+    register_handler!(
+        ("julia.gc_loaded",),
+        @augfunc(gcloaded_augfwd),
+        @revfunc(gcloaded_rev),
+        @fwdfunc(gcloaded_fwd),
     )
     register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),
