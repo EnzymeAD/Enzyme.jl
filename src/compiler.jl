@@ -4924,10 +4924,12 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(attributes, prev)
             end
         end
+        if LLVM.version().major > 15
         if kind(prev) == kind(EnumAttribute("memory"))
             old = MemoryEffect(value(attr))
             mem = MemoryEffect(( set_writing(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) | (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) | (getModRef(old, Other) << getLocationPos(Other)))
             push!(attributes, EnumAttribute("memory", mem.data))
+        end
         end
         if kind(prev) == kind(EnumAttribute("speculatable"))
             push!(attributes, prev)
