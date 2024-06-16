@@ -5431,11 +5431,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("readonly"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
-        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller)
+        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) && has_method(Tuple{typeof(EnzymeRules.inactive), tys...}, world, method_table)
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")])
             continue
         end
-        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller)
+        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller) && has_method(Tuple{typeof(EnzymeRules.inactive_noinl), tys...}, world, method_table)
             handleCustom(llvmfn, "enz_noop", [StringAttribute("enzyme_inactive"), EnumAttribute("nofree"), StringAttribute("enzyme_no_escaping_allocation"), StringAttribute("enzyme_ta_norecur")], false, false)
             for bb in blocks(llvmfn)
                 for inst in instructions(bb)
