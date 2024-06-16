@@ -13,8 +13,8 @@ end
   InaccessibleMem = 1,
   Other = 2)
 
-const BitsPerLoc::UInt32 = 2
-const LocMask::UInt32 = (1 << BitsPerLoc) - 1
+const BitsPerLoc = UInt32(2)
+const LocMask = UInt32((1 << BitsPerLoc) - 1)
 function getLocationPos(Loc::IRMemLocation)
     return UInt32(Loc) * BitsPerLoc
 end
