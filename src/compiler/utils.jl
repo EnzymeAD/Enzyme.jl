@@ -29,6 +29,7 @@ function Base.:&(lhs::ModRefInfo, rhs::ModRefInfo)
 end
 const AllEffects = MemoryEffect((MRI_ModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_ModRef << getLocationPos(Other)))
 const ReadOnlyEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_Ref << getLocationPos(Other)))
+const ReadOnlyArgMemEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
 const NoEffects = MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
 
 # Get ModRefInfo for any location.

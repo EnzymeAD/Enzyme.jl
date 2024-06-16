@@ -3323,8 +3323,13 @@ function annotate!(mod, mode)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
             push!(function_attributes(fn), no_escaping_alloc)
+            accattr = if LLVM.version().major <= 15
+                LLVM.EnumAttribute("inaccessiblememonly")
+            else
+                EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data)
+            end
             if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly", 0))
+                push!(function_attributes(fn), accattr)
             end
             for u in LLVM.uses(fn)
                 c = LLVM.user(u)
@@ -3335,12 +3340,7 @@ function annotate!(mod, mode)
                 if cf == fn
                     LLVM.API.LLVMAddCallSiteAttribute(c, LLVM.API.LLVMAttributeReturnIndex, LLVM.EnumAttribute("noalias", 0))
                     if !(boxfn in ("jl_array_copy", "ijl_array_copy", "jl_idtable_rehash", "ijl_idtable_rehash"))
-                        attr = if LLVM.version().major <= 15
-                            LLVM.EnumAttribute("inaccessiblememonly")
-                        else
-                            EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data)
-                        end
-                        LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), attr)
+                        LLVM.API.LLVMAddCallSiteAttribute(c, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), accattr)
                     end
                 end
                 if !isa(cf, LLVM.Function)
@@ -4910,22 +4910,24 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         if kind(prev) == kind(StringAttribute("enzyme_shouldrecompute"))
             push!(attributes, prev)
         end
-        if kind(prev) == kind(EnumAttribute("readonly"))
-            push!(attributes, prev)
-        end
-        if kind(prev) == kind(EnumAttribute("readnone"))
-            push!(attributes, prev)
-        end
-        if kind(prev) == kind(EnumAttribute("argmemonly"))
-            push!(attributes, prev)
+        if LLVM.version().major <= 15
+            if kind(prev) == kind(EnumAttribute("readonly"))
+                push!(attributes, prev)
+            end
+            if kind(prev) == kind(EnumAttribute("readnone"))
+                push!(attributes, prev)
+            end
+            if kind(prev) == kind(EnumAttribute("argmemonly"))
+                push!(attributes, prev)
+            end
+            if kind(prev) == kind(EnumAttribute("inaccessiblememonly"))
+                push!(attributes, prev)
+            end
         end
         if kind(prev) == kind(EnumAttribute("memory"))
             old = MemoryEffect(value(attr))
             mem = MemoryEffect(( set_writing(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) | (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) | (getModRef(old, Other) << getLocationPos(Other)))
             push!(attributes, EnumAttribute("memory", mem.data))
-        end
-        if kind(prev) == kind(EnumAttribute("inaccessiblememonly"))
-            push!(attributes, prev)
         end
         if kind(prev) == kind(EnumAttribute("speculatable"))
             push!(attributes, prev)
@@ -5645,9 +5647,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
             res = call!(builder, LLVM.function_type(llvmfn), llvmfn, collect(parameters(wrapper_f)))
 
+            sretkind = kind(if LLVM.version().major >= 12
+                TypeAttribute("sret", LLVM.Int32Type())
+            else
+                EnumAttribute("sret")
+            end)
             for idx in length(collect(parameters(llvmfn)))
                 for attr in collect(parameter_attributes(llvmfn, idx))
-                    if kind(attr) == kind(EnumAttribute("sret"))
+                    if kind(attr) == sretkind
                         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(idx), attr)
                     end
                 end

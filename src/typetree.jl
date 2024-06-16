@@ -152,28 +152,46 @@ function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
     return tt
 end
 
-function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
-    offset = 0
+@static if VERSION < v"1.11-"
+    function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
+        offset = 0
 
-    tt = copy(typetree(T, ctx, dl, seen))
-    if !allocatedinline(T)
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T)
+            merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, 0)
-    end
-    merge!(tt, TypeTree(API.DT_Pointer, ctx))
-    only!(tt, offset)
+        only!(tt, offset)
 
-    offset += sizeof(Ptr{Cvoid})
+        offset += sizeof(Ptr{Cvoid})
 
-    sizeofstruct = offset + 2 + 2 + 4 + 2 * sizeof(Csize_t)
-    if true # STORE_ARRAY_LEN
-        sizeofstruct += sizeof(Csize_t)
-    end
+        sizeofstruct = offset + 2 + 2 + 4 + 2 * sizeof(Csize_t)
+        if true # STORE_ARRAY_LEN
+            sizeofstruct += sizeof(Csize_t)
+        end
 
-    for i in offset:(sizeofstruct-1)
-        merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+        for i in offset:(sizeofstruct-1)
+            merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+        end
+        return tt
     end
-    return tt
+else
+    function typetree_inner(::Type{<:GenericMemory{kind, T}}, ctx, dl, seen::TypeTreeTable) where {kind, T}
+        offset = 0
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T)
+            merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
+        merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, sizeof(Csize_t))
+
+        for i in 0:(sizeof(Csize_t)-1)
+            merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+        end
+        return tt
+    end
 end
 
 if VERSION >= v"1.7.0-DEV.204"

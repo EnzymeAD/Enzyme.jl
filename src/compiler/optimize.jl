@@ -876,6 +876,11 @@ function fix_decayaddr!(mod::LLVM.Module)
                 mayread = false
                 maywrite = false
                 sret = true
+                sretkind = kind(if LLVM.version().major >= 12
+                    TypeAttribute("sret", LLVM.Int32Type())
+                else
+                    EnumAttribute("sret")
+                end)
                 for (i, v) in enumerate(operands(st)[1:end-1])
                     if v == inst
                         readnone = false
@@ -883,7 +888,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         writeonly = false
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
-                            if kind(a) == kind(EnumAttribute("sret"))
+                            if kind(a) == sretkind
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
@@ -1589,6 +1594,11 @@ function validate_return_roots!(mod)
         enzyme_srets_v = Int[]
         rroots = Int[]
         rroots_v = Int[]
+        sretkind = kind(if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end)
         for (i, a) in enumerate(parameters(f))
             for attr in collect(parameter_attributes(f, i))
                 if isa(attr, StringAttribute)
@@ -1605,7 +1615,7 @@ function validate_return_roots!(mod)
                         push!(enzyme_srets, i)
                     end
                 end
-                if kind(attr) == kind(EnumAttribute("sret"))
+                if kind(attr) == sretkind
                     push!(srets, (i, attr))
                 end
             end
@@ -1781,8 +1791,8 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
         sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
     else
         func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("memory", NoEffects.data), EnumAttribute("nofree")])
-        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("memory", ReadOnlyEffects.data), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
-        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("memory", ReadOnlyEffects.data), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")])
+        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")])
     end
     
     for fn in functions(mod)
@@ -1811,12 +1821,17 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
                 end
             end
         end
+        sretkind = kind(if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end)
         for idx in (1, 2)
             if length(collect(parameters(fn))) < idx
                 continue
             end
             attrs = collect(parameter_attributes(fn, idx))
-            if any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
+            if any( ( kind(attr) == sretkind || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
