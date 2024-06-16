@@ -146,7 +146,7 @@ end
 
 function set_readonly!(fn::LLVM.Function)
     attrs = collect(function_attributes(fn))
-    if LLVM.version().major <= 16
+    if LLVM.version().major <= 15
         if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
             if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
                 delete!(function_attributes(fn), EnumAttribute("writeonly"))
