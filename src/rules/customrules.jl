@@ -734,7 +734,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         end
     end
 
-    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -765,11 +765,11 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
         if needsTape
             @assert tape != C_NULL
-            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])) + !isghostty(funcTy)
-            trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself+(RT <: Active)
+            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) 
+            trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
             if innerTy != value_type(tape)
-                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL
+                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
                     msg = sprint() do io
                         println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
                         println(io, "tape_idx=", tape_idx)
@@ -831,7 +831,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             if any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
-            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup))+(isKWCall && !isghostty(rev_TT.parameters[4])), al)
+            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup)), al)
         end
     end
 
