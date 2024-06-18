@@ -1,4 +1,16 @@
 """
+    pick_chunksize(x; threshold=16)
+
+Pick a reasonable chunk size for batched differentiation with input `x`, while staying under a given `threshold`.
+
+!!! warning
+    This function is experimental, and not part of the public API.
+"""
+function pick_chunksize(x; threshold=16)
+    return min(length(x), threshold)
+end
+
+"""
     unsafe_to_pointer
 
 !!! warning
@@ -260,8 +272,3 @@ end
 end
 
 export codegen_world_age
-
-
-
-
-
