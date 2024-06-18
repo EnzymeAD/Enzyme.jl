@@ -5160,7 +5160,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     # Tablegen BLAS does not support forward mode yet
     if !(mode == API.DEM_ForwardMode && Enzyme.API.runtimeActivity())
         for ty in ("s", "d")
-            for func in mode == API.DEM_ForwardMode ? ForwardModeDerivatives : ReverseModeDerivatives
+            for func in (mode == API.DEM_ForwardMode ? ForwardModeDerivatives : ReverseModeDerivatives)
                 for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
                         push!(disableFallback, prefix*ty*func*ending)
