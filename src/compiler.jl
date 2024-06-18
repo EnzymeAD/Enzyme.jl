@@ -1632,7 +1632,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
-    ct = if occursin("ptx", LLVM.triple(mod))
+    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         GPUCompiler.emit_exception!(B, string, orig)
     else
         call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
@@ -5932,6 +5932,46 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 				end
 			end
 		end
+        if parent_job.config.target isa GPUCompiler.GCNCompilerTarget
+            arg1 = ("acos", "acosh", "asin",
+                    "asinh", "atan2", "atan",
+                             "atanh",        "cbrt",         "ceil",
+                             "copysign",     "cos",          "native_cos",
+                             "cosh",         "cospi",        "i0",
+                             "i1",           "erfc",         "erfcinv",
+                             "erfcx",        "erf",          "erfinv",
+                             "exp10",        "native_exp10", "exp2",
+                             "exp",          "native_exp",   "expm1",
+                             "fabs",         "fdim",         "floor",
+                             "fma",          "fmax",         "fmin",
+                             "fmod",         "frexp",        "hypot",
+                             "ilogb",        "isfinite",     "isinf",
+                             "isnan",        "j0",           "j1",
+                             "ldexp",        "lgamma",       "log10",
+                             "native_log10", "log1p",        "log2",
+                             "log2",         "logb",         "log",
+                             "native_log",   "modf",         "nearbyint",
+                             "nextafter",    "len3",         "len4",
+                             "ncdf",         "ncdfinv",      "pow",
+                             "pown",         "rcbrt",        "remainder",
+                             "remquo",       "rhypot",       "rint",
+                             "rlen3",        "rlen4",        "round",
+                             "rsqrt",        "scalb",        "scalbn",
+                             "signbit",      "sincos",       "sincospi",
+                             "sin",          "native_sin",   "sinh",
+                             "sinpi",        "sqrt",         "native_sqrt",
+                             "tan",          "tanh",         "tgamma",
+                             "trunc",        "y0",           "y1")
+            for n in arg1, (T, pf, lpf) in ((LLVM.DoubleType(), "", "f64"), (LLVM.FloatType(), "f", "f32"))
+                fname = "__ocml_"*n*"_"*lpf
+                if !haskey(functions(mod), fname)
+                    FT = LLVM.FunctionType(T, [T], vararg=false)
+                    wrapper_f = LLVM.Function(mod, fname, FT)
+                    llname = "llvm."*n*"."*lpf
+                    push!(function_attributes(wrapper_f), StringAttribute("implements", llname))
+                end
+            end
+        end
 	end
     for (name, fnty) in fnsToInject
 		for (T, JT, pf) in ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
