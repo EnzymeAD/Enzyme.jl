@@ -1,14 +1,12 @@
 """
-    pick_chunksize(x; threshold=16)
+    pick_chunksize()
 
-Pick a reasonable chunk size for batched differentiation with input `x`, while staying under a given `threshold`.
+Return a reasonable chunk size for batched differentiation, given as `Val{chunk}()`.
 
 !!! warning
     This function is experimental, and not part of the public API.
 """
-function pick_chunksize(x; threshold=16)
-    return min(length(x), threshold)
-end
+pick_chunksize() = Val(16)
 
 """
     unsafe_to_pointer
