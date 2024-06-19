@@ -1,12 +1,19 @@
 """
-    pick_chunksize()
+    pick_chunksize(::Val{totalsize}, mode, ftype, argtypes...)
 
-Return a reasonable chunk size for batched differentiation, given as `Val{chunk}()`.
+Return a reasonable chunk size for batched differentiation.
 
 !!! warning
     This function is experimental, and not part of the public API.
 """
-pick_chunksize() = Val(16)
+function pick_chunksize(
+    ::Val{totalsize},
+    mode::Mode,
+    ftype::Type,
+    argtypes::Vararg{Type{<:Annotation}, Nargs}
+) where {totalsize,Nargs}
+    return min(totalsize, 16)
+end
 
 """
     unsafe_to_pointer
