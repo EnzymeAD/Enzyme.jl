@@ -5,7 +5,7 @@ using Test
 mode = Forward
 ftype = typeof(sum)
 argtypes = typeof.((Duplicated(ones(1), zeros(1)),))
-@test pick_chunksize(Val(1), mode, ftype, argtypes...) == 1
+@test pick_chunksize(1, mode, ftype, argtypes...) == 1
 
 argtypes = typeof.((Duplicated(ones(100), zeros(100)),))
-@test pick_chunksize(Val(100), mode, ftype, argtypes...) == 16
+@test pick_chunksize(100, mode, ftype, argtypes...) == 16
