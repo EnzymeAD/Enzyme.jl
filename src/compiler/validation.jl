@@ -947,6 +947,16 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
             push!(todo, (cur[off[1]], off[2:end]))
             continue
         end
+        
+        if isa(cur, LLVM.CallInst)
+            dest = called_operand(cur)
+            if isa(dest, LLVM.Function)
+                fn = LLVM.name(dest)
+                if fn == "julia.call" || fn == "julia.call2"
+                    continue
+                end
+            end
+        end
 
           msg = sprint() do io::IO
               println(io, "Enzyme Internal Error (rewrite_union_returns_as_ref[2])")
