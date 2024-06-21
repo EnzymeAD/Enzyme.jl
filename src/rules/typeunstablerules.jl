@@ -300,7 +300,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     if !newstruct_common(#=fwd=#true, #=run=#true, offset, B, orig, gutils, normalR, shadowR)
         origops = collect(operands(orig))
         abs_partial = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
-        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig)*" "*string(abs)*" "*string([v for v in origops[offset+1:end-1]]))
+        icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+        emit_error(B, orig, "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants="*string(icvs)*" "*string(orig)*" "*string(abs_partial)*" "*string([v for v in origops[offset+1:end-1]]))
     end
 
     return false
