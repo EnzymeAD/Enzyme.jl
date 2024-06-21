@@ -3,6 +3,7 @@ module EnzymeCore
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export MixedDuplicated, MixedDuplicatedNoNeed
 export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
 
