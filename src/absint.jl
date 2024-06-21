@@ -13,11 +13,16 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                              ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                             ("jl_box_char", Char), ("ijl_box_char", Char),
                             )
             if nm == fname
                 v = first(operands(arg))
                 if isa(v, ConstantInt)
-                    return (true, convert(ty, v))
+                    if ty == Char
+                        return (true, Char(convert(Int, v)))
+                    else
+                        return (true, convert(ty, v))
+                    end
                 end
             end
         end
@@ -144,6 +149,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
                              ("jl_box_float32", Float32), ("ijl_box_float32", Float32),
+                             ("jl_box_char", Char), ("ijl_box_char", Char),
                             )
             if nm == fname
                 return (true, ty)
