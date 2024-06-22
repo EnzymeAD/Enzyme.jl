@@ -134,13 +134,24 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
 
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
                 if value_type(val) != eltype(value_type(ptr))
-                    @assert !overwritten[end]
-                    val = load!(B, arty, val)
+                    if overwritten[end]
+                        emit_error(B, orig, "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
+                    end
+                    if arty != eltype(value_type(val))
+                        val = load!(B, arty, val)
+                    else
+                        val = LLVM.UndefValue(arty)
+                        emit_error(B, orig, "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
+                    end
                 end
-                store!(B, val, ptr)
 
-                if any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
+                if eltype(value_type(ptr)) == value_type(val)
+                    store!(B, val, ptr)
+                    if any_jltypes(llty)
+                        emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
+                    end
+                else
+                    emit_error(B, orig, "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
                 end
 
                 push!(args, al)
