@@ -24,7 +24,7 @@ Enzyme.API.printall!(true)
   out
 end
 
-@noinline function mydiag(R)
+@inline function mydiag(R)
    len = Base.reinterpret(Ptr{Int}, Libc.malloc(8))
    unsafe_store!(len, 9)
    mygetindex(R, len)
