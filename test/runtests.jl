@@ -26,7 +26,7 @@ end
 
 @inline function mydiag(R)
    len = Base.reinterpret(Ptr{Int}, Libc.malloc(8))
-   unsafe_store!(len, 9)
+   unsafe_store!(len, 3)
    mygetindex(R, len)
 end
 
