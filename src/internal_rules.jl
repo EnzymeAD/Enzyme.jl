@@ -118,6 +118,8 @@ end
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
+@inline EnzymeRules.inactive_type(v::Core.MethodMatch) = true
+@inline EnzymeRules.inactive_type(v::Core.Compiler.WorldRange) = true
 
 @inline width(::Duplicated) = 1
 @inline width(::BatchDuplicated{T, N}) where {T, N} = N
