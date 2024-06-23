@@ -18,7 +18,7 @@ using Enzyme_jll
 Enzyme.API.printall!(true)
 
     function whocallsmorethan30args(R)
-        return @inbounds (@inbounds diag(R) )[1]    
+        return @inbounds (@inbounds R[1:4:9] )[1]    
     end
 
 @testset "generic" begin
