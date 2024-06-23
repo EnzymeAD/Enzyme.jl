@@ -642,25 +642,19 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 legal, iterlib = absint(operands(inst)[iteroff+1])
                 if legal && iterlib == Base.iterate
                     legal, GT = abs_typeof(operands(inst)[4+1], true)
-                    if legal && GT <: Vector
-                        funcoff = 3
-                        funclib = operands(inst)[funcoff+1]
-                        while isa(funclib, LLVM.ConstantExpr)
-                            funclib = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(funclib, 0))
-                        end
-                        if isa(funclib, ConstantInt)
-                            rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, funclib))
-                            funclib = Base.unsafe_pointer_to_objref(rep)
-                            tys = [typeof(funclib), Vararg{Any}]
-                            if is_inactive(tys, world, method_table)
+                    funcoff = 3
+                    legal2, funclib = abs_typeof(operands(inst)[funcoff+1])
+                    if legal && (GT <: Vector || GT <: Tuple)
+                        if legal2
+                            tys = [funclib, Vararg{Any}]
+                            if funclib == typeof(Core.apply_type) || is_inactive(tys, world, method_table)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                 LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), inactive)
                                 nofree = LLVM.EnumAttribute("nofree")
                                 LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), nofree)
                                 no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
                                 LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
-                            end
-                            if funclib == Base.tuple && length(operands(inst)) == 4+1+1 && Base.isconcretetype(GT) && Enzyme.Compiler.guaranteed_const_nongen(GT, world)
+                            elseif funclib == typeof(Base.tuple) && length(operands(inst)) == 4+1+1 && Base.isconcretetype(GT) && Enzyme.Compiler.guaranteed_const_nongen(GT, world)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                 LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), inactive)
                                 nofree = LLVM.EnumAttribute("nofree")
@@ -670,14 +664,6 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             end
                         end
                     end
-                end
-                if legal && iterlib == Core.apply_type
-                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                    LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), inactive)
-                    nofree = LLVM.EnumAttribute("nofree")
-                    LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), nofree)
-                    no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
-                    LLVM.API.LLVMAddCallSiteAttribute(inst, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), no_escaping_alloc)
                 end
             end
 
