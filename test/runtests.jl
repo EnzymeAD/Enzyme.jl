@@ -7,7 +7,7 @@ using Enzyme_jll
 
 Enzyme.API.printall!(true)
 
-function mygetindex(R, rng)
+@noinline function mygetindex(R, rng)
   out = Vector{Float64}(undef, 3)
   oi = 1
   for i in rng
