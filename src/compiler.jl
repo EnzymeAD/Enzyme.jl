@@ -2010,6 +2010,11 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
                 println(io)
             end
+            pscope = parent_scope(val)
+            mi, rt = enzyme_custom_extract_mi(pscope, #=error=#false)
+            if mi !== nothing
+                println(io, "within ", mi)
+            end
         end
         emit_error(B, nothing, msg2)
         return C_NULL
