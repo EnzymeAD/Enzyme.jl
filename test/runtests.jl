@@ -10,6 +10,7 @@ end
 
 using Enzyme
 using Test
+using LinearAlgebra
 
 using Enzyme_jll
 
