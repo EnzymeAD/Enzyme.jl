@@ -120,6 +120,7 @@ end
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodMatch}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
+@inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
 
 @inline width(::Duplicated) = 1
 @inline width(::BatchDuplicated{T, N}) where {T, N} = N
