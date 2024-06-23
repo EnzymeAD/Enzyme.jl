@@ -3538,6 +3538,7 @@ include("rules/activityrules.jl")
 
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
     world = job.world
+    println(string(mod))
     interp = GPUCompiler.get_interpreter(job)
     rt = job.config.params.rt
     @assert eltype(rt) != Union{}
