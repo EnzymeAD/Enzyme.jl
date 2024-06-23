@@ -12,7 +12,8 @@ Enzyme.API.printall!(true)
   oi = 1
   i = 1
   while i < unsafe_load(len)
-    @inbounds out[oi] = @inbounds R[i]
+    v = Core.arrayref(false, R, i)
+    Core.arrayset(false, out, v, oi)
     oi+=1
     i += 4
   end
