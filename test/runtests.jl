@@ -8,12 +8,14 @@ using Enzyme_jll
 Enzyme.API.printall!(true)
 
 @noinline function mygetindex(R, len)
-  out = Vector{Float64}(undef, 3)
+  # out = Vector{Float64}(undef, 3)
+  out = Base.reinterpret(Ptr{Float64}, Libc.malloc(24))
   oi = 1
   i = 1
   while i < unsafe_load(len)
     v = Core.arrayref(false, R, i)
-    Core.arrayset(false, out, v, oi)
+    # Core.arrayset(false, out, v, oi)
+    unsafe_store!(out, v, oi)
     oi+=1
     i += 4
   end
@@ -27,7 +29,8 @@ end
 end
 
 function whocallsmorethan30args(R)
-   return @inbounds mydiag(R)[1]    
+   return unsafe_load(mydiag(R))
+   # return @inbounds mydiag(R)[1]    
 end
 
 @testset "generic" begin
