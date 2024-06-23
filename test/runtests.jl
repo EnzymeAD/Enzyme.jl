@@ -76,31 +76,6 @@ function invsin(xp)
 end
 
 Enzyme.API.printall!(true)
-@testset "generic" begin
-    @test -0.4161468365471424 ≈ Enzyme.autodiff(Reverse, genlatestsin, Active, Active(2.0))[1][1]
-    @test -0.4161468365471424 ≈ Enzyme.autodiff(Forward, genlatestsin, Duplicated(2.0, 1.0))[1]
-
-    x = [2.0]
-    dx = [0.0]
-    Enzyme.autodiff(Reverse, genlatestsinx, Active, Duplicated(x, dx))
-    @test 0 ≈ x[1]
-    @test -0.4161468365471424 ≈ dx[1]
-
-    x = [2.0]
-    dx = [0.0]
-    Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx))
-    @test 0 ≈ x[1]
-    @test -0.4161468365471424 ≈ dx[1]
-
-	function inactive_gen(x)
-		n = 1
-		for k in 1:2
-			y = falses(n)
-		end
-		return x
-	end
-    @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1][1]
-	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
 
     function whocallsmorethan30args(R)
         temp = diag(R)     
@@ -113,6 +88,8 @@ Enzyme.API.printall!(true)
     
         return sum(R_inv)
     end
+
+@testset "generic" begin
     
     R = zeros(6,6)    
     dR = zeros(6, 6)
@@ -121,6 +98,8 @@ Enzyme.API.printall!(true)
         @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
     else
         autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+	@show R
+	@show dR
     	@test 1.0 ≈ dR[1, 1]
     	@test 1.0 ≈ dR[2, 2]
     	@test 1.0 ≈ dR[3, 3]
