@@ -18,12 +18,9 @@ using Enzyme_jll
 Enzyme.API.printall!(true)
 
     function whocallsmorethan30args(R)
-        temp = diag(R)     
-         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
-             0. temp[2] 0. 0. 0. 0.; 
-         ]
-    
-        return sum(R_inv)
+        temp = @inbounds diag(R)     
+         R_inv = @inbounds [temp[1] 0.]
+        return @inbounds (R_inv[1] + R_inv[2]) # sum(R_inv)
     end
 
 @testset "generic" begin
