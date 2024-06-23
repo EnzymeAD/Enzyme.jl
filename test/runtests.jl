@@ -7,9 +7,17 @@ using Enzyme_jll
 
 Enzyme.API.printall!(true)
 
+
 @noinline function mygetindex(R, len)
   # out = Vector{Float64}(undef, 3)
-  out = Base.reinterpret(Ptr{Float64}, Libc.malloc(24))
+  out = Base.llvmcall(("
+declare i8* @malloc(i64)
+
+define i64 @f() {
+  %r = call i8* @malloc(i64 24)
+  %p = ptrtoint i8* %r to i64
+  ret i64 %p
+}", "f"), Ptr{Float64}, Tuple{})
   oi = 1
   i = 1
   while i < unsafe_load(len)
