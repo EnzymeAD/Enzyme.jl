@@ -30,7 +30,7 @@ jobs:
           - x64
         assertions:
           - false
-        libEnzyme: [packaged]
+        libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
             arch: x64
