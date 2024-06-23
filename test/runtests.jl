@@ -18,15 +18,13 @@ using Enzyme_jll
 Enzyme.API.printall!(true)
 
     function whocallsmorethan30args(R)
-        temp = @inbounds diag(R)     
-         R_inv = @inbounds [temp[1] 0.]
-        return @inbounds (R_inv[1] + R_inv[2]) # sum(R_inv)
+        return @inbounds (@inbounds diag(R) )[1]    
     end
 
 @testset "generic" begin
     
-    R = zeros(6,6)    
-    dR = zeros(6, 6)
+    R = zeros(3,3)    
+    dR = zeros(3,3)
 
     @static if VERSION ≥ v"1.10-"
         @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
@@ -35,10 +33,5 @@ Enzyme.API.printall!(true)
 	@show R
 	@show dR
     	@test 1.0 ≈ dR[1, 1]
-    	@test 1.0 ≈ dR[2, 2]
-    	#@test 1.0 ≈ dR[3, 3]
-    	#@test 1.0 ≈ dR[4, 4]
-    	#@test 1.0 ≈ dR[5, 5]
-    	#@test 0.0 ≈ dR[6, 6]
     end
 end
