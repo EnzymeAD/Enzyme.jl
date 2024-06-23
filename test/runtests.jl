@@ -7,23 +7,27 @@ using Enzyme_jll
 
 Enzyme.API.printall!(true)
 
-@noinline function mygetindex(R, rng)
+@noinline function mygetindex(R, len)
   out = Vector{Float64}(undef, 3)
   oi = 1
-  for i in rng
+  i = 1
+  while i < unsafe_load(len)
     @inbounds out[oi] = @inbounds R[i]
     oi+=1
+    i += 4
   end
   out
 end
 
 @noinline function mydiag(R)
-   mygetindex(R, 1:4:9)
+   len = Base.reinterpret(Ptr{Int}, Libc.malloc(8))
+   unsafe_store!(len, 9)
+   mygetindex(R, len)
 end
 
-    function whocallsmorethan30args(R)
-        return @inbounds mydiag(R)[1]    
-    end
+function whocallsmorethan30args(R)
+   return @inbounds mydiag(R)[1]    
+end
 
 @testset "generic" begin
     
