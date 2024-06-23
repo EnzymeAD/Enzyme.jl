@@ -1,13 +1,3 @@
-# HACK: work around Pkg.jl#2500
-if VERSION < v"1.8-"
-test_project = Base.active_project()
-preferences_file = joinpath(dirname(@__DIR__), "LocalPreferences.toml")
-test_preferences_file = joinpath(dirname(test_project), "LocalPreferences.toml")
-if isfile(preferences_file) && !isfile(test_preferences_file)
-    cp(preferences_file, test_preferences_file)
-end
-end
-
 using Enzyme
 using Test
 using LinearAlgebra
@@ -17,8 +7,9 @@ using Enzyme_jll
 
 Enzyme.API.printall!(true)
 
+@noinline mydiag(R) = @inbounds R[diagind(R, 0)]
     function whocallsmorethan30args(R)
-        return @inbounds (@inbounds R[diagind(R, 0)] )[1]    
+        return @inbounds mydiag(R)[1]    
     end
 
 @testset "generic" begin
