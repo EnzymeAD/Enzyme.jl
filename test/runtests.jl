@@ -7,8 +7,18 @@ using Enzyme_jll
 
 Enzyme.API.printall!(true)
 
+function mygetindex(R, rng)
+  out = Vector{Float64}(undef, 3)
+  oi = 1
+  for i in rng
+    @inbounds out[oi] = @inbounds R[i]
+    oi+=1
+  end
+  out
+end
+
 @noinline function mydiag(R)
-   @inbounds R[1:4:9]
+   mygetindex(R, 1:4:9)
 end
 
     function whocallsmorethan30args(R)
