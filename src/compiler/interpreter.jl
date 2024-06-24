@@ -68,6 +68,7 @@ else
     Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
 end
 
+const CC = Core.Compiler
 @static if HAS_INTEGRATED_CACHE
     function CC.CodeInstance(interp::EnzymeInterpreter, result::CC.InferenceResult,
                       valid_worlds::CC.WorldRange)
