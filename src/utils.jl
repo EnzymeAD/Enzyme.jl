@@ -1,5 +1,5 @@
 """
-    pick_chunksize(totalsize, mode, ftype, argtypes...)
+    pick_chunksize(totalsize, mode, ftype, return_activity, argtypes...)
 
 Return a reasonable chunk size for batched differentiation.
 
@@ -10,6 +10,7 @@ function pick_chunksize(
     totalsize::Integer,
     mode::Mode,
     ftype::Type,
+    return_activity,::Type{<:Annotation},
     argtypes::Vararg{Type{<:Annotation}, Nargs}
 ) where {Nargs}
     return min(totalsize, 16)
