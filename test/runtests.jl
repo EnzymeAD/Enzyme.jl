@@ -100,6 +100,10 @@ end
     include("blas.jl")
 end
 
+@static if VERSION >= v"1.10"
+    include("differentiationinterface.jl")
+end
+
 f0(x) = 1.0 + x
 function vrec(start, x)
     if start > length(x)
@@ -3411,4 +3415,3 @@ end
 
 
 end
-
