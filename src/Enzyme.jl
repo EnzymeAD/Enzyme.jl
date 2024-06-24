@@ -1475,4 +1475,13 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+# using PrecompileTools
+# Crashes on 1.11
+# @setup_workload let
+#     @compile_workload begin
+#         autodiff(ReverseMode{false,InlineABI,false}(), ()->nothing, Const)
+#         autodiff(ForwardMode{InlineABI}(), ()->nothing, Const)
+#     end
+# end
+
 end # module

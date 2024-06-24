@@ -42,8 +42,10 @@ precompile_test_harness("Inference caching") do load_path
 
         @setup_workload begin
             @compile_workload begin
-                autodiff(Reverse, mul, Active, Active(1.0), Active(2.0))
-                autodiff(Forward, mul, Duplicated, Duplicated(1.0, 1.0), Const(2.0))
+                autodiff(ReverseMode{false,InlineABI,false}(), mul, Active, Active(1.0), Active(2.0))
+                # Non-Inline mode uses `@generated` functions and poisons the caller
+                # autodiff(Reverse, mul, Active, Active(1.0), Active(2.0))
+                # autodiff(Forward, mul, Duplicated, Duplicated(1.0, 1.0), Const(2.0))
             end
         end
     end) |> string)
@@ -53,7 +55,8 @@ precompile_test_harness("Inference caching") do load_path
         using InferenceCaching
         using Enzyme
 
-        autodiff(Reverse, InferenceCaching.mul, Active, Active(1.0), Active(2.0))
-        autodiff(Forward, InferenceCaching.mul, Duplicated, Duplicated(1.0, 1.0), Const(2.0))
+        @test autodiff(ReverseMode{false,InlineABI,false}(), InferenceCaching.mul, Active, Active(1.0), Active(2.0)) == ((2.0, 1.0),)
+        # autodiff(Reverse, InferenceCaching.mul, Active, Active(1.0), Active(2.0))
+        # autodiff(Forward, InferenceCaching.mul, Duplicated, Duplicated(1.0, 1.0), Const(2.0))
     end
 end
