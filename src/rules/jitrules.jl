@@ -915,7 +915,19 @@ end
     return body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
 end
 
+function add_into_vec!(val::Base.RefValue, expr, vec, idx_in_vec)
+   val[] = recursive_add(val[], expr, identity, guaranteed_nonactive)
+   nothing
+end
 
+function add_into_vec!(val::T, expr, vec, idx_in_vec) where T
+    if ismutable(vec)
+        @inbounds vec[idx_in_vec] = recursive_add(val, expr, identity, guaranteed_nonactive)
+    else
+        error("Enzyme Mutability Error: Cannot in place to immutable value vec[$idx_in_vec] = $val, vec=$vec")
+    end
+    nothing
+end
 
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
 function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween0}, ::Val{lengths}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, tape, shadowargs, args::Vararg{Annotation, Nargs})::Nothing where {width, dupClosure0, ModifiedBetween0, lengths, FT, tt′, DF, Nargs}
@@ -1049,13 +1061,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
                     end)
                 else
                     val = @inbounds vec[idx_in_vec]
-                    if val isa Base.RefValue
-                        val[] = recursive_add(val[], expr)
-                    elseif ismutable(vec)
-                        @inbounds vec[idx_in_vec] = recursive_add(val, expr, identity, guaranteed_nonactive)
-                    else
-                      error("Enzyme Mutability Error: Cannot in place to immutable value vec[$idx_in_vec] = $val, vec=$vec")
-                    end
+                    add_into_vec!(Base.inferencebarrier(val), expr, vec, idx_in_vec)
                 end
             end
 
