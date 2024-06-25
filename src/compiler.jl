@@ -3655,7 +3655,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
     retT = (!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ?
            Ptr{actualRetType} : actualRetType
-    retTT = typetree(retT, ctx, dl, seen)
+    retTT = (actualRetType <: Tuple && in(Any, actualRetType.parameters)) ? TypeTree() : typetree(retT, ctx, dl, seen)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -4579,6 +4579,8 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
         rt = Nothing
     elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
         rt = Nothing
+    elseif jlrettype <: Tuple && in(Any, jlrettype.parameters)
+        rt = Any
     elseif jlrettype isa Union
         nbytes = 0
         allunbox = for_each_uniontype_small(jlrettype) do jlrettype
