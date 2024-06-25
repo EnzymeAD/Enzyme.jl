@@ -4579,8 +4579,6 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
         rt = Nothing
     elseif Base.isstructtype(jlrettype) && Base.issingletontype(jlrettype) &&isa(jlrettype, DataType)
         rt = Nothing
-    elseif jlrettype <: Tuple && in(Any, jlrettype.parameters)
-        rt = Any
     elseif jlrettype isa Union
         nbytes = 0
         allunbox = for_each_uniontype_small(jlrettype) do jlrettype
@@ -4597,6 +4595,8 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
         else
             rt = Any
         end
+    elseif jlrettype <: Tuple && in(Any, jlrettype.parameters)
+        rt = Any
     elseif !GPUCompiler.deserves_retbox(jlrettype)
         lRT = convert(LLVMType, jlrettype )
         if !isa(lRT, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, lRT)
