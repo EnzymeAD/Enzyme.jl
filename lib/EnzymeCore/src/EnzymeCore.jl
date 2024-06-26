@@ -4,7 +4,7 @@ export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWi
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
 export MixedDuplicated, BatchMixedDuplicated
-export DefaultABI, FFIABI, InlineABI
+export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 
 function batch_size end
@@ -196,6 +196,12 @@ struct FFIABI <: ABI end
 Inlining function call ABI. 
 """
 struct InlineABI <: ABI end
+"""
+    struct NonGenABI <: ABI
+
+Non-generated function ABI. 
+"""
+struct NonGenABI <: ABI end
 const DefaultABI = FFIABI
 
 """

@@ -247,9 +247,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         eltype(A)    
     end
 
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+
     if A <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
-            forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
+            forward, adjoint = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args...)
             tape = res[1]
             if ReturnPrimal
@@ -279,9 +281,9 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             args = seed_complex_args(seen, seen2, args...)
             tt′   = vaTypeof(args...)
 
-            thunk = Enzyme.Compiler.thunk(Val(world), typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+            thunk = Enzyme.Compiler.thunk(opt_mi, Val(world), typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 
-            results = thunk(f, args..., (rt(0), rt(1), rt(im)))
+            results = thunk(opt_mi, f, args..., (rt(0), rt(1), rt(im)))
 
             # compute the correct complex derivative in reverse mode by propagating the conjugate return values
             # then subtracting twice the imaginary component to get the correct result
@@ -301,7 +303,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Reverse-mode Active Complex return is ambiguous and requires more information to specify the desired result. See https://enzyme.mit.edu/julia/stable/faq/#Complex-numbers for more details."))
     end
 
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    thunk = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt))
@@ -412,7 +414,9 @@ f(x) = x*x
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
     world = codegen_world_age(Core.Typeof(f.val), tt)
 
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+
+    thunk = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
     thunk(f, args...)
 end
@@ -612,7 +616,9 @@ result, ∂v, ∂A
     if !(A <: Const)
         @assert ReturnShadow
     end
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    tt′ = Tuple{args...}
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+    Enzyme.Compiler.thunk(opt_mi, Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 end
 
 """
@@ -674,7 +680,9 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
         
     world = codegen_world_age(eltype(FA), tt)
     
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+    tt′ = Tuple{args...}
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+    Enzyme.Compiler.thunk(opt_mi, Val(world), FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
 end
 
 @inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
@@ -699,7 +707,8 @@ end
    
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), TT) : nothing
+    nondef = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     TapeType = EnzymeRules.tape_type(nondef[1])
     return TapeType
 end
@@ -1225,7 +1234,8 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
     World = Val(nothing)
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -1233,7 +1243,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     end
 
     tmp = ntuple(num) do i
@@ -1264,7 +1274,8 @@ end
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : nothing
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
