@@ -3655,7 +3655,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
     retT = (!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ?
            Ptr{actualRetType} : actualRetType
-    retTT = (actualRetType <: Tuple && in(Any, actualRetType.parameters)) ? TypeTree() : typetree(retT, ctx, dl, seen)
+    retTT = (!isa(actualRetType, Union) && actualRetType <: Tuple && in(Any, actualRetType.parameters)) ? TypeTree() : typetree(retT, ctx, dl, seen)
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
