@@ -103,6 +103,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
     "ijl_gf_invoke_lookup_worlds", "jl_gf_invoke_lookup_worlds",
     "ijl_gc_get_total_bytes", "jl_gc_get_total_bytes",
@@ -183,6 +184,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
     "ijl_gf_invoke_lookup_worlds", "jl_gf_invoke_lookup_worlds",
     "ijl_gc_get_total_bytes", "jl_gc_get_total_bytes",
@@ -3258,7 +3260,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("jl_excstack_state","ijl_excstack_state")
+    for fname in ("jl_excstack_state","ijl_excstack_state", "ijl_field_index", "jl_field_index")
         if haskey(fns, fname)
             fn = fns[fname]
             if LLVM.version().major <= 15
