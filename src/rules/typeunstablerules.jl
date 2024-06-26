@@ -606,7 +606,7 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
     RT = Core.Typeof(res)
 
     actreg = active_reg_nothrow(RT, Val(nothing))
-    if actreg == ActiveState || isconst
+    if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
         else
@@ -623,6 +623,16 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
+            end)...))
+            return fval
+        end
+    elseif isconst
+        if length(dptrs) == 0
+            return make_zero(res)
+        else
+            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                make_zero(res)
             end)...))
             return fval
         end
@@ -648,7 +658,7 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
     end
     RT = Core.Typeof(res)
     actreg = active_reg_nothrow(RT, Val(nothing))
-    if actreg == ActiveState || isconst
+    if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
         else
@@ -665,6 +675,16 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname+1))
+            end)...))
+            return fval
+        end
+    elseif isconst
+        if length(dptrs) == 0
+            return make_zero(res)::Any
+        else
+            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                make_zero(res)
             end)...))
             return fval
         end
