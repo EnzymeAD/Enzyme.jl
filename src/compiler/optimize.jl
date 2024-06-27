@@ -1940,7 +1940,7 @@ function optimize!(mod::LLVM.Module, tm)
 @static if isdefined(LLVM, :cpu_features!)
         LLVM.cpu_features!(pm)
 else
-@staticif isdefined(GPUCompiler, :cpu_features!)
+@static if isdefined(GPUCompiler, :cpu_features!)
         GPUCompiler.cpu_features!(pm)
 end
 end
