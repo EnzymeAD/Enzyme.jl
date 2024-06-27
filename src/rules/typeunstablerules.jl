@@ -606,7 +606,7 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
     RT = Core.Typeof(res)
 
     actreg = active_reg_nothrow(RT, Val(nothing))
-    if actreg == ActiveState
+    if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
         else
@@ -623,6 +623,16 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
+            end)...))
+            return fval
+        end
+    elseif isconst
+        if length(dptrs) == 0
+            return make_zero(res)
+        else
+            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                make_zero(res)
             end)...))
             return fval
         end
@@ -648,7 +658,7 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
     end
     RT = Core.Typeof(res)
     actreg = active_reg_nothrow(RT, Val(nothing))
-    if actreg == ActiveState
+    if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
         else
@@ -659,12 +669,22 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
         end
     elseif actreg == MixedState
         if length(dptrs) == 0
-            return Ref{RT}(res)::Any
+            return Ref{RT}(res)
         else
             fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
                 Base.@_inline_meta
                 dv = dptrs[i]
                 Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname+1))
+            end)...))
+            return fval
+        end
+    elseif isconst
+        if length(dptrs) == 0
+            return make_zero(res)::Any
+        else
+            fval = NT((res, (ntuple(Val(length(dptrs))) do i
+                Base.@_inline_meta
+                make_zero(res)
             end)...))
             return fval
         end
@@ -858,7 +878,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, orig))))
+    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[2]))))
 
     for v in inps[2:end]
         push!(vals, v)
@@ -944,7 +964,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, orig))))
+    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[2]))))
 
     for v in inps[2:end]
         push!(vals, v)
@@ -1037,7 +1057,7 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, orig))))
+    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[1]))))
 
     for v in inps[2:end]
         push!(vals, v)
@@ -1125,7 +1145,7 @@ function jl_nthfield_rev(B, orig, gutils, tape)
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, orig))))
+    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[1]))))
 
     for v in inps[2:end]
         push!(vals, v)

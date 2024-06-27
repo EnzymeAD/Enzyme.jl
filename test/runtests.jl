@@ -2327,7 +2327,35 @@ end
 
     adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
     @test adres[1][4] ≈ 5050.0
+    
+    mutable struct MyTypeM
+       x::Float64
+       y
+    end
 
+    @noinline function unstable_mul(x, y)
+        return (x*y)::Float64
+    end
+
+    function gf3(y, v::MyTypeM, fld::Symbol)
+       x = getfield(v, fld)
+       unstable_mul(x, y)
+    end
+
+    function gf3(y, v::MyTypeM, fld::Integer)
+       x = getfield_idx(v, fld)
+       unstable_mul(x, y)
+    end
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(0))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
 end
 
 
