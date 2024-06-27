@@ -455,7 +455,7 @@ end
 
 
 """
-    maxtypeoffset!(val::Bool)
+    maxtypeoffset!(val::Int)
 
 Enzyme runs a type analysis to deduce the corresponding types of all values being
 differentiated. This is necessary to compute correct derivatives of various values.
@@ -472,7 +472,7 @@ function maxtypeoffset!(val)
 end
 
 """
-    maxtypedepth!(val::Bool)
+    maxtypedepth!(val::Int)
 
 Enzyme runs a type analysis to deduce the corresponding types of all values being
 differentiated. This is necessary to compute correct derivatives of various values.
