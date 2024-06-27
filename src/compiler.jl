@@ -6748,27 +6748,27 @@ end
 
         run_enzyme = true
 
-        if rrt == Union{}
+        A2 = if rrt == Union{}
             run_enzyme = false
-            A = Const
+            Const
+	else
+	    A
         end
         
-        if run_enzyme && !(A <: Const) && guaranteed_const_nongen(rrt, World)
-			estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-            return quote
-				error($estr)
-			end
+        if run_enzyme && !(A2 <: Const) && guaranteed_const_nongen(rrt, World)
+	    estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
+            return error(estr)
         end
 
         rt2 = if !run_enzyme
             Const{rrt}
-        elseif A isa UnionAll
-            A{rrt}
+        elseif A2 isa UnionAll
+            A2{rrt}
         else
             @assert A isa DataType
             # Can we relax this condition?
             # @assert eltype(A) == rrt
-            A
+            A2
         end
        
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
