@@ -1937,8 +1937,12 @@ function optimize!(mod::LLVM.Module, tm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         dce!(pm)
-@static if isdefined(GPUCompiler, :cpu_features!)
+@static if isdefined(LLVM, :cpu_features!)
+        LLVM.cpu_features!(pm)
+else
+@staticif isdefined(GPUCompiler, :cpu_features!)
         GPUCompiler.cpu_features!(pm)
+end
 end
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
