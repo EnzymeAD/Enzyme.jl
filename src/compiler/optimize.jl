@@ -2205,6 +2205,9 @@ function post_optimze!(mod, tm, machine=true)
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
     end
+    for f in collect(functions(mod))
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
     out_error = Ref{Cstring}()
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
         throw(LLVM.LLVMException("broken gc calling conv fix\n"*string(unsafe_string(out_error[]))*"\n"*string(mod)))
