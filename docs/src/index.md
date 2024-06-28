@@ -216,7 +216,9 @@ Unlike [`autodiff`](@ref) and [`gradient`](@ref), a mode is not specified. Here,
 julia> f(x) = sin(x[1] * x[2]);
 
 julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
-
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
 ```
 
 Enzyme also provides an in-place variant which will store the hessian vector product in a pre-allocated array (this will, however, still allocate another array for storing an intermediate gradient).
@@ -229,6 +231,9 @@ julia> res = Vector{Float64}(undef, 2);
 julia> hvp!(res, f, [2.0, 3.0], [5.0, 2.7]);
 
 julia> res
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
 ```
 
 Finally. Enzyme provides a second in-place variant which simultaneously computes both the hessian vector product, and the gradient. This function uses no additional allocation, and is much more efficient than separately computing the hvp and the gradient.
@@ -243,6 +248,12 @@ julia> grad = Vector{Float64}(undef, 2);
 julia> hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
 
 julia> res
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
 
 julia> grad
+2-element Vector{Float64}:
+ 2.880510859951098
+ 1.920340573300732
 ```
