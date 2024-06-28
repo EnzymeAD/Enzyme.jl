@@ -1294,14 +1294,13 @@ f(x) = sin(x[1] * x[2])
 hvp(f, [2.0, 3.0], [5.0, 2.7])
 
 # output
-
-2×2 Matrix{Float64}:
- 3.0  2.0
- 0.0  1.0
+(var"1" = [19.69268826373025, 16.201003759768003],)
 ```
 """
 @inline function hvp(f::F, x::X, v::X) where {F, X}
-    return Enzyme.autodiff(Forward, gradient_deferred, Const(Reverse), Const(f), Duplicated(x, v))
+    res = make_zero(x)
+    hvp!(res, f, x, v)
+    return res
 end
 
 
@@ -1326,16 +1325,13 @@ hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
 
 res
 # output
-
-2×2 Matrix{Float64}:
- 3.0  2.0
- 0.0  1.0
+(var"1" = [19.69268826373025, 16.201003759768003],)
 ```
 """
 
 @inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Const(f), DuplicatedNoNeed(x, res), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
@@ -1372,7 +1368,7 @@ res, grad
 
 @inline function hvp_and_gradient!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Const(f), Duplicated(x, res), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(x, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
