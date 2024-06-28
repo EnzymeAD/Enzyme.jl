@@ -1288,7 +1288,7 @@ See [`hvp!`](@ref) for a version which stores the result in an existing buffer a
 
 Example:
 
-```jldoctest; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
+```jldoctest hvp; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 f(x) = sin(x[1] * x[2])
 
 hvp(f, [2.0, 3.0], [5.0, 2.7])
@@ -1319,7 +1319,7 @@ See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the g
 
 Example:
 
-```jldoctest; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
+```jldoctest hvpip; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 f(x) = sin(x[1] * x[2])
 
 res = Vector{Float64}(undef, 2)
@@ -1354,7 +1354,7 @@ In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, 
 
 Example:
 
-```jldoctest; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
+```jldoctest hvp_and_gradient; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 f(x) = sin(x[1] * x[2])
 
 res = Vector{Float64}(undef, 2)
