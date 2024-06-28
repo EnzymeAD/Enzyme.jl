@@ -411,6 +411,8 @@ end
 
 abssum(x) = sum(abs2, x);
 
+mulsin(x) = sin(x[1] * x[2])
+
 @testset "Type inference" begin
     x = ones(10)
     @inferred autodiff(Enzyme.Reverse, abssum, Duplicated(x,x))
@@ -440,6 +442,11 @@ abssum(x) = sum(abs2, x);
     @inferred gradient(Reverse, abssum, tx)
     @inferred gradient(Forward, abssum, tx)
 
+    @inferred hvp(mulsin, [2.0, 3.0], [5.0, 2.7])
+
+    @inferred hvp!(zeros(2), mulsin, [2.0, 3.0], [5.0, 2.7])
+
+    @inferred hvp_and_gradient!(zeros(2), zeros(2), mulsin, [2.0, 3.0], [5.0, 2.7])
 end
 
 include("usermixed.jl")
