@@ -20,7 +20,7 @@ export batch_size, get_func
 import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 
-export jacobian, gradient, gradient!
+export jacobian, gradient, gradient!, hvp, hvp!, hvp!!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -1007,6 +1007,22 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
     end
 end
 
+"""
+    gradient_deferred(::ReverseMode, f, x)
+
+Like [`gradient`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
+    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        dx = Ref(make_zero(x))
+        autodiff_deferred(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
+        return dx
+    end
+end
 
 """
     gradient!(::ReverseMode, dx, f, x)
@@ -1033,6 +1049,18 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 @inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
     make_zero!(dx)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
+    dx
+end
+
+
+"""
+    gradient_deferred!(::ReverseMode, f, x)
+
+Like [`gradient!`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+    make_zero!(dx)
+    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
@@ -1248,6 +1276,101 @@ end
     end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
+
+"""
+    hvp(f::F, x::X, v::X) where {F, X}
+
+Compute the Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+
+In other words, compute hessian(f)(x) * v
+
+Example:
+
+```jldoctest
+f(x) = sin(x[1] * x[2])
+
+result = hvp(f, [2.0, 3.0])
+
+# output
+
+2×2 Matrix{Float64}:
+ 3.0  2.0
+ 0.0  1.0
+```
+"""
+@inline function hvp(f::F, x::X, v::X) where {F, X}
+    return Enzyme.autodiff(Forward, gradient_deferred, Const(Reverse), Duplicated(x, y))
+end
+
+
+"""
+    hvp!(res::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+The result will be stored into `res`. The function still allocates and zero's a buffer to store the intermediate gradient.
+
+In other words, compute res .= hessian(f)(x) * v
+
+Example:
+
+```jldoctest
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+hvp!(res, f, [2.0, 3.0])
+
+res
+# output
+
+2×2 Matrix{Float64}:
+ 3.0  2.0
+ 0.0  1.0
+```
+"""
+
+@inline function hvp!(res::X, f::F, x::X, v::Y) where {F, X}
+    grad = make_zero(x)
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(x, res), Duplicated(x, y))
+    return nothing
+end
+
+
+
+"""
+    hvp!!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v` as well as
+the gradient, storing the gradient into `grad`. Both the hessian vector product and the gradient can be computed together more efficiently
+than computing them separately.
+
+The result will be stored into `res`. The gradient will be stored into `grad`.
+
+In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, f)(x)
+
+Example:
+
+```jldoctest
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+grad = Vector{Float64}(undef, 2)
+hvp!!(res, grad, f, [2.0, 3.0])
+
+res, grad
+# output
+
+2×2 Matrix{Float64}:
+ 3.0  2.0
+ 0.0  1.0
+```
+"""
+
+@inline function hvp!!(res::X, f::F, x::X, v::Y) where {F, X}
+    grad = make_zero(x)
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Duplicated(x, res), Duplicated(x, y))
+    return nothing
+end
+
 
 function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 
