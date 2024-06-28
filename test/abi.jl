@@ -442,4 +442,21 @@ abssum(x) = sum(abs2, x);
 
 end
 
+struct ByRefStruct
+    x::Vector{Float64}
+    v::Vector{Float64}
+end
+
+@noinline function byrefg(bref)
+    return bref.x[1] .+ bref.v[1]
+end
+function byrefs(x, v)
+    byrefg(ByRefStruct(x, v))
+end
+
+@testset "Batched byref struct" begin
+
+    Enzyme.autodiff(Forward, byrefs, BatchDuplicated([1.0], ([1.0], [1.0])), BatchDuplicated([1.0], ([1.0], [1.0]) ) )
+end
+
 include("usermixed.jl")
