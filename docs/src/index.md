@@ -135,7 +135,7 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 (400.0, (var"1" = -800.0, var"2" = 400.0))
 ```
 
-## Convenience functions
+## Jacobian Convenience functions
 
 !!! note
     While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
@@ -201,4 +201,46 @@ julia> # Again, the optinal chunk size argument allows us to use vector forward 
 2×2 Matrix{Float64}:
  -400.0  200.0
     2.0    1.0
+```
+
+## Hessian Vector Product Convenience functions
+
+!!! note
+    While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
+
+Key convenience functions for common derivative computations are [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
+
+```jldoctest hvp
+julia> f(x) = sin(x[1] * x[2]);
+
+julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
+
+```
+
+Enzyme also provides an in-place variant which will store the hessian vector product in a pre-allocated array (this will, however, still allocate another array for storing an intermediate gradient).
+
+```jldoctest hvp2
+julia> f(x) = sin(x[1] * x[2])
+
+julia> res = Vector{Float64}(undef, 2);
+
+julia> hvp!(res, f, [2.0, 3.0], [5.0, 2.7]);
+
+julia> res
+```
+
+Finally. Enzyme provides a second in-place variant which simultaneously computes both the hessian vector product, and the gradient. This function uses no additional allocation, and is much more efficient than separately computing the hvp and the gradient.
+
+```jldoctest hvp3
+julia> f(x) = sin(x[1] * x[2]);
+
+julia> res = Vector{Float64}(undef, 2);
+
+julia> grad = Vector{Float64}(undef, 2);
+
+julia> hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+
+julia> res
+
+julia> grad
 ```

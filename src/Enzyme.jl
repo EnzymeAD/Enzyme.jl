@@ -20,7 +20,7 @@ export batch_size, get_func
 import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 
-export jacobian, gradient, gradient!, hvp, hvp!, hvp!!
+export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -1289,7 +1289,7 @@ Example:
 ```jldoctest
 f(x) = sin(x[1] * x[2])
 
-result = hvp(f, [2.0, 3.0])
+hvp(f, [2.0, 3.0], [5.0, 2.7])
 
 # output
 
@@ -1299,7 +1299,7 @@ result = hvp(f, [2.0, 3.0])
 ```
 """
 @inline function hvp(f::F, x::X, v::X) where {F, X}
-    return Enzyme.autodiff(Forward, gradient_deferred, Const(Reverse), Duplicated(x, y))
+    return Enzyme.autodiff(Forward, gradient_deferred, Const(Reverse), Const(f), Duplicated(x, v))
 end
 
 
@@ -1317,7 +1317,7 @@ Example:
 f(x) = sin(x[1] * x[2])
 
 res = Vector{Float64}(undef, 2)
-hvp!(res, f, [2.0, 3.0])
+hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
 
 res
 # output
@@ -1328,16 +1328,16 @@ res
 ```
 """
 
-@inline function hvp!(res::X, f::F, x::X, v::Y) where {F, X}
+@inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(x, res), Duplicated(x, y))
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Const(f), DuplicatedNoNeed(x, res), Duplicated(x, v))
     return nothing
 end
 
 
 
 """
-    hvp!!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+    hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
 
 Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v` as well as
 the gradient, storing the gradient into `grad`. Both the hessian vector product and the gradient can be computed together more efficiently
@@ -1354,7 +1354,7 @@ f(x) = sin(x[1] * x[2])
 
 res = Vector{Float64}(undef, 2)
 grad = Vector{Float64}(undef, 2)
-hvp!!(res, grad, f, [2.0, 3.0])
+hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
 
 res, grad
 # output
@@ -1365,9 +1365,9 @@ res, grad
 ```
 """
 
-@inline function hvp!!(res::X, f::F, x::X, v::Y) where {F, X}
+@inline function hvp_and_gradient!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Duplicated(x, res), Duplicated(x, y))
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), Const(f), Duplicated(x, res), Duplicated(x, v))
     return nothing
 end
 
