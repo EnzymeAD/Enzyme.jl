@@ -135,12 +135,12 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 (400.0, (var"1" = -800.0, var"2" = 400.0))
 ```
 
-## Jacobian Convenience functions
+## Gradient Convenience functions
 
 !!! note
     While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
 
-Key convenience functions for common derivative computations are [`gradient`](@ref) (and its inplace variant [`gradient!`](@ref)) and [`jacobian`](@ref).
+Key convenience functions for common derivative computations are [`gradient`](@ref) (and its inplace variant [`gradient!`](@ref)).
 Like [`autodiff`](@ref), the mode (forward or reverse) is determined by the first argument.
 
 The functions [`gradient`](@ref) and [`gradient!`](@ref) compute the gradient of function with vector input and scalar return.
@@ -174,7 +174,10 @@ julia> # in forward mode, we can also optionally pass a chunk size
 (-400.0, 200.0)
 ```
 
+## Jacobian Convenience functions
+
 The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
+Like [`autodiff`](@ref) and [`gradient`](@ref), the mode (forward or reverse) is determined by the first argument.
 
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
@@ -205,10 +208,9 @@ julia> # Again, the optinal chunk size argument allows us to use vector forward 
 
 ## Hessian Vector Product Convenience functions
 
-!!! note
-    While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
+Enzyme provides convenience functions for second-order derivative computations, like [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
 
-Key convenience functions for common derivative computations are [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
+Unlike [`autodiff`](@ref) and [`gradient`](@ref), a mode is not specified. Here, Enzyme will choose to perform forward over reverse mode (generally the fastest for this type of operation).
 
 ```jldoctest hvp
 julia> f(x) = sin(x[1] * x[2]);

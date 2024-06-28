@@ -1294,7 +1294,9 @@ f(x) = sin(x[1] * x[2])
 hvp(f, [2.0, 3.0], [5.0, 2.7])
 
 # output
-(var"1" = [19.69268826373025, 16.201003759768003],)
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
 ```
 """
 @inline function hvp(f::F, x::X, v::X) where {F, X}
@@ -1325,7 +1327,9 @@ hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
 
 res
 # output
-(var"1" = [19.69268826373025, 16.201003759768003],)
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
 ```
 """
 
@@ -1366,9 +1370,8 @@ res, grad
 ```
 """
 
-@inline function hvp_and_gradient!(res::X, f::F, x::X, v::X) where {F, X}
-    grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(x, res), Const(f), Duplicated(x, v))
+@inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
