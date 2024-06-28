@@ -5,8 +5,8 @@ import EnzymeCore
 import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 
-import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
-export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
+import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI, NonGenABI
+export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI, NonGenABI
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
@@ -239,7 +239,6 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    world = codegen_world_age(Core.Typeof(f.val), tt)
     
     rt = if A isa UnionAll
         Core.Compiler.return_type(f.val, tt)
@@ -247,7 +246,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         eltype(A)    
     end
 
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f.val), tt))
+    end
 
     if A <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
@@ -412,9 +415,12 @@ f(x) = x*x
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    world = codegen_world_age(Core.Typeof(f.val), tt)
 
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f.val), tt))
+    end
 
     thunk = Enzyme.Compiler.thunk(opt_mi, FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
@@ -610,14 +616,16 @@ result, ∂v, ∂A
     end
 
     tt    = Tuple{map(eltype, args)...}
-        
-    world = codegen_world_age(eltype(FA), tt)
     
     if !(A <: Const)
         @assert ReturnShadow
     end
     tt′ = Tuple{args...}
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(eltype(FA), tt))
+    end
     Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 end
 
@@ -677,11 +685,13 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(eltype, args)...}
-        
-    world = codegen_world_age(eltype(FA), tt)
     
     tt′ = Tuple{args...}
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(eltype(FA), tt))
+    end
     Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
 end
 
@@ -706,8 +716,11 @@ end
     TT = Tuple{args...}
    
     primal_tt = Tuple{map(eltype, args)...}
-    world = codegen_world_age(eltype(FA), primal_tt)
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), TT) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), TT)
+    else
+        Val(codegen_world_age(eltype(FA), primal_tt))
+    end
     nondef = Enzyme.Compiler.thunk(opt_mi, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
     TapeType = EnzymeRules.tape_type(nondef[1])
     return TapeType
@@ -1229,12 +1242,14 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
-    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    World = Val(nothing)
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f), tt))
+    end
     primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     
     if num * chunk == n_out_val
@@ -1270,11 +1285,14 @@ end
     @assert !ReturnPrimal
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
-    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    opt_mi = RABI <: NonGenABI ? Compiler.fspec(eltype(FA), tt′) : Val(world)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f), tt))
+    end
     primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
