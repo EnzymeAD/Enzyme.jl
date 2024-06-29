@@ -642,6 +642,125 @@ end
 
     f10(x) = hypot(x, 2x)
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
+    @test autodiff(Forward, f10, Duplicated(2.0, 1.0))[1]   == sqrt(5)
+
+    f11(x) = x * sum(LinRange(x, 10.0, 6))
+    @test autodiff(Reverse, f11, Active, Active(2.0))[1][1] == 42
+    @test autodiff(Forward, f11, Duplicated(2.0, 1.0))[1]   == 42
+
+    f12(x, k) = get(Dict(1 => 1.0, 2 => x, 3 => 3.0), k, 1.0)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(2))[1] == (1.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(2))    == (1.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(3))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(3))    == (0.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(4))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(4))    == (0.0,)
+
+    f13(x) = muladd(x, 3, x)
+    @test autodiff(Reverse, f13, Active, Active(2.0))[1][1] == 4
+    @test autodiff(Forward, f13, Duplicated(2.0, 1.0))[1]   == 4
+
+    f14(x) = x * cmp(x, 3)
+    @test autodiff(Reverse, f14, Active, Active(2.0))[1][1] == -1
+    @test autodiff(Forward, f14, Duplicated(2.0, 1.0))[1]   == -1
+
+    f15(x) = x * argmax([1.0, 3.0, 2.0])
+    @test autodiff(Reverse, f15, Active, Active(3.0))[1][1] == 2
+    @test autodiff(Forward, f15, Duplicated(3.0, 1.0))[1]   == 2
+
+    f16(x) = evalpoly(2, (1, 2, x))
+    @test autodiff(Reverse, f16, Active, Active(3.0))[1][1] == 4
+    @test autodiff(Forward, f16, Duplicated(3.0, 1.0))[1]   == 4
+
+    f17(x) = @evalpoly(2, 1, 2, x)
+    @test autodiff(Reverse, f17, Active, Active(3.0))[1][1] == 4
+    @test autodiff(Forward, f17, Duplicated(3.0, 1.0))[1]   == 4
+
+    f18(x) = widemul(x, 5.0f0)
+    @test autodiff(Reverse, f18, Active, Active(2.0f0))[1][1] == 5
+    @test autodiff(Forward, f18, Duplicated(2.0f0, 1.0f0))[1] == 5
+
+    f19(x) = copysign(x, -x)
+    @test autodiff(Reverse, f19, Active, Active(2.0))[1][1] == -1
+    @test autodiff(Forward, f19, Duplicated(2.0, 1.0))[1]   == -1
+
+    f20(x) = sum([ifelse(i > 5, i, zero(i)) for i in [x, 2x, 3x, 4x]])
+    @test autodiff(Reverse, f20, Active, Active(2.0))[1][1] == 7
+    @test autodiff(Forward, f20, Duplicated(2.0, 1.0))[1]   == 7
+
+    function f21(x)
+        nt = (a=x, b=2x, c=3x)
+        return nt.c
+    end
+    @test autodiff(Reverse, f21, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f21, Duplicated(2.0, 1.0))[1]   == 3
+
+    f22(x) = sum(fill(x, (3, 3)))
+    @test autodiff(Reverse, f22, Active, Active(2.0))[1][1] == 9
+    @test autodiff(Forward, f22, Duplicated(2.0, 1.0))[1]   == 9
+
+    function f23(x)
+        a = similar(rand(3, 3))
+        fill!(a, x)
+        return sum(a)
+    end
+    @test autodiff(Reverse, f23, Active, Active(2.0))[1][1] == 9
+    @test autodiff(Forward, f23, Duplicated(2.0, 1.0))[1]   == 9
+
+    function f24(x)
+        try
+            return 3x
+        catch
+            return 2x
+        end
+    end
+    @test autodiff(Reverse, f24, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f24, Duplicated(2.0, 1.0))[1]   == 3
+
+    function f25(x)
+        try
+            sqrt(-1.0)
+            return 3x
+        catch
+            return 2x
+        end
+    end
+    # Gives 0.0 on Julia 1.6, see #971
+    @static if VERSION ≥ v"1.8-"
+        @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+        @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    else
+        @test_broken autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+        @test_broken autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    end
+
+    f26(x) = circshift([1.0, 2x, 3.0], 1)[end]
+    @test autodiff(Reverse, f26, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f26, Duplicated(2.0, 1.0))[1]   == 2
+
+    f27(x) = sum(diff([0.0 x; 1.0 2x]; dims=2))
+    @test autodiff(Reverse, f27, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f27, Duplicated(2.0, 1.0))[1]   == 3
+
+    f28(x) = repeat([x 3x], 3)[2, 2]
+    @test autodiff(Reverse, f28, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f28, Duplicated(2.0, 1.0))[1]   == 3
+
+    f29(x) = rot180([x 2x; 3x 4x], 3)[1, 1]
+    @test autodiff(Reverse, f29, Active, Active(2.0))[1][1] == 4
+    @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1]   == 4
+
+    f30(x) = x * sum(trues(4, 3))
+    @test autodiff(Reverse, f30, Active, Active(2.0))[1][1] == 12
+    @test autodiff(Forward, f30, Duplicated(2.0, 1.0))[1]   == 12
+
+    f31(x) = sum(Set([1.0, x, 2x, x]))
+    @test autodiff(Reverse, f31, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f31, Duplicated(2.0, 1.0))[1]   == 3
+
+    f32(x) = reverse([x 2.0 3x])[1]
+    @test autodiff(Reverse, f32, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f32, Duplicated(2.0, 1.0))[1]   == 3
 end
 
 function deadarg_pow(z::T, i) where {T<:Real}
@@ -688,6 +807,14 @@ end
     tonest(x,y) = (x + y)^2
 
     @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+
+    f_nest(x) = 2 * x^4
+    deriv(f, x) = first(first(autodiff_deferred(Reverse, f, Active(x))))
+    f′(x) = deriv(f_nest, x)
+    f′′(x) = deriv(f′, x)
+
+    @test f′(2.0)  == 64
+    @test f′′(2.0) == 96
 end
 
 @testset "Hessian" begin
@@ -744,33 +871,30 @@ end
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 
-    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
-    @static if VERSION ≥ v"1.8-"
-        function f1(m)
-            s = 0.0
-            for (i, col) in enumerate(eachcol(m))
-                s += i * sum(col)
-            end
-            return s
+    function f1(m)
+        s = 0.0
+        for (i, col) in enumerate(eachcol(m))
+            s += i * sum(col)
         end
-
-        m = Float64[1 2 3; 4 5 6; 7 8 9]
-        dm = zero(m)
-        autodiff(Reverse, f1, Active, Duplicated(m, dm))
-        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
-
-        function f2(m)
-            s = 0.0
-            for (i, col) in enumerate(eachrow(m))
-                s += i * sum(col)
-            end
-            return s
-        end
-
-        dm = zero(m)
-        autodiff(Reverse, f2, Active, Duplicated(m, dm))
-        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+        return s
     end
+
+    m = Float64[1 2 3; 4 5 6; 7 8 9]
+    dm = zero(m)
+    autodiff(Reverse, f1, Active, Duplicated(m, dm))
+    @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+    function f2(m)
+        s = 0.0
+        for (i, col) in enumerate(eachrow(m))
+            s += i * sum(col)
+        end
+        return s
+    end
+
+    dm = zero(m)
+    autodiff(Reverse, f2, Active, Duplicated(m, dm))
+    @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
 
     function my_conv_3(x, w)
         y = zeros(Float64, 2, 3, 4, 5)
