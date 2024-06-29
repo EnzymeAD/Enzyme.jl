@@ -21,6 +21,7 @@ while length(args) > 0
     global args
     global branch
     global source_dir
+    global BUILD_TYPE
     if length(args) >= 2 && args[1] == "--branch"
         branch = args[2]
         args = (args[3:end]...,)
@@ -84,7 +85,7 @@ LLVM_DIR = joinpath(LLVM.artifact_dir, "lib", "cmake", "llvm")
 LLVM_VER_MAJOR = Base.libllvm_version.major
 
 # Build!
-@info "Building" source_dir scratch_dir LLVM_DIR
+@info "Building" source_dir scratch_dir LLVM_DIR BUILD_TYPE
 run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
 
 if BCLoad

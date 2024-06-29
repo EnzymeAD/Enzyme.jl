@@ -771,6 +771,7 @@ EnzymeAttributeKnownFunctions(f) = ccall((:EnzymeAttributeKnownFunctions, libEnz
 EnzymeAnonymousAliasScopeDomain(str, ctx) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScopeDomain, libEnzyme), LLVM.API.LLVMMetadataRef, (Cstring,LLVMContextRef), str, ctx))
 EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(ccall((:EnzymeAnonymousAliasScope, libEnzyme), LLVM.API.LLVMMetadataRef, (LLVM.API.LLVMMetadataRef,Cstring), dom.ref, str))
 EnzymeFixupJuliaCallingConvention(f) = ccall((:EnzymeFixupJuliaCallingConvention, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
+EnzymeFixupBatchedJuliaCallingConvention(f) = ccall((:EnzymeFixupBatchedJuliaCallingConvention, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
 
 e_extract_value!(builder, AggVal, Index, Name::String="") =
   GC.@preserve Index begin
