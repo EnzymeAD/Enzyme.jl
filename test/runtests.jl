@@ -207,6 +207,19 @@ end
 
     z4 = sin
     Enzyme.make_zero!(z4)
+    
+    struct Dense
+        n_inp::Int
+        b::Vector{Float64}
+    end
+
+    function Dense(n)
+        Dense(n, rand(n))
+    end
+
+    nn = Dense(4)
+    Enzyme.make_zero!(nn)
+    @test nn.b ≈ [0.0, 0.0, 0.0, 0.0]
 end
 
 @testset "Reflection" begin

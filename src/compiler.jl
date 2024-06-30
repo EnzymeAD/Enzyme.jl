@@ -1573,7 +1573,7 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(seen, prev)
+    if in(prev, seen)
         return
     end
     @assert !Base.isabstracttype(T)
