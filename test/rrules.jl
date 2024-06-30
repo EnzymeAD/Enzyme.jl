@@ -345,5 +345,38 @@ end
     @test cl.v[1] ≈ 0.0
 end
 
+
+function times2(wt_y)
+    return wt_y*2
+end
+function EnzymeRules.augmented_primal(config, ::Const{typeof(times2)}, FA, x)
+    return EnzymeRules.AugmentedReturn(2*x.val, nothing, nothing)
+end
+function EnzymeRules.reverse(config, ::Const{typeof(times2)}, FA, tape, arg)
+    return (46.7*FA.val,)
+end
+
+
+function times2_ar(x)
+	n = length(x)
+    res = Vector{Float64}(undef, n)
+	i = 1
+	while true
+        @inbounds res[i] = @inbounds times2(@inbounds x[i])
+		if i == n
+			break
+		end
+		i+=1
+    end
+    return res[3]::Float64
+end
+
+@testset "Zero diffe result" begin
+    vals = [2.7, 5.6, 7.8, 12.2]
+    dvals = zero(vals)
+    Enzyme.autodiff(Reverse, times2_ar, Duplicated(vals, dvals))
+    @test dvals ≈ [0., 0., 46.7, 0.]
+end
+
 include("mixedrrule.jl")
 end # ReverseRules
