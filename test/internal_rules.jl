@@ -413,6 +413,21 @@ end
     end
 end
 
+function chol_upper(x)
+	x = reshape(x, 4, 4)
+	x = parent(cholesky(Hermitian(x)).U)
+	x = convert(typeof(x), UpperTriangular(x))
+	return x[1,2]
+end
+
+@testset "Cholesky upper triangular" begin
+	x = [1.0, -0.10541615131279458, 0.6219810761363638, 0.293343219811946, -0.10541615131279458, 1.0, -0.05258941747718969, 0.34629296878264443, 0.6219810761363638, -0.05258941747718969, 1.0, 0.4692436399208845, 0.293343219811946, 0.34629296878264443, 0.4692436399208845, 1.0]
+
+    @test collect(Enzyme.gradient(Forward, chol_upper, x)) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    @test_broken Enzyme.gradient(Reverse, chol_upper, x) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+end
+
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))

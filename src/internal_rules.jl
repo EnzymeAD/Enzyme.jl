@@ -744,6 +744,32 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
+function _cholesky_forward(C::Cholesky, Ȧ)
+    # Computes the cholesky forward mode update rule
+    # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
+    if C.uplo === 'U'
+        U = C.U
+        U̇ = Ȧ / U
+        ldiv!(U', U̇)
+        idx = diagind(U̇)
+        U̇[idx] ./= 2
+        triu!(U̇)
+        rmul!(U̇, U)
+        U̇ .+= UpperTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
+        return Cholesky(U̇, 'U', C.info)
+    else
+        L = C.L
+        L̇ = L \ Ȧ
+        rdiv!(L̇, L')
+        idx = diagind(L̇)
+        L̇[idx] ./= 2
+        tril!(L̇)
+        lmul!(L, L̇)
+        L̇ .+= LowerTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
+        return Cholesky(L̇, 'L', C.info)
+    end
+end
+
 function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
     fact = cholesky(A.val; kwargs...)
     if RT <: Const
@@ -756,7 +782,7 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
         dA = if isa(A, Const)
             ntuple(Val(N)) do i
                 Base.@_inline_meta
-                zeros(A.val)
+                zero(A.val)
             end
         else
             if N == 1
@@ -768,9 +794,7 @@ function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
 
         dfact = ntuple(Val(N)) do i
             Base.@_inline_meta
-            Cholesky(
-                Matrix(fact.L * LowerTriangular(invL * dA[i] * invL' * 0.5 * I)), 'L', 0
-            )
+            return _cholesky_forward(fact, dA[i])
         end
 
         if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
@@ -788,49 +812,41 @@ end
 # ->
 # B(out) = inv(A) B(in)
 # dB(out) = inv(A) [ dB(in) - dA B(out) ]
-function EnzymeRules.forward(
-        func::Const{typeof(ldiv!)},
-        RT::Type,
-        fact::Annotation{<:Cholesky},
-        B;
-        kwargs...
-)
-    if isa(B, Const)
-        @assert (RT <: Const)
+function EnzymeRules.forward(func::Const{typeof(ldiv!)},
+                             RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
+                             fact::Annotation{<:Cholesky},
+                             B::Annotation{<:AbstractVecOrMat};
+                             kwargs...)
+    if B isa Const
         return func.val(fact.val, B.val; kwargs...)
     else
         N = width(B)
+        retval = B.val
 
-        @assert !isa(B, Const)
+        L = fact.val.L
+        U = fact.val.U
 
-        retval = if !isa(fact, Const) || (RT <: Const) || (RT <: Duplicated) || (RT <: BatchDuplicated)
-            func.val(fact.val, B.val; kwargs...)
-        else
-            nothing
+        ldiv!(L, B.val)
+        ntuple(Val(N)) do b
+            Base.@_inline_meta
+            dB = N == 1 ? B.dval : B.dval[b]
+            if !(fact isa Const)
+                dL = N == 1 ? fact.dval.L : fact.dval[b].L
+                mul!(dB, dL, B.val, -1, 1)
+            end
+            ldiv!(L, dB)
         end
 
+        ldiv!(U, B.val)
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
-
-            dB = if N == 1
-                B.dval
-            else
-                B.dval[b]
+            dB = N == 1 ? B.dval : B.dval[b]
+            if !(fact isa Const)
+                dU = N == 1 ? fact.dval.U : fact.dval[b].U
+                mul!(dB, dU, B.val, -1, 1)
             end
-
-            if !isa(fact, Const)
-
-                dfact = if N == 1
-                    fact.dval
-                else
-                    fact.dval[b]
-                end
-                
-                tmp = dfact.U * retval
-                mul!(dB, dfact.L, tmp, -1, 1)
-            end
-
-            func.val(fact.val, dB; kwargs...)
+            ldiv!(U, dB)
+            return dB
         end
 
         if RT <: Const
