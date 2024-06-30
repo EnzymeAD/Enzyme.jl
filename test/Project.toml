@@ -2,6 +2,8 @@
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+DifferentiationInterfaceTest = "a82114a7-5aa3-49a8-9643-716bb13727a3"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
