@@ -136,282 +136,68 @@ end
 end
 
 @static if VERSION > v"1.8"
-@testset "Cholesky" begin
-    function symmetric_definite(n :: Int=10)
-        α = one(Float64)
-        A = spdiagm(-1 => α * ones(n-1), 0 => 4 * ones(n), 1 => conj(α) * ones(n-1))
-        b = A * Float64[1:n;]
-        return A, b
-    end
-
-    function divdriver_NC(x, fact, b)
-        res = fact\b
-        x .= res
-        return nothing
-    end
-    
-    function ldivdriver_NC(x, fact, b)
-        ldiv!(fact,b)
-        x .= b
-        return nothing
-    end
-
-    function divdriver(x, A, b)
-        fact = cholesky(A)
-        divdriver_NC(x, fact, b)
-    end
-
-    function divdriver_herm(x, A, b)
-        fact = cholesky(Hermitian(A))
-        divdriver_NC(x, fact, b)
-    end
-
-    function divdriver_sym(x, A, b)
-        fact = cholesky(Symmetric(A))
-        divdriver_NC(x, fact, b)
-    end
-    
-    function ldivdriver(x, A, b)
-        fact = cholesky(A)
-        ldivdriver_NC(x, fact, b)
-    end
-
-    function ldivdriver_herm(x, A, b)
-        fact = cholesky(Hermitian(A))
-        ldivdriver_NC(x, fact, b)
-    end
-
-    function ldivdriver_sym(x, A, b)
-        fact = cholesky(Symmetric(A))
-        ldivdriver_NC(x, fact, b)
-    end
-
-    # Test forward
-    function fwdJdxdb(driver, A, b)
-        adJ = zeros(size(A))
-        dA = Duplicated(A, zeros(size(A)))
-        db = Duplicated(b, zeros(length(b)))
-        dx = Duplicated(zeros(length(b)), zeros(length(b)))
-        for i in 1:length(b)
-            copyto!(dA.val, A)
-            copyto!(db.val, b)
-            fill!(dA.dval, 0.0)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
-            db.dval[i] = 1.0
-            Enzyme.autodiff(
-                Forward,
-                driver,
-                dx,
-                dA,
-                db
-            )
-            adJ[i, :] = dx.dval
+    @testset "cholesky" begin
+        activities = (Const, Duplicated, BatchDuplicated)
+        function _square(A)
+            S = A * adjoint(A)
+            S[diagind(S)] .= real.(S[diagind(S)]) # workaround for issue #1456:
+            return S
         end
-        return adJ
+        @testset for (Te, TSs) in (
+            Float64 => (Symmetric, Hermitian),
+            ComplexF64 => (Hermitian,),
+        ), TA in activities, Tret in activities
+            @testset "without wrapper arguments" begin
+                A = rand(Te, 5, 5)
+                are_activities_compatible(Tret, TA) || continue
+                test_forward(cholesky ∘ _square, Tret, (A, TA))
+                test_reverse(cholesky ∘ _square, Tret, (A, TA))
+            end
+            @testset "with wrapper arguments" for TS in TSs, uplo in (:U, :L)
+                _A = collect(exp(TS(I + rand(Te, 5, 5))))
+                A = TS(_A, uplo)
+                are_activities_compatible(Tret, TA) || continue
+                test_forward(cholesky, Tret, (A, TA); fdm=FiniteDifferences.forward_fdm(5, 1))
+                test_reverse(cholesky, Tret, (A, TA))
+            end
+        end
     end
 
-    function const_fwdJdxdb(driver, A, b)
-        adJ = zeros(length(b), length(b))
-        db = Duplicated(b, zeros(length(b)))
-        dx = Duplicated(zeros(length(b)), zeros(length(b)))
-        for i in 1:length(b)
-            copyto!(db.val, b)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
-            db.dval[i] = 1.0
-            Enzyme.autodiff(
-                Forward,
-                driver,
-                dx,
-                Const(A),
-                db
-            )
-            adJ[i, :] = dx.dval
+    @testset "Linear solve for `Cholesky`" begin
+        activities = (Const, Duplicated, DuplicatedNoNeed, BatchDuplicated,
+                      BatchDuplicatedNoNeed)
+        @testset for Te in (Float64, ComplexF64), uplo in ('L', 'U')
+            C = Cholesky(I + rand(Te, 5, 5), uplo, 0) # add `I` for numerical stability
+            B = rand(Te, 5, 5)
+            b = rand(Te, 5)
+            @testset for TC in activities,
+                         TB in activities,
+                         Tret in (Const, Duplicated, BatchDuplicated)
+
+                @testset "$(size(_B))" for _B in (B, b)
+                    are_activities_compatible(Tret, TC, TB) || continue
+                    # Non-uniform activities are disabled due to unresolved questions
+                    # see https://github.com/EnzymeAD/Enzyme.jl/issues/1411
+                    Tret == TC == TB || continue
+                    test_forward(\, Tret, (C, TC), (_B, TB))
+                    test_reverse(\, Tret, (C, TC), (_B, TB))
+                end
+            end
+            @testset for TC in activities,
+                         TB in activities,
+                         Tret in (Const, Duplicated, BatchDuplicated)
+
+                @testset "$(size(_B))" for _B in (B, b)
+                    are_activities_compatible(Tret, TC, TB) || continue
+                    # Non-uniform activities are disabled due to unresolved questions
+                    # see https://github.com/EnzymeAD/Enzyme.jl/issues/1411
+                    Tret == TC == TB || continue
+                    test_forward(ldiv!, Tret, (C, TC), (_B, TB))
+                    test_reverse(ldiv!, Tret, (C, TC), (_B, TB))
+                end
+            end
         end
-        return adJ
     end
-
-    function batchedfwdJdxdb(driver, A, b)
-        n = length(b)
-        function seed(i)
-            x = zeros(n)
-            x[i] = 1.0
-            return x
-        end
-        adJ = zeros(size(A))
-        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
-        db = BatchDuplicated(b, ntuple(i -> seed(i), n))
-        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> zeros(length(b)), n))
-        Enzyme.autodiff(
-            Forward,
-            driver,
-            dx,
-            dA,
-            db
-        )
-        for i in 1:n
-            adJ[i, :] = dx.dval[i]
-        end
-        return adJ
-    end
-
-    # Test reverse
-    function revJdxdb(driver, A, b)
-        adJ = zeros(size(A))
-        dA = Duplicated(A, zeros(size(A)))
-        db = Duplicated(b, zeros(length(b)))
-        dx = Duplicated(zeros(length(b)), zeros(length(b)))
-        for i in 1:length(b)
-            copyto!(dA.val, A)
-            copyto!(db.val, b)
-            fill!(dA.dval, 0.0)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
-            dx.dval[i] = 1.0
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                dA,
-                db
-            )
-            adJ[i, :] = db.dval
-        end
-        return adJ
-    end
-
-    function const_revJdxdb(driver, A, b)
-        adJ = zeros(length(b), length(b))
-        db = Duplicated(b, zeros(length(b)))
-        dx = Duplicated(zeros(length(b)), zeros(length(b)))
-        for i in 1:length(b)
-            copyto!(db.val, b)
-            fill!(db.dval, 0.0)
-            fill!(dx.dval, 0.0)
-            dx.dval[i] = 1.0
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                Const(A),
-                db
-            )
-            adJ[i, :] = db.dval
-        end
-        return adJ
-    end
-
-    function batchedrevJdxdb(driver, A, b)
-        n = length(b)
-        function seed(i)
-            x = zeros(n)
-            x[i] = 1.0
-            return x
-        end
-        adJ = zeros(size(A))
-        dA = BatchDuplicated(A, ntuple(i -> zeros(size(A)), n))
-        db = BatchDuplicated(b, ntuple(i -> zeros(length(b)), n))
-        dx = BatchDuplicated(zeros(length(b)), ntuple(i -> seed(i), n))
-            Enzyme.autodiff(
-                Reverse,
-                driver,
-                dx,
-                dA,
-                db
-            )
-        for i in 1:n
-            adJ[i, :] .= db.dval[i]
-        end
-        return adJ
-    end
-
-    function Jdxdb(driver, A, b)
-        x = A\b
-        dA = zeros(size(A))
-        db = zeros(length(b))
-        J = zeros(length(b), length(b))
-        for i in 1:length(b)
-            db[i] = 1.0
-            dx = A\db
-            db[i] = 0.0
-            J[i, :] = dx
-        end
-        return J
-    end
-
-    function JdxdA(driver, A, b)
-        db = zeros(length(b))
-        J = zeros(length(b), length(b))
-        for i in 1:length(b)
-            db[i] = 1.0
-            dx = A\db
-            db[i] = 0.0
-            J[i, :] = dx
-        end
-        return J
-    end
-    
-    @testset "Testing $op" for (op, driver, driver_NC) in (
-        (:\, divdriver, divdriver_NC),
-        (:\, divdriver_herm, divdriver_NC),
-        (:\, divdriver_sym, divdriver_NC),
-        (:ldiv!, ldivdriver, ldivdriver_NC),
-        (:ldiv!, ldivdriver_herm, ldivdriver_NC),
-        (:ldiv!, ldivdriver_sym, ldivdriver_NC)
-    )
-        A, b = symmetric_definite(10)
-        n = length(b)
-        A = Matrix(A)
-        x = zeros(n)
-        x = driver(x, A, b)
-        fdm = forward_fdm(2, 1);
-
-        function b_one(b)
-            _x = zeros(length(b))
-            driver(_x,A,b)
-            return _x
-        end
-
-        fdJ = op==:\ ? FiniteDifferences.jacobian(fdm, b_one, copy(b))[1] : nothing
-        fwdJ = fwdJdxdb(driver, A, b)
-        revJ = revJdxdb(driver, A, b)
-        batchedrevJ = batchedrevJdxdb(driver, A, b)
-        batchedfwdJ = batchedfwdJdxdb(driver, A, b)
-        J = Jdxdb(driver, A, b)
-
-        if op == :\
-            @test isapprox(fwdJ, fdJ)
-        end
-
-        @test isapprox(fwdJ, revJ)
-        @test isapprox(fwdJ, batchedrevJ)
-        @test isapprox(fwdJ, batchedfwdJ)
-
-        fwdJ = const_fwdJdxdb(driver_NC, cholesky(A), b)
-        revJ = const_revJdxdb(driver_NC, cholesky(A), b)
-        if op == :\
-            @test isapprox(fwdJ, fdJ)
-        end
-        @test isapprox(fwdJ, revJ)
-
-        function h(A, b)
-            C = cholesky(A)
-            b2 = copy(b)
-            ldiv!(C, b2)
-            @inbounds b2[1]
-        end
-
-        A = [1.3 0.5; 0.5 1.5]
-        b = [1., 2.]
-        V = [1.0 0.0; 0.0 0.0]
-        dA = zero(A)
-        Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
-
-        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
-        @test isapprox(dA, dA_sym)
-    end
-end
 
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
