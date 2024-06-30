@@ -362,7 +362,7 @@ function times2_ar(x)
     res = Vector{Float64}(undef, n)
 	i = 1
 	while true
-        @inbounds res[i] = @inbounds ti2(@inbounds x[i])
+        @inbounds res[i] = @inbounds times2(@inbounds x[i])
 		if i == n
 			break
 		end
