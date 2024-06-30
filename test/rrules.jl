@@ -352,7 +352,7 @@ end
 function EnzymeRules.augmented_primal(config, ::Const{typeof(times2)}, FA, x)
     return EnzymeRules.AugmentedReturn(2*x.val, nothing, nothing)
 end
-function EnzymeRules.reverse(config, ::Const{typeof(ti2)}, FA, tape, arg)
+function EnzymeRules.reverse(config, ::Const{typeof(times2)}, FA, tape, arg)
     return (46.7*FA.val,)
 end
 
