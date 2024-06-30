@@ -31,6 +31,9 @@ function jlcall_fwd(B, orig, gutils, normalR, shadowR)
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_fwd(2, B, orig, gutils, normalR, shadowR)
+        end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
         end
@@ -68,6 +71,9 @@ function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f__svec_rev", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+        end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
@@ -113,6 +119,10 @@ function jlcall_rev(B, orig, gutils, tape)
         end
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             common_f_svec_ref_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            common_finalizer_rev(2, B, orig, gutils, tape)
             return nothing
         end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
@@ -460,6 +470,54 @@ function arrayreshape_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function arrayreshape_rev(B, orig, gutils, tape)
+    return nothing
+end
+
+function gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 )
+        return true
+    end
+    
+    origops = LLVM.operands(orig)
+    if is_constant_value(gutils, origops[1])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)")
+    end
+    if is_constant_value(gutils, origops[2])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(2)")
+    end
+
+    width = get_width(gutils)
+
+    shadowin1 = invert_pointer(gutils, origops[1], B)
+    shadowin2 = invert_pointer(gutils, origops[2], B)
+    if width == 1
+        args = LLVM.Value[shadowin1, shadowin2]
+        shadowres = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx in 1:width
+            args = LLVM.Value[
+                              extract_value!(B, shadowin1, idx-1)
+                              extract_value!(B, shadowin2, idx-1)
+                              ]
+            tmp = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+            shadowres = insert_value!(B, shadowres, tmp, idx-1)
+        end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+
+	return false
+end
+
+function gcloaded_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+end
+
+function gcloaded_rev(B, orig, gutils, tape)
     return nothing
 end
 
@@ -1103,7 +1161,7 @@ function finalizer_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -1117,9 +1175,9 @@ function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    # err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    # newo = new_from_original(gutils, orig)
-    # API.moveBefore(newo, err, B)
+    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -1172,7 +1230,18 @@ macro fwdfunc(f)
     ))
 end
 
+
+macro diffusefunc(f)
+   :(@cfunction((OrigCI, gutils, val, shadow, mode, useDefault) -> begin
+     res = $f(LLVM.CallInst(OrigCI), GradientUtils(gutils), LLVM.Value(val), shadow != 0, mode)::Tuple{Bool, Bool}
+     unsafe_store!(useDefault, UInt8(res[2]))
+     UInt8(res[1])
+    end, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
+    ))
+end
+
 @noinline function register_llvm_rules()
+    API.EnzymeRegisterDiffUseCallHandler("enzyme_custom", @diffusefunc(enzyme_custom_diffuse))
     register_handler!(
         ("julia.call",),
         @augfunc(jlcall_augfwd),
@@ -1184,6 +1253,12 @@ end
         @augfunc(jlcall2_augfwd),
         @revfunc(jlcall2_rev),
         @fwdfunc(jlcall2_fwd),
+    )
+    register_handler!(
+        ("julia.gc_loaded",),
+        @augfunc(gcloaded_augfwd),
+        @revfunc(gcloaded_rev),
+        @fwdfunc(gcloaded_fwd),
     )
     register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),

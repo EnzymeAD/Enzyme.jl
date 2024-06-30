@@ -69,7 +69,7 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
 
     dx = zero(x)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
-    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
 
     dx_fwd = map(eachindex(x)) do i
         dx = zero(x)
@@ -77,7 +77,7 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
         ∂x = autodiff(Forward, f, Duplicated(x, dx))
         isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
     end
-    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Forward, f), dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
 Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false)
@@ -137,8 +137,12 @@ end
     @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Tuple{Any,Int64}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Tuple{S,Int64} where S, (), Base.get_world_counter()) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
+    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
@@ -181,6 +185,28 @@ end
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
+    #
+    z = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z)
+    @test z[1] ≈ [0.0, 0.0, 0.0]
+    @test z[2][1] == 0
+    @test z[2][2] == 1
+    @test z[3] ≈ [0.0, 0.0]
+    
+    z2 = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z2)
+    @test z2[1] ≈ [0.0, 0.0, 0.0]
+    @test z2[2][1] == 0
+    @test z2[2][2] == 1
+    @test z2[3] ≈ [0.0, 0.0]
+    
+    z3 = [3.4, "foo"]
+    Enzyme.make_zero!(z3)
+    @test z3[1] ≈ 0.0
+    @test z3[2] == "foo"
+
+    z4 = sin
+    Enzyme.make_zero!(z4)
 end
 
 @testset "Reflection" begin
@@ -1647,6 +1673,40 @@ end
 
 end
 
+
+function batchgf(out, args)
+	res = 0.0
+    x = Base.inferencebarrier((args[1][1],))
+	for v in x
+		v = v::Float64
+		res += v
+        break
+	end
+    out[] = res
+	nothing
+end
+
+@testset "Batch Getfield" begin
+    x = [(2.0, 3.0)]
+    dx = [(0.0, 0.0)]
+    dx2 = [(0.0, 0.0)]
+    dx3 = [(0.0, 0.0)]
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(3.0)
+    dout3 = Ref(5.0)
+    Enzyme.autodiff(Reverse, batchgf, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
+    @test dx[1][1] ≈ 1.0
+    @test dx[1][2] ≈ 0.0
+    @test dx2[1][1] ≈ 3.0
+    @test dx2[1][2] ≈ 0.0
+    @test dx3[1][1] ≈ 5.0
+    @test dx2[1][2] ≈ 0.0
+end
+
+include("mixed.jl")
+include("applyiter.jl")
+
 @testset "Dynamic Val Construction" begin
 
     dyn_f(::Val{D}) where D = prod(D)
@@ -2062,6 +2122,65 @@ end
     end
 end
 
+function bc0_test_function(ps)
+    z = view(ps, 26:30)
+    C = Matrix{Float64}(undef, 5, 1)
+    C .= z
+    return C[1]
+end
+
+@noinline function bc1_bcs2(x, y)
+    x != y && error(2)
+    return x
+end
+
+@noinline function bc1_affine_normalize(x::AbstractArray)
+    _axes = bc1_bcs2(axes(x), axes(x))
+    dest = similar(Array{Float32}, _axes)
+    bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(Base.broadcasted(+, x, x)))
+    copyto!(dest, bc)
+    return x
+end
+
+function bc1_loss_function(x)
+    return bc1_affine_normalize(x)[1]
+end
+
+function bc2_affine_normalize(::typeof(identity), x::AbstractArray, xmean, xvar,
+    scale::AbstractArray, bias::AbstractArray, epsilon::Real)
+    _scale = @. scale / sqrt(xvar + epsilon)
+    _bias = @. bias - xmean * _scale
+    return @. x * _scale + _bias
+end
+
+function bc2_loss_function(x, scale, bias)
+    x_ = reshape(x, 6, 6, 3, 2, 2)
+    scale_ = reshape(scale, 1, 1, 3, 2, 1)
+    bias_ = reshape(bias, 1, 1, 3, 2, 1)
+
+    xmean = mean(x_, dims=(1, 2, 5))
+    xvar = var(x_, corrected=false, mean=xmean, dims=(1, 2, 5))
+
+    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
+end
+
+@static if VERSION ≥ v"1.8-"
+@testset "Broadcast noalias" begin
+
+    x = ones(30)
+    autodiff(Reverse, bc0_test_function, Active, Const(x))
+    
+    x = rand(Float32, 2, 3)
+    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+
+    x = rand(Float32, 6, 6, 6, 2)
+    sc = rand(Float32, 6)
+    bi = rand(Float32, 6)
+    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+end
+end
+
 @testset "GetField" begin
     mutable struct MyType
        x::Float64
@@ -2175,6 +2294,68 @@ end
     @test mt2.y ≈ 6.0
     @test dmt2.x ≈ 1.2
     @test dmt2.y ≈ 2.4
+
+    function sf_for2(v, fld, fld2, x)
+       setfield!(v, fld, 0.0)
+       for i in 1:100
+            setfield!(v, fld2, getfield(v, fld)::Float64 + x * i)
+       end
+       return getfield(v, fld)::Float64
+    end
+
+    mt2 = MyType2(0.0, 0.0)
+    dmt2 = MyType2(0.0, 0.0)
+
+    adres = Enzyme.autodiff(Reverse, sf_for2, Duplicated(mt2, dmt2), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+
+    mutable struct MyType3
+       x::Base.RefValue{Float64}
+       y::Base.RefValue{Float64}
+    end
+
+    function sf_for3(v, fld, fld2, x)
+       setfield!(v, fld, Ref(0.0))
+       for i in 1:100
+            setfield!(v, fld2, Base.Ref((getfield(v, fld)::Base.RefValue{Float64})[] + x * i))
+       end
+       return (getfield(v, fld)::Base.RefValue{Float64})[]
+    end
+
+    mt3 = MyType3(Ref(0.0), Ref(0.0))
+    dmt3 = MyType3(Ref(0.0), Ref(0.0))
+
+    adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+    
+    mutable struct MyTypeM
+       x::Float64
+       y
+    end
+
+    @noinline function unstable_mul(x, y)
+        return (x*y)::Float64
+    end
+
+    function gf3(y, v::MyTypeM, fld::Symbol)
+       x = getfield(v, fld)
+       unstable_mul(x, y)
+    end
+
+    function gf3(y, v::MyTypeM, fld::Integer)
+       x = getfield_idx(v, fld)
+       unstable_mul(x, y)
+    end
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(0))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
 end
 
 
@@ -2222,41 +2403,6 @@ end
     GFlogpdf(d, p)
     autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
     Enzyme.API.runtimeActivity!(false)
-end
-
-@testset "apply iterate" begin
-    function mktup(v)
-        tup = tuple(v...)
-        return tup[1][1] * tup[3][1]
-    end
-
-    data = [[3.0], nothing, [2.0]]
-    ddata = [[0.0], nothing, [0.0]]
-
-    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 2.0
-    @test ddata[3][1] ≈ 3.0
-
-    function mktup2(v)
-        tup = tuple(v...)
-        return (tup[1][1] * tup[3])::Float64
-    end
-
-    data = [[3.0], nothing, 2.0]
-    ddata = [[0.0], nothing, 0.0]
-
-    @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
-
-    function mktup3(v)
-        tup = tuple(v..., v...)
-        return tup[1][1] * tup[1][1]
-    end
-
-    data = [[3.0]]
-    ddata = [[0.0]]
-
-    Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 6.0
 end
 
 @testset "BLAS" begin
@@ -2339,6 +2485,15 @@ end
     out = Ref(0.0)
     dout = Ref(1.0)
     @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), Const(true))[1][1]
+end
+
+
+function assured_err(x)
+    throw(AssertionError("foo"))
+end
+
+@testset "UnionAll" begin
+    @test_throws AssertionError Enzyme.autodiff(Reverse, assured_err, Active, Active(2.0))
 end
 
 struct MyFlux
@@ -3016,6 +3171,79 @@ end
         @test res == 2
     end
 end
+
+const CUmemoryPool2 = Ptr{Float64} 
+
+struct CUmemPoolProps2
+    reserved::NTuple{31,Char}
+end
+
+mutable struct CuMemoryPool2
+    handle::CUmemoryPool2
+end
+
+function ccall_macro_lower(func, rettype, types, args, nreq)
+    # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
+    # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
+    # just around the inner ccall
+
+    cconvert_exprs = []
+    cconvert_args = []
+    for (typ, arg) in zip(types, args)
+        var = gensym("$(func)_cconvert")
+        push!(cconvert_args, var)
+        push!(cconvert_exprs, quote
+            $var = Base.cconvert($(esc(typ)), $(esc(arg)))
+        end)
+    end
+
+    unsafe_convert_exprs = []
+    unsafe_convert_args = []
+    for (typ, arg) in zip(types, cconvert_args)
+        var = gensym("$(func)_unsafe_convert")
+        push!(unsafe_convert_args, var)
+        push!(unsafe_convert_exprs, quote
+            $var = Base.unsafe_convert($(esc(typ)), $arg)
+        end)
+    end
+
+    quote
+        $(cconvert_exprs...)
+
+        $(unsafe_convert_exprs...)
+
+        ret = ccall($(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
+                    $(unsafe_convert_args...))
+    end
+end
+
+macro gcsafe_ccall(expr)
+    ccall_macro_lower(Base.ccall_macro_parse(expr)...)
+end
+
+function cuMemPoolCreate2(pool, poolProps)
+    # CUDA.initialize_context()
+    #CUDA.
+    gc_state = @ccall(jl_gc_safe_enter()::Int8)
+    @gcsafe_ccall cuMemPoolCreate(pool::Ptr{CUmemoryPool2},
+                                          poolProps::Ptr{CUmemPoolProps2})::Cvoid
+    @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
+end
+
+function cual()
+        props = Ref(CUmemPoolProps2( 
+            ntuple(i->Char(0), 31)
+        ))
+        handle_ref = Ref{CUmemoryPool2}()
+        cuMemPoolCreate2(handle_ref, props)
+
+        CuMemoryPool2(handle_ref[])
+end
+
+@testset "Unused shadow phi rev" begin
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
 
 const SEED = 42
 const N_SAMPLES = 500

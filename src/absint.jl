@@ -13,11 +13,16 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                              ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                             ("jl_box_char", Char), ("ijl_box_char", Char),
                             )
             if nm == fname
                 v = first(operands(arg))
                 if isa(v, ConstantInt)
-                    return (true, convert(ty, v))
+                    if ty == Char
+                        return (true, Char(convert(Int, v)))
+                    else
+                        return (true, convert(ty, v))
+                    end
                 end
             end
         end
@@ -113,12 +118,11 @@ function absint(arg::LLVM.Value, partial::Bool=false)
         end
         ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
         if ptr == C_NULL
-            # XXX: Is this correct?
-            bt = GPUCompiler.backtrace(arg)
-            btstr = sprint() do io
-                Base.show_backtrace(io, bt)
-            end
-            @error "Found null pointer at\n $btstr" arg
+            # bt = GPUCompiler.backtrace(arg)
+            # btstr = sprint() do io
+            #     Base.show_backtrace(io, bt)
+            # end
+            # @error "Found null pointer at\n $btstr" arg
             return (false, nothing)
         end
         typ = Base.unsafe_pointer_to_objref(ptr)
@@ -144,6 +148,10 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                              ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
                              ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
                              ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
+                             ("jl_box_float32", Float32), ("ijl_box_float32", Float32),
+                             ("jl_box_char", Char), ("ijl_box_char", Char),
+                             ("jl_specializations_get_linfo", Core.MethodInstance), 
+                             ("ijl_specializations_get_linfo", Core.MethodInstance), 
                             )
             if nm == fname
                 return (true, ty)
@@ -221,7 +229,11 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-        	return abs_typeof(operands(arg)[1], partial)
+        	legal, RT = abs_typeof(operands(arg)[1], partial)
+            if legal
+                @assert RT <: Array
+            end
+            return (legal, RT)
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
@@ -284,6 +296,9 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                                     fieldoffset(typ, i+1)
                                 end - offset
                                 if fsize == llsz(value_type(larg))
+                                    if Base.isconcretetype(subT) && is_concrete_tuple(subT) && length(subT.parameters) == 1
+                                        subT = subT.parameters[1]
+                                    end
                                     return (true, subT)
                                 end
                             end
@@ -316,12 +331,17 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
 end
 
 function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
-
     if isa(arg, ConstantExpr)
         ce = arg
 	    while isa(ce, ConstantExpr)
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
+            elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
+                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                    ce = operands(ce)[1]
+                else
+                    break
+                end
 	        else
 	            break
 	        end
@@ -329,7 +349,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	    if isa(ce, LLVM.GlobalVariable)
 	        ce = LLVM.initializer(ce)
 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(flib)[1:(end-1)])))
+	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
 		    end
 
 	    end

@@ -11,13 +11,16 @@ export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
 
+import EnzymeCore: MixedDuplicated, BatchMixedDuplicated
+export MixedDuplicated, BatchMixedDuplicated
+
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 
-export jacobian, gradient, gradient!
+export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -61,6 +64,10 @@ end
         arg = @inbounds args[i]
         if arg isa Active
             return true
+        elseif arg isa MixedDuplicated
+            return true
+        elseif arg isa BatchMixedDuplicated
+            return true
         else
             return false
         end
@@ -71,6 +78,13 @@ end
     return Tuple{(ntuple(Val(N)) do i
         Base.@_inline_meta
         Core.Typeof(args[i])
+    end)...}
+end
+
+@inline function vaEltypes(args::Type{Ty}) where {Ty <: Tuple}
+    return Tuple{(ntuple(Val(length(Ty.parameters))) do i
+        Base.@_inline_meta
+        eltype(Ty.parameters[i])
     end)...}
 end
 
@@ -85,6 +99,10 @@ end
 end
 
 @inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchMixedDuplicated{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchMixedDuplicated{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T,N} =
@@ -230,7 +248,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
 
     if A <: Active
-        if !allocatedinline(rt) || rt isa Union
+        if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args...)
             tape = res[1]
@@ -244,7 +262,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
-    if A <: Active && rt <: Complex
+    if (A <: Active && rt <: Complex) && rt != Union{}
         if Holomorphic
             seen = IdDict()
             seen2 = IdDict()
@@ -834,6 +852,12 @@ result, ∂v, ∂A
         else
             BatchDuplicatedNoNeed{eltype(A2), width}
         end
+    elseif A2 <: MixedDuplicated && width != 1
+        if A2 isa UnionAll
+            BatchMixedDuplicated{T, width} where T
+        else
+            BatchMixedDuplicated{eltype(A2), width}
+        end
     else
         A2
     end
@@ -983,6 +1007,22 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
     end
 end
 
+"""
+    gradient_deferred(::ReverseMode, f, x)
+
+Like [`gradient`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
+    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        dx = Ref(make_zero(x))
+        autodiff_deferred(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
+        return dx
+    end
+end
 
 """
     gradient!(::ReverseMode, dx, f, x)
@@ -1007,8 +1047,20 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 ```
 """
 @inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
-    dx .= 0
+    make_zero!(dx)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
+    dx
+end
+
+
+"""
+    gradient_deferred!(::ReverseMode, f, x)
+
+Like [`gradient!`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+    make_zero!(dx)
+    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
@@ -1224,6 +1276,108 @@ end
     end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
+
+"""
+    hvp(f::F, x::X, v::X) where {F, X}
+
+Compute the Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+
+In other words, compute hessian(f)(x) * v
+
+See [`hvp!`](@ref) for a version which stores the result in an existing buffer and also [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+hvp(f, [2.0, 3.0], [5.0, 2.7])
+
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+@inline function hvp(f::F, x::X, v::X) where {F, X}
+    res = make_zero(x)
+    hvp!(res, f, x, v)
+    return res
+end
+
+
+"""
+    hvp!(res::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+The result will be stored into `res`. The function still allocates and zero's a buffer to store the intermediate gradient, which is
+not returned to the user.
+
+In other words, compute res .= hessian(f)(x) * v
+
+See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvpip; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+
+@inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
+    grad = make_zero(x)
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
+
+
+"""
+    hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v` as well as
+the gradient, storing the gradient into `grad`. Both the hessian vector product and the gradient can be computed together more efficiently
+than computing them separately.
+
+The result will be stored into `res`. The gradient will be stored into `grad`.
+
+In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, f)(x)
+
+Example:
+
+```jldoctest hvp_and_gradient; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+grad = Vector{Float64}(undef, 2)
+hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+grad
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+2-element Vector{Float64}:
+ 2.880510859951098
+ 1.920340573300732
+```
+"""
+
+@inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
 
 function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 

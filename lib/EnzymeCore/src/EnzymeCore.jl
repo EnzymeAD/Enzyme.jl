@@ -3,6 +3,7 @@ module EnzymeCore
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
 
@@ -151,6 +152,32 @@ end
 
 
 """
+    MixedDuplicated(x, ∂f_∂x)
+
+Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
+data which is differentiable. Only used within custom rules.
+"""
+struct MixedDuplicated{T} <: Annotation{T}
+    val::T
+    dval::Base.RefValue{T}
+    @inline MixedDuplicated(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
+end
+
+"""
+    BatchMixedDuplicated(x, ∂f_∂xs)
+
+Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
+for all at once. Only used within custom rules.
+"""
+struct BatchMixedDuplicated{T,N} <: Annotation{T}
+    val::T
+    dval::NTuple{N,Base.RefValue{T}}
+    @inline BatchMixedDuplicated(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+end
+@inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
+@inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
+
+"""
     abstract type ABI
 
 Abstract type for what ABI  will be used.
@@ -227,6 +254,13 @@ function autodiff_deferred_thunk end
     what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
 """
 function make_zero end
+
+"""
+    make_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+
+    Recursively set a variables differentiable fields to zero. Only applicable for mutable types `T`.
+"""
+function make_zero! end
 
 """
     make_zero(prev::T)
