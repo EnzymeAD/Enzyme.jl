@@ -219,7 +219,7 @@ end
 
     nn = Dense(4)
     Enzyme.make_zero!(nn)
-    @test nn.b[3] ≈ [0.0, 0.0, 0.0, 0.0]
+    @test nn.b ≈ [0.0, 0.0, 0.0, 0.0]
 end
 
 @testset "Reflection" begin
