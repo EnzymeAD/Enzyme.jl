@@ -3194,7 +3194,7 @@ GDoubleField() = G{Float64}(0.0, 1.0)
 function fexpandempty(vec)
     x = vec[1]
     empty = []
-    d = G(empty...)
+    d = GDoubleField(empty...)
     return x ≤ d.b ? x * d.b : zero(x)
 end
 
