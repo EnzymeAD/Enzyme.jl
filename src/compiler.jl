@@ -3740,7 +3740,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
     fix_decayaddr!(mod)
-    adjointf = adjointf isa Nothing ? nothing functions(mod)[adjointf_name]
+    adjointf = adjointf isa Nothing ? nothing : functions(mod)[adjointf_name]
     augmented_primalf = augmented_primalf isa Nothing ? nothing : functions(mod)[augmented_primalf_name]
     return adjointf, augmented_primalf, TapeType
 end
