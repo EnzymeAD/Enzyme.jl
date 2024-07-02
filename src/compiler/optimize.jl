@@ -1158,9 +1158,12 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         if isempty(blocks(cur))
             return false
         end
+
+        err_is_readonly = !is_noreturn(cur)
+
         for bb in blocks(cur)
             for inst in instructions(bb)
-                if !mayWriteToMemory(inst; err_is_readonly=true)
+                if !mayWriteToMemory(inst; err_is_readonly)
                     continue
                 end
                 if isa(inst, LLVM.CallInst)
