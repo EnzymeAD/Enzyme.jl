@@ -3200,8 +3200,8 @@ end
 
 @testset "Constant Complex return" begin
     vec = [0.5]
-    @test Enzyme.gradient(Enzyme.Reverse, f, vec)[1] ≈ 1.0
-    @test Enzyme.gradient(Enzyme.Forward, f, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Reverse, fexpandempty, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ 1.0
 end
 
 const CUmemoryPool2 = Ptr{Float64} 
