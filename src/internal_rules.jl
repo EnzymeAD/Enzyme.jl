@@ -774,42 +774,42 @@ function _cholesky_forward(C::Cholesky, Ȧ)
     end
 end
 
-function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
-    fact = cholesky(A.val; kwargs...)
-    if RT <: Const
-        return fact
-    else
-        N = width(RT)
-
-        invL = inv(fact.L)
-
-        dA = if isa(A, Const)
-            ntuple(Val(N)) do i
-                Base.@_inline_meta
-                zero(A.val)
-            end
-        else
-            if N == 1
-                (A.dval,)
-            else
-                A.dval
-            end
-        end
-
-        dfact = ntuple(Val(N)) do i
-            Base.@_inline_meta
-            return _cholesky_forward(fact, dA[i])
-        end
-
-        if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
-            return dfact
-        elseif RT <: Duplicated
-            return Duplicated(fact, dfact[1])
-        else
-            return BatchDuplicated(fact, dfact)
-        end
-    end
-end
+# function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
+#     fact = cholesky(A.val; kwargs...)
+#     if RT <: Const
+#         return fact
+#     else
+#         N = width(RT)
+# 
+#         invL = inv(fact.L)
+# 
+#         dA = if isa(A, Const)
+#             ntuple(Val(N)) do i
+#                 Base.@_inline_meta
+#                 zero(A.val)
+#             end
+#         else
+#             if N == 1
+#                 (A.dval,)
+#             else
+#                 A.dval
+#             end
+#         end
+# 
+#         dfact = ntuple(Val(N)) do i
+#             Base.@_inline_meta
+#             return _cholesky_forward(fact, dA[i])
+#         end
+# 
+#         if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
+#             return dfact
+#         elseif RT <: Duplicated
+#             return Duplicated(fact, dfact[1])
+#         else
+#             return BatchDuplicated(fact, dfact)
+#         end
+#     end
+# end
 
 # y = inv(A) B
 # dY = inv(A) [ dB - dA y ]
@@ -867,62 +867,62 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
     end
 end
 
-function EnzymeRules.augmented_primal(
-    config,
-    func::Const{typeof(cholesky)},
-    RT::Type,
-    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-    kwargs...)
-    fact = if EnzymeRules.needs_primal(config)
-        cholesky(A.val; kwargs...)
-    else
-        nothing
-    end
-
-    # dfact would be a dense matrix, prepare buffer
-    dfact = if RT <: Const
-        nothing
-    else
-        if EnzymeRules.width(config) == 1
-            Enzyme.make_zero(fact)
-        else
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                Enzyme.make_zero(fact)
-            end
-        end
-    end
-    cache = if isa(A, Const)
-        nothing
-    else
-        dfact
-    end
-
-    return EnzymeRules.AugmentedReturn(fact, dfact, cache)
-end
-
-function EnzymeRules.reverse(
-    config,
-    ::Const{typeof(cholesky)},
-    RT::Type,
-    dfact,
-    A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-    kwargs...)
-
-    if !(RT <: Const) && !isa(A, Const)
-        dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
-        dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
-
-        for (dA, dfact) in zip(dAs, dfacts)
-            _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
-            if _dA !== dfact.factors
-                _dA .+= dfact.factors
-                dfact.factors .= 0
-            end
-        end
-    end
-    return (nothing,)
-end
+# function EnzymeRules.augmented_primal(
+#     config,
+#     func::Const{typeof(cholesky)},
+#     RT::Type,
+#     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
+#     kwargs...)
+#     fact = if EnzymeRules.needs_primal(config)
+#         cholesky(A.val; kwargs...)
+#     else
+#         nothing
+#     end
+# 
+#     # dfact would be a dense matrix, prepare buffer
+#     dfact = if RT <: Const
+#         nothing
+#     else
+#         if EnzymeRules.width(config) == 1
+#             Enzyme.make_zero(fact)
+#         else
+#             ntuple(Val(EnzymeRules.width(config))) do i
+#                 Base.@_inline_meta
+#                 Enzyme.make_zero(fact)
+#             end
+#         end
+#     end
+#     cache = if isa(A, Const)
+#         nothing
+#     else
+#         dfact
+#     end
+# 
+#     return EnzymeRules.AugmentedReturn(fact, dfact, cache)
+# end
+# 
+# function EnzymeRules.reverse(
+#     config,
+#     ::Const{typeof(cholesky)},
+#     RT::Type,
+#     dfact,
+#     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
+#     kwargs...)
+# 
+#     if !(RT <: Const) && !isa(A, Const)
+#         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
+#         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
+# 
+#         for (dA, dfact) in zip(dAs, dfacts)
+#             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
+#             if _dA !== dfact.factors
+#                 _dA .+= dfact.factors
+#                 dfact.factors .= 0
+#             end
+#         end
+#     end
+#     return (nothing,)
+# end
 
 
 # y=inv(A) B

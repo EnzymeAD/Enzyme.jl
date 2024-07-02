@@ -3185,6 +3185,30 @@ end
     end
 end
 
+module ConstantComplex
+struct GDoubleField{T}
+    this_field_does_nothing::T
+    b::T
+end
+
+GDoubleField() = G{Float64}(0.0, 1.0)
+function fexpandempty(vec)
+    x = vec[1]
+    empty = []
+    d = G(empty...)
+    return x ≤ d.b ? x * d.b : zero(x)
+end
+
+vec = [0.5]
+
+@testset "Constant Complex return" begin
+    @test Enzyme.gradient(Enzyme.Reverse, f, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Forward, f, vec)[1] ≈ 1.0
+end
+
+end
+
+
 const CUmemoryPool2 = Ptr{Float64} 
 
 struct CUmemPoolProps2

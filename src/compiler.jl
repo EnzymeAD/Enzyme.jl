@@ -5174,11 +5174,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     disableFallback = String[]
 
-    ForwardModeDerivatives = ("nrm2", "dot","gemm","gemv","axpy","copy","scal", "syrk")
-    ReverseModeDerivatives = (#="nrm2",=# "dot","gemm","gemv","axpy","copy","scal", "trmv", "syrk", "trmm", "trsm")
+    ForwardModeDerivatives = ("nrm2", "dot","gemm","gemv","axpy","copy","scal", "syrk", "potrf")
+    ReverseModeDerivatives = ("nrm2","dot","gemm","gemv","axpy","copy","scal", "trmv", "syrk", "trmm", "trsm", "potrf")
+    ForwardModeTypes = ("s", "d", "c", "z")
+    ReverseModeTypes = ("s", "d")
     # Tablegen BLAS does not support forward mode yet
     if !(mode == API.DEM_ForwardMode && Enzyme.API.runtimeActivity())
-        for ty in ("s", "d")
+        for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
             for func in (mode == API.DEM_ForwardMode ? ForwardModeDerivatives : ReverseModeDerivatives)
                 for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
