@@ -786,7 +786,7 @@ end
 
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
-        invalid = LLVM.AddrSpaceCastInst[]
+        invalid = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
             if !isa(inst, LLVM.AddrSpaceCastInst)
                 continue
@@ -815,6 +815,10 @@ function fix_decayaddr!(mod::LLVM.Module)
 							 continue
 						 end
 					 end
+                     if isa(st, LLVM.InsertValueInst)
+                        push!(invalid, st)
+                        continue
+                     end
 					 if !isa(st, LLVM.CallInst)
 						  bt = GPUCompiler.backtrace(st)
 						  msg = sprint() do io::IO
@@ -828,7 +832,7 @@ function fix_decayaddr!(mod::LLVM.Module)
 								  println(io)
 							  end
 						  end
-						  throw(AssertionError(msg))
+					  throw(AssertionError(msg))
                 end
                 
                 fop = operands(st)[end]
