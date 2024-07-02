@@ -3733,15 +3733,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         @assert "Unhandled derivative mode", mode
     end
     API.EnzymeLogicErasePreprocessedFunctions(logic)
-
-    adjointf_name = adjointf isa Nothing ? nothing : name(adjointf)
-    augmented_primalf_name = augmented_primalf isa Nothing ? nothing : name(augmented_primalf)
-    for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
-    end
     fix_decayaddr!(mod)
-    adjointf = adjointf isa Nothing ? nothing functions(mod)[adjointf_name]
-    augmented_primalf = augmented_primalf isa Nothing ? nothing : functions(mod)[augmented_primalf_name]
     return adjointf, augmented_primalf, TapeType
 end
 
