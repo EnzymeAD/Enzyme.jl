@@ -5174,7 +5174,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     disableFallback = String[]
 
-    ForwardModeDerivatives = ("nrm2", "dot","gemm","gemv","axpy","copy","scal", "syrk", "potrf")
+    ForwardModeDerivatives = (#="nrm2",=#"dot","gemm","gemv","axpy","copy","scal", "syrk", "potrf")
     ReverseModeDerivatives = (#="nrm2",=#"dot","gemm","gemv","axpy","copy","scal", "trmv", "syrk", "trmm", "trsm", "potrf")
     ForwardModeTypes = ("s", "d", "c", "z")
     ReverseModeTypes = ("s", "d")
