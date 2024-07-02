@@ -3190,7 +3190,7 @@ struct GDoubleField{T}
     b::T
 end
 
-GDoubleField() = G{Float64}(0.0, 1.0)
+GDoubleField() = GDoubleField{Float64}(0.0, 1.0)
 function fexpandempty(vec)
     x = vec[1]
     empty = []
