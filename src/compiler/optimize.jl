@@ -815,18 +815,18 @@ function fix_decayaddr!(mod::LLVM.Module)
 							 continue
 						 end
 					 end
-                     if isa(st, LLVM.InsertValueInst)
-                        if operands(st)[1] == inst
-                            push!(invalid, st)
-                            LLVM.API.LLVMSetOperand(st, 1-1, LLVM.UndefValue(value_type(inst)))
-                            continue
-                        end
-                        if operands(st)[2] == inst
-                            push!(invalid, st)
-                            LLVM.API.LLVMSetOperand(st, 2-1, LLVM.UndefValue(value_type(inst)))
-                            continue
-                        end
-                     end
+                     # if isa(st, LLVM.InsertValueInst)
+                     #    if operands(st)[1] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 1-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     #    if operands(st)[2] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 2-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     # end
 					 if !isa(st, LLVM.CallInst)
 						  bt = GPUCompiler.backtrace(st)
 						  msg = sprint() do io::IO
