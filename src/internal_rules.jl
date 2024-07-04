@@ -106,6 +106,10 @@ function EnzymeRules.inactive_noinl(::typeof(Base.setindex!), ::IdDict{K, V}, ::
     return nothing
 end
 
+function EnzymeRules.inactive_noinl(::typeof(Base.hasproperty), args...)
+    return nothing
+end
+
 if VERSION >= v"1.9"
     Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = nothing
 end
