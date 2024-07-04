@@ -292,9 +292,13 @@ end
     return (A, A[2])
 end
 
+@noinline function sretf(A2, x, c)
+    x[3] = c * A2[3]
+end
+
 @noinline function batchdecaysret0(x, A, b)
     A2, c = @noinline prt_sret(A)
-    f(A2, x, c)
+    sretf(A2, x, c)
     return nothing
 end
 
