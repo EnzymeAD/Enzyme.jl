@@ -3738,6 +3738,10 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
+    ModulePassManager() do pm
+        dce!(pm)
+        run!(pm, mod)
+    end
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf = augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
