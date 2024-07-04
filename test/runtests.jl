@@ -287,6 +287,30 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
 end
 
+@noinline function prt_sret(A)
+    A[1] *= 2
+    return (A, A[2])
+end
+
+@noinline function batchdecaysret0(x, A, b)
+    A2, c = @noinline prt_sret(A)
+    f(A2, x, c)
+    return nothing
+end
+
+function batchdecaysret(x, A, b)
+    batchdecaysret0(x, A, b)
+    A[2] = 0
+    return nothing
+end
+
+@testset "Batch Reverse sret fix" begin
+    Enzyme.autodiff(Reverse, batchdecaysret,
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))))
+end
+
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 

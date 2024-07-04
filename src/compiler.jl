@@ -3733,7 +3733,14 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         @assert "Unhandled derivative mode", mode
     end
     API.EnzymeLogicErasePreprocessedFunctions(logic)
+    adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
+    augmented_primalfname = augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
+    for f in collect(functions(mod))
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
     fix_decayaddr!(mod)
+    adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
+    augmented_primalf = augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
     return adjointf, augmented_primalf, TapeType
 end
 
