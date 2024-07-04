@@ -103,6 +103,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 end
 
 const nofreefns = Set{String}((
+    "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
     "ijl_gf_invoke_lookup_worlds", "jl_gf_invoke_lookup_worlds",
@@ -184,6 +185,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
     "ijl_gf_invoke_lookup_worlds", "jl_gf_invoke_lookup_worlds",
