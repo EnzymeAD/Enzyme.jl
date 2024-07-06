@@ -287,6 +287,34 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
 end
 
+@noinline function prt_sret(A)
+    A[1] *= 2
+    return (A, A[2])
+end
+
+@noinline function sretf(A2, x, c)
+    x[3] = c * A2[3]
+end
+
+@noinline function batchdecaysret0(x, A, b)
+    A2, c = prt_sret(A)
+    sretf(A2, x, c)
+    return nothing
+end
+
+function batchdecaysret(x, A, b)
+    batchdecaysret0(x, A, b)
+    A[2] = 0
+    return nothing
+end
+
+@testset "Batch Reverse sret fix" begin
+    Enzyme.autodiff(Reverse, batchdecaysret,
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))))
+end
+
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 
@@ -3183,6 +3211,25 @@ end
         @test res isa T
         @test res == 2
     end
+end
+
+struct GDoubleField{T}
+    this_field_does_nothing::T
+    b::T
+end
+
+GDoubleField() = GDoubleField{Float64}(0.0, 1.0)
+function fexpandempty(vec)
+    x = vec[1]
+    empty = []
+    d = GDoubleField(empty...)
+    return x ≤ d.b ? x * d.b : zero(x)
+end
+
+@testset "Constant Complex return" begin
+    vec = [0.5]
+    @test Enzyme.gradient(Enzyme.Reverse, fexpandempty, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ 1.0
 end
 
 const CUmemoryPool2 = Ptr{Float64} 

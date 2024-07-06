@@ -135,6 +135,108 @@ end
     @test dA ≈ (-z * transpose(y))
 end
 
+function chol_lower0(x)
+  c = copy(x)
+  C, info = LinearAlgebra.LAPACK.potrf!('L', c)
+  return c[2,1]
+end
+
+function chol_upper0(x)
+  c = copy(x)
+  C, info = LinearAlgebra.LAPACK.potrf!('U', c)
+  return c[1,2]
+end
+
+@testset "Cholesky PotRF" begin
+    x = reshape([1.0, -0.10541615131279458, 0.6219810761363638, 0.293343219811946, -0.10541615131279458, 1.0, -0.05258941747718969, 0.34629296878264443, 0.6219810761363638, -0.05258941747718969, 1.0, 0.4692436399208845, 0.293343219811946, 0.34629296878264443, 0.4692436399208845, 1.0], 4, 4)
+     dL = zero(x)
+     dL[2, 1] = 1.0
+ 
+     @test Enzyme.gradient(Reverse, chol_lower0, x) ≈  [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0] 
+     
+     @test reshape(collect(Enzyme.gradient(Forward, chol_lower0, x)), 4, 4) ≈  [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0] 
+
+     @test FiniteDifferences.grad(central_fdm(5, 1), chol_lower0, x)[1] ≈ [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     
+     @test reshape(collect(Enzyme.gradient(Forward, chol_upper0, x)), 4, 4) ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     @test Enzyme.gradient(Reverse, chol_upper0, x) ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     @test FiniteDifferences.grad(central_fdm(5, 1), chol_upper0, x)[1] ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+end
+
+
+function tchol_lower(x, row, col)
+    c = copy(x)
+    C, info = LinearAlgebra.LAPACK.potrf!('L', c)
+    return c[row, col]
+end
+function tchol_upper(x, row, col)
+    c = copy(x)
+    C, info = LinearAlgebra.LAPACK.potrf!('U', c)
+    return c[row, col]
+end
+
+@testset "Cholesky PotRF 3x3" begin
+
+    x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
+    for i in 1:size(x, 1)
+        for j in 1:size(x, 2)
+             reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_lower(x, i, j), x)
+             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_lower(x, i, j), x)), size(x))
+             finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_lower(x, i, j), x)[1]
+             @test reverse_grad  ≈ finite_diff 
+             @test forward_grad  ≈ finite_diff 
+             
+             reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_upper(x, i, j), x)
+             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_upper(x, i, j), x)), size(x))
+             finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_upper(x, i, j), x)[1]
+             @test reverse_grad  ≈ finite_diff 
+             @test forward_grad  ≈ finite_diff
+        end
+    end
+end
+
+function tcholsolv_lower(A, B, i)
+    c = copy(B)
+    C, info = LinearAlgebra.LAPACK.potrs!('L', A, c)
+    return c[i]
+end
+function tcholsolv_upper(A, B, i)
+    c = copy(B)
+    C, info = LinearAlgebra.LAPACK.potrs!('U', A, c)
+    return c[i]
+end
+
+@testset "Cholesky PotRS 3x5" begin
+
+    x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
+    for i in 1:15
+         B = [3.1 2.7 5.9 2.4 1.6; 7.9 8.2 1.3 9.4 5.5; 4.7 2.9 9.8 7.1 4.3]
+         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_lower(x, B, i), B)
+         # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_lower(x, B, i), B)), size(B))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_lower(x, B, i), B)[1]
+         @test reverse_grad  ≈ finite_diff 
+         # @test forward_grad  ≈ finite_diff 
+         
+         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_upper(x, B, i), B)
+         # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_upper(x, B, i), B)), size(B))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_upper(x, B, i), B)[1]
+         @test reverse_grad  ≈ finite_diff 
+         # @test forward_grad  ≈ finite_diff
+
+         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_lower(x, B, i), x)
+         #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_lower(x, B, i), x)), size(x))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_lower(x, B, i), x)[1]
+         @test reverse_grad  ≈ finite_diff 
+         #@test forward_grad  ≈ finite_diff 
+         # 
+         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_upper(x, B, i), x)
+         #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_upper(x, B, i), x)), size(x))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_upper(x, B, i), x)[1]
+         @test reverse_grad  ≈ finite_diff 
+         #@test forward_grad  ≈ finite_diff
+    end
+end
+
 @static if VERSION > v"1.8"
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
@@ -396,20 +498,21 @@ end
         @test isapprox(fwdJ, revJ)
 
         function h(A, b)
-            C = cholesky(A)
+            A = copy(A)
+            LinearAlgebra.LAPACK.potrf!('U', A)
             b2 = copy(b)
-            ldiv!(C, b2)
+            LinearAlgebra.LAPACK.potrs!('U', A, b2)
             @inbounds b2[1]
         end
 
         A = [1.3 0.5; 0.5 1.5]
         b = [1., 2.]
-        V = [1.0 0.0; 0.0 0.0]
         dA = zero(A)
         Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
+        # dA_fwd  = Enzyme.gradient(Forward, A->h(A, b), A)
+        dA_fd  = FiniteDifferences.grad(central_fdm(5, 1), A->h(A, b), A)[1]
 
-        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
-        @test isapprox(dA, dA_sym)
+        @test isapprox(dA, dA_fd)
     end
 end
 
@@ -420,14 +523,14 @@ function chol_upper(x)
 	return x[1,2]
 end
 
-@testset "Cholesky upper triangular" begin
+@testset "Cholesky upper triangular v1" begin
 	x = [1.0, -0.10541615131279458, 0.6219810761363638, 0.293343219811946, -0.10541615131279458, 1.0, -0.05258941747718969, 0.34629296878264443, 0.6219810761363638, -0.05258941747718969, 1.0, 0.4692436399208845, 0.293343219811946, 0.34629296878264443, 0.4692436399208845, 1.0]
 
     @test collect(Enzyme.gradient(Forward, chol_upper, x)) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    @test_broken Enzyme.gradient(Reverse, chol_upper, x) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    @test Enzyme.gradient(Reverse, chol_upper, x) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 end
-
+ 
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))

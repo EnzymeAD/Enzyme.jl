@@ -3736,7 +3736,18 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         @assert "Unhandled derivative mode", mode
     end
     API.EnzymeLogicErasePreprocessedFunctions(logic)
+    adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
+    augmented_primalfname = augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
+    for f in collect(functions(mod))
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
+    ModulePassManager() do pm
+        dce!(pm)
+        run!(pm, mod)
+    end
     fix_decayaddr!(mod)
+    adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
+    augmented_primalf = augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
     return adjointf, augmented_primalf, TapeType
 end
 
@@ -5177,11 +5188,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     disableFallback = String[]
 
-    ForwardModeDerivatives = ("nrm2", "dot","gemm","gemv","axpy","copy","scal", "syrk")
-    ReverseModeDerivatives = (#="nrm2",=# "dot","gemm","gemv","axpy","copy","scal", "trmv", "syrk", "trmm", "trsm")
+    ForwardModeDerivatives = ("nrm2","dot","gemm","gemv","axpy","copy","scal", "syrk", "potrf")
+    ReverseModeDerivatives = ("nrm2","dot","gemm","gemv","axpy","copy","scal", "trmv", "syrk", "trmm", "trsm", "potrf")
+    ForwardModeTypes = ("s", "d", "c", "z")
+    ReverseModeTypes = ("s", "d")
     # Tablegen BLAS does not support forward mode yet
     if !(mode == API.DEM_ForwardMode && Enzyme.API.runtimeActivity())
-        for ty in ("s", "d")
+        for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
             for func in (mode == API.DEM_ForwardMode ? ForwardModeDerivatives : ReverseModeDerivatives)
                 for prefix in ("", "cblas_")
                     for ending in ("", "_", "64_", "_64_")
