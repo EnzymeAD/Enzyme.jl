@@ -297,7 +297,7 @@ end
 end
 
 @noinline function batchdecaysret0(x, A, b)
-    A2, c = @noinline prt_sret(A)
+    A2, c = prt_sret(A)
     sretf(A2, x, c)
     return nothing
 end
