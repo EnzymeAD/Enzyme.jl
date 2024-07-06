@@ -748,69 +748,6 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
-function _cholesky_forward(C::Cholesky, Ȧ)
-    # Computes the cholesky forward mode update rule
-    # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
-    if C.uplo === 'U'
-        U = C.U
-        U̇ = Ȧ / U
-        ldiv!(U', U̇)
-        idx = diagind(U̇)
-        U̇[idx] ./= 2
-        triu!(U̇)
-        rmul!(U̇, U)
-        U̇ .+= UpperTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
-        return Cholesky(U̇, 'U', C.info)
-    else
-        L = C.L
-        L̇ = L \ Ȧ
-        rdiv!(L̇, L')
-        idx = diagind(L̇)
-        L̇[idx] ./= 2
-        tril!(L̇)
-        lmul!(L, L̇)
-        L̇ .+= LowerTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
-        return Cholesky(L̇, 'L', C.info)
-    end
-end
-
-# function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
-#     fact = cholesky(A.val; kwargs...)
-#     if RT <: Const
-#         return fact
-#     else
-#         N = width(RT)
-# 
-#         invL = inv(fact.L)
-# 
-#         dA = if isa(A, Const)
-#             ntuple(Val(N)) do i
-#                 Base.@_inline_meta
-#                 zero(A.val)
-#             end
-#         else
-#             if N == 1
-#                 (A.dval,)
-#             else
-#                 A.dval
-#             end
-#         end
-# 
-#         dfact = ntuple(Val(N)) do i
-#             Base.@_inline_meta
-#             return _cholesky_forward(fact, dA[i])
-#         end
-# 
-#         if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
-#             return dfact
-#         elseif RT <: Duplicated
-#             return Duplicated(fact, dfact[1])
-#         else
-#             return BatchDuplicated(fact, dfact)
-#         end
-#     end
-# end
-
 # y = inv(A) B
 # dY = inv(A) [ dB - dA y ]
 # ->
@@ -867,63 +804,6 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
     end
 end
 
-# function EnzymeRules.augmented_primal(
-#     config,
-#     func::Const{typeof(cholesky)},
-#     RT::Type,
-#     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-#     kwargs...)
-#     fact = if EnzymeRules.needs_primal(config)
-#         cholesky(A.val; kwargs...)
-#     else
-#         nothing
-#     end
-# 
-#     # dfact would be a dense matrix, prepare buffer
-#     dfact = if RT <: Const
-#         nothing
-#     else
-#         if EnzymeRules.width(config) == 1
-#             Enzyme.make_zero(fact)
-#         else
-#             ntuple(Val(EnzymeRules.width(config))) do i
-#                 Base.@_inline_meta
-#                 Enzyme.make_zero(fact)
-#             end
-#         end
-#     end
-#     cache = if isa(A, Const)
-#         nothing
-#     else
-#         dfact
-#     end
-# 
-#     return EnzymeRules.AugmentedReturn(fact, dfact, cache)
-# end
-# 
-# function EnzymeRules.reverse(
-#     config,
-#     ::Const{typeof(cholesky)},
-#     RT::Type,
-#     dfact,
-#     A::Annotation{<:Union{Matrix,LinearAlgebra.RealHermSym{<:Real,<:Matrix}}};
-#     kwargs...)
-# 
-#     if !(RT <: Const) && !isa(A, Const)
-#         dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
-#         dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
-# 
-#         for (dA, dfact) in zip(dAs, dfacts)
-#             _dA = dA isa LinearAlgebra.RealHermSym ? dA.data : dA
-#             if _dA !== dfact.factors
-#                 _dA .+= dfact.factors
-#                 dfact.factors .= 0
-#             end
-#         end
-#     end
-#     return (nothing,)
-# end
-
 
 # y=inv(A) B
 #   dA −= z y^T
@@ -933,79 +813,79 @@ end
 # B(out)=inv(A) B(in)
 #   dA −= z B(out)^T
 #   dB = z, where  z = inv(A^T) dB
-function EnzymeRules.augmented_primal(
-        config,
-        func::Const{typeof(ldiv!)},
-        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
-
-        A::Annotation{<:Cholesky},
-        B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-        kwargs...
-)
-    func.val(A.val, B.val; kwargs...)
-
-    cache_Bout = if !isa(A, Const) && !isa(B, Const)
-        if EnzymeRules.overwritten(config)[3]
-            copy(B.val)
-        else
-            B.val
-        end
-    else
-        nothing
-    end
-
-    cache_A = if !isa(B, Const)
-        if EnzymeRules.overwritten(config)[2]
-            copy(A.val)
-        else
-            A.val
-        end
-    else
-        nothing
-    end
-
-    primal = if EnzymeRules.needs_primal(config)
-        B.val
-    else
-        nothing
-    end
-
-    shadow = if EnzymeRules.needs_shadow(config)
-        B.dval
-    else
-        nothing
-    end
-
-    return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_Bout))
-end
-
-function EnzymeRules.reverse(
-    config,
-    func::Const{typeof(ldiv!)},
-    dret,
-    cache,
-    A::Annotation{<:Cholesky},
-    B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-    kwargs...
-)
-    if !isa(B, Const)
-
-        (cache_A, cache_Bout) = cache
-
-        for b in 1:EnzymeRules.width(config)
-
-            dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
-
-            #   dB = z, where  z = inv(A^T) dB
-            #   dA −= z B(out)^T
-
-            func.val(cache_A, dB; kwargs...)
-            if !isa(A, Const)
-                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-                mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
-            end
-        end
-    end
-
-    return (nothing, nothing)
-end
+# function EnzymeRules.augmented_primal(
+#         config,
+#         func::Const{typeof(ldiv!)},
+#         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+# 
+#         A::Annotation{<:Cholesky},
+#         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
+#         kwargs...
+# )
+#     func.val(A.val, B.val; kwargs...)
+# 
+#     cache_Bout = if !isa(A, Const) && !isa(B, Const)
+#         if EnzymeRules.overwritten(config)[3]
+#             copy(B.val)
+#         else
+#             B.val
+#         end
+#     else
+#         nothing
+#     end
+# 
+#     cache_A = if !isa(B, Const)
+#         if EnzymeRules.overwritten(config)[2]
+#             copy(A.val)
+#         else
+#             A.val
+#         end
+#     else
+#         nothing
+#     end
+# 
+#     primal = if EnzymeRules.needs_primal(config)
+#         B.val
+#     else
+#         nothing
+#     end
+# 
+#     shadow = if EnzymeRules.needs_shadow(config)
+#         B.dval
+#     else
+#         nothing
+#     end
+# 
+#     return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_Bout))
+# end
+# 
+# function EnzymeRules.reverse(
+#     config,
+#     func::Const{typeof(ldiv!)},
+#     dret,
+#     cache,
+#     A::Annotation{<:Cholesky},
+#     B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
+#     kwargs...
+# )
+#     if !isa(B, Const)
+# 
+#         (cache_A, cache_Bout) = cache
+# 
+#         for b in 1:EnzymeRules.width(config)
+# 
+#             dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
+# 
+#             #   dB = z, where  z = inv(A^T) dB
+#             #   dA −= z B(out)^T
+# 
+#             func.val(cache_A, dB; kwargs...)
+#             if !isa(A, Const)
+#                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+#                 mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
+#             end
+#         end
+#     end
+# 
+#     return (nothing, nothing)
+# end
