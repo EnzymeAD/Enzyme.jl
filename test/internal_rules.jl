@@ -202,7 +202,7 @@ function tcholsolv_lower(A, B, i)
 end
 function tcholsolv_upper(A, B, i)
     c = copy(B)
-    C, info = LinearAlgebra.LAPACK.potrs!('L', A, c)
+    C, info = LinearAlgebra.LAPACK.potrs!('U', A, c)
     return c[i]
 end
 
@@ -498,9 +498,10 @@ end
         @test isapprox(fwdJ, revJ)
 
         function h(A, b)
-            C = cholesky(A)
+            A = copy(A)
+            LinearAlgebra.LAPACK.potrf!('U', A)
             b2 = copy(b)
-            ldiv!(C, b2)
+            LinearAlgebra.LAPACK.potrs!('U', A, b2)
             @inbounds b2[1]
         end
 
@@ -508,14 +509,10 @@ end
         b = [1., 2.]
         dA = zero(A)
         Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
-        dA_fwd  = Enzyme.gradient(Forward, A->h(A, b), A)
+        # dA_fwd  = Enzyme.gradient(Forward, A->h(A, b), A)
+        dA_fd  = FiniteDifferences.grad(central_fdm(5, 1), A->h(A, b), A)[1]
 
-        #dA_fd  = FiniteDifferences.grad(central_fdm(5, 1), A->h(A, b), A)
-        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
-        @show dA
-        @show dA_sym
-        @show dA_fwd
-        @test_broken isapprox(dA, dA_sym)
+        @test isapprox(dA, dA_fd)
     end
 end
 
