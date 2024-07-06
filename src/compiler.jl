@@ -1439,8 +1439,9 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T, S}
     if guaranteed_const_nongen(T, nothing)
         return prev
     end
-    @assert !ismutable(T)
+    @assert !ismutable(prev)
 
+    RT = Core.Typeof(prev)
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
     nf = fieldcount(RT)
@@ -6148,7 +6149,7 @@ end
 @inline mutable_register(::Type{T}) where T <: NamedTuple = false
 @inline mutable_register(::Type{Core.Box}) = true
 @inline mutable_register(::Type{T}) where T <: Array = true
-@inline mutable_register(::Type{T}) where T = ismutable(T)
+@inline mutable_register(::Type{T}) where T = ismutabletype(T)
 
 # Recursively In-place accumulate(aka +=). E.g. generalization of x .+= f(y)
 @inline function recursive_accumulate(x::Array{T}, y::Array{T}, f::F=identity) where {T, F}
