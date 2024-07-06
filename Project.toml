@@ -18,11 +18,13 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [weakdeps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [extensions]
 EnzymeChainRulesCoreExt = "ChainRulesCore"
+EnzymeLogExpFunctionsExt = "LogExpFunctions"
 EnzymeSpecialFunctionsExt = "SpecialFunctions"
 EnzymeStaticArraysExt = "StaticArrays"
 
@@ -32,6 +34,7 @@ ChainRulesCore = "1"
 EnzymeCore = "0.7.5"
 Enzyme_jll = "0.0.133"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25, 0.26"
+LogExpFunctions = "0.3"
 LLVM = "6.1, 7, 8"
 ObjectFile = "0.4"
 Preferences = "1.4"
@@ -41,5 +44,6 @@ julia = "1.6"
 
 [extras]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
