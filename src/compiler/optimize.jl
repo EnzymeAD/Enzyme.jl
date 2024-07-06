@@ -1543,8 +1543,11 @@ function detect_writeonly!(mod::LLVM.Module)
         end
         for (i, a) in enumerate(parameters(f))
             if isa(value_type(a), LLVM.PointerType)
-                todo = LLVM.Value[a]
-                seen = Set{LLVM.Value}()
+                todo = Tuple{LLVM.Value, LLVM.Instruction}[]
+                for u in LLVM.uses(a)
+                    push!(todo, (a, LLVM.user(u)))
+                end
+                seen = Set{Tuple{LLVM.Value, LLVM.Instruction}}()
                 mayread = false
                 maywrite = false
                 while length(todo) > 0
@@ -1553,20 +1556,23 @@ function detect_writeonly!(mod::LLVM.Module)
                         continue
                     end
                     push!(seen, cur)
+                    curv, curi = cur
                     
-                    if isa(cur, LLVM.StoreInst)
-                        maywrite = true
-                        continue
+                    if isa(curi, LLVM.StoreInst)
+                        if operands(curi)[1] != curv
+                            maywrite = true
+                            continue
+                        end
                     end
                     
-                    if isa(cur, LLVM.LoadInst)
+                    if isa(curi, LLVM.LoadInst)
                         mayread = true
                         continue
                     end
 
-                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
-                        for u in LLVM.uses(cur)
-                            push!(todo, LLVM.user(u))
+                    if isa(curi, LLVM.GetElementPtrInst) || isa(curi, LLVM.BitCastInst) || isa(curi, LLVM.AddrSpaceCastInst)
+                        for u in LLVM.uses(curi)
+                            push!(todo, (curi, LLVM.user(u)))
                         end
                         continue
                     end
