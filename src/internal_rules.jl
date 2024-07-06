@@ -457,64 +457,64 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
     return (nothing,nothing)
 end
 
-const EnzymeTriangulars = Union{
-    UpperTriangular,
-    LowerTriangular,
-    UnitUpperTriangular,
-    UnitLowerTriangular
-}
-
-function EnzymeRules.augmented_primal(
-    config,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT}
-) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
-    cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
-    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
-    cache_A = compute_lu_cache(cache_A, B.val)
-    cache_B = EnzymeRules.overwritten(config)[3] ? copy(B.val) : nothing
-    primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
-    shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
-    func.val(Y.val, A.val, B.val)
-    return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
-        primal, shadow, (cache_Y, cache_A, cache_B))
-end
-
-function EnzymeRules.reverse(
-    config,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    cache,
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT}
-) where {YT <: Array, RT, AT <: EnzymeTriangulars, BT <: Array}
-    if !isa(Y, Const)
-        (cache_Yout, cache_A, cache_B) = cache
-        for b in 1:EnzymeRules.width(config)
-            dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
-            z = adjoint(cache_A) \ dY
-            if !isa(B, Const)
-                dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
-                dB .+= z
-            end
-            if !isa(A, Const)
-                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-                dA.data .-= _zero_unused_elements!(z * adjoint(cache_Yout), A.val)
-            end
-            dY .= zero(eltype(dY))
-        end
-    end
-    return (nothing, nothing, nothing)
-end
-
-_zero_unused_elements!(X, ::UpperTriangular) = triu!(X)
-_zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
-_zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
-_zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
+# const EnzymeTriangulars = Union{
+#     UpperTriangular,
+#     LowerTriangular,
+#     UnitUpperTriangular,
+#     UnitLowerTriangular
+# }
+# 
+# function EnzymeRules.augmented_primal(
+#     config,
+#     func::Const{typeof(ldiv!)},
+#     ::Type{RT},
+#     Y::Annotation{YT},
+#     A::Annotation{AT},
+#     B::Annotation{BT}
+# ) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
+#     cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
+#     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+#     cache_A = compute_lu_cache(cache_A, B.val)
+#     cache_B = EnzymeRules.overwritten(config)[3] ? copy(B.val) : nothing
+#     primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
+#     shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
+#     func.val(Y.val, A.val, B.val)
+#     return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
+#         primal, shadow, (cache_Y, cache_A, cache_B))
+# end
+# 
+# function EnzymeRules.reverse(
+#     config,
+#     func::Const{typeof(ldiv!)},
+#     ::Type{RT},
+#     cache,
+#     Y::Annotation{YT},
+#     A::Annotation{AT},
+#     B::Annotation{BT}
+# ) where {YT <: Array, RT, AT <: EnzymeTriangulars, BT <: Array}
+#     if !isa(Y, Const)
+#         (cache_Yout, cache_A, cache_B) = cache
+#         for b in 1:EnzymeRules.width(config)
+#             dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
+#             z = adjoint(cache_A) \ dY
+#             if !isa(B, Const)
+#                 dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
+#                 dB .+= z
+#             end
+#             if !isa(A, Const)
+#                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+#                 dA.data .-= _zero_unused_elements!(z * adjoint(cache_Yout), A.val)
+#             end
+#             dY .= zero(eltype(dY))
+#         end
+#     end
+#     return (nothing, nothing, nothing)
+# end
+# 
+# _zero_unused_elements!(X, ::UpperTriangular) = triu!(X)
+# _zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
+# _zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
+# _zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
 
 @static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
@@ -803,89 +803,3 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         end
     end
 end
-
-
-# y=inv(A) B
-#   dA −= z y^T
-#   dB += z, where  z = inv(A^T) dy
-# ->
-#
-# B(out)=inv(A) B(in)
-#   dA −= z B(out)^T
-#   dB = z, where  z = inv(A^T) dB
-# function EnzymeRules.augmented_primal(
-#         config,
-#         func::Const{typeof(ldiv!)},
-#         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
-# 
-#         A::Annotation{<:Cholesky},
-#         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-#         kwargs...
-# )
-#     func.val(A.val, B.val; kwargs...)
-# 
-#     cache_Bout = if !isa(A, Const) && !isa(B, Const)
-#         if EnzymeRules.overwritten(config)[3]
-#             copy(B.val)
-#         else
-#             B.val
-#         end
-#     else
-#         nothing
-#     end
-# 
-#     cache_A = if !isa(B, Const)
-#         if EnzymeRules.overwritten(config)[2]
-#             copy(A.val)
-#         else
-#             A.val
-#         end
-#     else
-#         nothing
-#     end
-# 
-#     primal = if EnzymeRules.needs_primal(config)
-#         B.val
-#     else
-#         nothing
-#     end
-# 
-#     shadow = if EnzymeRules.needs_shadow(config)
-#         B.dval
-#     else
-#         nothing
-#     end
-# 
-#     return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_Bout))
-# end
-# 
-# function EnzymeRules.reverse(
-#     config,
-#     func::Const{typeof(ldiv!)},
-#     dret,
-#     cache,
-#     A::Annotation{<:Cholesky},
-#     B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-#     kwargs...
-# )
-#     if !isa(B, Const)
-# 
-#         (cache_A, cache_Bout) = cache
-# 
-#         for b in 1:EnzymeRules.width(config)
-# 
-#             dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
-# 
-#             #   dB = z, where  z = inv(A^T) dB
-#             #   dA −= z B(out)^T
-# 
-#             func.val(cache_A, dB; kwargs...)
-#             if !isa(A, Const)
-#                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-#                 mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
-#             end
-#         end
-#     end
-# 
-#     return (nothing, nothing)
-# end
