@@ -732,7 +732,7 @@ function wologpdf_test(x)
 end
 
 @testset "Ensure writeonly deduction combines with capture" begin
-    res = Enzyme.autodiff(Enzyme.Forward, logpdf_test, Duplicated([0.5], [0.7]))
+    res = Enzyme.autodiff(Enzyme.Forward, wologpdf_test, Duplicated([0.5], [0.7]))
     @test res[1] ≈ 1.0
 end
 
