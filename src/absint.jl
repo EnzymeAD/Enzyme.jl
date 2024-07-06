@@ -187,7 +187,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             end
             
  	   if nm == "jl_f_isdefined" || nm == "ijl_f_isdefined"
-		return Bool
+		return (true, Bool)
 	   end
 
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
