@@ -719,7 +719,7 @@ function euroad(f::T) where T
 end
 
 @noinline function womylogpdf(X::AbstractArray{<:Real})
-  map(mylogpdf, X)
+  map(womylogpdf, X)
 end
 
 function womylogpdf(x::Real)
