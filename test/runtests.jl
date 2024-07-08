@@ -207,6 +207,19 @@ end
 
     z4 = sin
     Enzyme.make_zero!(z4)
+    
+    struct Dense
+        n_inp::Int
+        b::Vector{Float64}
+    end
+
+    function Dense(n)
+        Dense(n, rand(n))
+    end
+
+    nn = Dense(4)
+    Enzyme.make_zero!(nn)
+    @test nn.b ≈ [0.0, 0.0, 0.0, 0.0]
 end
 
 @testset "Reflection" begin
@@ -272,6 +285,34 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     x = ones(100)
     dx = zeros(100)
     Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
+end
+
+@noinline function prt_sret(A)
+    A[1] *= 2
+    return (A, A[2])
+end
+
+@noinline function sretf(A2, x, c)
+    x[3] = c * A2[3]
+end
+
+@noinline function batchdecaysret0(x, A, b)
+    A2, c = prt_sret(A)
+    sretf(A2, x, c)
+    return nothing
+end
+
+function batchdecaysret(x, A, b)
+    batchdecaysret0(x, A, b)
+    A[2] = 0
+    return nothing
+end
+
+@testset "Batch Reverse sret fix" begin
+    Enzyme.autodiff(Reverse, batchdecaysret,
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))))
 end
 
 # @testset "Split Tape" begin
@@ -675,6 +716,24 @@ function euroad(f::T) where T
         g += f^i / i
     end
     return g
+end
+
+@noinline function womylogpdf(X::AbstractArray{<:Real})
+  map(womylogpdf, X)
+end
+
+function womylogpdf(x::Real)
+    (x - 2)
+end
+
+
+function wologpdf_test(x)
+    return womylogpdf(x)
+end
+
+@testset "Ensure writeonly deduction combines with capture" begin
+    res = Enzyme.autodiff(Enzyme.Forward, wologpdf_test, Duplicated([0.5], [0.7]))
+    @test res[1] ≈ [0.7]
 end
 
 euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
@@ -3170,6 +3229,25 @@ end
         @test res isa T
         @test res == 2
     end
+end
+
+struct GDoubleField{T}
+    this_field_does_nothing::T
+    b::T
+end
+
+GDoubleField() = GDoubleField{Float64}(0.0, 1.0)
+function fexpandempty(vec)
+    x = vec[1]
+    empty = []
+    d = GDoubleField(empty...)
+    return x ≤ d.b ? x * d.b : zero(x)
+end
+
+@testset "Constant Complex return" begin
+    vec = [0.5]
+    @test Enzyme.gradient(Enzyme.Reverse, fexpandempty, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ 1.0
 end
 
 const CUmemoryPool2 = Ptr{Float64} 

@@ -22,6 +22,7 @@ while length(args) > 0
     global branch
     global source_dir
     global BUILD_TYPE
+    global BCLoad
     if length(args) >= 2 && args[1] == "--branch"
         branch = args[2]
         args = (args[3:end]...,)

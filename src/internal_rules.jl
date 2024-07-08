@@ -106,6 +106,10 @@ function EnzymeRules.inactive_noinl(::typeof(Base.setindex!), ::IdDict{K, V}, ::
     return nothing
 end
 
+function EnzymeRules.inactive_noinl(::typeof(Base.hasproperty), args...)
+    return nothing
+end
+
 if VERSION >= v"1.9"
     Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = nothing
 end
@@ -834,6 +838,7 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
             ldiv!(U, dB)
         end
 
+        ldiv!(U, B.val)
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]

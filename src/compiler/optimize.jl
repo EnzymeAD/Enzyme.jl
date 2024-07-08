@@ -786,7 +786,7 @@ end
 
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
-        invalid = LLVM.AddrSpaceCastInst[]
+        invalid = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
             if !isa(inst, LLVM.AddrSpaceCastInst)
                 continue
@@ -815,6 +815,18 @@ function fix_decayaddr!(mod::LLVM.Module)
 							 continue
 						 end
 					 end
+                     # if isa(st, LLVM.InsertValueInst)
+                     #    if operands(st)[1] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 1-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     #    if operands(st)[2] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 2-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     # end
 					 if !isa(st, LLVM.CallInst)
 						  bt = GPUCompiler.backtrace(st)
 						  msg = sprint() do io::IO
@@ -828,7 +840,7 @@ function fix_decayaddr!(mod::LLVM.Module)
 								  println(io)
 							  end
 						  end
-						  throw(AssertionError(msg))
+					  throw(AssertionError(msg))
                 end
                 
                 fop = operands(st)[end]
@@ -1158,9 +1170,12 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         if isempty(blocks(cur))
             return false
         end
+
+        err_is_readonly = !is_noreturn(cur)
+
         for bb in blocks(cur)
             for inst in instructions(bb)
-                if !mayWriteToMemory(inst; err_is_readonly=true)
+                if !mayWriteToMemory(inst; err_is_readonly)
                     continue
                 end
                 if isa(inst, LLVM.CallInst)
@@ -1528,8 +1543,11 @@ function detect_writeonly!(mod::LLVM.Module)
         end
         for (i, a) in enumerate(parameters(f))
             if isa(value_type(a), LLVM.PointerType)
-                todo = LLVM.Value[a]
-                seen = Set{LLVM.Value}()
+                todo = Tuple{LLVM.Value, LLVM.Instruction}[]
+                for u in LLVM.uses(a)
+                    push!(todo, (a, LLVM.user(u)))
+                end
+                seen = Set{Tuple{LLVM.Value, LLVM.Instruction}}()
                 mayread = false
                 maywrite = false
                 while length(todo) > 0
@@ -1538,20 +1556,23 @@ function detect_writeonly!(mod::LLVM.Module)
                         continue
                     end
                     push!(seen, cur)
+                    curv, curi = cur
                     
-                    if isa(cur, LLVM.StoreInst)
-                        maywrite = true
-                        continue
+                    if isa(curi, LLVM.StoreInst)
+                        if operands(curi)[1] != curv
+                            maywrite = true
+                            continue
+                        end
                     end
                     
-                    if isa(cur, LLVM.LoadInst)
+                    if isa(curi, LLVM.LoadInst)
                         mayread = true
                         continue
                     end
 
-                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
-                        for u in LLVM.uses(cur)
-                            push!(todo, LLVM.user(u))
+                    if isa(curi, LLVM.GetElementPtrInst) || isa(curi, LLVM.BitCastInst) || isa(curi, LLVM.AddrSpaceCastInst)
+                        for u in LLVM.uses(curi)
+                            push!(todo, (curi, LLVM.user(u)))
                         end
                         continue
                     end

@@ -100,6 +100,15 @@ for n in (:is_readonly, :is_readnone, :is_writeonly)
 end
 end
 
+function is_noreturn(f::LLVM.Function)
+    for attr in collect(function_attributes(f))
+        if kind(attr) == kind(EnumAttribute("noreturn"))
+            return true
+        end
+    end
+    return false
+end
+
 function is_readonly(f::LLVM.Function)
     for attr in collect(function_attributes(f))
         if kind(attr) == kind(EnumAttribute("readonly"))
