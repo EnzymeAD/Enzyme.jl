@@ -718,6 +718,24 @@ function euroad(f::T) where T
     return g
 end
 
+@noinline function womylogpdf(X::AbstractArray{<:Real})
+  map(womylogpdf, X)
+end
+
+function womylogpdf(x::Real)
+    (x - 2)
+end
+
+
+function wologpdf_test(x)
+    return womylogpdf(x)
+end
+
+@testset "Ensure writeonly deduction combines with capture" begin
+    res = Enzyme.autodiff(Enzyme.Forward, wologpdf_test, Duplicated([0.5], [0.7]))
+    @test res[1] ≈ [0.7]
+end
+
 euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
 
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
