@@ -458,10 +458,10 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
 end
 
 const EnzymeTriangulars = Union{
-    UpperTriangular,
-    LowerTriangular,
-    UnitUpperTriangular,
-    UnitLowerTriangular
+    UpperTriangular{<:Complex},
+    LowerTriangular{<:Complex},
+    UnitUpperTriangular{<:Complex},
+    UnitLowerTriangular{<:Complex}
 }
 
 function EnzymeRules.augmented_primal(
@@ -803,89 +803,3 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         end
     end
 end
-
-
-# y=inv(A) B
-#   dA −= z y^T
-#   dB += z, where  z = inv(A^T) dy
-# ->
-#
-# B(out)=inv(A) B(in)
-#   dA −= z B(out)^T
-#   dB = z, where  z = inv(A^T) dB
-# function EnzymeRules.augmented_primal(
-#         config,
-#         func::Const{typeof(ldiv!)},
-#         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
-# 
-#         A::Annotation{<:Cholesky},
-#         B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-#         kwargs...
-# )
-#     func.val(A.val, B.val; kwargs...)
-# 
-#     cache_Bout = if !isa(A, Const) && !isa(B, Const)
-#         if EnzymeRules.overwritten(config)[3]
-#             copy(B.val)
-#         else
-#             B.val
-#         end
-#     else
-#         nothing
-#     end
-# 
-#     cache_A = if !isa(B, Const)
-#         if EnzymeRules.overwritten(config)[2]
-#             copy(A.val)
-#         else
-#             A.val
-#         end
-#     else
-#         nothing
-#     end
-# 
-#     primal = if EnzymeRules.needs_primal(config)
-#         B.val
-#     else
-#         nothing
-#     end
-# 
-#     shadow = if EnzymeRules.needs_shadow(config)
-#         B.dval
-#     else
-#         nothing
-#     end
-# 
-#     return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_Bout))
-# end
-# 
-# function EnzymeRules.reverse(
-#     config,
-#     func::Const{typeof(ldiv!)},
-#     dret,
-#     cache,
-#     A::Annotation{<:Cholesky},
-#     B::Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated};
-#     kwargs...
-# )
-#     if !isa(B, Const)
-# 
-#         (cache_A, cache_Bout) = cache
-# 
-#         for b in 1:EnzymeRules.width(config)
-# 
-#             dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
-# 
-#             #   dB = z, where  z = inv(A^T) dB
-#             #   dA −= z B(out)^T
-# 
-#             func.val(cache_A, dB; kwargs...)
-#             if !isa(A, Const)
-#                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-#                 mul!(dA.factors, dB, transpose(cache_Bout), -1, 1)
-#             end
-#         end
-#     end
-# 
-#     return (nothing, nothing)
-# end
