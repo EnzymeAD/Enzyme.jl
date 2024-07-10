@@ -1409,7 +1409,6 @@ end
 if !Sys.iswindows()
     include("ext/specialfunctions.jl")
 end
-include("ext/logexpfunctions.jl")
 
 @testset "Threads" begin
     cmd = `$(Base.julia_cmd()) --threads=1 --startup-file=no threads.jl`
@@ -3512,6 +3511,7 @@ end
     @testset "ChainRulesCore ext" begin
         include("ext/chainrulescore.jl")
     end
+    include("ext/logexpfunctions.jl")
 end
 
 
