@@ -3511,6 +3511,7 @@ end
     @testset "ChainRulesCore ext" begin
         include("ext/chainrulescore.jl")
     end
+    include("ext/logexpfunctions.jl")
 end
 
 

@@ -101,6 +101,58 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 @static if VERSION >= v"1.8.0"
     known_ops[typeof(Base.fma_emulated)] = (:fma, 3, nothing)
 end
+@inline function find_math_method(@nospecialize(func), sparam_vals)
+    if func ∈ keys(known_ops)
+        name, arity, toinject = known_ops[func]
+        Tys = (Float32, Float64)
+
+        if length(sparam_vals) == arity
+            T = first(sparam_vals)
+            legal = T ∈ Tys
+
+            if legal
+                if name == :ldexp
+                    if !(sparam_vals[2] <: Integer)
+                        legal = false
+                    end
+                elseif name == :pow
+                    if sparam_vals[2] <: Integer
+                        name = :powi
+                    elseif sparam_vals[2] != T
+                        legal = false
+                    end
+                elseif name == :jl_rem2pi
+                else
+                    if !all(==(T), sparam_vals)
+                        legal = false
+                    end
+                end
+            end
+            if legal
+                return name, toinject, T
+            end
+        end
+    end 
+
+    if func ∈ keys(cmplx_known_ops)
+        name, arity, toinject = cmplx_known_ops[func]
+        Tys = (Complex{Float32}, Complex{Float64})
+        if length(sparam_vals) == arity
+            T = first(sparam_vals)
+            legal = T ∈ Tys
+
+            if legal
+                if !all(==(T), sparam_vals)
+                    legal = false
+                end
+            end
+            if legal
+                return name, toinject, T
+            end
+        end
+    end
+    return nothing, nothing, nothing
+end
 
 const nofreefns = Set{String}((
     "ijl_f_isdefined", "jl_f_isdefined",
@@ -5621,61 +5673,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
             continue
         end
-
-        @inline function find_math_method()
-            if func ∈ keys(known_ops)
-                name, arity, toinject = known_ops[func]
-                Tys = (Float32, Float64)
         
-                if length(sparam_vals) == arity
-                    T = first(sparam_vals)
-                    legal = T ∈ Tys
-
-                    if legal
-                        if name == :ldexp
-                            if !(sparam_vals[2] <: Integer)
-                                legal = false
-                            end
-                        elseif name == :pow
-                            if sparam_vals[2] <: Integer
-                                name = :powi
-                            elseif sparam_vals[2] != T
-                                legal = false
-                            end
-                        elseif name == :jl_rem2pi
-                        else
-                            if !all(==(T), sparam_vals)
-                                legal = false
-                            end
-                        end
-                    end
-                    if legal
-                        return name, toinject, T
-                    end
-                end
-            end 
-
-            if func ∈ keys(cmplx_known_ops)
-                name, arity, toinject = cmplx_known_ops[func]
-                Tys = (Complex{Float32}, Complex{Float64})
-                if length(sparam_vals) == arity
-                    T = first(sparam_vals)
-                    legal = T ∈ Tys
-
-                    if legal
-                        if !all(==(T), sparam_vals)
-                            legal = false
-                        end
-                    end
-                    if legal
-                        return name, toinject, T
-                    end
-                end
-            end
-            return nothing, nothing, nothing
-        end
-        
-        name, toinject, T = find_math_method()
+        name, toinject, T = find_math_method(func, sparam_vals)
         if name === nothing
             continue
         end
