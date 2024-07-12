@@ -1825,7 +1825,7 @@ end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing && !occursin("No create nofree of empty function", ece.msg)
+    if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
@@ -1996,6 +1996,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     end
 
     if errtype == API.ET_NoDerivative
+        if occursin("No create nofree of empty function", msg) || occursin("No forward mode derivative found for", msg) || occursin("No augmented forward mode derivative found for", msg) || occursin("No reverse pass found", msg)
+            ir = nothing
+        end
         exc = NoDerivativeException(msg, ir, bt)
         if B != C_NULL
             B = IRBuilder(B)
