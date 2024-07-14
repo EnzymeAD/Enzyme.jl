@@ -155,6 +155,7 @@ end
 end
 
 const nofreefns = Set{String}((
+    "ijl_gc_run_pending_finalizers", "jl_gc_run_pending_finalizers",
     "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
@@ -3308,7 +3309,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("julia.typeof",)
+    for fname in ("julia.typeof", "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
         if haskey(fns, fname)
             fn = fns[fname]
             if LLVM.version().major <= 15
@@ -3479,17 +3480,6 @@ function annotate!(mod, mode)
                 push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
             else
                 push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
-            end
-        end
-    end
-
-    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
-        if haskey(fns, rfn)
-            fn = fns[rfn]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
-            else
-                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
             end
         end
     end
