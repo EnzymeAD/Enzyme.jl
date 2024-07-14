@@ -3132,16 +3132,16 @@ end
     end
 end
 
+@inline extract_bc(bc, ::Val{:north}) = (bc.north)
+@inline extract_bc(bc, ::Val{:top}) = (bc.top)
+
+function permute_boundary_conditions(boundary_conditions)
+    sides = [:top, :north] # changing the order of these actually changes the error
+    boundary_conditions = Tuple(extract_bc(boundary_conditions, Val(side)) for side in sides)
+
+    return nothing
+end
 @testset "Extract abstype" begin
-    @inline extract_bc(bc, ::Val{:north}) = (bc.north)
-    @inline extract_bc(bc, ::Val{:top}) = (bc.top)
-
-    function permute_boundary_conditions(boundary_conditions)
-        sides = [:top, :north] # changing the order of these actually changes the error
-        boundary_conditions = Tuple(extract_bc(boundary_conditions, Val(side)) for side in sides)
-
-        return nothing
-    end
 
     parameters = (a = 1, b = 0.1)
 
