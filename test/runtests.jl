@@ -3132,6 +3132,7 @@ end
     end
 end
 
+@static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
 @inline extract_bc(bc, ::Val{:north}) = (bc.north)
 @inline extract_bc(bc, ::Val{:top}) = (bc.top)
 
@@ -3141,6 +3142,7 @@ function permute_boundary_conditions(boundary_conditions)
 
     return nothing
 end
+
 @testset "Extract abstype" begin
 
     parameters = (a = 1, b = 0.1)
@@ -3154,6 +3156,7 @@ end
                       Duplicated(bc, d_bc))
 
     Enzyme.API.looseTypeAnalysis!(false)
+end
 end
 
 
