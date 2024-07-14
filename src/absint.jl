@@ -312,8 +312,46 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 end
             end
         end
-        
     end
+   
+    if isa(arg, LLVM.ExtractValueInst)
+        larg = operands(arg)[1]
+        indptrs = LLVM.API.LLVMGetIndices(arg)
+        numind = LLVM.API.LLVMGetNumIndices(arg)
+        offset = Cuint[unsafe_load(indptrs, i) for i in 1:numind]
+        if isa(larg, LLVM.Argument) || isa(larg, LLVM.ExtractValueInst)
+            typ, byref = if isa(larg, LLVM.Argument)
+                f = LLVM.Function(LLVM.API.LLVMGetParamParent(larg))
+                idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == larg])
+                enzyme_extract_parm_type(f, idx, #=error=#false)
+            else
+                found, typ = abs_typeof(larg, partial)
+                if !found
+                    return (false, nothing)
+                end
+                (typ, GPUCompiler.BITS_VALUE)
+            end
+            if typ !== nothing && byref == GPUCompiler.BITS_VALUE
+                for ind in offset
+                    @assert Base.isconcretetype(typ)
+                    cnt = 0
+                    for i in 1:fieldcount(typ)
+                        styp = fieldtype(typ, i)
+                        if isghostty(styp)
+                            continue
+                        end
+                        if cnt == ind
+                            typ = styp
+                            break
+                        end
+                        cnt+=1
+                    end
+                end
+                return (true, typ)
+            end
+        end
+    end
+        
 
     if isa(arg, LLVM.Argument)
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
