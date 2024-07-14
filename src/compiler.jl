@@ -1998,7 +1998,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     end
 
     if errtype == API.ET_NoDerivative
-        if occursin("No create nofree of empty function", msg) || occursin("No forward mode derivative found for", msg) || occursin("No augmented forward mode derivative found for", msg) || occursin("No reverse pass found", msg)
+        if occursin("No create nofree of empty function", msg) || occursin("No forward mode derivative found for", msg) || occursin("No augmented forward pass", msg) || occursin("No reverse pass found", msg)
             ir = nothing
         end
         exc = NoDerivativeException(msg, ir, bt)
