@@ -3226,13 +3226,17 @@ import .Interpreter: isKWCallSignature
 """
 Create the methodinstance pair, and lookup the primal return type.
 """
-@inline function fspec(@nospecialize(F), @nospecialize(TT), world::Integer)
+@inline function fspec(@nospecialize(F), @nospecialize(TT), world::Union{Integer, Nothing}=nothing)
     # primal function. Inferred here to get return type
     _tt = (TT.parameters...,)
 
     primal_tt = Tuple{map(eltype, _tt)...}
 
-    primal = GPUCompiler.methodinstance(F, primal_tt, world)
+    primal = if world isa Nothing
+	GPUCompiler.methodinstance(F, primal_tt)
+    else
+	GPUCompiler.methodinstance(F, primal_tt, world)
+    end
 
     return primal
 end
