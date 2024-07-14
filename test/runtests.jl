@@ -3147,10 +3147,13 @@ end
 
     bc   = (north=1, top=tuple(parameters, tuple(:c)))
     d_bc = Enzyme.make_zero(bc)
+    Enzyme.API.looseTypeAnalysis!(true)
 
     dc²_dκ = autodiff(Enzyme.Reverse,
                       permute_boundary_conditions,
                       Duplicated(bc, d_bc))
+
+    Enzyme.API.looseTypeAnalysis!(false)
 end
 
 
