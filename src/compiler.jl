@@ -6741,7 +6741,11 @@ end
 
         target = Compiler.EnzymeTarget()
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-        tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        tmp_job    = if World isa Nothing
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+	else
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+	end
 
         interp = GPUCompiler.get_interpreter(tmp_job)
 
