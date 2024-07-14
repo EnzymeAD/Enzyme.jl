@@ -4869,7 +4869,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         dl = string(LLVM.datalayout(LLVM.parent(entry_f)))
         if sret
             if !in(0, parmsRemoved)
-                sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
+                sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])), "innersret")
                 ctx = LLVM.context(entry_f)
                 if RetActivity <: Const
                     metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
@@ -4879,7 +4879,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
-                retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])))
+                retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])), "innerreturnroots")
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
                 push!(wrapper_args, retRootPtr)
             end
@@ -4898,7 +4898,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 if !isa(ty, LLVM.PointerType)
                     throw(AssertionError("ty is not a LLVM.PointerType: entry_f = $(entry_f), args = $(args), parm = $(parm), ty = $(ty)"))
                 end
-                ptr = alloca!(builder, eltype(ty))
+                ptr = alloca!(builder, eltype(ty), LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
