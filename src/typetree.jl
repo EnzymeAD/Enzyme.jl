@@ -111,6 +111,10 @@ function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
+function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree()
+end
+
 function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:AbstractFloat}
     GPUCompiler.@safe_warn "Unknown floating point type" T
     return TypeTree()

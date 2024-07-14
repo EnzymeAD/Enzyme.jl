@@ -394,7 +394,7 @@ end
         (cache_res, dres, cache_A, cache_b)
     )
 
-    return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), typeof(cache)}(retres, dres, cache)
+    return EnzymeRules.AugmentedReturn{EnzymeRules.needs_primal(config) ? eltype(RT) : Nothing, EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing, typeof(cache)}(retres, dres, cache)
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, A::Annotation{<:Array}, b::Annotation{<:Array}) where RT
