@@ -983,7 +983,7 @@ function jl_array_del_end_rev(B, orig, gutils, tape)
             
             length = LLVM.mul!(B, len, elSize)
             
-            GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $(abs_typeof(origops[1]))"
+            GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $(abs_typeof(origops[1])) in $(string(origops[1]))"
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)

@@ -4911,7 +4911,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(wrapper_args, ptr)
                 push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzyme_type", string(typetree(arg.typ, ctx, dl, seen))))
                 push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
-                push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.BITS_REF))))
+                push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.BITS_VALUE))))
             elseif arg.arg_i in raisedArgs
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
@@ -5800,13 +5800,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     dl = string(LLVM.datalayout(mod))
     ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
-        if !isa(inst, LLVM.CallInst)
-            continue
-        end
+        fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
-        fn = LLVM.called_operand(inst)
-
-        if !API.HasFromStack(inst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+        if !API.HasFromStack(inst) && isa(inst, LLVM.CallInst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
             legal, source_typ = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
@@ -5832,17 +5828,27 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     codegen_typ
                 end
 
-                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+                else
+                    metadata(inst)["enzyme_type"] = to_md(typetree(arg.typ, ctx, dl, seen), ctx)
+                end
             elseif codegen_typ == T_prjlvalue
-                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+                else
+                    metadata(inst)["enzyme_type"] = to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                end
             end
         end
 
-        if !isa(fn, LLVM.Function)
-            continue
-        end
-        if length(blocks(fn)) != 0
-            continue
+        if isa(inst, LLVM.CallInst)
+            if !isa(fn, LLVM.Function)
+                continue
+            end
+            if length(blocks(fn)) != 0
+                continue
+            end
         end
         ty = value_type(inst)
         if ty == LLVM.VoidType()
@@ -5856,7 +5862,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if !guaranteed_const_nongen(jTy, world)
             continue
         end        
-        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_inactive"))
+        if isa(inst, LLVM.CallInst)
+            LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_inactive"))
+        else
+            metadata(inst)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+        end
     end
 
 

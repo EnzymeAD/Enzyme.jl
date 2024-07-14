@@ -3132,6 +3132,28 @@ end
     end
 end
 
+@testset "Extract abstype" begin
+    @inline extract_bc(bc, ::Val{:north}) = (bc.north)
+    @inline extract_bc(bc, ::Val{:top}) = (bc.top)
+
+    function permute_boundary_conditions(boundary_conditions)
+        sides = [:top, :north] # changing the order of these actually changes the error
+        boundary_conditions = Tuple(extract_bc(boundary_conditions, Val(side)) for side in sides)
+
+        return nothing
+    end
+
+    parameters = (a = 1, b = 0.1)
+
+    bc   = (north=1, top=tuple(parameters, tuple(:c)))
+    d_bc = Enzyme.make_zero(bc)
+
+    dc²_dκ = autodiff(Enzyme.Reverse,
+                      permute_boundary_conditions,
+                      Duplicated(bc, d_bc))
+end
+
+
 @testset "Static activity" begin
 
     struct Test2{T}
