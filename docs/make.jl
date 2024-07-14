@@ -21,8 +21,8 @@ const EXAMPLES_DIR = joinpath(@__DIR__, "..", "examples")
 const OUTPUT_DIR = joinpath(@__DIR__, "src/generated")
 
 examples = Pair{String,String}[
+    "Basics" => "autodiff"
     "Box model" => "box"
-    "AutoDiff API" => "autodiff"
     "Custom rules" => "custom_rule"
 ]
 
@@ -51,13 +51,14 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Examples" => examples,
-        "API" => "api.md",
-        "Implementing pullbacks" => "pullbacks.md",
-        "For developers" => "dev_docs.md",
-        "Internal API" => "internal_api.md",
+        "FAQ" => "faq.md",
+        "API reference" => "api.md",
+        "Advanced" => [
+            "For developers" => "dev_docs.md",
+            "Internal API" => "internal_api.md",
+        ]
     ],
     doctest = true,
-    strict = true,
 )
 
 deploydocs(;

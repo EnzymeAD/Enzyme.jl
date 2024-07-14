@@ -1,5 +1,13 @@
 # # Enzyme custom rules tutorial
-
+#
+# !!! note "More Examples"
+#     The tutorial below focuses on a simple setting to illustrate the basic concepts of writing custom rules.
+#     For more complex custom rules beyond the scope of this tutorial, you may take inspiration from the following in-the-wild examples:
+#     - [Enzyme internal rules](https://github.com/EnzymeAD/Enzyme.jl/blob/main/src/internal_rules.jl)
+#     - [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl/blob/main/ext/EnzymeExt.jl)
+#     - [LinearSolve.jl](https://github.com/SciML/LinearSolve.jl/blob/main/ext/LinearSolveEnzymeExt.jl)
+#     - [NNlib.jl](https://github.com/FluxML/NNlib.jl/blob/master/ext/NNlibEnzymeCoreExt/NNlibEnzymeCoreExt.jl)
+#
 # The goal of this tutorial is to give a simple example of defining a custom rule with Enzyme.
 # Specifically, our goal will be to write custom rules for the following function `f`:
 
@@ -126,7 +134,7 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNee
     if !(x isa Const) && !(y isa Const)
         y.dval .= 2 .* x.val .* x.dval
     elseif !(y isa Const) 
-        y.dval .= 0
+        make_zero!(y.dval)
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
     if RT <: Const
@@ -203,7 +211,7 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
     x.dval .+= 2 .* xval .* dret.val 
     ## also accumulate any derivative in y's shadow into x's shadow. 
     x.dval .+= 2 .* xval .* y.dval
-    y.dval .= 0
+    make_zero!(y.dval)
     return (nothing, nothing)
 end
 
@@ -215,7 +223,9 @@ end
 # * Using `dret.val` and `y.dval`, we accumulate the backpropagated derivatives for `x` into its shadow `x.dval`.  
 #   Note that we have to accumulate from both `y.dval` and `dret.val`. This is because in reverse-mode AD we have to sum up the derivatives from all uses: 
 #   if `y` was read after our function, we need to consider derivatives from that use as well.
-# * Finally, we zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
+# * We zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
+# * Finally, since all derivatives are accumulated *in place* (in the shadows of the [`Duplicated`](@ref) arguments), these derivatives must not be communicated via the return value.
+#   Hence, we return `(nothing, nothing)`. If, instead, one of our arguments was annotated as [`Active`](@ref), we would have to provide its derivative at the corresponding index in the tuple returned.
 
 # Finally, let's see our reverse rule in action!
 
@@ -241,8 +251,8 @@ end
 
 x  = [3.0, 1.0]
 y  = [0.0, 0.0]
-dx .= 0
-dy .= 0
+make_zero!(dx)
+make_zero!(dy)
 
 autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
 @show dx # derivative of h w.r.t. x

@@ -1,3 +1,194 @@
+struct MemoryEffect
+    data::UInt32
+end
+
+@enum(ModRefInfo,
+  MRI_NoModRef = 0,
+  MRI_Ref = 1,
+  MRI_Mod = 2,
+  MRI_ModRef = 3)
+
+@enum(IRMemLocation,
+  ArgMem = 0,
+  InaccessibleMem = 1,
+  Other = 2)
+
+const BitsPerLoc = UInt32(2)
+const LocMask = UInt32((1 << BitsPerLoc) - 1)
+function getLocationPos(Loc::IRMemLocation)
+    return UInt32(Loc) * BitsPerLoc
+end
+function Base.:<<(mr::ModRefInfo, rhs::UInt32)
+    UInt32(mr) << rhs
+end
+function Base.:|(lhs::ModRefInfo, rhs::ModRefInfo)
+    ModRefInfo(UInt32(lhs) | UInt32(rhs))
+end
+function Base.:&(lhs::ModRefInfo, rhs::ModRefInfo)
+    ModRefInfo(UInt32(lhs) & UInt32(rhs))
+end
+const AllEffects = MemoryEffect((MRI_ModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_ModRef << getLocationPos(Other)))
+const ReadOnlyEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_Ref << getLocationPos(Other)))
+const ReadOnlyArgMemEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
+const NoEffects = MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
+
+# Get ModRefInfo for any location.
+function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo
+    ModRefInfo((effect.data >> getLocationPos(loc)) & LocMask) 
+end
+
+function getModRef(effect::MemoryEffect)::ModRefInfo
+    cur = MRI_NoModRef
+    for loc in (ArgMem, InaccessibleMem, Other)
+        cur |= getModRef(effect, loc)
+    end
+    return cur
+end
+
+function setModRef(effect::MemoryEffect, Loc::IRMemLocation, MR::ModRefInfo)::MemoryEffect
+    data = effect.data
+    Data &= ~(LocMask << getLocationPos(Loc))
+    Data |= MR << getLocationPos(Loc)
+    return MemoryEffect(data)
+end
+
+function setModRef(effect::MemoryEffect)::MemoryEffect
+    for loc in (ArgMem, InaccessibleMem, Other)
+        effect = setModRef(effect, mri)= getModRef(effect, loc)
+    end
+    return effect
+end
+
+function set_readonly(mri::ModRefInfo)
+    return mri & MRI_Ref
+end
+function set_writeonly(mri::ModRefInfo)
+    return mri & MRI_Mod
+end
+function set_reading(mri::ModRefInfo)
+    return mri | MRI_Ref
+end
+function set_writing(mri::ModRefInfo)
+    return mri | MRI_Mod
+end
+
+function set_readonly(effect::MemoryEffect)
+    data = UInt32(0)
+    for loc in (ArgMem, InaccessibleMem, Other)
+        data = UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
+    end
+    return MemoryEffect(data)
+end
+
+function is_readonly(mri::ModRefInfo)
+    return mri == MRI_NoModRef || mri == MRI_Ref
+end
+
+function is_readnone(mri::ModRefInfo)
+    return mri == MRI_NoModRef
+end
+
+function is_writeonly(mri::ModRefInfo)
+    return mri == MRI_NoModRef || mri == MRI_Mod
+end
+
+for n in (:is_readonly, :is_readnone, :is_writeonly)
+@eval begin
+    function $n(memeffect::MemoryEffect)
+        return $n(getModRef(memeffect))
+    end
+end
+end
+
+function is_noreturn(f::LLVM.Function)
+    for attr in collect(function_attributes(f))
+        if kind(attr) == kind(EnumAttribute("noreturn"))
+            return true
+        end
+    end
+    return false
+end
+
+function is_readonly(f::LLVM.Function)
+    for attr in collect(function_attributes(f))
+        if kind(attr) == kind(EnumAttribute("readonly"))
+            return true
+        end
+        if kind(attr) == kind(EnumAttribute("readnone"))
+            return true
+        end
+        if LLVM.version().major > 15
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_readonly(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+        end
+    end
+    return false
+end
+
+function is_readnone(f::LLVM.Function)
+    for attr in collect(function_attributes(cur))
+        if kind(attr) == kind(EnumAttribute("readnone"))
+            return true
+        end
+        if LLVM.version().major > 15
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_readnone(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+        end
+    end
+    return false
+end
+
+function is_writeonly(f::LLVM.Function)
+    for attr in collect(function_attributes(cur))
+        if kind(attr) == kind(EnumAttribute("readnone"))
+            return true
+        end
+        if kind(attr) == kind(EnumAttribute("writeonly"))
+            return true
+        end
+        if LLVM.version().major > 15
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_writeonly(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+        end
+    end
+    return false
+end
+
+function set_readonly!(fn::LLVM.Function)
+    attrs = collect(function_attributes(fn))
+    if LLVM.version().major <= 15
+        if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+            if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
+                delete!(function_attributes(fn), EnumAttribute("writeonly"))
+                push!(function_attributes(fn), EnumAttribute("readnone"))
+            else
+                push!(function_attributes(fn), EnumAttribute("readonly"))
+            end
+            return true
+        end
+        return false
+    else
+        for attr in attrs
+            if kind(attr) == kind(EnumAttribute("memory"))
+                old = MemoryEffect(value(attr))
+                eff = set_readonly(old)
+                push!(function_attributes(fn), EnumAttribute("memory", eff.data))
+                return old != eff
+            end
+        end
+        push!(function_attributes(fn), EnumAttribute("memory", set_readonly(AllEffects).data))
+        return true
+    end
+end
 
 function get_function!(mod::LLVM.Module, name::AbstractString, FT::LLVM.FunctionType, attrs=[])
     if haskey(functions(mod), name)
@@ -21,6 +212,15 @@ end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
+@inline function get_base_object(v)
+    if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+        return get_base_object(operands(v)[1])
+    end
+    if isa(v, LLVM.GetElementPtrInst)
+        return get_base_object(operands(v)[1])
+    end
+    return v
+end
 
 if VERSION < v"1.7.0-DEV.1205"
 
@@ -276,8 +476,8 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
         end
         println(io, "ctype = ", ctype)
         println(io, "tape = ", tape)
-        println(io, "val = ", val)
-        println(io, "prev = ", prev)
+        println(io, "val = ", string(val))
+        println(io, "prev = ", string(prev))
         println(io, "lidxs = ", lidxs)
         println(io, "ridxs = ", ridxs)
         println(io, "tape_type(tape) = ", tape_type(tape))

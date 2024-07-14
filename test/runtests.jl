@@ -17,6 +17,8 @@ using Enzyme
 using Test
 using FiniteDifferences
 using Aqua
+using SparseArrays
+using StaticArrays
 using Statistics
 using LinearAlgebra
 using InlineStrings
@@ -24,24 +26,36 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+function isapproxfn(fn, args...; kwargs...)
+    isapprox(args...; kwargs...)
+end
 # Test against FiniteDifferences
 function test_scalar(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
-    ∂x, = autodiff(Reverse, f, Active, Active(x))[1]
-    if typeof(x) <: Complex
+    ∂x, = autodiff(ReverseHolomorphic, f, Active, Active(x))[1]
+
+    finite_diff = if typeof(x) <: Complex
+      RT = typeof(x).parameters[1]
+      (fdm(dx -> f(x+dx), RT(0)) - im * fdm(dy -> f(x+im*dy), RT(0)))/2
     else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+      fdm(f, x)
     end
 
-    rm = ∂x
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+
     if typeof(x) <: Integer
         x = Float64(x)
     end
-    ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
+
     if typeof(x) <: Complex
-      @test ∂x ≈ rm
+        ∂re, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
+        ∂im, = autodiff(Forward, f, Duplicated(x, im*one(typeof(x))))
+        ∂x = (∂re - im*∂im)/2
     else
-      @test isapprox(∂x, fdm(f, x); rtol=rtol, atol=atol, kwargs...)
+        ∂x, = autodiff(Forward, f, Duplicated(x, one(typeof(x))))
     end
+
+    @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol=rtol, atol=atol, kwargs...)
+
 end
 
 function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1), kwargs...)
@@ -55,7 +69,7 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
 
     dx = zero(x)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
-    @test isapprox(reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Reverse, f), reshape(dx, length(dx)), dx_fd; rtol=rtol, atol=atol, kwargs...)
 
     dx_fwd = map(eachindex(x)) do i
         dx = zero(x)
@@ -63,10 +77,10 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
         ∂x = autodiff(Forward, f, Duplicated(x, dx))
         isempty(∂x) ? zero(eltype(dx)) : ∂x[1]
     end
-    @test isapprox(dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
+    @test isapproxfn((Enzyme.Forward, f), dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
-Aqua.test_all(Enzyme, unbound_args=false, piracy=false)
+Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false)
 
 include("abi.jl")
 include("typetree.jl")
@@ -76,12 +90,15 @@ include("typetree.jl")
     include("rrules.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
+    include("internal_rules.jl")
     @static if VERSION ≥ v"1.9-"
         # XXX invalidation does not work on Julia 1.8
         include("ruleinvalidation.jl")
     end
 end
-include("blas.jl")
+@static if VERSION ≥ v"1.7-" || !Sys.iswindows()
+    include("blas.jl")
+end
 
 f0(x) = 1.0 + x
 function vrec(start, x)
@@ -120,8 +137,12 @@ end
     @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Tuple{Any,Int64}, (), nothing) == Enzyme.Compiler.DupState
+    @assert Enzyme.Compiler.active_reg_inner(Tuple{S,Int64} where S, (), Base.get_world_counter()) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
+    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
@@ -164,6 +185,41 @@ end
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
+    #
+    z = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z)
+    @test z[1] ≈ [0.0, 0.0, 0.0]
+    @test z[2][1] == 0
+    @test z[2][2] == 1
+    @test z[3] ≈ [0.0, 0.0]
+    
+    z2 = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    Enzyme.make_zero!(z2)
+    @test z2[1] ≈ [0.0, 0.0, 0.0]
+    @test z2[2][1] == 0
+    @test z2[2][2] == 1
+    @test z2[3] ≈ [0.0, 0.0]
+    
+    z3 = [3.4, "foo"]
+    Enzyme.make_zero!(z3)
+    @test z3[1] ≈ 0.0
+    @test z3[2] == "foo"
+
+    z4 = sin
+    Enzyme.make_zero!(z4)
+    
+    struct Dense
+        n_inp::Int
+        b::Vector{Float64}
+    end
+
+    function Dense(n)
+        Dense(n, rand(n))
+    end
+
+    nn = Dense(4)
+    Enzyme.make_zero!(nn)
+    @test nn.b ≈ [0.0, 0.0, 0.0, 0.0]
 end
 
 @testset "Reflection" begin
@@ -179,6 +235,85 @@ end
     end
 end
 
+sumsq2(x) = sum(abs2, x)
+sumsin(x) = sum(sin, x)
+sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
+@testset "Recursion optimization" begin
+    # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    @test occursin("diffe",fn)
+    # TODO we need to fix julia to remove unused bounds checks
+    # @test !occursin("aug",fn)
+    
+    Enzyme.API.printall!(true)
+    fn = sprint() do io
+       Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+    end
+    Enzyme.API.printall!(false)
+    @test occursin("diffe",fn)
+    if count("call fastcc void @diffejulia__mapreduce", fn) != 1
+        println(sprint() do io
+           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
+       end)
+        println(sprint() do io
+           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
+       end)
+        println(fn)
+    end
+    # TODO per system being run on the indexing in the mapreduce is broken
+    # @test count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
+    # no memory overwritten state [in addition to the arg-based variant]
+    @test_broken !occursin("aug",fn)
+
+    x = ones(100)
+    dx = zeros(100)
+    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
+end
+
+@noinline function prt_sret(A)
+    A[1] *= 2
+    return (A, A[2])
+end
+
+@noinline function sretf(A2, x, c)
+    x[3] = c * A2[3]
+end
+
+@noinline function batchdecaysret0(x, A, b)
+    A2, c = prt_sret(A)
+    sretf(A2, x, c)
+    return nothing
+end
+
+function batchdecaysret(x, A, b)
+    batchdecaysret0(x, A, b)
+    A[2] = 0
+    return nothing
+end
+
+@testset "Batch Reverse sret fix" begin
+    Enzyme.autodiff(Reverse, batchdecaysret,
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))),
+                    BatchDuplicated(ones(3), (ones(3), ones(3))))
+end
 
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
@@ -244,16 +379,23 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.sinc, 2.2)
+    end
     test_scalar(Base.FastMath.sinh_fast, 1.0)
     test_scalar(Base.FastMath.cosh_fast, 1.0)
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.FastMath.exp_fast, 1.0)
+    end
+    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.exp10, 1.0)
+    end
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
     test_scalar(x->rem(x, 1), 0.7)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
+    test_scalar(sqrt, 1.7+2.1im)
     
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
@@ -278,11 +420,197 @@ make3() = (1.0, 2.0, 3.0)
 
 end
 
+@testset "Deferred and deferred thunk" begin
+    function dot(A)
+        return A[1] * A[1] + A[2] * A[2] 
+    end
+    dA = zeros(2)
+    A = [3.0, 5.0]
+    thunk_dA, def_dA = copy(dA), copy(dA)
+    def_A, thunk_A = copy(A), copy(A)
+    primal = Enzyme.autodiff(ReverseWithPrimal, dot, Active, Duplicated(A, dA))[2]
+    @test primal == 34.0
+    primal = Enzyme.autodiff_deferred(ReverseWithPrimal, dot, Active, Duplicated(def_A, def_dA))[2]
+    @test primal == 34.0
+
+    dup = Duplicated(thunk_A, thunk_dA)
+    TapeType = Enzyme.EnzymeCore.tape_type(
+        ReverseSplitWithPrimal,
+        Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
+    )
+    @test Tuple{Float64,Float64}  === TapeType
+    Ret = if VERSION < v"1.8-"
+        Active{Float64}
+    else
+        Active
+    end
+    fwd, rev = Enzyme.autodiff_deferred_thunk(
+        ReverseSplitWithPrimal,
+        TapeType,
+        Const{typeof(dot)},
+        Ret,
+        Duplicated{typeof(thunk_A)}
+    )
+    tape, primal, _  = fwd(Const(dot), dup)
+    @test isa(tape, Tuple{Float64,Float64})
+    rev(Const(dot), dup, 1.0, tape)
+    @test all(primal == 34)
+    @test all(dA .== [6.0, 10.0])
+    @test all(dA .== def_dA)
+    @test all(dA .== thunk_dA)
+
+    @static if VERSION < v"1.8-"
+    else
+        function kernel(len, A)
+            for i in 1:len
+                A[i] *= A[i]
+            end
+        end
+
+        A = Array{Float64}(undef, 64)
+        dA = Array{Float64}(undef, 64)
+
+        A .= (1:1:64)
+        dA .= 1
+
+        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
+            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+            forward(Const(f), Const(ctx), args...)[1]
+            return nothing
+        end
+
+        ModifiedBetween = Val((false, false, true))
+
+        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
+    end
+
+end
+
+@testset "Simple Complex tests" begin
+    mul2(z) = 2 * z
+    square(z) = z * z
+
+    z = 1.0+1.0im
+
+    @test_throws ErrorException autodiff(Reverse, mul2, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseWithPrimal, mul2, Active, Active(z))
+    @test autodiff(ReverseHolomorphic, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[1][1] ≈ 2.0 + 0.0im
+    @test autodiff(ReverseHolomorphicWithPrimal, mul2, Active, Active(z))[2] ≈ 2 * z
+
+    z = 3.4 + 2.7im
+    @test autodiff(ReverseHolomorphic, square, Active, Active(z))[1][1] ≈ 2 * z
+    @test autodiff(ReverseHolomorphic, identity, Active, Active(z))[1][1] ≈ 1
+
+    @test autodiff(ReverseHolomorphic, Base.inv, Active, Active(3.0 + 4.0im))[1][1] ≈ 0.0112 + 0.0384im
+
+    mul3(z) = Base.inferencebarrier(2 * z)
+
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active, Active(z))
+    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sum, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 1.0
+
+    sumsq(x) = sum(x .* x)
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    sumsq2(x) = sum(abs2.(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    sumsq2C(x) = Complex{Float64}(sum(abs2.(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq2C, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 3.4 - 2.7im
+
+    sumsq3(x) = sum(x .* conj(x))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 3.4 - 2.7im
+
+    sumsq3R(x) = Float64(sum(x .* conj(x)))
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, sumsq3R, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 3.4 + 2.7im
+    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+
+    function setinact(z)
+        z[1] *= 2
+        nothing
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setinact2(z)
+        z[1] *= 2
+        return 0.0+1.0im
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setinact2, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+
+    function setact(z)
+        z[1] *= 2
+        return z[1]
+    end
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Const, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 0.0
+
+    vals = Complex{Float64}[3.4 + 2.7im]
+    dvals = Complex{Float64}[0.0]
+    autodiff(ReverseHolomorphic, setact, Active, Duplicated(vals, dvals))
+    @test vals[1] ≈ 2 * (3.4 + 2.7im)
+    @test dvals[1] ≈ 2.0
+
+    function upgrade(z)
+        z = ComplexF64(z)
+        return z*z
+    end
+    @test autodiff(ReverseHolomorphic, upgrade, Active, Active(3.1))[1][1] ≈ 6.2
+end
+
 @testset "Simple Exception" begin
     f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
     f_x = zero.(y)
-    @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), 0)
+    @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), Const(0))
 end
 
 
@@ -307,6 +635,7 @@ end
     @test first(autodiff(Forward, g, Duplicated(3.0, 1.0))) ≈ 2.0
     test_scalar(g, 2.0)
     test_scalar(g, 3.0)
+    test_scalar(Base.inv, 3.0 + 4.0im)
 end
 
 @testset "Base functions" begin
@@ -356,6 +685,27 @@ end
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
 end
 
+function deadarg_pow(z::T, i) where {T<:Real}
+    zabs = abs(z)
+    if sign(z) < zero(T)
+        return (zabs^i) * (cos(T(π) * i) + sin(T(π) * i)im)
+    end
+    return zabs^i + zero(T)im
+end
+
+function deadargtest(n)
+    wp = 1 + deadarg_pow(-n, 0.5)
+
+    deadarg_pow(-n, 0.5)
+
+    return real(wp)
+end
+
+@testset "Dead arg elim" begin
+    res = autodiff(Enzyme.ReverseWithPrimal, deadargtest, Active, Active(0.25))
+    @test res[2] ≈ 1.0
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
@@ -373,6 +723,23 @@ euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
 @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
 @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
 test_scalar(euroad, 0.5)
+end
+@noinline function womylogpdf(X::AbstractArray{<:Real})
+  map(womylogpdf, X)
+end
+
+function womylogpdf(x::Real)
+    (x - 2)
+end
+
+
+function wologpdf_test(x)
+    return womylogpdf(x)
+end
+
+@testset "Ensure writeonly deduction combines with capture" begin
+    res = Enzyme.autodiff(Enzyme.Forward, wologpdf_test, Duplicated([0.5], [0.7]))
+    @test res[1] ≈ [0.7]
 end
 
 @testset "Nested AD" begin
@@ -640,7 +1007,7 @@ end
     B = Float64[4.0, 5.0]
     dB = Float64[0.0, 0.0]
     f = (X, Y) -> sum(X .* Y)
-    Enzyme.autodiff(Reverse, f, Active, A, Duplicated(B, dB))
+    Enzyme.autodiff(Reverse, f, Active, Const(A), Duplicated(B, dB))
 
     function gc_copy(x)  # Basically g(x) = x^2
         a = x * ones(10)
@@ -693,6 +1060,16 @@ end
     @test res.y == nothing
 end
 
+@testset "Methoe errors" begin
+     fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
+     @test_throws MethodError fwd(ones(10))
+     @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
+     @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
+     # TODO
+     # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
+     fwd(Const(sum), Duplicated(ones(10), ones(10)))
+end
+
 @testset "Generic Active Union Return" begin
 
     function generic_union_ret(A)
@@ -715,6 +1092,29 @@ end
     Enzyme.autodiff(Enzyme.Reverse, outergeneric, Enzyme.Duplicated(weights, dweights))
 
     @test dweights[1] ≈ 1.
+end
+
+function Valuation1(z,Ls1)
+    @inbounds Ls1[1] = sum(Base.inferencebarrier(z))
+    return nothing
+end
+@testset "Active setindex!" begin
+    v=ones(5)
+    dv=zero(v)
+
+    DV1=Float32[0]
+    DV2=Float32[1]
+
+    Enzyme.autodiff(Reverse,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test dv[1] ≈ 1.
+    
+    DV1=Float32[0]
+    DV2=Float32[1]
+    v=ones(5)
+    dv=zero(v)
+    dv[1] = 1.    
+    Enzyme.autodiff(Forward,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
+    @test DV2[1] ≈ 1.
 end
 
 @testset "Null init union" begin
@@ -848,8 +1248,8 @@ end
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
 
     f74(a, c) = a * √c
-    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), 3))[1]
-    @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), 3))
+    @test √3 ≈ first(autodiff(Reverse, f74, Active, Active(2), Const(3)))[1]
+    @test √3 ≈ first(autodiff(Forward, f74, Duplicated(2.0, 1.0), Const(3)))
 end
 
 @testset "SinCos" begin
@@ -891,9 +1291,9 @@ mybesselj1(z) = mybesselj(1, z)
 
 @testset "Bessel" begin
     autodiff(Reverse, mybesselj, Active, Const(0), Active(1.0))
-    autodiff(Reverse, mybesselj, Active, 0, Active(1.0))
+    autodiff(Reverse, mybesselj, Active, Const(0), Active(1.0))
     autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
-    autodiff(Forward, mybesselj, 0, Duplicated(1.0, 1.0))
+    autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
     @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
         test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
         test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
@@ -932,6 +1332,17 @@ end
     Enzyme.API.runtimeActivity!(true)
     @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
     Enzyme.API.runtimeActivity!(false)
+end
+
+function fillsum(x)
+    a = similar(rand(3, 3))
+    fill!(a, x)
+    return sum(a)
+end
+
+@testset "Fill sum" begin
+    res = autodiff(Forward, fillsum, Duplicated(2.0, 1.0))[1]
+    @test 9.0 ≈ res
 end
 
 
@@ -996,7 +1407,7 @@ end
 
 ## https://github.com/JuliaDiff/ChainRules.jl/tree/master/test/rulesets
 if !Sys.iswindows()
-    include("packages/specialfunctions.jl")
+    include("ext/specialfunctions.jl")
 end
 
 @testset "Threads" begin
@@ -1211,14 +1622,18 @@ end
     
     R = zeros(6,6)    
     dR = zeros(6, 6)
-    autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
 
-	@test 1.0 ≈ dR[1, 1]
-	@test 1.0 ≈ dR[2, 2]
-	@test 1.0 ≈ dR[3, 3]
-	@test 1.0 ≈ dR[4, 4]
-	@test 1.0 ≈ dR[5, 5]
-	@test 0.0 ≈ dR[6, 6]
+    @static if VERSION ≥ v"1.10-"
+        @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    else
+        autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    	@test 1.0 ≈ dR[1, 1]
+    	@test 1.0 ≈ dR[2, 2]
+    	@test 1.0 ≈ dR[3, 3]
+    	@test 1.0 ≈ dR[4, 4]
+    	@test 1.0 ≈ dR[5, 5]
+    	@test 0.0 ≈ dR[6, 6]
+    end
 end
 
 @testset "invoke" begin
@@ -1316,6 +1731,40 @@ end
 
 end
 
+
+function batchgf(out, args)
+	res = 0.0
+    x = Base.inferencebarrier((args[1][1],))
+	for v in x
+		v = v::Float64
+		res += v
+        break
+	end
+    out[] = res
+	nothing
+end
+
+@testset "Batch Getfield" begin
+    x = [(2.0, 3.0)]
+    dx = [(0.0, 0.0)]
+    dx2 = [(0.0, 0.0)]
+    dx3 = [(0.0, 0.0)]
+    out = Ref(0.0)
+    dout = Ref(1.0)
+    dout2 = Ref(3.0)
+    dout3 = Ref(5.0)
+    Enzyme.autodiff(Reverse, batchgf, Const, BatchDuplicatedNoNeed(out, (dout, dout2, dout3)), BatchDuplicated(x, (dx, dx2, dx3)))
+    @test dx[1][1] ≈ 1.0
+    @test dx[1][2] ≈ 0.0
+    @test dx2[1][1] ≈ 3.0
+    @test dx2[1][2] ≈ 0.0
+    @test dx3[1][1] ≈ 5.0
+    @test dx2[1][2] ≈ 0.0
+end
+
+include("mixed.jl")
+include("applyiter.jl")
+
 @testset "Dynamic Val Construction" begin
 
     dyn_f(::Val{D}) where D = prod(D)
@@ -1406,7 +1855,7 @@ end
 
     u_v_eta = [0.0]
 
-    v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), 1)[1][2]
+    v = autodiff(Reverse, incopy, Active, Const(u_v_eta), Active(3.14), Const(1))[1][2]
     @test v ≈ 1.0
     @test u_v_eta[1] ≈ 0.0
 
@@ -1416,7 +1865,7 @@ end
         return @inbounds eta[i]
     end
 
-    v = autodiff(Reverse, incopy2, Active, Active(3.14), 1)[1][1]
+    v = autodiff(Reverse, incopy2, Active, Active(3.14), Const(1))[1][1]
     @test v ≈ 1.0
 end
 
@@ -1450,11 +1899,11 @@ end
         end
         y
     end
-    @test 1.0 ≈ autodiff(Reverse, f_undef, false, Active(2.14))[1][2]
-    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, true, Active(2.14))
+    @test 1.0 ≈ autodiff(Reverse, f_undef, Const(false), Active(2.14))[1][2]
+    @test_throws Base.UndefVarError autodiff(Reverse, f_undef, Const(true), Active(2.14))
 
-    @test 1.0 ≈ autodiff(Forward, f_undef, false, Duplicated(2.14, 1.0))[1]
-    @test_throws Base.UndefVarError autodiff(Forward, f_undef, true, Duplicated(2.14, 1.0))
+    @test 1.0 ≈ autodiff(Forward, f_undef, Const(false), Duplicated(2.14, 1.0))[1]
+    @test_throws Base.UndefVarError autodiff(Forward, f_undef, Const(true), Duplicated(2.14, 1.0))
 end
 
 @testset "Return GC error" begin
@@ -1468,8 +1917,8 @@ end
 		end
 	end
 
-    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, true, Active(2.1))[1][2]
-	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, true, Duplicated(2.1, 1.0))[1]
+    @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, Const(true), Active(2.1))[1][2]
+	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, Const(true), Duplicated(2.1, 1.0))[1]
 
 	function tobedifferentiated2(cond, a)::Float64
 		if cond
@@ -1479,8 +1928,8 @@ end
 		end
 	end
 
-    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, true, Active(2.1))[1][2]
-	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, true, Duplicated(2.1, 1.0))[1]
+    @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, Const(true), Active(2.1))[1][2]
+	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, Const(true), Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)
         bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(p1))
@@ -1510,8 +1959,8 @@ end
     F_H = [1.0, 0.0]
     F = [1.0, 0.0]
 
-    autodiff(Reverse, mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
-    autodiff(Forward, mer, Duplicated(F, L), Duplicated(F_H, L_H), true)
+    autodiff(Reverse, mer, Duplicated(F, L), Duplicated(F_H, L_H), Const(true))
+    autodiff(Forward, mer, Duplicated(F, L), Duplicated(F_H, L_H), Const(true))
 end
 
 @testset "GC Sret" begin
@@ -1673,8 +2122,8 @@ end
             -t
             nothing
         end
-        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), false)
-        autodiff(Forward, tobedifferentiated, Duplicated(F, L), false)
+        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), Const(false))
+        autodiff(Forward, tobedifferentiated, Duplicated(F, L), Const(false))
     end
 
     main()
@@ -1729,6 +2178,65 @@ end
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
+end
+
+function bc0_test_function(ps)
+    z = view(ps, 26:30)
+    C = Matrix{Float64}(undef, 5, 1)
+    C .= z
+    return C[1]
+end
+
+@noinline function bc1_bcs2(x, y)
+    x != y && error(2)
+    return x
+end
+
+@noinline function bc1_affine_normalize(x::AbstractArray)
+    _axes = bc1_bcs2(axes(x), axes(x))
+    dest = similar(Array{Float32}, _axes)
+    bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(Base.broadcasted(+, x, x)))
+    copyto!(dest, bc)
+    return x
+end
+
+function bc1_loss_function(x)
+    return bc1_affine_normalize(x)[1]
+end
+
+function bc2_affine_normalize(::typeof(identity), x::AbstractArray, xmean, xvar,
+    scale::AbstractArray, bias::AbstractArray, epsilon::Real)
+    _scale = @. scale / sqrt(xvar + epsilon)
+    _bias = @. bias - xmean * _scale
+    return @. x * _scale + _bias
+end
+
+function bc2_loss_function(x, scale, bias)
+    x_ = reshape(x, 6, 6, 3, 2, 2)
+    scale_ = reshape(scale, 1, 1, 3, 2, 1)
+    bias_ = reshape(bias, 1, 1, 3, 2, 1)
+
+    xmean = mean(x_, dims=(1, 2, 5))
+    xvar = var(x_, corrected=false, mean=xmean, dims=(1, 2, 5))
+
+    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
+end
+
+@static if VERSION ≥ v"1.8-"
+@testset "Broadcast noalias" begin
+
+    x = ones(30)
+    autodiff(Reverse, bc0_test_function, Active, Const(x))
+    
+    x = rand(Float32, 2, 3)
+    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+
+    x = rand(Float32, 6, 6, 6, 2)
+    sc = rand(Float32, 6)
+    bi = rand(Float32, 6)
+    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+end
 end
 
 @testset "GetField" begin
@@ -1844,41 +2352,115 @@ end
     @test mt2.y ≈ 6.0
     @test dmt2.x ≈ 1.2
     @test dmt2.y ≈ 2.4
+
+    function sf_for2(v, fld, fld2, x)
+       setfield!(v, fld, 0.0)
+       for i in 1:100
+            setfield!(v, fld2, getfield(v, fld)::Float64 + x * i)
+       end
+       return getfield(v, fld)::Float64
+    end
+
+    mt2 = MyType2(0.0, 0.0)
+    dmt2 = MyType2(0.0, 0.0)
+
+    adres = Enzyme.autodiff(Reverse, sf_for2, Duplicated(mt2, dmt2), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+
+    mutable struct MyType3
+       x::Base.RefValue{Float64}
+       y::Base.RefValue{Float64}
+    end
+
+    function sf_for3(v, fld, fld2, x)
+       setfield!(v, fld, Ref(0.0))
+       for i in 1:100
+            setfield!(v, fld2, Base.Ref((getfield(v, fld)::Base.RefValue{Float64})[] + x * i))
+       end
+       return (getfield(v, fld)::Base.RefValue{Float64})[]
+    end
+
+    mt3 = MyType3(Ref(0.0), Ref(0.0))
+    dmt3 = MyType3(Ref(0.0), Ref(0.0))
+
+    adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
+    @test adres[1][4] ≈ 5050.0
+    
+    mutable struct MyTypeM
+       x::Float64
+       y
+    end
+
+    @noinline function unstable_mul(x, y)
+        return (x*y)::Float64
+    end
+
+    function gf3(y, v::MyTypeM, fld::Symbol)
+       x = getfield(v, fld)
+       unstable_mul(x, y)
+    end
+
+    function gf3(y, v::MyTypeM, fld::Integer)
+       x = getfield_idx(v, fld)
+       unstable_mul(x, y)
+    end
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(:x))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
+    
+    mx = MyTypeM(3.0, 1)
+    res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(0))
+    @test mx.x ≈ 3.0
+    @test res[1][1] ≈ 3.0
 end
 
-@testset "apply iterate" begin
-    function mktup(v)
-        tup = tuple(v...)
-        return tup[1][1] * tup[3][1]
+
+struct GFUniform{T}
+    a::T
+    b::T
+end
+GFlogpdf(d::GFUniform, ::Real) = -log(d.b - d.a)
+
+struct GFNormal{T}
+    μ::T
+    σ::T
+end
+GFlogpdf(d::GFNormal, x::Real) = -(x - d.μ)^2 / (2 * d.σ^2)
+
+struct GFProductDist{V}
+    dists::V
+end
+function GFlogpdf(d::GFProductDist, x::Vector)
+    dists = d.dists
+    s = zero(eltype(x))
+    for i in eachindex(x)
+	s += GFlogpdf(dists[i], x[i])
     end
+    return s
+end
 
-    data = [[3.0], nothing, [2.0]]
-    ddata = [[0.0], nothing, [0.0]]
+struct GFNamedDist{Names, D<:NamedTuple{Names}}
+    dists::D
+end
 
-    Enzyme.autodiff(Reverse, mktup, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 2.0
-    @test ddata[3][1] ≈ 3.0
+function GFlogpdf(d::GFNamedDist{N}, x::NamedTuple{N}) where {N}
+    vt = values(x)
+    dists = d.dists
+    return mapreduce((dist, acc) -> GFlogpdf(dist, acc), +, dists, vt)
+end
 
-    function mktup2(v)
-        tup = tuple(v...)
-        return (tup[1][1] * tup[3])::Float64
-    end
 
-    data = [[3.0], nothing, 2.0]
-    ddata = [[0.0], nothing, 0.0]
+@testset "Getfield with reference" begin
+    Enzyme.API.runtimeActivity!(true)
 
-    @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
-
-    function mktup3(v)
-        tup = tuple(v..., v...)
-        return tup[1][1] * tup[1][1]
-    end
-
-    data = [[3.0]]
-    ddata = [[0.0]]
-
-    Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
-    @test ddata[1][1] ≈ 6.0
+    d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
+    p = (a = 1.0, b = [0.5, 0.5])
+    dp = Enzyme.make_zero(p)
+    GFlogpdf(d, p)
+    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
+    Enzyme.API.runtimeActivity!(false)
 end
 
 @testset "BLAS" begin
@@ -1906,9 +2488,9 @@ end
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond,x)*x
     if sizeof(Int) == sizeof(Int64)
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0))
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
     else
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, true, Active(1.0f0))
+        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
     end
     # TODO: Add test for NoShadowException
 end
@@ -1945,7 +2527,7 @@ end;
     loss = Ref(0.0)
     dloss = Ref(1.0)
 
-    autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), R)
+    autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), Const(R))
 
     @test loss[] ≈ 0.0
     @show dloss[] ≈ 0.0
@@ -1960,7 +2542,16 @@ end
 
     out = Ref(0.0)
     dout = Ref(1.0)
-    @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), true)[1][1]
+    @test 2.0 ≈ Enzyme.autodiff(Reverse, unionret, Active, Active(2.0), Duplicated(out, dout), Const(true))[1][1]
+end
+
+
+function assured_err(x)
+    throw(AssertionError("foo"))
+end
+
+@testset "UnionAll" begin
+    @test_throws AssertionError Enzyme.autodiff(Reverse, assured_err, Active, Active(2.0))
 end
 
 struct MyFlux
@@ -2000,6 +2591,19 @@ end
     nt = Enzyme.Compiler.runtime_generic_augfwd(args2...)
     @test nt[1] == MyFlux()
     @test nt[2] == MyFlux()
+end
+
+@testset "Batched inactive" begin
+    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(2), Val((true, true, true)),
+                                                    Val(Enzyme.Compiler.AnyArray(2+Int(2))),
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
+
+    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(2), Val((true, true, true)), augres[end],
+                                ==, nothing, nothing,
+                                :foo, nothing, nothing,
+                                :bar, nothing, nothing)
 end
 
 @testset "Array push" begin
@@ -2115,6 +2719,77 @@ end
     r = pullback(Const(times2), xact, tape)
     @test xact.dval[1] ≈ dy1 * 2
     @test xact.dval[2] ≈ dy2 * 2
+end
+
+@testset "Gradient & NamedTuples" begin
+    xy = (x = [1.0, 2.0], y = [3.0, 4.0])
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad == (x = [3.0, 4.0], y = [1.0, 2.0])
+
+    xp = (x = [1.0, 2.0], p = 3)  # 3::Int is non-diff
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp)
+    @test grad.x == [3.0, 12.0]
+
+    xp2 = (x = [1.0, 2.0], p = 3.0)  # mixed activity
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .^ z.p), xp2)
+    @test grad.x == [3.0, 12.0]
+    @test grad.p ≈ 5.545177444479562
+
+    xy = (x = [1.0, 2.0], y = [3, 4])  # y is non-diff
+    grad = Enzyme.gradient(Reverse, z -> sum(z.x .* z.y), xy)
+    @test grad.x == [3.0, 4.0]
+    @test grad.y === xy.y  # make_zero did not copy this
+
+    grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))
+    @test grad == (x = 6.0, y = 5.0)
+
+    grad = Enzyme.gradient(Reverse, abs2, 7.0)
+    @test grad == 14.0
+end
+
+@testset "Gradient & SparseArrays / StaticArrays" begin
+    x = sparse([5.0, 0.0, 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseVector
+    @test dx ≈ [1, 0, 1]
+
+    x = sparse([5.0 0.0 6.0])
+    dx = Enzyme.gradient(Reverse, sum, x)
+    @test dx isa SparseMatrixCSC
+    @test dx ≈ [1 0 1]
+
+    x = @SArray [5.0 0.0 6.0]
+    dx = Enzyme.gradient(Reverse, prod, x)
+    @test dx isa SArray
+    @test dx ≈ [0 30 0]
+
+@static if VERSION ≥ v"1.9-" 
+    x = @SArray [5.0 0.0 6.0]
+    dx = Enzyme.gradient(Forward, prod, x)
+    @test dx[1] ≈ 0
+    @test dx[2] ≈ 30
+    @test dx[3] ≈ 0
+end
+end
+
+
+function sparse_eval(x::Vector{Float64})
+    A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
+    B = sparsevec([1, 1, 2, 3], [2.0*x[2], 1.0-x[1], 2.0+x[3], -1.0])
+    C = A + B
+    return A[1]
+end
+
+@static if VERSION ≥ v"1.7-" 
+@testset "Type Unstable SparseArrays" begin
+    x = [3.1, 2.7, 8.2]
+    dx = [0.0, 0.0, 0.0]
+
+    autodiff(Reverse, sparse_eval, Duplicated(x, dx))
+    
+    @test x ≈ [3.1, 2.7, 8.2]
+    @test dx ≈ [-1.0, 43.74, 0]
+end
 end
 
 @testset "Jacobian" begin
@@ -2276,6 +2951,37 @@ end
 	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
 end
 
+
+struct DensePE
+    n_inp::Int
+    W::Matrix{Float64}
+end
+
+struct NNPE
+    layers::Tuple{DensePE, DensePE}
+end
+
+
+function set_paramsPE(nn, params)
+    i = 1
+    for l in nn.layers
+        W = l.W # nn.layers[1].W
+        Base.copyto!(W, reshape(view(params,i:(i+length(W)-1)), size(W)))
+    end
+end
+
+@testset "Illegal phi erasure" begin
+    # just check that it compiles
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(set_paramsPE)}, Const, Duplicated{NNPE}, Duplicated{Vector{Float64}})
+    @test fwd !== nothing
+    @test rev !== nothing
+    nn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
+    dnn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
+    l = Vector{Float64}(undef, 32)
+    dl = Vector{Float64}(undef, 32)
+    fwd(Const(set_paramsPE), Duplicated(nn, dnn), Duplicated(l, dl))
+end
+
 @testset "Copy Broadcast arg" begin
 	x = Float32[3]
 	w = Float32[1]
@@ -2426,6 +3132,34 @@ end
     end
 end
 
+@static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
+@inline extract_bc(bc, ::Val{:north}) = (bc.north)
+@inline extract_bc(bc, ::Val{:top}) = (bc.top)
+
+function permute_boundary_conditions(boundary_conditions)
+    sides = [:top, :north] # changing the order of these actually changes the error
+    boundary_conditions = Tuple(extract_bc(boundary_conditions, Val(side)) for side in sides)
+
+    return nothing
+end
+
+@testset "Extract abstype" begin
+
+    parameters = (a = 1, b = 0.1)
+
+    bc   = (north=1, top=tuple(parameters, tuple(:c)))
+    d_bc = Enzyme.make_zero(bc)
+    Enzyme.API.looseTypeAnalysis!(true)
+
+    dc²_dκ = autodiff(Enzyme.Reverse,
+                      permute_boundary_conditions,
+                      Duplicated(bc, d_bc))
+
+    Enzyme.API.looseTypeAnalysis!(false)
+end
+end
+
+
 @testset "Static activity" begin
 
     struct Test2{T}
@@ -2524,6 +3258,175 @@ end
     end
 end
 
+struct GDoubleField{T}
+    this_field_does_nothing::T
+    b::T
+end
+
+GDoubleField() = GDoubleField{Float64}(0.0, 1.0)
+function fexpandempty(vec)
+    x = vec[1]
+    empty = []
+    d = GDoubleField(empty...)
+    return x ≤ d.b ? x * d.b : zero(x)
+end
+
+@testset "Constant Complex return" begin
+    vec = [0.5]
+    @test Enzyme.gradient(Enzyme.Reverse, fexpandempty, vec)[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ 1.0
+end
+
+const CUmemoryPool2 = Ptr{Float64} 
+
+struct CUmemPoolProps2
+    reserved::NTuple{31,Char}
+end
+
+mutable struct CuMemoryPool2
+    handle::CUmemoryPool2
+end
+
+function ccall_macro_lower(func, rettype, types, args, nreq)
+    # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
+    # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
+    # just around the inner ccall
+
+    cconvert_exprs = []
+    cconvert_args = []
+    for (typ, arg) in zip(types, args)
+        var = gensym("$(func)_cconvert")
+        push!(cconvert_args, var)
+        push!(cconvert_exprs, quote
+            $var = Base.cconvert($(esc(typ)), $(esc(arg)))
+        end)
+    end
+
+    unsafe_convert_exprs = []
+    unsafe_convert_args = []
+    for (typ, arg) in zip(types, cconvert_args)
+        var = gensym("$(func)_unsafe_convert")
+        push!(unsafe_convert_args, var)
+        push!(unsafe_convert_exprs, quote
+            $var = Base.unsafe_convert($(esc(typ)), $arg)
+        end)
+    end
+
+    quote
+        $(cconvert_exprs...)
+
+        $(unsafe_convert_exprs...)
+
+        ret = ccall($(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
+                    $(unsafe_convert_args...))
+    end
+end
+
+macro gcsafe_ccall(expr)
+    ccall_macro_lower(Base.ccall_macro_parse(expr)...)
+end
+
+function cuMemPoolCreate2(pool, poolProps)
+    # CUDA.initialize_context()
+    #CUDA.
+    gc_state = @ccall(jl_gc_safe_enter()::Int8)
+    @gcsafe_ccall cuMemPoolCreate(pool::Ptr{CUmemoryPool2},
+                                          poolProps::Ptr{CUmemPoolProps2})::Cvoid
+    @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
+end
+
+function cual()
+        props = Ref(CUmemPoolProps2( 
+            ntuple(i->Char(0), 31)
+        ))
+        handle_ref = Ref{CUmemoryPool2}()
+        cuMemPoolCreate2(handle_ref, props)
+
+        CuMemoryPool2(handle_ref[])
+end
+
+@testset "Unused shadow phi rev" begin
+    fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
+
+const SEED = 42
+const N_SAMPLES = 500
+const N_COMPONENTS = 4
+
+const rnd = Random.MersenneTwister(SEED)
+const data = randn(rnd, N_SAMPLES)
+const params0 = [rand(rnd, N_COMPONENTS); randn(rnd, N_COMPONENTS); 2rand(rnd, N_COMPONENTS)]
+
+# ========== Objective function ==========
+normal_pdf(x::Real, mean::Real, var::Real) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+normal_pdf(x, mean, var) =
+    exp(-(x - mean)^2 / (2var)) / sqrt(2π * var)
+
+# original objective (doesn't work)
+function mixture_loglikelihood1(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    sum(mat .* weights', dims=2) .|> log |> sum
+end
+
+# another form of original objective (doesn't work)
+function mixture_loglikelihood2(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    obj_true = sum(
+        sum(
+            weight * normal_pdf(x, mean, std^2)
+            for (weight, mean, std) in zip(weights, means, stds)
+        ) |> log
+        for x in data
+    )
+end
+
+# objective re-written by me
+function mixture_loglikelihood3(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
+    K = length(params) ÷ 3
+    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
+    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+
+    obj = zero(eltype(mat))
+    for x in data
+        obj_i = zero(eltype(mat))
+        for (weight, mean, std) in zip(weights, means, stds)
+            obj_i += weight * normal_pdf(x, mean, std^2)
+        end
+        obj += log(obj_i)
+    end
+    return obj
+end
+
+const objective1 = params -> mixture_loglikelihood1(params, data)
+const objective2 = params -> mixture_loglikelihood2(params, data)
+const objective3 = params -> mixture_loglikelihood3(params, data)
+
+@testset "Type unsstable return" begin
+    expected =  [289.7308495620467,
+                199.27559524985728,
+                 236.6894577756876,
+                 292.0612340227955,
+                  -9.429799389881452,
+                  26.722295646439047,
+                  -1.9180355546752244,
+                  37.98749089573396,
+                 -24.095620148778277,
+                 -13.935687326484112,
+                 -38.00044665702692,
+                 12.87712891527131]
+    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)
+    # objective2 fails from runtime activity requirements
+    # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)
+    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)
+end
+
 struct HarmonicAngle
     k::Float64
     t0::Float64
@@ -2589,11 +3492,10 @@ end
     @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
 
     f7(x) = median([2.0, 1.0, x])
-    # Fails on Julia 1.9 due to #880
-    #=@test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
+    @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
     @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
     @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
-    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0=#
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
 
     f8(x) = middle([2.0, x, 1.0])
     @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
@@ -2607,60 +3509,6 @@ end
         @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
         @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
     end
-end
-
-@testset "Linear Solve" begin
-    A = Float64[2 3; 5 7]
-    dA = zero(A)
-    b = Float64[11, 13]
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
-    @test db ≈ z
-    
-    db = zero(b)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Const{typeof(A)}, Duplicated{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Const(A), Duplicated(b, db))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Const(A), Duplicated(b, db), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test db ≈ z
-    
-    dA = zero(A)
-
-    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(\)}, Duplicated, Duplicated{typeof(A)}, Const{typeof(b)})
-
-    tape, primal, shadow = forward(Const(\), Duplicated(A, dA), Const(b))
-
-    dy = Float64[17, 19]
-    copyto!(shadow, dy)
-
-    pullback(Const(\), Duplicated(A, dA), Const(b), tape)
-
-    z = transpose(A) \ dy
-
-    y = A \ b
-    @test dA ≈ (-z * transpose(y))
 end
 
 @static if VERSION >= v"1.7-"
@@ -2677,5 +3525,24 @@ end
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
 end
+
+# TEST EXTENSIONS 
+@static if VERSION ≥ v"1.9-"
+    using SpecialFunctions
+    @testset "SpecialFunctions ext" begin
+        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    end
+
+    using ChainRulesCore
+    @testset "ChainRulesCore ext" begin
+        include("ext/chainrulescore.jl")
+    end
+    include("ext/logexpfunctions.jl")
+end
+
+
+
 end
 

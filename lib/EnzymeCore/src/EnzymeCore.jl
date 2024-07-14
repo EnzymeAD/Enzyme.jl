@@ -1,10 +1,9 @@
 module EnzymeCore
 
-using Adapt
-
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
-export ReverseSplitModified, ReverseSplitWidth
+export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI
 export BatchDuplicatedFunc
 
@@ -28,7 +27,6 @@ Enzyme will not auto-differentiate in respect `Const` arguments.
 struct Const{T} <: Annotation{T}
     val::T
 end
-Adapt.adapt_structure(to, x::Const) = Const(adapt(to, x.val))
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
 Const(::Type{T}) where T = Const{Type{T}}(T)
@@ -50,9 +48,9 @@ struct Active{T} <: Annotation{T}
     @inline Active(x::T1) where {T1} = new{T1}(x)
     @inline Active(x::T1) where {T1 <: Array} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
 end
-Adapt.adapt_structure(to, x::Active) = Active(adapt(to, x.val))
 
 Active(i::Integer) = Active(float(i))
+Active(ci::Complex{T}) where T <: Integer = Active(float(ci))
 
 """
     Duplicated(x, ∂f_∂x)
@@ -75,7 +73,6 @@ struct Duplicated{T} <: Annotation{T}
         new{T1}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::Duplicated) = Duplicated(adapt(to, x.val), adapt(to, x.dval))
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
@@ -96,7 +93,6 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
         new{T1}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::DuplicatedNoNeed) = DuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
 """
     BatchDuplicated(x, ∂f_∂xs)
@@ -119,7 +115,6 @@ struct BatchDuplicated{T,N} <: Annotation{T}
         new{T1, N}(x, dx)
     end
 end
-Adapt.adapt_structure(to, x::BatchDuplicated) = BatchDuplicated(adapt(to, x.val), adapt(to, x.dval))
 
 struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
     val::T
@@ -154,8 +149,33 @@ end
 @inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
-Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed) = BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 
+
+"""
+    MixedDuplicated(x, ∂f_∂x)
+
+Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
+data which is differentiable. Only used within custom rules.
+"""
+struct MixedDuplicated{T} <: Annotation{T}
+    val::T
+    dval::Base.RefValue{T}
+    @inline MixedDuplicated(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
+end
+
+"""
+    BatchMixedDuplicated(x, ∂f_∂xs)
+
+Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
+for all at once. Only used within custom rules.
+"""
+struct BatchMixedDuplicated{T,N} <: Annotation{T}
+    val::T
+    dval::NTuple{N,Base.RefValue{T}}
+    @inline BatchMixedDuplicated(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+end
+@inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
+@inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
 
 """
     abstract type ABI
@@ -186,14 +206,18 @@ Abstract type for what differentiation mode will be used.
 abstract type Mode{ABI} end
 
 """
-    struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI}
+    struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI}
 
 Reverse mode differentiation.
 - `ReturnPrimal`: Should Enzyme return the primal return value from the augmented-forward.
+- `ABI`: What runtime ABI to use
+- `Holomorphic`: Whether the complex result function is holomorphic and we should compute d/dz
 """
-struct ReverseMode{ReturnPrimal,ABI} <: Mode{ABI} end
-const Reverse = ReverseMode{false,DefaultABI}()
-const ReverseWithPrimal = ReverseMode{true,DefaultABI}()
+struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI} end
+const Reverse = ReverseMode{false,DefaultABI, false}()
+const ReverseWithPrimal = ReverseMode{true,DefaultABI, false}()
+const ReverseHolomorphic = ReverseMode{false,DefaultABI, true}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true}()
 
 """
     struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}
@@ -232,6 +256,13 @@ function autodiff_deferred_thunk end
 function make_zero end
 
 """
+    make_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+
+    Recursively set a variables differentiable fields to zero. Only applicable for mutable types `T`.
+"""
+function make_zero! end
+
+"""
     make_zero(prev::T)
 
     Helper function to recursively make zero.
@@ -242,6 +273,26 @@ end
 
 function tape_type end
 
+"""
+    compiler_job_from_backend(::KernelAbstractions.Backend, F::Type, TT:Type)::GPUCompiler.CompilerJob
+
+Returns a GPUCompiler CompilerJob from a backend as specified by the first argument to the function.
+
+For example, in CUDA one would do:
+
+```julia
+function EnzymeCore.compiler_job_from_backend(::CUDABackend, @nospecialize(F::Type), @nospecialize(TT::Type))
+    mi = GPUCompiler.methodinstance(F, TT)
+    return GPUCompiler.CompilerJob(mi, CUDA.compiler_config(CUDA.device()))
+end
+```
+"""
+function compiler_job_from_backend end
+
 include("rules.jl")
+
+if !isdefined(Base, :get_extension)
+    include("../ext/AdaptExt.jl")
+end
 
 end # module EnzymeCore

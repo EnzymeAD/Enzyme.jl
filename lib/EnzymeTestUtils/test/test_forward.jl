@@ -1,5 +1,6 @@
 using Enzyme
 using EnzymeTestUtils
+using LinearAlgebra
 using MetaTesting
 using Test
 
@@ -12,6 +13,11 @@ function f_mut_fwd!(y, x, a)
 end
 
 f_kwargs_fwd(x; a=3.0, kwargs...) = a .* x .^ 2
+
+function f_kwargs_fwd!(x; kwargs...)
+    copyto!(x, f_kwargs_fwd(x; kwargs...))
+    return nothing
+end
 
 function EnzymeRules.forward(
     func::Const{typeof(f_kwargs_fwd)},
@@ -80,14 +86,13 @@ end
                     elseif TT <: NamedTuple
                         x = (a=randn(T), b=randn(T))
                     else  # TT <: TestStruct
-                        VERSION ≤ v"1.8" && (@test_skip false; continue)
+                        if VERSION <= v"1.8" && Tx == BatchDuplicated
+                            continue
+                        end
                         x = TestStruct(randn(T, 5), randn(T))
                     end
                     atol = rtol = sqrt(eps(real(T)))
-                    @test !fails() do
-                        test_forward(fun, Tret, (x, Tx); atol, rtol)
-                        # https://github.com/EnzymeAD/Enzyme.jl/issues/874
-                    end broken = (TT <: TestStruct && T <: Float32 && !(Tret <: Const))
+                    test_forward(fun, Tret, (x, Tx); atol, rtol)
                 end
             end
         end
@@ -129,6 +134,49 @@ end
             end
         end
 
+        VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
+                                                                        @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                                                                                     Tx in (Const, Duplicated, BatchDuplicated),
+                                                                                     T in (Float32, Float64, ComplexF32, ComplexF64)
+
+                                                                                 # if some are batch, none must be duplicated
+                                                                                 are_activities_compatible(Tret, Tx) || continue
+
+                                                                                 x = Hermitian(randn(T, 5, 5))
+
+                                                                                 atol = rtol = sqrt(eps(real(T)))
+                                                                                 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
+                                                                                 end
+                                                                        end
+
+        @testset "equivalent arrays in output" begin
+            function f(x)
+                z = x * 2
+                return (z, z)
+            end
+            x = randn(2, 3)
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                         Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                test_forward(f, Tret, (x, Tx))
+            end
+        end
+
+        @testset "arrays sharing memory in output" begin
+            function f(x)
+                z = x * 2
+                return (z, z)
+            end
+            x = randn(2, 3)
+            @testset for Tret in (Const, Duplicated, BatchDuplicated),
+                         Tx in (Const, Duplicated, BatchDuplicated)
+
+                are_activities_compatible(Tret, Tx) || continue
+                test_forward(f, Tret, (x, Tx))
+            end
+        end
+
         @testset "mutating function" begin
             Enzyme.API.runtimeActivity!(true)
             sz = (2, 3)
@@ -152,6 +200,19 @@ end
                 end skip = (VERSION < v"1.8" && T <: Complex)
             end
             Enzyme.API.runtimeActivity!(false)
+        end
+
+        @testset "incorrect mutated argument detected" begin
+            @testset for Tx in (Const, Duplicated)
+                x = randn(3)
+                a = randn()
+
+                test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs=(; a))
+                fkwargs = (; a, incorrect_primal=true)
+                @test fails() do
+                    return test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
+                end
+            end
         end
 
         @testset "mutated callable" begin
