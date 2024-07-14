@@ -391,7 +391,7 @@ else
 end
 
     cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{
-        EnzymeRules.needs_primal(config) ? eltype(RT) : Nothing,
+        eltype(RT),
         EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing,
         UT,
         typeof(cache_b)
