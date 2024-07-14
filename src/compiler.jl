@@ -155,6 +155,7 @@ end
 end
 
 const nofreefns = Set{String}((
+    "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
@@ -237,6 +238,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
