@@ -6697,7 +6697,7 @@ function _thunk(job, postopt::Bool=true)
 
     # Run post optimization pipeline
     if postopt 
-        if job.config.params.ABI <: FFIABI
+        if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
         else
             propagate_returned!(mod)
@@ -6780,8 +6780,11 @@ end
         end
        
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
-
+        job    = if World isa Nothing
+        	Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+        else
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+	end
         # We need to use primal as the key, to lookup the right method
         # but need to mixin the hash of the adjoint to avoid cache collisions
         # This is counter-intuitive since we would expect the cache to be split
