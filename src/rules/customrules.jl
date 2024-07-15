@@ -340,7 +340,7 @@ function custom_rule_method_error(world, fn, args...)
     throw(MethodError(fn, (args...,), world))
 end
 
-function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end

@@ -39,7 +39,6 @@ macro register_fwd(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        @inline $expr
         function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
             return UInt8($name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
         end
@@ -55,7 +54,6 @@ macro register_diffuse(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        @inline $expr
         function $cname(OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, val::LLVM.API.LLVMValueRef, shadow::UInt8, mode::API.CDerivativeMode, useDefault::Ptr{UInt8})::UInt8
             res = $name(LLVM.CallInst(OrigCI), GradientUtils(gutils), LLVM.Value(val), shadow != 0, mode)::Tuple{Bool, Bool}
             unsafe_store!(useDefault, UInt8(res[2]))
