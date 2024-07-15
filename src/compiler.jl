@@ -3137,6 +3137,10 @@ function __init__()
                                                shadow_alloc_rewrite, Cvoid, (LLVM.API.LLVMValueRef,API.EnzymeGradientUtilsRef)))
     register_alloc_rules()
     register_llvm_rules()
+
+    # Force compilation of AD stack
+    # thunk = Enzyme.Compiler.thunk(Enzyme.Compiler.fspec(typeof(Base.identity), Tuple{Active{Float64}}), Const{typeof(Base.identity)}, Active, Tuple{Active{Float64}}, #=Split=# Val(Enzyme.API.DEM_ReverseModeCombined), #=width=#Val(1), #=ModifiedBetween=#Val((false,false)), Val(#=ReturnPrimal=#false), #=ShadowInit=#Val(false), NonGenABI)
+    # thunk(Const(Base.identity), Active(1.0), 1.0)
 end
 
 # Define EnzymeTarget

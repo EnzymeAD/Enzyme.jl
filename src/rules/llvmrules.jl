@@ -1270,25 +1270,25 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=no
 end
 
 macro augfunc(f)
-    cname = string(f)*"_cfunc"
+    cname = Symbol(string(f)*"_cfunc")
    :(@cfunction($cname, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
     ))
 end
 
 macro revfunc(f)
-    cname = string(f)*"_cfunc"
+    cname = Symbol(string(f)*"_cfunc")
    :(@cfunction($cname,  Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)
     ))
 end
 
 macro fwdfunc(f)
-    cname = string(f)*"_cfunc"
+    cname = Symbol(string(f)*"_cfunc")
    :(@cfunction($cname, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
     ))
 end
 
 macro diffusefunc(f)
-    cname = string(f)*"_cfunc"
+    cname = Symbol(string(f)*"_cfunc")
    :(@cfunction($cname, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
     ))
 end
