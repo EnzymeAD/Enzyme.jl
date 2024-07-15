@@ -974,16 +974,22 @@ function jl_array_del_end_rev(B, orig, gutils, tape)
             end
             args = LLVM.Value[anti, offset]
             
+            found, arty = abs_typeof(origops[1])
             anti = shadowin
-            elSize = get_array_elsz(B, anti)
-            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
+            elSize = if found
+                LLVM.ConstantInt(Csize_t(sizeof(eltype(arty))))
+            else
+                elSize = LLVM.zext!(B, get_array_elsz(B, anti), LLVM.IntType(8*sizeof(Csize_t)))
+            end
             len = get_array_len(B, anti)
             
             LLVM.call!(B, fty, delF, args)
             
             length = LLVM.mul!(B, len, elSize)
             
-            GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type"
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1]))"
+            end
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)

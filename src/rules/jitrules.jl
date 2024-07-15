@@ -204,7 +204,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         end
 
         world = codegen_world_age(FT, tt)
-        forward = thunk(Val(world), (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+        opt_mi = Val(world)
+        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
@@ -304,7 +305,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         end
         world = codegen_world_age(FT, tt)
 
-        forward, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
+        opt_mi = Val(world)
+        forward, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
                                  annotationA, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
@@ -439,7 +441,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
 
         world = codegen_world_age(FT, tt)
 
-        _, adjoint = thunk(Val(world), dupClosure0 ? Duplicated{FT} : Const{FT},
+        opt_mi = Val(world)
+        _, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
 
@@ -697,7 +700,8 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
     else
         Const(f)
     end
-    res = thunk(Val(world), FA, annotation, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    opt_mi = Val(world)
+    res = thunk(opt_mi, FA, annotation, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI)(fa, args...)
     return if annotation <: Const
         ReturnType(allFirst(Val(width+1), res))
@@ -830,7 +834,8 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
             Const(f)
         end
         world = codegen_world_age(FT, tt)
-        forward, adjoint = thunk(Val(world), FA,
+        opt_mi = Val(world)
+        forward, adjoint = thunk(opt_mi, FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         forward(fa, args...)
@@ -976,7 +981,8 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         else
             Const(f)
         end
-        forward, adjoint = thunk(Val(world), FA,
+        opt_mi = Val(world)
+        forward, adjoint = thunk(opt_mi, FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
         

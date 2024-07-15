@@ -135,6 +135,38 @@ end
     @test dA ≈ (-z * transpose(y))
 end
 
+function tr_solv(A, B, uplo, trans, diag, idx)
+  B = copy(B)
+  LAPACK.trtrs!(uplo, trans, diag, A, B)
+  return @inbounds B[idx]
+end
+
+
+@testset "Reverse triangular solve" begin
+	A = [0.7550523937508613 0.7979976952197996 0.29318222271218364; 0.4416768066117529 0.4335305304334933 0.8895389673238051; 0.07752980210005678 0.05978245503334367 0.4504482683752542]
+	B = [0.10527381151977078 0.5450388247476627 0.3179106723232359 0.43919576779182357 0.20974326586875847; 0.7551160501548224 0.049772782182839426 0.09284926395551141 0.07862188927391855 0.17346407477062986; 0.6258040138863172 0.5928022963567454 0.24251650865340169 0.6626410383247967 0.32752198021506784]
+    for idx in 1:15
+    for uplo in ('L', 'U')
+    for diag in ('N', 'U')
+    for trans in ('N', 'T')
+        dA = zero(A)
+        dB = zero(B)	
+        Enzyme.autodiff(Reverse, tr_solv, Duplicated(A, dA), Duplicated(B, dB), Const(uplo),Const(trans), Const(diag), Const(idx))
+        fA = FiniteDifferences.grad(central_fdm(5, 1), A->tr_solv(A, B, uplo, trans, diag, idx), A)[1]
+        fB = FiniteDifferences.grad(central_fdm(5, 1), B->tr_solv(A, B, uplo, trans, diag, idx), B)[1]
+
+		if max(abs.(dA)...) >= 1e-10 || max(abs.(fA)...) >= 1e-10
+			@test dA ≈ fA
+		end
+		if max(abs.(dB)...) >= 1e-10 || max(abs.(fB)...) >= 1e-10
+			@test dB ≈ fB
+		end
+    end
+    end
+    end
+    end
+end
+
 function chol_lower0(x)
   c = copy(x)
   C, info = LinearAlgebra.LAPACK.potrf!('L', c)

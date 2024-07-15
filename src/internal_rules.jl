@@ -390,11 +390,20 @@ else
     }
 end
 
-    cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{typeof(res), typeof(dres), UT, typeof(cache_b)}}(
+    cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{
+        eltype(RT),
+        EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing,
+        UT,
+        typeof(cache_b)
+        }}(
         (cache_res, dres, cache_A, cache_b)
     )
 
-    return EnzymeRules.AugmentedReturn{typeof(retres), typeof(dres), typeof(cache)}(retres, dres, cache)
+    return EnzymeRules.AugmentedReturn{
+        EnzymeRules.needs_primal(config) ? eltype(RT) : Nothing,
+        EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing,
+        typeof(cache)
+    }(retres, dres, cache)
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, A::Annotation{<:Array}, b::Annotation{<:Array}) where RT
@@ -458,10 +467,10 @@ function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, 
 end
 
 const EnzymeTriangulars = Union{
-    UpperTriangular,
-    LowerTriangular,
-    UnitUpperTriangular,
-    UnitLowerTriangular
+    UpperTriangular{<:Complex},
+    LowerTriangular{<:Complex},
+    UnitUpperTriangular{<:Complex},
+    UnitLowerTriangular{<:Complex}
 }
 
 function EnzymeRules.augmented_primal(

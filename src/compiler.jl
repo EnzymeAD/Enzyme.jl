@@ -101,8 +101,62 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
 @static if VERSION >= v"1.8.0"
     known_ops[typeof(Base.fma_emulated)] = (:fma, 3, nothing)
 end
+@inline function find_math_method(@nospecialize(func), sparam_vals)
+    if func ∈ keys(known_ops)
+        name, arity, toinject = known_ops[func]
+        Tys = (Float32, Float64)
+
+        if length(sparam_vals) == arity
+            T = first(sparam_vals)
+            legal = T ∈ Tys
+
+            if legal
+                if name == :ldexp
+                    if !(sparam_vals[2] <: Integer)
+                        legal = false
+                    end
+                elseif name == :pow
+                    if sparam_vals[2] <: Integer
+                        name = :powi
+                    elseif sparam_vals[2] != T
+                        legal = false
+                    end
+                elseif name == :jl_rem2pi
+                else
+                    if !all(==(T), sparam_vals)
+                        legal = false
+                    end
+                end
+            end
+            if legal
+                return name, toinject, T
+            end
+        end
+    end 
+
+    if func ∈ keys(cmplx_known_ops)
+        name, arity, toinject = cmplx_known_ops[func]
+        Tys = (Complex{Float32}, Complex{Float64})
+        if length(sparam_vals) == arity
+            T = first(sparam_vals)
+            legal = T ∈ Tys
+
+            if legal
+                if !all(==(T), sparam_vals)
+                    legal = false
+                end
+            end
+            if legal
+                return name, toinject, T
+            end
+        end
+    end
+    return nothing, nothing, nothing
+end
 
 const nofreefns = Set{String}((
+    "ijl_gc_run_pending_finalizers", "jl_gc_run_pending_finalizers",
+    "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
@@ -185,6 +239,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
     "ijl_specializations_get_linfo", "jl_specializations_get_linfo",
@@ -644,7 +699,7 @@ struct AdjointThunk{PT, FA, RT, TT, Width, TapeType} <: AbstractThunk{FA, RT, TT
     adjoint::PT
 end
 
-struct PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World} <: AbstractThunk{FA, RT, TT, Width}
+struct PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal} <: AbstractThunk{FA, RT, TT, Width}
     adjoint::PT
 end
 
@@ -1773,7 +1828,7 @@ end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing && !occursin("No create nofree of empty function", ece.msg)
+    if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
     end
@@ -1944,6 +1999,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
     end
 
     if errtype == API.ET_NoDerivative
+        if occursin("No create nofree of empty function", msg) || occursin("No forward mode derivative found for", msg) || occursin("No augmented forward pass", msg) || occursin("No reverse pass found", msg)
+            ir = nothing
+        end
         exc = NoDerivativeException(msg, ir, bt)
         if B != C_NULL
             B = IRBuilder(B)
@@ -3169,13 +3227,17 @@ import .Interpreter: isKWCallSignature
 """
 Create the methodinstance pair, and lookup the primal return type.
 """
-@inline function fspec(@nospecialize(F), @nospecialize(TT), world::Integer)
+@inline function fspec(@nospecialize(F), @nospecialize(TT), world::Union{Integer, Nothing}=nothing)
     # primal function. Inferred here to get return type
     _tt = (TT.parameters...,)
 
     primal_tt = Tuple{map(eltype, _tt)...}
 
-    primal = GPUCompiler.methodinstance(F, primal_tt, world)
+    primal = if world isa Nothing
+	GPUCompiler.methodinstance(F, primal_tt)
+    else
+	GPUCompiler.methodinstance(F, primal_tt, world)
+    end
 
     return primal
 end
@@ -3251,7 +3313,7 @@ function annotate!(mod, mode)
         end
     end
 
-    for fname in ("julia.typeof",)
+    for fname in ("julia.typeof", "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
         if haskey(fns, fname)
             fn = fns[fname]
             if LLVM.version().major <= 15
@@ -3422,17 +3484,6 @@ function annotate!(mod, mode)
                 push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
             else
                 push!(function_attributes(fn), EnumAttribute("memory", MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other))).data))
-            end
-        end
-    end
-
-    for rfn in ("jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
-        if haskey(fns, rfn)
-            fn = fns[rfn]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
-            else
-                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
             end
         end
     end
@@ -4812,7 +4863,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         dl = string(LLVM.datalayout(LLVM.parent(entry_f)))
         if sret
             if !in(0, parmsRemoved)
-                sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])))
+                sretPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1])), "innersret")
                 ctx = LLVM.context(entry_f)
                 if RetActivity <: Const
                     metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
@@ -4822,7 +4873,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
-                retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])))
+                retRootPtr = alloca!(builder, eltype(value_type(parameters(entry_f)[1+sret])), "innerreturnroots")
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
                 push!(wrapper_args, retRootPtr)
             end
@@ -4841,7 +4892,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 if !isa(ty, LLVM.PointerType)
                     throw(AssertionError("ty is not a LLVM.PointerType: entry_f = $(entry_f), args = $(args), parm = $(parm), ty = $(ty)"))
                 end
-                ptr = alloca!(builder, eltype(ty))
+                ptr = alloca!(builder, eltype(ty), LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
@@ -4856,7 +4907,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 push!(wrapper_args, ptr)
                 push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzyme_type", string(typetree(arg.typ, ctx, dl, seen))))
                 push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
-                push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.BITS_REF))))
+                push!(parameter_attributes(wrapper_f, arg.codegen.i-sret-returnRoots), StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.BITS_VALUE))))
             elseif arg.arg_i in raisedArgs
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
@@ -5621,61 +5672,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
             continue
         end
-
-        @inline function find_math_method()
-            if func ∈ keys(known_ops)
-                name, arity, toinject = known_ops[func]
-                Tys = (Float32, Float64)
         
-                if length(sparam_vals) == arity
-                    T = first(sparam_vals)
-                    legal = T ∈ Tys
-
-                    if legal
-                        if name == :ldexp
-                            if !(sparam_vals[2] <: Integer)
-                                legal = false
-                            end
-                        elseif name == :pow
-                            if sparam_vals[2] <: Integer
-                                name = :powi
-                            elseif sparam_vals[2] != T
-                                legal = false
-                            end
-                        elseif name == :jl_rem2pi
-                        else
-                            if !all(==(T), sparam_vals)
-                                legal = false
-                            end
-                        end
-                    end
-                    if legal
-                        return name, toinject, T
-                    end
-                end
-            end 
-
-            if func ∈ keys(cmplx_known_ops)
-                name, arity, toinject = cmplx_known_ops[func]
-                Tys = (Complex{Float32}, Complex{Float64})
-                if length(sparam_vals) == arity
-                    T = first(sparam_vals)
-                    legal = T ∈ Tys
-
-                    if legal
-                        if !all(==(T), sparam_vals)
-                            legal = false
-                        end
-                    end
-                    if legal
-                        return name, toinject, T
-                    end
-                end
-            end
-            return nothing, nothing, nothing
-        end
-        
-        name, toinject, T = find_math_method()
+        name, toinject, T = find_math_method(func, sparam_vals)
         if name === nothing
             continue
         end
@@ -5798,13 +5796,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     dl = string(LLVM.datalayout(mod))
     ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
-        if !isa(inst, LLVM.CallInst)
-            continue
-        end
+        fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
-        fn = LLVM.called_operand(inst)
-
-        if !API.HasFromStack(inst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+        if !API.HasFromStack(inst) && isa(inst, LLVM.CallInst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
             legal, source_typ = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
@@ -5830,17 +5824,27 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     codegen_typ
                 end
 
-                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
+                else
+                    metadata(inst)["enzyme_type"] = to_md(typetree(arg.typ, ctx, dl, seen), ctx)
+                end
             elseif codegen_typ == T_prjlvalue
-                LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", "{[-1]:Pointer}"))
+                else
+                    metadata(inst)["enzyme_type"] = to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                end
             end
         end
 
-        if !isa(fn, LLVM.Function)
-            continue
-        end
-        if length(blocks(fn)) != 0
-            continue
+        if isa(inst, LLVM.CallInst)
+            if !isa(fn, LLVM.Function)
+                continue
+            end
+            if length(blocks(fn)) != 0
+                continue
+            end
         end
         ty = value_type(inst)
         if ty == LLVM.VoidType()
@@ -5854,7 +5858,11 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if !guaranteed_const_nongen(jTy, world)
             continue
         end        
-        LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_inactive"))
+        if isa(inst, LLVM.CallInst)
+            LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_inactive"))
+        else
+            metadata(inst)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+        end
     end
 
 
@@ -6094,8 +6102,8 @@ struct CompileResult{AT, PT}
     TapeType::Type
 end
 
-@inline (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World})(fn::FA, args...) where {PT, FA, RT, TT, Width, ReturnPrimal, World} =
-enzyme_call(Val(false), thunk.adjoint, PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal, World}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
+@inline (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, RT, TT, Width, ReturnPrimal, World} =
+enzyme_call(Val(false), thunk.adjoint, PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
@@ -6689,7 +6697,7 @@ function _thunk(job, postopt::Bool=true)
 
     # Run post optimization pipeline
     if postopt 
-        if job.config.params.ABI <: FFIABI
+        if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
         else
             propagate_returned!(mod)
@@ -6728,13 +6736,16 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
-@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+@inline function thunkbase(mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
     JuliaContext() do ctx
-        mi = fspec(eltype(FA), TT, World)
 
         target = Compiler.EnzymeTarget()
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-        tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+        tmp_job    = if World isa Nothing
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+	else
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+	end
 
         interp = GPUCompiler.get_interpreter(tmp_job)
 
@@ -6745,32 +6756,35 @@ end
 
         run_enzyme = true
 
-        if rrt == Union{}
+        A2 = if rrt == Union{}
             run_enzyme = false
-            A = Const
+            Const
+	else
+	    A
         end
         
-        if run_enzyme && !(A <: Const) && guaranteed_const_nongen(rrt, World)
-			estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-            return quote
-				error($estr)
-			end
+        if run_enzyme && !(A2 <: Const) && guaranteed_const_nongen(rrt, World)
+	    estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
+            return error(estr)
         end
 
         rt2 = if !run_enzyme
             Const{rrt}
-        elseif A isa UnionAll
-            A{rrt}
+        elseif A2 isa UnionAll
+            A2{rrt}
         else
             @assert A isa DataType
             # Can we relax this condition?
             # @assert eltype(A) == rrt
-            A
+            A2
         end
        
         params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
-        job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
-
+        job    = if World isa Nothing
+        	Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
+        else
+		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
+	end
         # We need to use primal as the key, to lookup the right method
         # but need to mixin the hash of the adjoint to avoid cache collisions
         # This is counter-intuitive since we would expect the cache to be split
@@ -6780,44 +6794,40 @@ end
 
         compile_result = cached_compilation(job)
         if !run_enzyme
-            ErrT = PrimalErrorThunk{typeof(compile_result.adjoint), FA, rt2, TT, width, ReturnPrimal, World}
+            ErrT = PrimalErrorThunk{typeof(compile_result.adjoint), FA, rt2, TT, width, ReturnPrimal}
             if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-                return quote
-                    Base.@_inline_meta
-                    ($ErrT($(compile_result.adjoint)), $ErrT($(compile_result.adjoint)))
-                end
+                return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
             else
-                return quote
-                    Base.@_inline_meta
-                    $ErrT($(compile_result.adjoint))
-                end
+                return ErrT(compile_result.adjoint)
             end
         elseif Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             TapeType = compile_result.TapeType
             AugT = AugmentedForwardThunk{typeof(compile_result.primal), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal, TapeType}
             AdjT = AdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, TapeType}
-            return quote
-                Base.@_inline_meta
-                augmented = $AugT($(compile_result.primal))
-                adjoint  = $AdjT($(compile_result.adjoint))
-                (augmented, adjoint)
-            end
+            return (AugT(compile_result.primal), AdjT(compile_result.adjoint))
         elseif Mode == API.DEM_ReverseModeCombined
             CAdjT = CombinedAdjointThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal}
-            return quote
-                Base.@_inline_meta
-                $CAdjT($(compile_result.adjoint))
-            end
+            return CAdjT(compile_result.adjoint)
         elseif Mode == API.DEM_ForwardMode
             FMT = ForwardModeThunk{typeof(compile_result.adjoint), FA, rt2, Tuple{params.TT.parameters[2:end]...}, width, ReturnPrimal}
-            return quote
-                Base.@_inline_meta
-                $FMT($(compile_result.adjoint))
-            end
+            return FMT(compile_result.adjoint)
         else
             @assert false
         end
     end
+end
+
+@inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI}
+  return thunkbase(mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+end
+
+@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}
+  mi = fspec(eltype(FA), TT, World)
+  res = thunkbase(mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+  return quote
+    Base.@_inline_meta
+    return $(res)
+  end
 end
 
 import GPUCompiler: deferred_codegen_jobs

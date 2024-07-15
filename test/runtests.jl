@@ -718,6 +718,12 @@ function euroad(f::T) where T
     return g
 end
 
+euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
+
+@test euroad(0.5) ≈ -log(0.5) # -log(1-x)
+@test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
+test_scalar(euroad, 0.5)
+end
 @noinline function womylogpdf(X::AbstractArray{<:Real})
   map(womylogpdf, X)
 end
@@ -734,13 +740,6 @@ end
 @testset "Ensure writeonly deduction combines with capture" begin
     res = Enzyme.autodiff(Enzyme.Forward, wologpdf_test, Duplicated([0.5], [0.7]))
     @test res[1] ≈ [0.7]
-end
-
-euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
-
-@test euroad(0.5) ≈ -log(0.5) # -log(1-x)
-@test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
-test_scalar(euroad, 0.5)
 end
 
 @testset "Nested AD" begin
@@ -3133,6 +3132,34 @@ end
     end
 end
 
+@static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
+@inline extract_bc(bc, ::Val{:north}) = (bc.north)
+@inline extract_bc(bc, ::Val{:top}) = (bc.top)
+
+function permute_boundary_conditions(boundary_conditions)
+    sides = [:top, :north] # changing the order of these actually changes the error
+    boundary_conditions = Tuple(extract_bc(boundary_conditions, Val(side)) for side in sides)
+
+    return nothing
+end
+
+@testset "Extract abstype" begin
+
+    parameters = (a = 1, b = 0.1)
+
+    bc   = (north=1, top=tuple(parameters, tuple(:c)))
+    d_bc = Enzyme.make_zero(bc)
+    Enzyme.API.looseTypeAnalysis!(true)
+
+    dc²_dκ = autodiff(Enzyme.Reverse,
+                      permute_boundary_conditions,
+                      Duplicated(bc, d_bc))
+
+    Enzyme.API.looseTypeAnalysis!(false)
+end
+end
+
+
 @testset "Static activity" begin
 
     struct Test2{T}
@@ -3512,6 +3539,7 @@ end
     @testset "ChainRulesCore ext" begin
         include("ext/chainrulescore.jl")
     end
+    include("ext/logexpfunctions.jl")
 end
 
 
