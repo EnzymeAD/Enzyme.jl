@@ -757,11 +757,63 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
-# y = inv(A) B
-# dY = inv(A) [ dB - dA y ]
-# ->
-# B(out) = inv(A) B(in)
-# dB(out) = inv(A) [ dB(in) - dA B(out) ]
+function EnzymeRules.forward(::Const{typeof(cholesky)}, RT::Type, A; kwargs...)
+    fact = cholesky(A.val; kwargs...)
+    if RT <: Const
+        return fact
+    else
+        N = width(RT)
+
+        dA = if isa(A, Const)
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                return zero(A.val)
+            end
+        else
+            N == 1 ? (A.dval,) : A.dval
+        end
+
+        dfact = ntuple(Val(N)) do i
+            Base.@_inline_meta
+            return _cholesky_forward(fact, dA[i])
+        end
+
+        if (RT <: DuplicatedNoNeed) || (RT <: BatchDuplicatedNoNeed)
+            return dfact
+        elseif RT <: Duplicated
+            return Duplicated(fact, dfact[1])
+        else
+            return BatchDuplicated(fact, dfact)
+        end
+    end
+end
+
+function _cholesky_forward(C::Cholesky, Ȧ)
+    # Computes the cholesky forward mode update rule
+    # C.f. eq. 8 in https://arxiv.org/pdf/1602.07527.pdf
+    if C.uplo === 'U'
+        U = C.U
+        U̇ = Ȧ / U
+        ldiv!(U', U̇)
+        idx = diagind(U̇)
+        U̇[idx] ./= 2
+        triu!(U̇)
+        rmul!(U̇, U)
+        U̇ .+= UpperTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
+        return Cholesky(U̇, 'U', C.info)
+    else
+        L = C.L
+        L̇ = L \ Ȧ
+        rdiv!(L̇, L')
+        idx = diagind(L̇)
+        L̇[idx] ./= 2
+        tril!(L̇)
+        lmul!(L, L̇)
+        L̇ .+= LowerTriangular(Ȧ)' .- Diagonal(Ȧ) # correction for unused triangle
+        return Cholesky(L̇, 'L', C.info)
+    end
+end
+
 function EnzymeRules.forward(func::Const{typeof(ldiv!)},
                              RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
                              fact::Annotation{<:Cholesky},
@@ -777,8 +829,7 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         U = fact.val.U
 
         ldiv!(L, B.val)
-        ntuple(Val(N)) do b
-            Base.@_inline_meta
+        for b in 1:N
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
                 dL = N == 1 ? fact.dval.L : fact.dval[b].L
@@ -786,16 +837,20 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
             end
             ldiv!(L, dB)
         end
-
         ldiv!(U, B.val)
-        dretvals = ntuple(Val(N)) do b
-            Base.@_inline_meta
+        for b in 1:N
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
                 dU = N == 1 ? fact.dval.U : fact.dval[b].U
                 mul!(dB, dU, B.val, -1, 1)
             end
             ldiv!(U, dB)
+        end
+
+        ldiv!(U, B.val)
+        dretvals = ntuple(Val(N)) do b
+            Base.@_inline_meta
+            dB = N == 1 ? B.dval : B.dval[b]
             return dB
         end
 
@@ -811,4 +866,162 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
             return BatchDuplicated(retval, dretvals)
         end
     end
+end
+
+function EnzymeRules.augmented_primal(config,
+                                      func::Const{typeof(cholesky)},
+                                      RT::Type,
+                                      A::Annotation{<:Union{Matrix,
+                                                            LinearAlgebra.RealHermSymComplexHerm}};
+                                      kwargs...)
+    fact = if EnzymeRules.needs_primal(config) || !(RT <: Const)
+        cholesky(A.val; kwargs...)
+    else
+        nothing
+    end
+
+    fact_returned = EnzymeRules.needs_primal(config) ? fact : nothing
+
+    # dfact would be a dense matrix, prepare buffer
+    dfact = if RT <: Const
+        nothing
+    else
+        if EnzymeRules.width(config) == 1
+            Enzyme.make_zero(fact)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                return Enzyme.make_zero(fact)
+            end
+        end
+    end
+
+    cache = isa(A, Const) ? nothing : (fact, dfact)
+    return EnzymeRules.AugmentedReturn(fact_returned, dfact, cache)
+end
+
+function EnzymeRules.reverse(config,
+                             ::Const{typeof(cholesky)},
+                             RT::Type,
+                             cache,
+                             A::Annotation{<:Union{Matrix,
+                                                   LinearAlgebra.RealHermSymComplexHerm}};
+                             kwargs...)
+    if !(RT <: Const) && !isa(A, Const)
+        fact, dfact = cache
+        dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
+        dfacts = EnzymeRules.width(config) == 1 ? (dfact,) : dfact
+
+        for (dA, dfact) in zip(dAs, dfacts)
+            _dA = dA isa LinearAlgebra.RealHermSymComplexHerm ? dA.data : dA
+            if _dA !== dfact.factors
+                Ā = _cholesky_pullback_shared_code(fact, dfact)
+                _dA .+= Ā
+                dfact.factors .= 0
+            end
+        end
+    end
+    return (nothing,)
+end
+
+# Adapted from ChainRules.jl
+# MIT "Expat" License
+# Copyright (c) 2018: Jarrett Revels.
+# https://github.com/JuliaDiff/ChainRules.jl/blob/9f1817a22404259113e230bef149a54d379a660b/src/rulesets/LinearAlgebra/factorization.jl#L507-L528
+function _cholesky_pullback_shared_code(C, ΔC)
+    Δfactors = ΔC.factors
+    Ā = similar(C.factors)
+    if C.uplo === 'U'
+        U = C.U
+        Ū = ΔC.U
+        Ū = eltype(U) <: Real ? real(UpperTriangular(Δfactors)) : UpperTriangular(Δfactors)
+        mul!(Ā, Ū, U')
+        LinearAlgebra.copytri!(Ā, 'U', true)
+        eltype(Ā) <: Real || _realifydiag!(Ā)
+        ldiv!(U, Ā)
+        rdiv!(Ā, U')
+        Ā .+= tril!(ΔC.factors, -1)' # correction for unused triangle
+        triu!(Ā)
+    else  # C.uplo === 'L'
+        L = C.L
+        L̄ = ΔC.L
+        L̄ = eltype(L) <: Real ? real(LowerTriangular(Δfactors)) : LowerTriangular(Δfactors)
+        mul!(Ā, L', L̄)
+        LinearAlgebra.copytri!(Ā, 'L', true)
+        eltype(Ā) <: Real || _realifydiag!(Ā)
+        rdiv!(Ā, L)
+        ldiv!(L', Ā)
+        Ā .+= triu!(ΔC.factors, 1)' # correction for unused triangle
+        tril!(Ā)
+    end
+    idx = diagind(Ā)
+    @views Ā[idx] .= real.(Ā[idx]) ./ 2
+    return Ā
+end
+
+function _realifydiag!(A)
+    for i in diagind(A)
+        @inbounds A[i] = real(A[i])
+    end
+    return A
+end
+
+function EnzymeRules.augmented_primal(config,
+                                      func::Const{typeof(ldiv!)},
+                                      RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
+                                                       BatchDuplicatedNoNeed,
+                                                       BatchDuplicated}},
+                                      A::Annotation{<:Cholesky},
+                                      B::Union{Const,DuplicatedNoNeed,Duplicated,
+                                               BatchDuplicatedNoNeed,BatchDuplicated};
+                                      kwargs...)
+    cache_B = if !isa(A, Const) && !isa(B, Const)
+        copy(B.val)
+    else
+        nothing
+    end
+
+    cache_A = if !isa(B, Const)
+        EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    else
+        nothing
+    end
+
+    primal = EnzymeRules.needs_primal(config) ? B.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? B.dval : nothing
+    func.val(A.val, B.val; kwargs...)
+    return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_B))
+end
+
+function EnzymeRules.reverse(config,
+                             func::Const{typeof(ldiv!)},
+                             dret,
+                             cache,
+                             A::Annotation{<:Cholesky},
+                             B::Union{Const,DuplicatedNoNeed,Duplicated,
+                                      BatchDuplicatedNoNeed,BatchDuplicated};
+                             kwargs...)
+    if !isa(B, Const)
+        (cache_A, cache_B) = cache
+        U = cache_A.U
+        Z = isa(A, Const) ? nothing : U' \ cache_B
+        Y = isa(A, Const) ? nothing : U \ Z
+        for b in 1:EnzymeRules.width(config)
+            dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
+            dZ = U' \ dB
+            func.val(cache_A, dB; kwargs...)
+            if !isa(A, Const)
+                ∂B = U \ dZ
+                Ā = -dZ * Y' - Z * ∂B'
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+                if A.val.uplo === 'U'
+                    dA.factors .+= UpperTriangular(Ā)
+                else
+                    dA.factors .+= LowerTriangular(Ā')
+                end
+
+            end
+        end
+    end
+    return (nothing, nothing)
 end
