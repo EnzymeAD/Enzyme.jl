@@ -6102,7 +6102,7 @@ struct CompileResult{AT, PT}
     TapeType::Type
 end
 
-@inline (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, RT, TT, Width, ReturnPrimal, World} =
+@inline (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, RT, TT, Width, ReturnPrimal} =
 enzyme_call(Val(false), thunk.adjoint, PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal}, Val(Width), Val(ReturnPrimal), TT, RT, fn, Cvoid, args...)
 
 @inline (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(fn::FA, args...) where {PT, FA, Width, RT, TT, ReturnPrimal} =
