@@ -381,7 +381,7 @@ end
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
-function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -419,7 +419,7 @@ end
     return false
 end
 
-function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
@@ -474,7 +474,7 @@ end
     return false
 end
 
-function threadsfor_rev(B, orig, gutils, tape)
+@register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     world = enzyme_extract_world(LLVM.parent(position(B)))
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
@@ -512,7 +512,7 @@ end
     return nothing
 end
 
-function newtask_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function newtask_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -550,7 +550,7 @@ function newtask_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     # fn, dfn = augmentAndGradient(fn)
     # t = jl_new_task(fn)
     # # shadow t
@@ -608,11 +608,11 @@ function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function newtask_rev(B, orig, gutils, tape)
+@register_rev function newtask_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
     ops = collect(operands(orig))[1:end-1]
     if is_constant_value(gutils, ops[1])
         return true
@@ -641,15 +641,15 @@ function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function set_task_tid_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function set_task_tid_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function set_task_tid_rev(B, orig, gutils, tape)
+@register_rev function set_task_tid_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function enq_work_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enq_work_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -661,7 +661,7 @@ function enq_work_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function enq_work_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enq_work_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     enq_work_fwd(B, orig, gutils, normalR, shadowR)
 end
 
@@ -684,7 +684,7 @@ function find_match(mod, name)
     return nothing
 end
 
-function enq_work_rev(B, orig, gutils, tape)
+@register_rev function enq_work_rev(B, orig, gutils, tape)
     # jl_wait(shadow(t))
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -701,7 +701,7 @@ function enq_work_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function wait_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function wait_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -712,7 +712,7 @@ function wait_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -723,7 +723,7 @@ function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function wait_rev(B, orig, gutils, tape)
+@register_rev function wait_rev(B, orig, gutils, tape)
     # jl_enq_work(shadow(t))
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))

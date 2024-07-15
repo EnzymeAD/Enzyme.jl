@@ -340,7 +340,7 @@ function custom_rule_method_error(world, fn, args...)
     throw(MethodError(fn, (args...,), world))
 end
 
-function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -640,7 +640,7 @@ end
     return aug_fwd_mi(orig, gutils)[1] !== nothing
 end
 
-function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils, normalR, shadowR, tape)::LLVM.API.LLVMValueRef
+@register_rev function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils, normalR, shadowR, tape)::LLVM.API.LLVMValueRef
 
     ctx = LLVM.context(orig)
 
@@ -1065,7 +1065,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 end
 
 
-function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return true
     end
@@ -1076,8 +1076,7 @@ function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-
-function enzyme_custom_rev(B, orig, gutils, tape)
+@register_rev function enzyme_custom_rev(B, orig, gutils, tape)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return
     end
@@ -1085,7 +1084,7 @@ function enzyme_custom_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+@register_diffuse function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
     # use default
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return (false, true)

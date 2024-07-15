@@ -471,33 +471,33 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
 end
 
 
-function f_tuple_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function f_tuple_fwd(B, orig, gutils, normalR, shadowR)
     common_f_tuple_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function f_tuple_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
+@register_aug function f_tuple_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     common_f_tuple_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function f_tuple_rev(B, orig, gutils, tape)
+@register_rev function f_tuple_rev(B, orig, gutils, tape)
     common_f_tuple_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
-function new_structv_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function new_structv_fwd(B, orig, gutils, normalR, shadowR)
     common_newstructv_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function new_structv_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
+@register_aug function new_structv_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     common_newstructv_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function new_structv_rev(B, orig, gutils, tape)
+@register_rev function new_structv_rev(B, orig, gutils, tape)
     common_apply_latest_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
-function new_structt_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function new_structt_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -526,11 +526,12 @@ function new_structt_fwd(B, orig, gutils, normalR, shadowR)
     unsafe_store!(shadowR, shadowres.ref)
     return false
 end
-function new_structt_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
+
+@register_aug function new_structt_augfwd(B, orig, gutils, normalR, shadowR, tapeR)::Bool
     new_structt_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function new_structt_rev(B, orig, gutils, tape)
+@register_rev function new_structt_rev(B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return true
     end
@@ -978,7 +979,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     return nothing
 end
 
-function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -1020,7 +1021,7 @@ function jl_nthfield_fwd(B, orig, gutils, normalR, shadowR)
     end
     return false
 end
-function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -1097,7 +1098,7 @@ function jl_nthfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     unsafe_store!(tapeR, cal.ref)
     return false
 end
-function jl_nthfield_rev(B, orig, gutils, tape)
+@register_rev function jl_nthfield_rev(B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return
     end
@@ -1159,13 +1160,13 @@ function jl_nthfield_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jl_getfield_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_getfield_fwd(B, orig, gutils, normalR, shadowR)
     common_jl_getfield_fwd(1, B, orig, gutils, normalR, shadowR)
 end
-function jl_getfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_getfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_jl_getfield_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
-function jl_getfield_rev(B, orig, gutils, tape)
+@register_rev function jl_getfield_rev(B, orig, gutils, tape)
     common_jl_getfield_rev(1, B, orig, gutils, tape)
 end
 
@@ -1314,15 +1315,15 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
 end
 
 
-function setfield_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function setfield_fwd(B, orig, gutils, normalR, shadowR)
     common_setfield_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function setfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function setfield_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_setfield_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function setfield_rev(B, orig, gutils, tape)
+@register_rev function setfield_rev(B, orig, gutils, tape)
     common_setfield_rev(1, B, orig, gutils, tape)
 end
 
@@ -1438,17 +1439,17 @@ function common_finalizer_rev(offset, B, orig, gutils, tape)
     return nothing
 end
 
-function f_svec_ref_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function f_svec_ref_fwd(B, orig, gutils, normalR, shadowR)
     common_f_svec_ref_fwd(1, B, orig, gutils, normalR, shadowR)
     return nothing
 end
 
-function f_svec_ref_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function f_svec_ref_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_f_svec_ref_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
     return nothing
 end
 
-function f_svec_ref_rev(B, orig, gutils, tape)
+@register_rev function f_svec_ref_rev(B, orig, gutils, tape)
     common_f_svec_ref_rev(1, B, orig, gutils, tape)
     return nothing
 end

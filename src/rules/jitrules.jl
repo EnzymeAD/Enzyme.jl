@@ -1334,7 +1334,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function generic_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function generic_fwd(B, orig, gutils, normalR, shadowR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
@@ -1390,7 +1390,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function generic_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function generic_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
@@ -1414,7 +1414,7 @@ function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
     return nothing
 end
 
-function generic_rev(B, orig, gutils, tape)::Cvoid
+@register_rev function generic_rev(B, orig, gutils, tape)::Cvoid
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
@@ -1532,7 +1532,7 @@ function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
     return nothing
 end
 
-function apply_latest_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function apply_latest_fwd(B, orig, gutils, normalR, shadowR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
@@ -1540,7 +1540,7 @@ function apply_latest_fwd(B, orig, gutils, normalR, shadowR)
     common_apply_latest_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function apply_latest_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function apply_latest_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
@@ -1548,7 +1548,7 @@ function apply_latest_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_apply_latest_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function apply_latest_rev(B, orig, gutils, tape)
+@register_rev function apply_latest_rev(B, orig, gutils, tape)
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
@@ -1728,15 +1728,15 @@ function common_apply_iterate_rev(offset, B, orig, gutils, tape)
     return nothing
 end
 
-function apply_iterate_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function apply_iterate_fwd(B, orig, gutils, normalR, shadowR)
     common_apply_iterate_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function apply_iterate_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function apply_iterate_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_apply_iterate_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function apply_iterate_rev(B, orig, gutils, tape)
+@register_rev function apply_iterate_rev(B, orig, gutils, tape)
     common_apply_iterate_rev(1, B, orig, gutils, tape)
     return nothing
 end
@@ -1851,15 +1851,15 @@ function common_invoke_rev(offset, B, orig, gutils, tape)
     return nothing
 end
 
-function invoke_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function invoke_fwd(B, orig, gutils, normalR, shadowR)
     common_invoke_fwd(1, B, orig, gutils, normalR, shadowR)
 end
 
-function invoke_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function invoke_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     common_invoke_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
-function invoke_rev(B, orig, gutils, tape)
+@register_rev function invoke_rev(B, orig, gutils, tape)
     common_invoke_rev(1, B, orig, gutils, tape)
     return nothing
 end
