@@ -6819,26 +6819,38 @@ end
 
 @inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI}
   ts_ctx = JuliaContext()
-  ctx = context(ts_ctx)
+  ctx = @static if VERSION >= v"1.9.0-DEV.115"
+    context(ts_ctx)
+  else
+    ts_ctx
+  end
   activate(ctx)
   try
     return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
   finally
     deactivate(ctx)
-    dispose(ts_ctx)
+    @static if VERSION >= v"1.9.0-DEV.115"
+      dispose(ts_ctx)
+     end
   end
 end
 
 @inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}
   mi = fspec(eltype(FA), TT, World)
   ts_ctx = JuliaContext()
-  ctx = context(ts_ctx)
+  ctx = @static if VERSION >= v"1.9.0-DEV.115"
+    context(ts_ctx)
+  else
+    ts_ctx
+  end
   activate(ctx)
   res = try
     thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
   finally
     deactivate(ctx)
-    dispose(ts_ctx)
+    @static if VERSION >= v"1.9.0-DEV.115"
+      dispose(ts_ctx)
+    end
   end
   return quote
     Base.@_inline_meta
