@@ -4,12 +4,14 @@ macro register_aug(expr)
     cname = name*"_cfunc"
     name = Symbol(name)
     cname = Symbol(cname)
-    quote
-        @inline $expr
+
+    expr2 = :(@inline $expr)
+    res = quote
         function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
             return UInt8($name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR, tapeR)::Bool)
         end
     end
+    return Expr(:block, esc(expr2), esc(res))
 end
 
 macro register_rev(expr)
@@ -19,13 +21,14 @@ macro register_rev(expr)
 
     name = Symbol(name)
     cname = Symbol(cname)
-    quote
-        @inline $expr
+    expr2 = :(@inline $expr)
+    res = quote
         function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
             $name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), tape == C_NULL ? nothing : LLVM.Value(tape))
             return
         end
     end
+    return Expr(:block, esc(expr2), esc(res))
 end
 
 macro register_fwd(expr)
@@ -34,12 +37,14 @@ macro register_fwd(expr)
     cname = name*"_cfunc"
     name = Symbol(name)
     cname = Symbol(cname)
-    quote
+    expr2 = :(@inline $expr)
+    res = quote
         @inline $expr
         function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
             return UInt8($name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
         end
     end
+    return Expr(:block, esc(expr2), esc(res))
 end
 
 macro register_diffuse(expr)
@@ -48,7 +53,8 @@ macro register_diffuse(expr)
     cname = name*"_cfunc"
     name = Symbol(name)
     cname = Symbol(cname)
-    quote
+    expr2 = :(@inline $expr)
+    res = quote
         @inline $expr
         function $cname(OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, val::LLVM.API.LLVMValueRef, shadow::UInt8, mode::API.CDerivativeMode, useDefault::Ptr{UInt8})::UInt8
             res = $name(LLVM.CallInst(OrigCI), GradientUtils(gutils), LLVM.Value(val), shadow != 0, mode)::Tuple{Bool, Bool}
@@ -56,6 +62,7 @@ macro register_diffuse(expr)
             return UInt8(res[1])
         end
     end
+    return Expr(:block, esc(expr2), esc(res))
 end
 
 include("customrules.jl")
@@ -1289,7 +1296,7 @@ end
 
 macro diffusefunc(f)
     cname = Symbol(string(f)*"_cfunc")
-   :(@cfunction($cname, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
+   :(@cfunction(Compiler.$cname, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
     ))
 end
 
