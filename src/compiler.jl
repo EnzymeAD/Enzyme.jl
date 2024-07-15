@@ -6820,8 +6820,9 @@ end
 @inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI}
   ts_ctx = JuliaContext()
   ctx = context(ts_ctx)
+  activate(ctx)
   try
-    return thunkbase(mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+    return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
   finally
     deactivate(ctx)
     dispose(ts_ctx)
@@ -6832,8 +6833,9 @@ end
   mi = fspec(eltype(FA), TT, World)
   ts_ctx = JuliaContext()
   ctx = context(ts_ctx)
+  activate(ctx)
   res = try
-    thunkbase(mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+    thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
   finally
     deactivate(ctx)
     dispose(ts_ctx)
