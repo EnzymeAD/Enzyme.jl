@@ -1093,7 +1093,7 @@ end
                 push!(vargs, extract_value!(B, a, idx-1))
             end
             push!(vargs, args[end])
-            cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, vargs, valTys, #=lookup=#false)
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, #=lookup=#false)
             debug_from_orig!(gutils, cal, orig)
             callconv!(cal, callconv(orig))
         end
