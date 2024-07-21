@@ -825,7 +825,7 @@ end
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
                 API.EnzymeGradientUtilsSetDiffe(gutils, orig, LLVM.null(value_type(val)), B)
             else
-                llety = convert(LLVMType, eltype(RT))
+                llety = convert(LLVMType, eltype(RT); allow_boxed=true)
                 ptr_val = invert_pointer(gutils, operands(orig)[1 + !isghostty(funcTy)], B)
                 val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
                 for idx in 1:width

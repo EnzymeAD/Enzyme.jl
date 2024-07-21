@@ -486,6 +486,10 @@ end
         return active_reg_inner(ptreltype(T), seen, world, Val(justActive), Val(UnionSret), Val(AbstractIsMixed))
     end
 
+    if T <: BigFloat
+        return DupState
+    end
+    
     if T <: AbstractFloat
         return ActiveState
     end
