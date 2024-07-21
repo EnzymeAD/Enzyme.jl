@@ -155,6 +155,8 @@ end
 end
 
 const nofreefns = Set{String}((
+    "pcre2_match_8",
+    "julia.gcroot_flush",
     "pcre2_jit_stack_assign_8",
     "pcre2_match_context_create_8",
     "pcre2_jit_stack_create_8",
