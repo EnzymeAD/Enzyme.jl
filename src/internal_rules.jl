@@ -815,3 +815,42 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         end
     end
 end
+
+# Ranges
+# Float64 ranges in Julia use bitwise `&` with higher precision
+# to correct for numerical error, thus we put rules over the
+# operations as this is not directly differentiable
+
+getval(x) = hasproperty(x, :val) ? x.val : x
+function EnzymeRules.forward(func::Const{Colon}, ::Type{<:Duplicated}, start::Union{Const, Active}, step::Union{Const, Active}, stop::Union{Const, Active})
+    ret = func.val(getval.((start, step, stop))...)
+    dstart = start isa Const ? zero(eltype(ret)) : one(eltype(ret))
+    dstep = step isa Const ? zero(eltype(ret)) : one(eltype(ret))
+
+    return Duplicated(ret, range(dstart, step=dstep, length=length(ret)))
+end
+
+function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, ::Type{<:Active},
+                          start, step ,stop)
+
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, step.val, stop.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, dret, tape::Nothing,
+                 start, step, stop)
+
+    #fixedreverse = if _dret.start > _dret.stop && _dret.step > 0
+    #     _dret.stop:_dret.step:_dret.start
+    #else
+    #    _dret
+    #end
+    dstart = start isa Const ? nothing : one(eltype(dret.val))
+    dstep = step isa Const ? nothing : one(eltype(dret.val))
+    dstop = stop isa Const ? nothing : zero(eltype(dret.val))
+    return (dstart, dstep, dstop)
+end
