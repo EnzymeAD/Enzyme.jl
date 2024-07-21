@@ -815,3 +815,17 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
         end
     end
 end
+
+# Ranges
+# Float64 ranges in Julia use bitwise `&` with higher precision
+# to correct for numerical error, thus we put rules over the
+# operations as this is not directly differentiable
+
+getval(x) = hasproperty(x, :val) ? x.val : x
+function forward(func::Const{Colon}, ::Type{<:Duplicated}, start::Union{Const, Active}, step::Union{Const, Active}, stop::Union{Const, Active})
+    ret = func.val(getval.((start, step, stop))...)
+    dstart = start isa Const ? zero(eltype(ret)) : one(eltype(ret))
+    dstep = step isa Const ? zero(eltype(ret)) : one(eltype(ret))
+
+    return Duplicated(ret, range(dstart, step=dstep, length=length(ret)))
+end
