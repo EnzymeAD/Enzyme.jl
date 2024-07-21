@@ -822,7 +822,7 @@ end
 # operations as this is not directly differentiable
 
 getval(x) = hasproperty(x, :val) ? x.val : x
-function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start::Union{Const, Active}, step::Union{Const, Active}, stop::Union{Const, Active})
+function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start, step, stop)
     ret = func.val(getval.((start, step, stop))...)
     dstart = start isa Const ? zero(eltype(ret)) : one(eltype(ret))
     dstep = step isa Const ? zero(eltype(ret)) : one(eltype(ret))
