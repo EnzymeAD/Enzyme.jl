@@ -231,7 +231,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 if mixed
                     RefTy = arg.typ
                     if width != 1
-                        RefTy = NTuple{N, RefTy}
+                        RefTy = NTuple{Int(width), RefTy}
                     end
                     llrty = convert(LLVMType, RefTy)
                     RefTy = Base.RefValue{RefTy}
@@ -1035,7 +1035,7 @@ end
         for (ptr_val, argTyp, refal) in mixeds
             RefTy = argTyp
             if width != 1
-                RefTy = NTuple{N, RefTy}
+                RefTy = NTuple{Int(width), RefTy}
             end
             curs = load!(B, convert(LLVMType, RefTy), refal)
 
