@@ -823,7 +823,7 @@ end
 
 getval(x) = hasproperty(x, :val) ? x.val : x
 function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start, step, stop)
-    ret = func.val(getval.((start, step, stop))...)
+    ret = func.val(start.val, step.val, stop.val)
     dstart = start isa Const ? zero(eltype(ret)) : one(eltype(ret))
     dstep = step isa Const ? zero(eltype(ret)) : one(eltype(ret))
 
