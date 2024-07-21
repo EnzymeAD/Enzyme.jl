@@ -668,6 +668,11 @@ end
           ((var"1"=75.0, var"2"=150.0),)
     @test Enzyme.autodiff(Forward, f4, BatchDuplicated(0.12, (1.0, 2.0))) ==
           ((var"1"=0.0, var"2"=0.0),)
+
+    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.25)) == ((78,),)
+    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.25)) == ((1.0,),)
+    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.25)) == ((12,),)
+    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.25)) == ((0.0,),)
 end
 
 end # InternalRules

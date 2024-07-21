@@ -922,3 +922,28 @@ function EnzymeRules.reverse(
     )
     return ()
 end
+
+function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, ::Type{<:Active},
+                          start, step ,stop)
+
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, step.val, stop.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, dret, tape::Nothing,
+                 start, step, stop)
+
+    #fixedreverse = if _dret.start > _dret.stop && _dret.step > 0
+    #     _dret.stop:_dret.step:_dret.start
+    #else
+    #    _dret
+    #end
+    dstart = start isa Const ? nothing : one(eltype(dret.val))
+    dstep = step isa Const ? nothing : one(eltype(dret.val))
+    dstop = stop isa Const ? nothing : zero(eltype(dret.val))
+    return (dstart, dstep, dstop)
+end
