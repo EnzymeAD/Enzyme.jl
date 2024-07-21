@@ -783,7 +783,7 @@ end
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
             if innerTy != value_type(tape)
-                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
+                if isabstracttype(TapeT) || TapeT == Tuple || (!(TapeT isa UnionAll) && TapeT.layout == C_NULL) || TapeT == Array
                     msg = sprint() do io
                         println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
                         println(io, "tape_idx=", tape_idx)
