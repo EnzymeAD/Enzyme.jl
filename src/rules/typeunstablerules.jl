@@ -1423,7 +1423,7 @@ function common_finalizer_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function common_finalizer_augfwd(offset, B, orig, gutils, normalR, shadowR)
+function common_finalizer_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
