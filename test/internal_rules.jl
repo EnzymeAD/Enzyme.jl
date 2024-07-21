@@ -639,6 +639,11 @@ end
     @test Enzyme.autodiff(Forward, f2,  Duplicated(0.25, 1.0)) == (1.0,)
     @test Enzyme.autodiff(Forward, f3,  Duplicated(0.25, 1.0)) == (12,)
     @test Enzyme.autodiff(Forward, f4,  Duplicated(3.0, 1.0)) == (0,)
+
+    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.25)) == ((78,),)
+    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.25)) == ((1.0,),)
+    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.25)) == ((12,),)
+    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.25)) == ((0.0,),)
 end
 
 end # InternalRules
