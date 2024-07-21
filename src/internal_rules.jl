@@ -821,11 +821,30 @@ end
 # to correct for numerical error, thus we put rules over the
 # operations as this is not directly differentiable
 
-getval(x) = hasproperty(x, :val) ? x.val : x
-function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start, step, stop)
+batchsize(::Union{BatchDuplicated{T,N}, BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
+batchsize(::Type{<:Union{BatchDuplicated{T,N}, BatchDuplicatedNoNeed{T,N}}}) where {T,N} = N
+
+function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start::Annotation, step::Annotation, stop::Annotation)
     ret = func.val(start.val, step.val, stop.val)
-    dstart = start isa Const ? zero(eltype(ret)) : one(eltype(ret))
-    dstep = step isa Const ? zero(eltype(ret)) : one(eltype(ret))
+    dstart = if start isa Const 
+        zero(eltype(ret)) 
+    elseif start isa Duplicated || start isa DuplicatedNoNeed
+        one(eltype(ret))
+    elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
+        ntuple(x->one(eltype(ret)), batchsize(start))
+    else
+        error("Annotation type $(typeof(start)) not supported for range start. Please open an issue")
+    end
+
+    dstep = if step isa Const 
+        zero(eltype(ret)) 
+    elseif step isa Duplicated || step isa DuplicatedNoNeed
+        one(eltype(ret))
+    elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
+        ntuple(x->one(eltype(ret)), batchsize(step))
+    else
+        error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
+    end
 
     if RT <: Duplicated 
         Duplicated(ret, range(dstart, step=dstep, length=length(ret)))
@@ -833,7 +852,11 @@ function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, Duplica
         ret
     elseif RT <: DuplicatedNoNeed
         range(dstart, step=dstep, length=length(ret))
+    elseif RT <: BatchDuplicated
+        BatchDuplicated(ret, ntuple(x-> range(dstart, step=dstep, length=length(ret)), batchsize(RT)))
+    elseif RT <: BatchDuplicatedNoNeed
+        ntuple(x-> range(dstart, step=dstep, length=length(ret)), batchsize(RT))
     else
-        error("This should not be possible")
+        error("This should not be possible. Please report.")
     end
 end
