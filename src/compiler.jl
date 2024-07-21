@@ -5792,12 +5792,25 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # annotate
     annotate!(mod, mode)
+    if haskey(functions(mod), "gpu_report_exception")
+        exc = functions(mod)["gpu_report_exception"]
+        if !isempty(blocks(exc))
+            linkage!(exc, LLVM.API.LLVMExternalLinkage)
+        end
+    end
 
     # Run early pipeline
     optimize!(mod, target_machine)
 
     if process_module
         GPUCompiler.optimize_module!(parent_job, mod)
+    end
+    
+    if haskey(functions(mod), "gpu_report_exception")
+        exc = functions(mod)["gpu_report_exception"]
+        if !isempty(blocks(exc))
+            linkage!(exc, LLVM.API.LLVMInternalLinkage)
+        end
     end
 
     seen = TypeTreeTable()
