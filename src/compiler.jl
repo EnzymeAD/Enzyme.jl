@@ -155,6 +155,11 @@ end
 end
 
 const nofreefns = Set{String}((
+    "pcre2_jit_stack_assign_8",
+    "pcre2_match_context_create_8",
+    "pcre2_jit_stack_create_8",
+    "ijl_gc_enable_finalizers_internal", "jl_gc_enable_finalizers_internal",
+    "pcre2_match_data_create_from_pattern_8",
     "ijl_gc_run_pending_finalizers", "jl_gc_run_pending_finalizers",
     "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
@@ -239,6 +244,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "pcre2_match_data_create_from_pattern_8",
     "ijl_typeassert", "jl_typeassert",
     "ijl_f_isdefined", "jl_f_isdefined",
     "ijl_field_index", "jl_field_index",
