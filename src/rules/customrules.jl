@@ -700,6 +700,7 @@ end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
+    applicablefn = true
 
     if forward
         llvmf = nested_codegen!(mode, mod, ami, world)
@@ -733,6 +734,7 @@ end
                 llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
                 pushfirst!(args, LLVM.ConstantInt(world))
                 rev_RT = Union{}
+                applicablefn = false
             end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
@@ -744,6 +746,7 @@ end
                 llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
                 pushfirst!(args, LLVM.ConstantInt(world))
                 rev_RT = Union{}
+                applicablefn = false
             end
         end
     end
@@ -779,11 +782,11 @@ end
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
         if needsTape
             @assert tape != C_NULL
-            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (rev_RT == Union{}) 
+            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (!applicablefn)
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
             if innerTy != value_type(tape)
-                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
+                if isabstracttype(TapeT) || TapeT isa UnionAll || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
                     msg = sprint() do io
                         println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
                         println(io, "tape_idx=", tape_idx)
@@ -797,6 +800,8 @@ end
                         println(io, "returnRoots=", returnRoots)
                         println(io, "swiftself=", swiftself)
                         println(io, "RT=", RT)
+                        println(io, "rev_RT=", rev_RT)
+                        println(io, "applicablefn=", applicablefn)
                         println(io, "tape=", tape)
                         println(io, "llvmf=", string(LLVM.function_type(llvmf)))
                         println(io, "TapeT=", TapeT)
@@ -846,7 +851,7 @@ end
             if any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
-            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup)) + (rev_RT == Union{}),  al)
+            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup)) + (!applicablefn),  al)
         end
     end
 
