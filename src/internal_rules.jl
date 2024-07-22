@@ -825,9 +825,9 @@ function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, Duplica
     dstart = if start isa Const 
         zero(eltype(ret)) 
     elseif start isa Duplicated || start isa DuplicatedNoNeed
-        one(eltype(ret))
+        start.dval * one(eltype(ret))
     elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
-        ntuple(x->one(eltype(ret)), Val(width(RT)))
+        ntuple(i->start.dval[i] * one(eltype(ret)), Val(width(RT)))
     else
         error("Annotation type $(typeof(start)) not supported for range start. Please open an issue")
     end
@@ -835,9 +835,9 @@ function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, Duplica
     dstep = if step isa Const 
         zero(eltype(ret)) 
     elseif step isa Duplicated || step isa DuplicatedNoNeed
-        one(eltype(ret))
+        step.dval * one(eltype(ret))
     elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
-        ntuple(x->one(eltype(ret)), Val(width(RT)))
+        ntuple(x->step.dval[i] * one(eltype(ret)), Val(width(RT)))
     else
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
