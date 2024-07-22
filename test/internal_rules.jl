@@ -620,25 +620,29 @@ end
 
 @testset "Ranges" begin
     function f1(x)
+	x = 25.0x
         ts = Array(0.0:x:3.0)
         sum(ts)
     end
     function f2(x)
+	x = 25.0x
         ts = Array(0.0:.25:3.0)
         sum(ts) + x
     end
     function f3(x)
+	x = 25.0x
         ts = Array(x:.25:3.0)
         sum(ts)
     end
     function f4(x)
+	x = 25.0x
         ts = Array(0.0:.25:x)
         sum(ts)
     end
-    @test Enzyme.autodiff(Forward, f1,  Duplicated(0.25, 1.0)) == (78,)
-    @test Enzyme.autodiff(Forward, f2,  Duplicated(0.25, 1.0)) == (1.0,)
-    @test Enzyme.autodiff(Forward, f3,  Duplicated(0.25, 1.0)) == (12,)
-    @test Enzyme.autodiff(Forward, f4,  Duplicated(3.0, 1.0)) == (0,)
+    @test Enzyme.autodiff(Forward, f1,  Duplicated(0.1, 1.0)) == (78,)
+    @test Enzyme.autodiff(Forward, f2,  Duplicated(0.1, 1.0)) == (1.0,)
+    @test Enzyme.autodiff(Forward, f3,  Duplicated(0.1, 1.0)) == (12,)
+    @test Enzyme.autodiff(Forward, f4,  Duplicated(.12, 1.0)) == (0,)
 end
 
 end # InternalRules
