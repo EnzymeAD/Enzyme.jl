@@ -722,8 +722,12 @@ end
         Val(codegen_world_age(eltype(FA), primal_tt))
     end
     nondef = Enzyme.Compiler.thunk(opt_mi, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = EnzymeRules.tape_type(nondef[1])
-    return TapeType
+    if nondef[1] isa Enzyme.Compiler.PrimalErrorThunk
+        return Nothing
+    else
+        TapeType = EnzymeRules.tape_type(nondef[1])
+        return TapeType
+    end
 end
 
 const tape_cache = Dict{UInt, Type}()
