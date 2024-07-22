@@ -314,6 +314,13 @@ const activefns = Set{String}((
     "jl_",
 ))
 
+const inactiveglobs = Set{String}((
+    "ijl_boxed_uint8_cache",
+    "jl_boxed_uint8_cache",
+    "ijl_boxed_int8_cache",
+    "jl_boxed_int8_cache",
+))
+
 @enum ActivityState begin
     AnyState = 0
     ActiveState = 1
@@ -3269,6 +3276,14 @@ function annotate!(mod, mode)
 
     for f in fns
         API.EnzymeAttributeKnownFunctions(f.ref)
+    end
+        
+    for gname in inactiveglobs
+        globs = LLVM.globals(mod)
+        if haskey(globs, gname)
+            glob = globs[gname]
+            metadata(glob)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+        end
     end
 
     for fname in inactivefns
