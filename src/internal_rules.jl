@@ -820,38 +820,46 @@ end
 # Float64 ranges in Julia use bitwise `&` with higher precision
 # to correct for numerical error, thus we put rules over the
 # operations as this is not directly differentiable
-function EnzymeRules.forward(func::Const{Colon}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, start::Annotation, step::Annotation, stop::Annotation)
+function EnzymeRules.forward(func::Const{Colon},
+                             RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
+                                              BatchDuplicated,BatchDuplicatedNoNeed}},
+                             start::Annotation, step::Annotation, stop::Annotation)
     ret = func.val(start.val, step.val, stop.val)
-    dstart = if start isa Const 
-        zero(eltype(ret)) 
+    dstart = if start isa Const
+        zero(eltype(ret))
     elseif start isa Duplicated || start isa DuplicatedNoNeed
-        start.dval * one(eltype(ret))
+        start.dval
     elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
-        ntuple(i->start.dval[i] * one(eltype(ret)), Val(width(RT)))
+        ntuple(i -> start.dval[i], Val(width(RT)))
     else
         error("Annotation type $(typeof(start)) not supported for range start. Please open an issue")
     end
 
-    dstep = if step isa Const 
-        zero(eltype(ret)) 
+    dstep = if step isa Const
+        zero(eltype(ret))
     elseif step isa Duplicated || step isa DuplicatedNoNeed
-        step.dval * one(eltype(ret))
+        step.dval
     elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
-        ntuple(x->step.dval[i] * one(eltype(ret)), Val(width(RT)))
+        ntuple(i -> step.dval[i], Val(width(RT)))
     else
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
 
-    if RT <: Duplicated 
-        Duplicated(ret, range(dstart, step=dstep, length=length(ret)))
+    if RT <: Duplicated
+        Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
     elseif RT <: Const
         ret
     elseif RT <: DuplicatedNoNeed
-        range(dstart, step=dstep, length=length(ret))
+        range(dstart; step=dstep, length=length(ret))
     elseif RT <: BatchDuplicated
-        BatchDuplicated(ret, ntuple(x-> range(dstart, step=dstep, length=length(ret)), Val(width(RT))))
+        BatchDuplicated(ret,
+                        ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
+                                          step=dstep isa Number ? dstep : dstep[i],
+                                          length=length(ret)), Val(width(RT))))
     elseif RT <: BatchDuplicatedNoNeed
-        ntuple(x-> range(dstart, step=dstep, length=length(ret)), Val(width(RT)))
+        ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
+                          step=dstep isa Number ? dstep : dstep[i],
+                          length=length(ret)), Val(width(RT)))
     else
         error("This should not be possible. Please report.")
     end

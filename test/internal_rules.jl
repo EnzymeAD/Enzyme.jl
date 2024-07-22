@@ -620,29 +620,38 @@ end
 
 @testset "Ranges" begin
     function f1(x)
-	x = 25.0x
+        x = 25.0x
         ts = Array(0.0:x:3.0)
-        sum(ts)
+        return sum(ts)
     end
     function f2(x)
-	x = 25.0x
-        ts = Array(0.0:.25:3.0)
-        sum(ts) + x
+        x = 25.0x
+        ts = Array(0.0:0.25:3.0)
+        return sum(ts) + x
     end
     function f3(x)
-	x = 25.0x
-        ts = Array(x:.25:3.0)
-        sum(ts)
+        x = 25.0x
+        ts = Array(x:0.25:3.0)
+        return sum(ts)
     end
     function f4(x)
-	x = 25.0x
-        ts = Array(0.0:.25:x)
-        sum(ts)
+        x = 25.0x
+        ts = Array(0.0:0.25:x)
+        return sum(ts)
     end
-    @test Enzyme.autodiff(Forward, f1,  Duplicated(0.1, 1.0)) == (78,)
-    @test Enzyme.autodiff(Forward, f2,  Duplicated(0.1, 1.0)) == (1.0,)
-    @test Enzyme.autodiff(Forward, f3,  Duplicated(0.1, 1.0)) == (12,)
-    @test Enzyme.autodiff(Forward, f4,  Duplicated(.12, 1.0)) == (0,)
+    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (75.0,)
+    @test Enzyme.autodiff(Forward, f4, Duplicated(0.12, 1.0)) == (0,)
+
+    @test Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f2, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=75.0, var"2"=150.0),)
+    @test Enzyme.autodiff(Forward, f4, BatchDuplicated(0.12, (1.0, 2.0))) ==
+          ((var"1"=0.0, var"2"=0.0),)
 end
 
 end # InternalRules
