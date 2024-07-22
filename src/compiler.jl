@@ -489,7 +489,7 @@ end
     if T <: BigFloat
         return DupState
     end
-    
+
     if T <: AbstractFloat
         return ActiveState
     end
@@ -1425,8 +1425,9 @@ end
         return seen[prev]
     end
     prev2 = prev.contents
-    res = Core.Box(Base.Ref(EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive))))
+    res = Core.Box()
     seen[prev] = res
+    res.contents = Base.Ref(EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive)))
     return res
 end
 
