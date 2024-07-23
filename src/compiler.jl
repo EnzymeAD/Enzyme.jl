@@ -314,6 +314,13 @@ const activefns = Set{String}((
     "jl_",
 ))
 
+const inactiveglobs = Set{String}((
+    "ijl_boxed_uint8_cache",
+    "jl_boxed_uint8_cache",
+    "ijl_boxed_int8_cache",
+    "jl_boxed_int8_cache",
+))
+
 @enum ActivityState begin
     AnyState = 0
     ActiveState = 1
@@ -3270,6 +3277,16 @@ function annotate!(mod, mode)
     for f in fns
         API.EnzymeAttributeKnownFunctions(f.ref)
     end
+        
+@static if VERSION >= v"1.8-"
+    for gname in inactiveglobs
+        globs = LLVM.globals(mod)
+        if haskey(globs, gname)
+            glob = globs[gname]
+            metadata(glob)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+        end
+    end
+end
 
     for fname in inactivefns
         if haskey(fns, fname)
@@ -4823,9 +4840,6 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             ops = collect(operands(ci))[1:end-1]
             position!(builder, ci)
             nops = LLVM.Value[]
-			if returnRoots
-				push!(nops, ops[1+sret])
-			end
             if swiftself
                 push!(nops, ops[1+sret+returnRoots])
             end
