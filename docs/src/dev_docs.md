@@ -1,18 +1,74 @@
 # Enzyme developer documentation
 
-## Development of Enzyme and Enzyme.jl together
+## Development of Enzyme and Enzyme.jl together (recommended)
 
-Normally Enzyme.jl downloads and install Enzyme for the user automatically since Enzyme needs to be built against
+Normally Enzyme.jl downloads and installs [Enzyme](https://github.com/EnzymeAD/enzyme) for the user automatically since Enzyme needs to be built against
 Julia bundeled LLVM. In case that you are making updates to Enzyme and want to test them against Enzyme.jl the instructions
 below should help you get started.
 
+Start Julia in your development copy of Enzyme.jl and initialize the deps project
+
+```bash
+~/s/Enzyme.jl (master)> julia --project=deps
+```
+
+```julia-repl
+julia> # Hit the `]` key to enter package repl.
+(deps) pkg> instantiate
+```
+
+We can now build a custom version of Enzyme for use in Enzyme.jl. To build the latest commit on the main branch of Enzyme, run the following.
+It may take a few minutes to compile fully.
+
+```bash
+~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl
+```
+
+You will now find a file LocalPrefernces.toml which has been generated and contains a path to the new Enzyme\_jll binary you have built.
+To use your Enzyme\_jll instead of the default shipped by Enzyme.jl, ensure that this file is at the root of any Julia project you wish
+to test it with *and* that the Julia project has Enzyme\_jll as an explicit dependency. Note that an indirect dependency here is not
+sufficient (e.g. just because a project depends on Enzyme.jl, which depends on Enzyme\_jll, does not mean that your project will pick up
+this file unless you also add a direct dependency to Enzyme\_jll).
+
+To test whether your project found the custom version of Enzyme\_jll, you can inspect the path of the Enzyme\_jll library in use as follows.
+
+```bash
+~/my/project.jl (master)> julia --project=.
+```
+
+```julia-repl
+julia> using Enzyme_jll
+julia> Enzyme_jll.libEnzyme_path
+"${JULIA_PKG_DEVDIR}/Enzyme_jll/override/lib/LLVMEnzyme-9.so"
+```
+
+This should correspond to the path in the LocalPreferences.toml you just generated.
+
+Note that your system can have only one custom built Enzyme\_jll at a time. If you build one version for one version of Enzyme or Julia
+and later build a new version of Enzyme, it removes the old build. 
+
+Note that Julia versions are tightly coupled and you cannot use an Enzyme\_jll built for one version of Julia for another version of Julia.
+
+The same script can also be used to build Enzyme\_jll for a branch other than main as follows.
+
+```bash
+~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl --branch mybranch
+```
+
+It can also be used to build Enzyme\_jll from a local copy of Enzyme on your machine, which does not need to be committed to git.
+
+```bash
+~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl ../path/to/Enzyme
+```
+
+## Development of Enzyme and Enzyme.jl together (manual)
 Start Julia in your development copy of Enzyme.jl
 
 ```bash
-~/s/Enzyme (master)> julia --project=.
+~/s/Enzyme.jl (master)> julia --project=.
 ```
 
-Then create a development copy of Enzyme_jll and activate it within.
+Then create a development copy of Enzyme\_jll and activate it within.
 
 ```julia-repl
 julia> using Enzyme_jll
@@ -49,7 +105,7 @@ julia> Base.libllvm_version_string
 "9.0.1jl"
 ```
 
-If the LLVM version ends in a `jl` you a likely using the private LLVM.
+If the LLVM version ends in a `jl` you are likely using the private LLVM.
 
 In your source checkout of Enzyme:
 

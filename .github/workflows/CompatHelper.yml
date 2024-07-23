@@ -3,24 +3,33 @@ name: CompatHelper
 on:
   schedule:
     - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   CompatHelper:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Get Julia compatibility
         id: julia_compat
         # NOTE: this requires a julia compat lower-bound with minor version!
         run : |
           version=$(grep '^julia = ' Project.toml | grep -o '".*"' | cut -d '"' -f2)
           echo "::set-output name=version::$version"
-      - uses: julia-actions/setup-julia@latest
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ steps.julia_compat.outputs.version }}
-      - name: Pkg.add("CompatHelper")
-        run: julia -e 'using Pkg; Pkg.add("CompatHelper")'
-      - name: CompatHelper.main()
+          arch: x64
+          show-versioninfo: true
+      - name: Pkg.add
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.add("CompatHelper")
+      - name: CompatHelper.main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: julia -e 'using CompatHelper; CompatHelper.main()'
+        shell: julia --color=yes {0}
+        run: |
+          import CompatHelper
+          CompatHelper.main(; include_jll = true, subdirs = ["", "docs", "deps", "lib/EnzymeCore", "lib/EnzymeTestUtils"])

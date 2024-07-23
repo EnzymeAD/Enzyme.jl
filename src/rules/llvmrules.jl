@@ -1,9 +1,74 @@
+macro register_aug(expr)
+    decl = string(expr.args[1])
+    name = decl[1:prevind(decl, findfirst('(', decl))]
+    cname = name*"_cfunc"
+    name = Symbol(name)
+    cname = Symbol(cname)
+
+    expr2 = :(@inline $expr)
+    res = quote
+        function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})::UInt8
+            return UInt8($name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR, tapeR)::Bool)
+        end
+    end
+    return Expr(:block, esc(expr2), esc(res))
+end
+
+macro register_rev(expr)
+    decl = string(expr.args[1])
+    name = decl[1:prevind(decl, findfirst('(', decl))]
+    cname = name*"_cfunc"
+
+    name = Symbol(name)
+    cname = Symbol(cname)
+    expr2 = :(@inline $expr)
+    res = quote
+        function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, tape::LLVM.API.LLVMValueRef)::Cvoid
+            $name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), tape == C_NULL ? nothing : LLVM.Value(tape))
+            return
+        end
+    end
+    return Expr(:block, esc(expr2), esc(res))
+end
+
+macro register_fwd(expr)
+    decl = string(expr.args[1])
+    name = decl[1:prevind(decl, findfirst('(', decl))]
+    cname = name*"_cfunc"
+    name = Symbol(name)
+    cname = Symbol(cname)
+    expr2 = :(@inline $expr)
+    res = quote
+        function $cname(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})::UInt8
+            return UInt8($name(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
+        end
+    end
+    return Expr(:block, esc(expr2), esc(res))
+end
+
+macro register_diffuse(expr)
+    decl = string(expr.args[1])
+    name = decl[1:prevind(decl, findfirst('(', decl))]
+    cname = name*"_cfunc"
+    name = Symbol(name)
+    cname = Symbol(cname)
+    expr2 = :(@inline $expr)
+    res = quote
+        function $cname(OrigCI::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, val::LLVM.API.LLVMValueRef, shadow::UInt8, mode::API.CDerivativeMode, useDefault::Ptr{UInt8})::UInt8
+            res = $name(LLVM.CallInst(OrigCI), GradientUtils(gutils), LLVM.Value(val), shadow != 0, mode)::Tuple{Bool, Bool}
+            unsafe_store!(useDefault, UInt8(res[2]))
+            return UInt8(res[1])
+        end
+    end
+    return Expr(:block, esc(expr2), esc(res))
+end
+
 include("customrules.jl")
 include("jitrules.jl")
 include("typeunstablerules.jl")
 include("parallelrules.jl")
 
-function jlcall_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jlcall_fwd(B, orig, gutils, normalR, shadowR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -31,6 +96,9 @@ function jlcall_fwd(B, orig, gutils, normalR, shadowR)
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_fwd(2, B, orig, gutils, normalR, shadowR)
+        end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
         end
@@ -41,7 +109,7 @@ function jlcall_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -69,6 +137,9 @@ function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
         if in(name, ("ijl_f__svec_rev", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+        end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return true
         end
@@ -79,7 +150,7 @@ function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function jlcall_rev(B, orig, gutils, tape)
+@register_rev function jlcall_rev(B, orig, gutils, tape)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -115,6 +186,10 @@ function jlcall_rev(B, orig, gutils, tape)
             common_f_svec_ref_rev(2, B, orig, gutils, tape)
             return nothing
         end
+        if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
+            common_finalizer_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
         if any(map(k->kind(k)==kind(StringAttribute("enzyme_inactive")), collect(function_attributes(F))))
             return nothing
         end
@@ -125,7 +200,7 @@ function jlcall_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jlcall2_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jlcall2_fwd(B, orig, gutils, normalR, shadowR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -142,7 +217,7 @@ function jlcall2_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function jlcall2_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jlcall2_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -159,7 +234,7 @@ function jlcall2_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function jlcall2_rev(B, orig, gutils, tape)
+@register_rev function jlcall2_rev(B, orig, gutils, tape)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
         name = LLVM.name(F)
@@ -178,15 +253,15 @@ function jlcall2_rev(B, orig, gutils, tape)
 end
 
 
-function noop_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function noop_fwd(B, orig, gutils, normalR, shadowR)
     return true
 end
 
-function noop_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function noop_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return true
 end
 
-function duplicate_rev(B, orig, gutils, tape)
+@register_rev function duplicate_rev(B, orig, gutils, tape)
     newg = new_from_original(gutils, orig)
 
     real_ops = collect(operands(orig))[1:end-1]
@@ -198,7 +273,7 @@ function duplicate_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -237,12 +312,12 @@ function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
             ev = extract_value!(B, shadowin, idx-1)
             callv = call_samefunc_with_inverted_bundles!(B, gutils, orig, [ev], [API.VT_Shadow], #=lookup=#false)
             if is_constant_value(gutils, origops[1])
-                elSize = get_array_elsz(B, shadowin)
+                elSize = get_array_elsz(B, ev)
                 elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
-                len = get_array_len(B, shadowin)
+                len = get_array_len(B, ev)
                 length = LLVM.mul!(B, len, elSize)
                 GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
-                LLVM.memset!(B, get_array_data(callv), LLVM.ConstantInt(i8, 0, false), length, algn)
+                LLVM.memset!(B, get_array_data(B, callv), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
             if API.runtimeActivity()
                 prev = new_from_original(gutils, orig)
@@ -394,7 +469,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     return nothing
 end
 
-function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -411,7 +486,7 @@ function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
 	return false
 end
 
-function arraycopy_rev(B, orig, gutils, tape)
+@register_rev function arraycopy_rev(B, orig, gutils, tape)
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         arraycopy_common(#=fwd=#false, B, orig, origops[1], gutils, nothing)
@@ -420,7 +495,7 @@ function arraycopy_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -455,15 +530,63 @@ function arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
 	return false
 end
 
-function arrayreshape_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function arrayreshape_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function arrayreshape_rev(B, orig, gutils, tape)
+@register_rev function arrayreshape_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function boxfloat_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0 )
+        return true
+    end
+    
+    origops = LLVM.operands(orig)
+    if is_constant_value(gutils, origops[1])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)")
+    end
+    if is_constant_value(gutils, origops[2])
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(2)")
+    end
+
+    width = get_width(gutils)
+
+    shadowin1 = invert_pointer(gutils, origops[1], B)
+    shadowin2 = invert_pointer(gutils, origops[2], B)
+    if width == 1
+        args = LLVM.Value[shadowin1, shadowin2]
+        shadowres = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx in 1:width
+            args = LLVM.Value[
+                              extract_value!(B, shadowin1, idx-1)
+                              extract_value!(B, shadowin2, idx-1)
+                              ]
+            tmp = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, [API.VT_Shadow, API.VT_Shadow], #=lookup=#false)
+            shadowres = insert_value!(B, shadowres, tmp, idx-1)
+        end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+
+	return false
+end
+
+@register_aug function gcloaded_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    gcloaded_fwd(B, orig, gutils, normalR, shadowR)
+end
+
+@register_rev function gcloaded_rev(B, orig, gutils, tape)
+    return nothing
+end
+
+@register_fwd function boxfloat_fwd(B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
     if is_constant_value(gutils, orig)
@@ -490,7 +613,7 @@ function boxfloat_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origops = collect(operands(orig))
     width = get_width(gutils)
     if is_constant_value(gutils, orig)
@@ -518,7 +641,7 @@ function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function boxfloat_rev(B, orig, gutils, tape)
+@register_rev function boxfloat_rev(B, orig, gutils, tape)
     origops = collect(operands(orig))
     width = get_width(gutils)
     if !is_constant_value(gutils, orig)
@@ -548,7 +671,7 @@ function boxfloat_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function eqtableget_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function eqtableget_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig)
         return true
     end
@@ -572,9 +695,18 @@ function error_if_active(::Type{T}) where T
     nothing
 end
 
-function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig)
         return true
+    end
+    
+    mode = get_mode(gutils)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, mode)
+    if needsShadowP[] == 0
+        return false
     end
 
     width = get_width(gutils)
@@ -634,11 +766,11 @@ function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function eqtableget_rev(B, orig, gutils, tape)
+@register_rev function eqtableget_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function eqtableput_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function eqtableput_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -652,7 +784,7 @@ function eqtableput_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -714,12 +846,12 @@ function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function eqtableput_rev(B, orig, gutils, tape)
+@register_rev function eqtableput_rev(B, orig, gutils, tape)
     return nothing
 end
 
 
-function idtablerehash_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function idtablerehash_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -733,7 +865,7 @@ function idtablerehash_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function idtablerehash_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function idtablerehash_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -747,12 +879,12 @@ function idtablerehash_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function idtablerehash_rev(B, orig, gutils, tape)
+@register_rev function idtablerehash_rev(B, orig, gutils, tape)
     emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_idtable_rehash")
     return nothing
 end
 
-function jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     if is_constant_value(gutils, origops[1])
         return true
@@ -780,7 +912,7 @@ function jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 
-function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origops = collect(operands(orig))
     if is_constant_value(gutils, origops[1])
         return true
@@ -831,7 +963,7 @@ function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function jl_array_grow_end_rev(B, orig, gutils, tape)
+@register_rev function jl_array_grow_end_rev(B, orig, gutils, tape)
     origops = collect(operands(orig))
     if !is_constant_value(gutils, origops[1])
 
@@ -868,15 +1000,15 @@ function jl_array_grow_end_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jl_array_del_end_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_array_del_end_fwd(B, orig, gutils, normalR, shadowR)
     jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function jl_array_del_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_array_del_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     jl_array_del_end_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function jl_array_del_end_rev(B, orig, gutils, tape)
+@register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
     origops = collect(operands(orig))
     if !is_constant_value(gutils, origops[1])
         width = get_width(gutils)
@@ -907,16 +1039,22 @@ function jl_array_del_end_rev(B, orig, gutils, tape)
             end
             args = LLVM.Value[anti, offset]
             
+            found, arty = abs_typeof(origops[1])
             anti = shadowin
-            elSize = get_array_elsz(B, anti)
-            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
+            elSize = if found
+                LLVM.ConstantInt(Csize_t(sizeof(eltype(arty))))
+            else
+                elSize = LLVM.zext!(B, get_array_elsz(B, anti), LLVM.IntType(8*sizeof(Csize_t)))
+            end
             len = get_array_len(B, anti)
             
             LLVM.call!(B, fty, delF, args)
             
             length = LLVM.mul!(B, len, elSize)
             
-            GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type"
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1]))"
+            end
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)
@@ -925,7 +1063,7 @@ function jl_array_del_end_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_inst(gutils, orig)
         return true
     end
@@ -955,7 +1093,7 @@ function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
                 push!(vargs, extract_value!(B, a, idx-1))
             end
             push!(vargs, args[end])
-            cal = call_samefunc_with_inverted_bundles!(b, gutils, orig, vargs, valTys, #=lookup=#false)
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, #=lookup=#false)
             debug_from_orig!(gutils, cal, orig)
             callconv!(cal, callconv(orig))
         end
@@ -963,14 +1101,14 @@ function jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
 
     return false
 end
-function jl_array_ptr_copy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_array_ptr_copy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
   jl_array_ptr_copy_fwd(B, orig, gutils, normalR, shadowR)
 end
-function jl_array_ptr_copy_rev(B, orig, gutils, tape)
+@register_rev function jl_array_ptr_copy_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jl_array_sizehint_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_array_sizehint_fwd(B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     if is_constant_value(gutils, origops[1])
         return true
@@ -997,15 +1135,15 @@ function jl_array_sizehint_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function jl_array_sizehint_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_array_sizehint_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     jl_array_sizehint_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function jl_array_sizehint_rev(B, orig, gutils, tape)
+@register_rev function jl_array_sizehint_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     newo = new_from_original(gutils, orig)
     origops = collect(operands(orig))
     err = emit_error(B, orig, "Enzyme: unhandled forward for "*string(origops[end]))
@@ -1027,14 +1165,14 @@ function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     end
     return false
 end
-function jl_unhandled_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function jl_unhandled_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
   jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
 end
-function jl_unhandled_rev(B, orig, gutils, tape)
+@register_rev function jl_unhandled_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig)
         return true
     end
@@ -1060,7 +1198,7 @@ function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig)
         return true
     end
@@ -1085,16 +1223,16 @@ function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function get_binding_or_error_rev(B, orig, gutils, tape)
+@register_rev function get_binding_or_error_rev(B, orig, gutils, tape)
     emit_error(B, orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
     return nothing
 end
 
-function finalizer_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function finalizer_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer")
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -1104,13 +1242,13 @@ function finalizer_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    # err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
-    # newo = new_from_original(gutils, orig)
-    # API.moveBefore(newo, err, B)
+    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         unsafe_store!(shadowR, normal.ref)
@@ -1125,7 +1263,7 @@ function finalizer_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function finalizer_rev(B, orig, gutils, tape)
+@register_rev function finalizer_rev(B, orig, gutils, tape)
     # emit_error(B, orig, "Enzyme: unhandled reverse for jl_gc_add_finalizer_th")
     return nothing
 end
@@ -1143,27 +1281,31 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=no
 end
 
 macro augfunc(f)
-   :(@cfunction((B, OrigCI, gutils, normalR, shadowR, tapeR) -> begin
-     UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR, tapeR)::Bool)
-    end, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
+    cname = Symbol(string(f)*"_cfunc")
+   :(@cfunction($cname, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
     ))
 end
 
 macro revfunc(f)
-   :(@cfunction((B, OrigCI, gutils, tape) -> begin
-     $f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), tape == C_NULL ? nothing : LLVM.Value(tape))
-    end,  Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)
+    cname = Symbol(string(f)*"_cfunc")
+   :(@cfunction($cname,  Cvoid, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef)
     ))
 end
 
 macro fwdfunc(f)
-   :(@cfunction((B, OrigCI, gutils, normalR, shadowR) -> begin
-     UInt8($f(LLVM.IRBuilder(B), LLVM.CallInst(OrigCI), GradientUtils(gutils), normalR, shadowR)::Bool)
-    end, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
+    cname = Symbol(string(f)*"_cfunc")
+   :(@cfunction($cname, UInt8, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, Ptr{LLVM.API.LLVMValueRef}, Ptr{LLVM.API.LLVMValueRef})
+    ))
+end
+
+macro diffusefunc(f)
+    cname = Symbol(string(f)*"_cfunc")
+   :(@cfunction(Compiler.$cname, UInt8, (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt8, API.CDerivativeMode, Ptr{UInt8})
     ))
 end
 
 @noinline function register_llvm_rules()
+    API.EnzymeRegisterDiffUseCallHandler("enzyme_custom", @diffusefunc(enzyme_custom_diffuse))
     register_handler!(
         ("julia.call",),
         @augfunc(jlcall_augfwd),
@@ -1175,6 +1317,12 @@ end
         @augfunc(jlcall2_augfwd),
         @revfunc(jlcall2_rev),
         @fwdfunc(jlcall2_fwd),
+    )
+    register_handler!(
+        ("julia.gc_loaded",),
+        @augfunc(gcloaded_augfwd),
+        @revfunc(gcloaded_rev),
+        @fwdfunc(gcloaded_fwd),
     )
     register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),
@@ -1199,12 +1347,6 @@ end
         @augfunc(threadsfor_augfwd),
         @revfunc(threadsfor_rev),
         @fwdfunc(threadsfor_fwd),
-    )
-    register_handler!(
-        ("jl_pmap",),
-        @augfunc(pmap_augfwd),
-        @revfunc(pmap_rev),
-        @fwdfunc(pmap_fwd),
     )
     register_handler!(
         ("jl_new_task", "ijl_new_task"),

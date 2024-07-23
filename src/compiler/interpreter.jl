@@ -1,12 +1,28 @@
 module Interpreter
 import Enzyme: API
 using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
-using GPUCompiler: CodeCache, WorldView, @safe_debug
+using GPUCompiler: @safe_debug
+if VERSION < v"1.11.0-DEV.1552"
+    using GPUCompiler: CodeCache, WorldView, @safe_debug
+end
+const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
+
 import ..Enzyme
 import ..EnzymeRules
 
+@static if VERSION ≥ v"1.11.0-DEV.1498"
+    import Core.Compiler: get_inference_world
+    using Base: get_world_counter
+else
+    import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
+end
+
 struct EnzymeInterpreter <: AbstractInterpreter
-    global_cache::CodeCache
+@static if HAS_INTEGRATED_CACHE
+    token::Any
+else
+    code_cache::CodeCache
+end
     method_table::Union{Nothing,Core.MethodTable}
 
     # Cache of inference results for this particular interpreter
@@ -19,34 +35,38 @@ struct EnzymeInterpreter <: AbstractInterpreter
     opt_params::OptimizationParams
 
     mode::API.CDerivativeMode
+end
 
-    function EnzymeInterpreter(cache::CodeCache, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
-        @assert world <= Base.get_world_counter()
+function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
+    @assert world <= Base.get_world_counter()
 
-        return new(
-            cache,
-            mt,
+    return EnzymeInterpreter(
+        cache_or_token,
+        mt,
 
-            # Initially empty cache
-            Vector{InferenceResult}(),
+        # Initially empty cache
+        Vector{InferenceResult}(),
 
-            # world age counter
-            world,
+        # world age counter
+        world,
 
-            # parameters for inference and optimization
-            InferenceParams(unoptimize_throw_blocks=false),
-            VERSION >= v"1.8.0-DEV.486" ? OptimizationParams() :
-                                          OptimizationParams(unoptimize_throw_blocks=false),
-            mode
-        )
-    end
+        # parameters for inference and optimization
+        InferenceParams(unoptimize_throw_blocks=false),
+        VERSION >= v"1.8.0-DEV.486" ? OptimizationParams() :
+                                        OptimizationParams(unoptimize_throw_blocks=false),
+        mode
+    )
 end
 
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
-Core.Compiler.get_world_counter(interp::EnzymeInterpreter) = interp.world
+get_inference_world(interp::EnzymeInterpreter) = interp.world
 Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
-Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.global_cache, interp.world)
+@static if HAS_INTEGRATED_CACHE
+    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
+else
+    Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
+end
 
 # No need to do any locking since we're not putting our results into the runtime cache
 Core.Compiler.lock_mi_inference(interp::EnzymeInterpreter, mi::MethodInstance) = nothing
@@ -88,65 +108,11 @@ function is_primitive_func(@nospecialize(TT))
     if ft == typeof(Enzyme.pmap)
         return true
     end
-    if ft === typeof(Base.rem2pi)
-        if TT <: Tuple{ft, Float32, <:Any} || TT <: Tuple{ft, Float64, <:Any} || TT <: Tuple{ft, Float16, <:Any}
-            return true
-        end
+    match = Enzyme.Compiler.find_math_method(ft, TT.parameters[2:end])[1]
+    if match !== nothing
+        return true
     end
 
-    if ft == typeof(Base.inv) || ft == typeof(Base.sqrt)
-        if TT <: Tuple{ft, Complex{Float32}} || TT <: Tuple{ft, Complex{Float64}}
-            return true
-        end
-    end
-
-    @static if VERSION >= v"1.9-"
-    if ft === typeof(Base.rem)
-        if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
-            return true
-        end
-        end
-    end
-
-    if ft === typeof(Base.cbrt) || ft === typeof(Base.sin) || ft === typeof(Base.cos) ||
-       ft === typeof(Base.sinc) ||
-       ft === typeof(Base.tan) || ft === typeof(Base.exp) || ft === typeof(Base.FastMath.exp_fast) ||
-       ft === typeof(Base.exp10) ||
-       ft === typeof(Base.exp2) ||
-       ft === typeof(Base.expm1) ||
-       ft === typeof(Base.log) || ft === typeof(Base.FastMath.log) ||
-       ft === typeof(Base.log1p) ||
-       ft === typeof(Base.log2) ||
-       ft === typeof(Base.log10) ||
-       ft === typeof(Base.asin) ||
-       ft === typeof(Base.acos) ||
-       ft === typeof(Base.atan) ||
-       ft === typeof(Base.sinpi) ||
-       ft === typeof(Base.cospi) ||
-       ft === typeof(Base.sinh) || ft === typeof(Base.FastMath.sinh_fast) ||
-       ft === typeof(Base.cosh) || ft === typeof(Base.FastMath.cosh_fast) ||
-       ft === typeof(Base.tanh) || ft === typeof(Base.FastMath.tanh_fast) ||
-       ft === typeof(Base.sqrt) || ft === typeof(Base.sincos) || ft === typeof(Base.sincospi)
-        if TT <: Tuple{ft, Float32} || TT <: Tuple{ft, Float64} || TT <: Tuple{ft, Float16}
-            return true
-        end
-    end
-@static if VERSION < v"1.8.0"
-else
-    if ft === typeof(Base.fma_emulated)
-        if TT <: Tuple{ft, Float32, Float32, Float32} || TT <: Tuple{ft, Float64, Float64, Float64}
-            return true
-        end
-    end
-end
-    if ft === typeof(Base.:^) || ft === typeof(Base.atan)
-        if TT <: Tuple{ft, Float32, Float32} || TT <: Tuple{ft, Float64, Float64}
-            return true
-        end
-        if TT <: Tuple{ft, Float32, <:Integer} || TT <: Tuple{ft, Float64, <:Integer}
-            return true
-        end
-    end
     # FIXME(@wsmoses): For which types should we not inline?
     if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work) ||
        ft === typeof(Base.Threads.threadid) || ft == typeof(Base.Threads.nthreads) ||

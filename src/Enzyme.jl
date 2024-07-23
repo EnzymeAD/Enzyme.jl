@@ -5,19 +5,22 @@ import EnzymeCore
 import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 
-import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI
-export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI
+import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI, NonGenABI
+export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI, NonGenABI
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
 
+import EnzymeCore: MixedDuplicated, BatchMixedDuplicated
+export MixedDuplicated, BatchMixedDuplicated
+
 import EnzymeCore: batch_size, get_func 
 export batch_size, get_func
 
-import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
-export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero
+import EnzymeCore: autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
+export autodiff, autodiff_deferred, autodiff_thunk, autodiff_deferred_thunk, tape_type, make_zero, make_zero!
 
-export jacobian, gradient, gradient!
+export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
@@ -61,6 +64,10 @@ end
         arg = @inbounds args[i]
         if arg isa Active
             return true
+        elseif arg isa MixedDuplicated
+            return true
+        elseif arg isa BatchMixedDuplicated
+            return true
         else
             return false
         end
@@ -71,6 +78,13 @@ end
     return Tuple{(ntuple(Val(N)) do i
         Base.@_inline_meta
         Core.Typeof(args[i])
+    end)...}
+end
+
+@inline function vaEltypes(args::Type{Ty}) where {Ty <: Tuple}
+    return Tuple{(ntuple(Val(length(Ty.parameters))) do i
+        Base.@_inline_meta
+        eltype(Ty.parameters[i])
     end)...}
 end
 
@@ -85,6 +99,10 @@ end
 end
 
 @inline same_or_one_rec(current) = current
+@inline same_or_one_rec(current, arg::BatchMixedDuplicated{T, N}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::Type{BatchMixedDuplicated{T, N}}, args...) where {T,N} =
+   same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T,N} =
    same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T,N} =
@@ -221,7 +239,6 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    world = codegen_world_age(Core.Typeof(f.val), tt)
     
     rt = if A isa UnionAll
         Core.Compiler.return_type(f.val, tt)
@@ -229,9 +246,15 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         eltype(A)    
     end
 
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f.val), tt))
+    end
+
     if A <: Active
-        if !allocatedinline(rt) || rt isa Union
-            forward, adjoint = Enzyme.Compiler.thunk(Val(world), FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
+        if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
+            forward, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args...)
             tape = res[1]
             if ReturnPrimal
@@ -244,7 +267,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
-    if A <: Active && rt <: Complex
+    if (A <: Active && rt <: Complex) && rt != Union{}
         if Holomorphic
             seen = IdDict()
             seen2 = IdDict()
@@ -261,7 +284,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             args = seed_complex_args(seen, seen2, args...)
             tt′   = vaTypeof(args...)
 
-            thunk = Enzyme.Compiler.thunk(Val(world), typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+            thunk = Enzyme.Compiler.thunk(opt_mi, typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 
             results = thunk(f, args..., (rt(0), rt(1), rt(im)))
 
@@ -283,7 +306,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Reverse-mode Active Complex return is ambiguous and requires more information to specify the desired result. See https://enzyme.mit.edu/julia/stable/faq/#Complex-numbers for more details."))
     end
 
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    thunk = Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt))
@@ -392,9 +415,14 @@ f(x) = x*x
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    world = codegen_world_age(Core.Typeof(f.val), tt)
 
-    thunk = Enzyme.Compiler.thunk(Val(world), FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f.val), tt))
+    end
+
+    thunk = Enzyme.Compiler.thunk(opt_mi, FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
                                      ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
     thunk(f, args...)
 end
@@ -431,7 +459,7 @@ code, as well as high-order differentiation.
 
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal))
 
-    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), Val(ReturnPrimal)}(adjoint_ptr)
+    thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     if rt <: Active
         args = (args..., Compiler.default_adjoint(eltype(rt)))
     elseif A <: Duplicated || A<: DuplicatedNoNeed || A <: BatchDuplicated || A<: BatchDuplicatedNoNeed
@@ -490,11 +518,11 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = Val(RT <: Duplicated || RT <: BatchDuplicated)
+    ReturnPrimal = RT <: Duplicated || RT <: BatchDuplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal)
-    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, typeof(Val(width)), ReturnPrimal}(adjoint_ptr)
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal))
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     thunk(f, args...)
 end
 
@@ -588,13 +616,17 @@ result, ∂v, ∂A
     end
 
     tt    = Tuple{map(eltype, args)...}
-        
-    world = codegen_world_age(eltype(FA), tt)
     
     if !(A <: Const)
         @assert ReturnShadow
     end
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    tt′ = Tuple{args...}
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(eltype(FA), tt))
+    end
+    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
 end
 
 """
@@ -653,10 +685,14 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(eltype, args)...}
-        
-    world = codegen_world_age(eltype(FA), tt)
     
-    Enzyme.Compiler.thunk(Val(world), FA, A, Tuple{args...}, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
+    tt′ = Tuple{args...}
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(eltype(FA), tt))
+    end
+    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI)
 end
 
 @inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
@@ -680,10 +716,18 @@ end
     TT = Tuple{args...}
    
     primal_tt = Tuple{map(eltype, args)...}
-    world = codegen_world_age(eltype(FA), primal_tt)
-    nondef = Enzyme.Compiler.thunk(Val(world), FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
-    TapeType = EnzymeRules.tape_type(nondef[1])
-    return TapeType
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), TT)
+    else
+        Val(codegen_world_age(eltype(FA), primal_tt))
+    end
+    nondef = Enzyme.Compiler.thunk(opt_mi, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI)
+    if nondef[1] isa Enzyme.Compiler.PrimalErrorThunk
+        return Nothing
+    else
+        TapeType = EnzymeRules.tape_type(nondef[1])
+        return TapeType
+    end
 end
 
 const tape_cache = Dict{UInt, Type}()
@@ -834,6 +878,12 @@ result, ∂v, ∂A
         else
             BatchDuplicatedNoNeed{eltype(A2), width}
         end
+    elseif A2 <: MixedDuplicated && width != 1
+        if A2 isa UnionAll
+            BatchMixedDuplicated{T, width} where T
+        else
+            BatchMixedDuplicated{eltype(A2), width}
+        end
     else
         A2
     end
@@ -849,8 +899,8 @@ result, ∂v, ∂A
         RT
     end
 
-    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, Val{width}, Val(ReturnPrimal), TapeType}(primal_ptr)
-    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, Val{width}, TapeType}(adjoint_ptr)
+    aug_thunk = Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, width, ReturnPrimal, TapeType}(primal_ptr)
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, width, TapeType}(adjoint_ptr)
     aug_thunk, adj_thunk
 end
 
@@ -983,6 +1033,22 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
     end
 end
 
+"""
+    gradient_deferred(::ReverseMode, f, x)
+
+Like [`gradient`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
+    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        dx = Ref(make_zero(x))
+        autodiff_deferred(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        return only(dx)
+    else
+        dx = make_zero(x)
+        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
+        return dx
+    end
+end
 
 """
     gradient!(::ReverseMode, dx, f, x)
@@ -1007,8 +1073,20 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
 ```
 """
 @inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
-    dx .= 0
+    make_zero!(dx)
     autodiff(Reverse, f, Active, Duplicated(x, dx))
+    dx
+end
+
+
+"""
+    gradient_deferred!(::ReverseMode, f, x)
+
+Like [`gradient!`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+    make_zero!(dx)
+    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
     dx
 end
 
@@ -1168,12 +1246,15 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
 
     tt′   = Tuple{BatchDuplicated{Core.Typeof(x), chunk}}
     tt    = Tuple{Core.Typeof(x)}
-    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    World = Val(nothing)
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f), tt))
+    end
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -1181,7 +1262,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0], Val(2))
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(Val(world), FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     end
 
     tmp = ntuple(num) do i
@@ -1208,11 +1289,15 @@ end
     @assert !ReturnPrimal
     tt′   = Tuple{Duplicated{Core.Typeof(x)}}
     tt    = Tuple{Core.Typeof(x)}
-    world = codegen_world_age(Core.Typeof(f), tt)
     rt = Core.Compiler.return_type(f, tt)
     ModifiedBetween = Val((false, false))
     FA = Const{Core.Typeof(f)}
-    primal, adjoint = Enzyme.Compiler.thunk(Val(world), FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f), tt))
+    end
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI)
     rows = ntuple(n_outs) do i
         Base.@_inline_meta
         dx = zero(x)
@@ -1225,10 +1310,169 @@ end
     mapreduce(LinearAlgebra.adjoint, vcat, rows)
 end
 
+"""
+    hvp(f::F, x::X, v::X) where {F, X}
+
+Compute the Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+
+In other words, compute hessian(f)(x) * v
+
+See [`hvp!`](@ref) for a version which stores the result in an existing buffer and also [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+hvp(f, [2.0, 3.0], [5.0, 2.7])
+
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+@inline function hvp(f::F, x::X, v::X) where {F, X}
+    res = make_zero(x)
+    hvp!(res, f, x, v)
+    return res
+end
+
+
+"""
+    hvp!(res::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+The result will be stored into `res`. The function still allocates and zero's a buffer to store the intermediate gradient, which is
+not returned to the user.
+
+In other words, compute res .= hessian(f)(x) * v
+
+See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvpip; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+
+@inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
+    grad = make_zero(x)
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
+
+
+"""
+    hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v` as well as
+the gradient, storing the gradient into `grad`. Both the hessian vector product and the gradient can be computed together more efficiently
+than computing them separately.
+
+The result will be stored into `res`. The gradient will be stored into `grad`.
+
+In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, f)(x)
+
+Example:
+
+```jldoctest hvp_and_gradient; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+grad = Vector{Float64}(undef, 2)
+hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+grad
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+2-element Vector{Float64}:
+ 2.880510859951098
+ 1.920340573300732
+```
+"""
+
+@inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
+
 function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 
+"""
+    import_frule(::fn, tys...)
+
+Automatically import a `ChainRulesCore.frule`` as a custom forward mode `EnzymeRule`. When called in batch mode, this
+will end up calling the primal multiple times, which may result in incorrect behavior if the function mutates,
+and slow code, always. Importing the rule from `ChainRules` is also likely to be slower than writing your own rule,
+and may also be slower than not having a rule at all.
+
+Use with caution.
+
+```julia
+Enzyme.@import_frule(typeof(Base.sort), Any);
+
+x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
+
+# output
+
+(var"1" = [0.0, 1.0, 2.0], var"2" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]))
+(var"1" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]),)
+(var"1" = [0.3, 0.1, 0.2],)
+(var"1" = [0.0, 1.0, 2.0], var"2" = [0.3, 0.1, 0.2])
+
+```
+"""
 macro import_frule(args...)
     return _import_frule(args...)
 end 
+
+function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
+
+"""
+    import_rrule(::fn, tys...)
+
+Automatically import a ChainRules.rrule as a custom reverse mode EnzymeRule. When called in batch mode, this
+will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
+function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
+inputs permit a .+= operation and that the output has a valid Enzyme.make_zero function defined. It also assumes
+that overwritten(x) accurately describes if there is any non-preserved data from forward to reverse, not just
+the outermost data structure being overwritten as provided by the specification.
+
+Finally, this macro falls back to almost always caching all of the inputs, even if it may not be needed for the
+derivative computation.
+
+As a result, this auto importer is also likely to be slower than writing your own rule, and may also be slower
+than not having a rule at all.
+
+Use with caution.
+
+```julia
+Enzyme.@import_rrule(typeof(Base.sort), Any);
+```
+"""
+macro import_rrule(args...)
+    return _import_rrule(args...)
+end
 
 end # module

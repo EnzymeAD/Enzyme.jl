@@ -2,7 +2,8 @@
 function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    forward = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
+    opt_mi = world
+    forward = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
@@ -16,7 +17,8 @@ function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any,
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    forward, adjoint = thunk(world, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
+    opt_mi = world
+    forward, adjoint = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
@@ -203,7 +205,7 @@ end
             push!(function_attributes(functions(mod)[fwdmodenm]), EnumAttribute("alwaysinline"))
             permit_inlining!(functions(mod)[fwdmodenm])
         end
-        thunkTy = ForwardModeThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width},  #=returnPrimal=#Val(false)}
+        thunkTy = ForwardModeThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, width,  #=returnPrimal=#false}
         subfunc = functions(mod)[fwdmodenm]
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
@@ -243,10 +245,10 @@ end
         end
 
         if mode == API.DEM_ReverseModePrimal
-            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, #=returnPrimal=#Val(true), TapeType}
+            thunkTy = AugmentedForwardThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, width, #=returnPrimal=#true, TapeType}
             subfunc = functions(mod)[augfwdnm]
        else
-           thunkTy = AdjointThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, Val{width}, TapeType}
+           thunkTy = AdjointThunk{Ptr{Cvoid}, dupClosure ? Duplicated{funcT} : Const{funcT}, Const{Nothing}, e_tt, width, TapeType}
             subfunc = functions(mod)[adjointnm]
         end
     else
@@ -379,7 +381,7 @@ end
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
-function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -417,7 +419,7 @@ end
     return false
 end
 
-function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
@@ -472,7 +474,7 @@ end
     return false
 end
 
-function threadsfor_rev(B, orig, gutils, tape)
+@register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     world = enzyme_extract_world(LLVM.parent(position(B)))
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
@@ -510,7 +512,7 @@ end
     return nothing
 end
 
-function newtask_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function newtask_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -548,7 +550,7 @@ function newtask_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     # fn, dfn = augmentAndGradient(fn)
     # t = jl_new_task(fn)
     # # shadow t
@@ -606,11 +608,11 @@ function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function newtask_rev(B, orig, gutils, tape)
+@register_rev function newtask_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
     ops = collect(operands(orig))[1:end-1]
     if is_constant_value(gutils, ops[1])
         return true
@@ -639,15 +641,15 @@ function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function set_task_tid_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function set_task_tid_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
 end
 
-function set_task_tid_rev(B, orig, gutils, tape)
+@register_rev function set_task_tid_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function enq_work_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enq_work_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -659,7 +661,7 @@ function enq_work_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function enq_work_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enq_work_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     enq_work_fwd(B, orig, gutils, normalR, shadowR)
 end
 
@@ -682,7 +684,7 @@ function find_match(mod, name)
     return nothing
 end
 
-function enq_work_rev(B, orig, gutils, tape)
+@register_rev function enq_work_rev(B, orig, gutils, tape)
     # jl_wait(shadow(t))
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -699,7 +701,7 @@ function enq_work_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function wait_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function wait_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -710,7 +712,7 @@ function wait_fwd(B, orig, gutils, normalR, shadowR)
     return false
 end
 
-function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -721,7 +723,7 @@ function wait_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-function wait_rev(B, orig, gutils, tape)
+@register_rev function wait_rev(B, orig, gutils, tape)
     # jl_enq_work(shadow(t))
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))

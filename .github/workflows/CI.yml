@@ -26,6 +26,7 @@ jobs:
           - '1.8'
           - '1.9'
           - '1.10'
+          - ~1.11.0-0
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -85,6 +86,11 @@ jobs:
             arch: x64
             libEnzyme: packaged
             version: '1.10'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.11'
             assertions: true
     steps:
       - uses: actions/checkout@v2
@@ -170,6 +176,7 @@ jobs:
           - '1.8'
           - '1.9'
           - '1.10'
+          - ~1.11.0-0
           - 'nightly'
         os:
           - ubuntu-latest
