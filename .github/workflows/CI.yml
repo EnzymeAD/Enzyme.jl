@@ -248,8 +248,8 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Run tests"
         run: |
-            julia --color=yes --project=test/integration -e 'using Pkg; Pkg.instantiate(); Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
-            julia --color=yes --project=test/integration --threads=auto --check-bounds=yes -e test/integration/${{ matrix.test }}.jl
+            julia --color=yes --project=test/integration -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}.jl
         shell: bash
   docs:
     name: Documentation
