@@ -9,7 +9,7 @@ X = randn(3, 100);
 dX = zero(X)
 
 function f(tree, X, operators, output)
-    output[] = sum(eval_tree_array(tree, X, operators; eval_options...)[1])
+    output[] = sum(eval_tree_array(tree, X, operators)[1])
     return nothing
 end
 
