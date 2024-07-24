@@ -225,6 +225,33 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
+  integration:
+    name: Integration Tests - ${{ matrix.test }}
+    runs-on: ${{ matrix.os }}
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1'
+        os:
+          - ubuntu-latest
+        test:
+          - DynamicExpressions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v1
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: "Run tests"
+        run: |
+            julia --color=yes --project=. -e 'using Pkg; pkg"instantiate"'
+            julia --color=yes --project=test/integration -e 'using Pkg; pkg"dev ."; pkg"instantiate"'
+            julia --color=yes --project=test/integration --threads=auto --check-bounds=yes -e test/integration/${{ matrix.test }}.jl
+        shell: bash
   docs:
     name: Documentation
     runs-on: ubuntu-latest
