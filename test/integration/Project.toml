@@ -2,4 +2,4 @@
 DynamicExpressions = "a40a106e-89c9-4ca8-8020-a735e8728b6b"
 
 [compat]
-DynamicExpressions = "=0.18.6"
+DynamicExpressions = "=0.18.5"
