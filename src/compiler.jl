@@ -6742,6 +6742,19 @@ function _thunk(job, postopt::Bool=true)
     if postopt 
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
+            for f in functions(mod)
+                if callconv(f) == LLVM.API.LLVMFastCallConv
+                    callconv!(f, LLVM.API.LLVMCCallConv)
+                    for u in LLVM.uses(f)
+                        u = LLVM.user(u)::LLVM.CallInst
+                        callconv!(u, LLVM.API.LLVMCCallConv)
+                    end
+                end
+                if !isempty(blocks(f))
+                    linkage!(f, LLVM.API.LLVMExternalLinkage)
+                end
+            end
+            # print(string(mod))
         else
             propagate_returned!(mod)
         end
