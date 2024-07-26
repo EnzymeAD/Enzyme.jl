@@ -2239,6 +2239,19 @@ end
 end
 end
 
+function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
+    a1  =  1 / @inbounds poly[1]
+    E1  = 2*a1
+    E12 =  E1*E1
+    s1 = log(E12)
+    return nothing
+end
+
+@testset "Extract Tuple for Reverse" begin
+    autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(solve_cubic_eq)}, Const, Duplicated{Vector{Complex{Float64}}})
+end
+
+
 @testset "GetField" begin
     mutable struct MyType
        x::Float64
