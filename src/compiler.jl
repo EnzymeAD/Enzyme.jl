@@ -6619,7 +6619,7 @@ end
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
                 llty = from_tape_type(eltype(TapeType))
-                tape = bitcast!(builder, LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))))
+                tape = bitcast!(builder, LLVM.PointerType(llty, tape, LLVM.addrspace(value_type(tape))))
                 tape = load!(builder, llty, tape)
                 API.SetMustCache!(tape)
                 callparams[end] = tape
