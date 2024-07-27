@@ -749,7 +749,7 @@ end
         newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowdflt]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
         callconv!(cal, callconv(orig))
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(mod, error_if_active), emit_jltypeof!(B, cal)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)])
         cal
     else
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
@@ -758,7 +758,7 @@ end
             newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), extract_value!(B, shadowdflt, j-1)]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(mod, error_if_active), emit_jltypeof!(B, cal)])
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)])
             shadow = insert_value!(B, shadow, cal, j-1)
         end
         shadow
@@ -827,7 +827,7 @@ end
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
     
     shadowres = if width == 1
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(mod, error_if_active), emit_jltypeof!(B, shadowval)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)])
         newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowval, LLVM.null(value_type(originserted))]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
         callconv!(cal, callconv(orig))
@@ -837,7 +837,7 @@ end
         shadow = LLVM.UndefValue(ST)
         for j in 1:width
             sval2 = extract_value!(B, shadowval, j-1)
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(mod, error_if_active), emit_jltypeof!(B, sval2)])
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, sval2)])
             newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), sval2, LLVM.null(value_type(originserted))]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))

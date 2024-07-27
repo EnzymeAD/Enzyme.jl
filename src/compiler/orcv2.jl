@@ -139,6 +139,11 @@ function __init__()
         LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
     end
 
+    for (k, v) in Compiler.JuliaEnzymeNameMap
+        ptr = Compiler.unsafe_to_ptr(v)
+        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
+    end
+
     atexit() do
         @static if !use_ojit()
            ci = jit[]

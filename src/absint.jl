@@ -110,6 +110,11 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                 return (true, v)
             end
         end
+        for (k, v) in JuliaEnzymeNameMap
+            if gname == k || gname == "ejl_"*k
+                return (true, v)
+            end
+        end
     end
 
     if isa(arg, LLVM.LoadInst) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)

@@ -56,8 +56,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
-                mod = LLVM.parent(ofn)
-                val = unsafe_to_llvm(mod, arg.typ.parameters[1])
+                val = unsafe_to_llvm(B, arg.typ.parameters[1])
                 store!(B, val, ptr)
 
                 if any_jltypes(llty)

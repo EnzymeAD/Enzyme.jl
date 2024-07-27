@@ -45,6 +45,8 @@ end
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
+include("compiler/utils.jl")
+
 if LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else
@@ -53,7 +55,6 @@ end
 
 include("gradientutils.jl")
 
-include("compiler/utils.jl")
 
 # Julia function to LLVM stem and arity
 const cmplx_known_ops =
@@ -981,6 +982,20 @@ function emit_svec!(B, args)::LLVM.Value
     call!(B, fty, fn, [LLVM.ConstantInt(sz, length(args)), args...])
 end
 
+AnyArray(Length::Int) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
+
+const JuliaEnzymeNameMap = Dict{String, Any}(
+
+    "enz_val_true" => Val(true),
+    "enz_val_false" => Val(false),
+
+    "enz_val_1" => Val(1),
+
+    "enz_any_array_1" => AnyArray(1),
+    "enz_any_array_2" => AnyArray(2),
+    "enz_any_array_3" => AnyArray(3)
+)
+
 const JuliaGlobalNameMap = (
     ("jl_type_type", Type),
     ("jl_any_type", Any),
@@ -1082,7 +1097,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
     end
 
     if legal
-        return unsafe_to_llvm(mod, Ty{found...})
+        return unsafe_to_llvm(B, Ty{found...})
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1092,7 +1107,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
 
     generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
     f_apply_type, _ = get_function!(mod, "jl_f_apply_type", generic_FT)
-    Ty = unsafe_to_llvm(mod, Ty)
+    Ty = unsafe_to_llvm(B, Ty)
 
     @static if VERSION < v"1.9.0-"
         FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
@@ -1128,7 +1143,7 @@ function emit_tuple!(B, args)::LLVM.Value
     end
 
     if legal
-        return unsafe_to_llvm(mod, (found...,))
+        return unsafe_to_llvm(B, (found...,))
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1162,7 +1177,7 @@ function emit_jltypeof!(B::LLVM.IRBuilder, arg::LLVM.Value)::LLVM.Value
 
     legal, val = abs_typeof(arg)
     if legal
-        return unsafe_to_llvm(mod, val)
+        return unsafe_to_llvm(B, val)
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1182,7 +1197,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
     sizeT = convert(LLVMType, Csize_t)
     psizeT = LLVM.PointerType(sizeT)
 
-    primalvaltys = LLVM.Value[unsafe_to_llvm(mod, Core.Typeof(func))]
+    primalvaltys = LLVM.Value[unsafe_to_llvm(B, Core.Typeof(func))]
     for a in args
         push!(primalvaltys, emit_jltypeof!(B, a))
     end
@@ -1203,7 +1218,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
 #    sv = emit_svec!(B, tosv[2:end])
 #
 
-    meth = unsafe_to_llvm(mod, meth)
+    meth = unsafe_to_llvm(B, meth)
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -1223,7 +1238,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
     @static if VERSION < v"1.8.0-"
     methodmatch = call!(B, FT, worlds, LLVM.Value[tag, LLVM.ConstantInt(sizeT, world), minworld, maxworld])
     else
-    methodmatch = call!(B, FT, worlds, LLVM.Value[tag, unsafe_to_llvm(mod, nothing), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    methodmatch = call!(B, FT, worlds, LLVM.Value[tag, unsafe_to_llvm(B, nothing), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
     end
     # emit_jl!(B, methodmatch)
     # emit_jl!(B, emit_jltypeof!(B, methodmatch))
@@ -1377,13 +1392,6 @@ struct Return2
     ret1::Any
     ret2::Any
 end
-
-struct Return3
-    ret1::Any
-    ret2::Any
-    ret3::Any
-end
-AnyArray(Length::Int) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
 
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
@@ -2867,7 +2875,7 @@ function julia_undef_value_for_type(mod::LLVM.API.LLVMModuleRef, Ty::LLVM.API.LL
         end
     end
     if isa(ty, LLVM.PointerType)
-        val = unsafe_to_llvm(LLVM.Module(mod), nothing)
+        val = unsafe_nothing_to_llvm(LLVM.Module(mod))
         if !is_opaque(ty)
             val = const_pointercast(val, LLVM.PointerType(eltype(ty), Tracked))
         end
@@ -2901,7 +2909,9 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         @assert has 
         rt = active_reg_inner(Ty, (), world)
         if rt == ActiveState || rt == MixedState
-            operands(V)[3] = unsafe_to_llvm(LLVM.parent(fn), Base.RefValue{Ty})
+            B = LLVM.IRBuilder()
+            position!(B, V)
+            operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
         end
     end
     nothing
@@ -2932,7 +2942,7 @@ function fixup_return(B, retval)
     if isa(ty, LLVM.StructType)
         elems = LLVM.elements(ty)
         if length(elems) == 2 && elems[1] == T_prjlvalue
-            fill_val = unsafe_to_llvm(mod, nothing)
+            fill_val = unsafe_to_llvm(B, nothing)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
             retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
@@ -2967,7 +2977,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
             if any_jltypes(ty)
                 loc = gep!(builder, LLVMType, nobj, path)
                 mod = LLVM.parent(LLVM.parent(Base.position(builder)))
-                fill_val = unsafe_to_llvm(mod, nothing)
+                fill_val = unsafe_nothing_to_llvm(mod)
                 loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(value_type(loc))))
                 store!(builder, fill_val, loc)
             elseif zeroAll
@@ -3106,7 +3116,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             end
 
             # Obtain tag
-            tag = unsafe_to_llvm(mod, ETT)
+            tag = unsafe_to_llvm(B, ETT)
         else
             if sizeof(Int) == sizeof(Int64)
                 boxed_count = emit_box_int64!(B, Count)
@@ -3115,7 +3125,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
                 Count = trunc!(B, Count, T_size_t)
                 boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(mod, TT)))
+            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(B, TT)))
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -3207,6 +3217,40 @@ end
 
 include("rules/allocrules.jl")
 include("rules/llvmrules.jl")
+
+for (k, v) in (
+    ("enz_runtime_newtask_fwd", Enzyme.Compiler.runtime_newtask_fwd),
+    ("enz_runtime_newtask_augfwd", Enzyme.Compiler.runtime_newtask_augfwd),
+
+    ("enz_runtime_generic_fwd", Enzyme.Compiler.runtime_generic_fwd),
+    ("enz_runtime_generic_augfwd", Enzyme.Compiler.runtime_generic_augfwd),
+    ("enz_runtime_generic_rev", Enzyme.Compiler.runtime_generic_rev),
+
+    ("enz_runtime_iterate_fwd", Enzyme.Compiler.runtime_iterate_fwd),
+    ("enz_runtime_iterate_augfwd", Enzyme.Compiler.runtime_iterate_augfwd),
+    ("enz_runtime_iterate_rev", Enzyme.Compiler.runtime_iterate_rev),
+
+    ("enz_runtime_newstruct_augfwd", Enzyme.Compiler.runtime_newstruct_augfwd),
+    ("enz_runtime_newstruct_rev", Enzyme.Compiler.runtime_newstruct_rev),
+
+    ("enz_runtime_tuple_augfwd", Enzyme.Compiler.runtime_tuple_augfwd),
+    ("enz_runtime_tuple_rev", Enzyme.Compiler.runtime_tuple_rev),
+
+
+    ("enz_runtime_jl_getfield_aug", Enzyme.Compiler.rt_jl_getfield_aug),
+    ("enz_runtime_jl_getfield_rev", Enzyme.Compiler.rt_jl_getfield_rev),
+
+    ("enz_runtime_idx_jl_getfield_aug", Enzyme.Compiler.idx_jl_getfield_aug),
+    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_aug),
+
+    ("enz_runtime_jl_setfield_aug", Enzyme.Compiler.rt_jl_setfield_aug),
+    ("enz_runtime_jl_setfield_rev", Enzyme.Compiler.rt_jl_setfield_rev),
+
+    ("enz_runtime_error_if_differentiable", Enzyme.Compiler.error_if_differentiable),
+    ("enz_runtime_error_if_active", Enzyme.Compiler.error_if_active),
+)
+    JuliaEnzymeNameMap[k] = v
+end
 
 function __init__()
     API.memmove_warning!(false)
@@ -3652,7 +3696,7 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
             end
         end
     end
-    GPUCompiler.@safe_error "Enzyme: Could not find world", fn
+    throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
 end
 
 function enzyme_custom_extract_mi(orig::LLVM.Instruction, error=true)
@@ -4391,7 +4435,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
                 @assert !(isghostty(combinedReturn) || Core.Compiler.isconstType(combinedReturn) )
                 @assert Core.Compiler.isconstType(ty)
-                eval = makeInstanceOf(mod, ty)
+                eval = makeInstanceOf(builder, ty)
                 eval = fixup_abi(i, eval)
                 ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
@@ -4421,7 +4465,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
         for returnNum in 0:(count_Sret-1)
             eval = fixup_abi(returnNum+1, if count_llvm_Sret == 0
-                makeInstanceOf(mod, sret_types[returnNum+1])
+                makeInstanceOf(builder, sret_types[returnNum+1])
             elseif count_llvm_Sret == 1
                 val
             else
@@ -4442,7 +4486,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     eval = fixup_abi(returnNum+1, if !isghostty(actualRetType)
                         extract_value!(builder, val, returnNum)
                     else
-                        makeInstanceOf(mod, sret_types[returnNum+1])
+                        makeInstanceOf(builder, sret_types[returnNum+1])
                     end)
                     store!(builder, eval, inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), length(elements(jltype))-1 )]))
                     returnNum+=1
@@ -4909,6 +4953,12 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
     end
 
+    for attr in collect(function_attributes(entry_f))
+        if kind(attr) == "enzymejl_world"
+            push!(function_attributes(wrapper_f), attr)
+        end
+    end
+
     seen = TypeTreeTable()
     # emit IR performing the "conversions"
     let builder = IRBuilder()
@@ -5064,7 +5114,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                     position!(builder, BB)
 
                     if isghostty(jlrettype) || Core.Compiler.isconstType(jlrettype)
-                        fill_val = unsafe_to_llvm(mod, jlrettype.instance)
+                        fill_val = unsafe_to_llvm(builder, jlrettype.instance)
                         ret!(builder, fill_val)
                     else
                         nobj = if sretPtr !== nothing
@@ -5866,8 +5916,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if lowerConvention 
         primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, job.config.params.rt, TT)
     end
-    
-    push!(function_attributes(primalf), StringAttribute("enzymejl_world", string(job.world)))
     
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
         target_machine = JIT.get_tm()
