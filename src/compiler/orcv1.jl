@@ -127,6 +127,19 @@ function resolver(name, ctx)
                 name = name[2:end]
             end
         end
+
+        for (k, v) in Compiler.JuliaGlobalNameMap
+            if "ejl_"*k == name
+                return unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
+            end
+        end
+
+        for (k, v) in Compiler.JuliaEnzymeNameMap
+            if "ejl_"*k == name
+                return Compiler.unsafe_to_ptr(v)
+            end
+        end
+
         LLVM.API.LLVMSearchForAddressOfSymbol(name)
         ## Step 4: Lookup in libatomic
         # TODO: Do we need to do this?
