@@ -26,10 +26,8 @@ function unsafe_nothing_to_llvm(mod::LLVM.Module)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
 
-    LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_ta_norecur"), LLVM.MDNode(LLVM.Metadata[]))
-    LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_inactive"), LLVM.MDNode(LLVM.Metadata[]))
-    # LLVM.metadata(gv)["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
-    # LLVM.metadata(gv)["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
+    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
     return gv
 end
 
@@ -63,16 +61,14 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
             end
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
 
-            LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_ta_norecur"), LLVM.MDNode(LLVM.Metadata[]))
-            # LLVM.metadata(gv)["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
+            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
             legal, jTy = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
                 world = Compiler.enzyme_extract_world(fn)
                 if Compiler.guaranteed_const_nongen(jTy, world)
-                    LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_inactive"), LLVM.MDNode(LLVM.Metadata[]))
-                    # LLVM.metadata(gv)["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
+                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
                 end
             end
             return gv
@@ -87,16 +83,14 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
                 return globs["ejl_"*k]
             end
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
-            LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_ta_norecur"), LLVM.MDNode(LLVM.Metadata[]))
-            # LLVM.metadata(gv)["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
+            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
             legal, jTy = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
                 world = Compiler.enzyme_extract_world(fn)
                 if Compiler.guaranteed_const_nongen(jTy, world)
-                    LLVM.API.LLVMSetMetadata2(gv, LLVM.MDKind("enzyme_inactive"), LLVM.MDNode(LLVM.Metadata[]))
-                    # LLVM.metadata(gv)["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
+                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
                 end
             end
             return gv

@@ -3416,15 +3416,13 @@ function annotate!(mod, mode)
         API.EnzymeAttributeKnownFunctions(f.ref)
     end
         
-@static if VERSION >= v"1.8-"
     for gname in inactiveglobs
         globs = LLVM.globals(mod)
         if haskey(globs, gname)
             glob = globs[gname]
-            metadata(glob)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+            API.SetMD(glob, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
         end
     end
-end
 
     for fname in inactivefns
         if haskey(fns, fname)
