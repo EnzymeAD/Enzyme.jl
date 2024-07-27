@@ -996,86 +996,96 @@ const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_any_array_3" => AnyArray(3)
 )
 
-const JuliaGlobalNameMap = (
-    ("jl_type_type", Type),
-    ("jl_any_type", Any),
-    ("jl_datatype_type", DataType),
-    ("jl_methtable_type", Core.MethodTable),
-    ("jl_symbol_type", Symbol),
-    ("jl_simplevector_type", Core.SimpleVector),
-    ("jl_nothing_type", Nothing),
+const JuliaGlobalNameMap = Dict{String, Any}(
+    "jl_type_type" => Type,
+    "jl_any_type" => Any,
+    "jl_datatype_type" => DataType,
+    "jl_methtable_type" => Core.MethodTable,
+    "jl_symbol_type" => Symbol,
+    "jl_simplevector_type" => Core.SimpleVector,
+    "jl_nothing_type" => Nothing,
 
-    ("jl_tvar_type", TypeVar),
-    ("jl_typeofbottom_type", Core.TypeofBottom),
-    ("jl_bottom_type", Union{}),
-    ("jl_unionall_type", UnionAll),
+    "jl_tvar_type" => TypeVar,
+    "jl_typeofbottom_type" => Core.TypeofBottom,
+    "jl_bottom_type" => Union{},
+    "jl_unionall_type" => UnionAll,
 
-    ("jl_uniontype_type", Union),
-    ("jl_vararg_type", Core.TypeofVararg),
-    ("jl_emptytuple_type", Tuple{}),
-    ("jl_emptytuple", ()),
-    ("jl_int32_type", Int32),
-    ("jl_int64_type", Int64),
-    ("jl_uint32_type", UInt32),
-    ("jl_uint64_type", UInt64),
-    ("jl_uint8_type", UInt8),
-    ("jl_uint16_type", UInt16),
-    ("jl_ssavalue_type", Core.SSAValue),
-    ("jl_slotnumber_type", Core.SlotNumber),
-    ("jl_argument_type", Core.Argument),
-    ("jl_bool_type", Bool),
-    ("jl_false", false),
-    ("jl_true", true),
-    ("jl_abstractstring_type", AbstractString),
-    ("jl_string_type", String),
-    ("jl_an_empty_string", ""),
-    ("jl_function_type", Function),
-    ("jl_builtin_type", Core.Builtin),
-    ("jl_module_type", Core.Module),
-    ("jl_binding_type", Core.Binding),
-    ("jl_globalref_type", Core.GlobalRef),
-    ("jl_ref_type", Ref),
-    ("jl_pointer_typename", Ptr),
-    ("jl_voidpointer_type", Ptr{Nothing}),
+    "jl_uniontype_type" => Union,
+    "jl_emptytuple_type" => Tuple{},
+    "jl_emptytuple" => (),
+    "jl_int8_type" => Int8,
+    "jl_uint8_type" => UInt8,
+    "jl_int16_type" => Int16,
+    "jl_uint16_type" => UInt16,
+    "jl_int32_type" => Int32,
+    "jl_uint32_type" => UInt32,
+    "jl_int64_type" => Int64,
+    "jl_uint64_type" => UInt64,
+    "jl_float16_type" => Float16,
+    "jl_float32_type" => Float32,
+    "jl_float64_type" => Float64,
+    "jl_ssavalue_type" => Core.SSAValue,
+    "jl_slotnumber_type" => Core.SlotNumber,
+    "jl_argument_type" => Core.Argument,
+    "jl_bool_type" => Bool,
+    "jl_char_type" => Char,
+    "jl_false" => false,
+    "jl_true" => true,
+    "jl_abstractstring_type" => AbstractString,
+    "jl_string_type" => String,
+    "jl_an_empty_string" => "",
+    "jl_function_type" => Function,
+    "jl_builtin_type" => Core.Builtin,
+    "jl_module_type" => Core.Module,
+    "jl_globalref_type" => Core.GlobalRef,
+    "jl_ref_type" => Ref,
+    "jl_pointer_typename" => Ptr,
+    "jl_voidpointer_type" => Ptr{Nothing},
 
-    ("jl_abstractarray_type", AbstractArray),
+    "jl_abstractarray_type" => AbstractArray,
 
-    ("jl_densearray_type", DenseArray),
+    "jl_densearray_type" => DenseArray,
 
-    ("jl_array_type", Array),
+    "jl_array_type" => Array,
 
-    ("jl_array_any_type", Array{Any, 1}),
+    "jl_array_any_type" => Array{Any, 1},
 
-    ("jl_array_symbol_type", Array{Symbol, 1}),
+    "jl_array_symbol_type" => Array{Symbol, 1},
 
-    ("jl_array_uint8_type", Array{UInt8, 1}),
+    "jl_array_uint8_type" => Array{UInt8, 1},
 
-    # ("jl_array_uint32_type", Array{UInt32, 1}),
+    # "jl_array_uint32_type" => Array{UInt32, 1},
 
-    ("jl_array_int32_type", Array{Int32, 1}),
+    "jl_array_int32_type" => Array{Int32, 1},
 
-    ("jl_array_uint64_type", Array{UInt64, 1}),
+    "jl_array_uint64_type" => Array{UInt64, 1},
 
-    ("jl_expr_type", Expr),
+    "jl_expr_type" => Expr,
 
-    ("jl_method_type", Method),
-    ("jl_method_instance_type", Core.MethodInstance),
-    ("jl_code_instance_type", Core.CodeInstance),
-    ("jl_const_type", Core.Const),
-    ("jl_llvmpointer_type", Core.LLVMPtr),
+    "jl_method_type" => Method,
+    "jl_method_instance_type" => Core.MethodInstance,
+    "jl_code_instance_type" => Core.CodeInstance,
+    "jl_const_type" => Core.Const,
+    "jl_llvmpointer_type" => Core.LLVMPtr,
 
-    ("jl_opaque_closure_type", Core.OpaqueClosure),
+    "jl_opaque_closure_type" => Core.OpaqueClosure,
 
-    ("jl_namedtuple_type", NamedTuple),
+    "jl_namedtuple_type" => NamedTuple,
 
-    ("jl_task_type", Task),
+    "jl_task_type" => Task,
 
-    ("jl_uint8pointer_type", Ptr{UInt8}),
+    "jl_uint8pointer_type" => Ptr{UInt8},
 
-    ("jl_nothing", nothing),
+    "jl_nothing" => nothing,
 
-    ("jl_anytuple_type", Tuple),
+    "jl_anytuple_type" => Tuple,
 )
+@static if VERSION >= v"1.7.0"
+    JuliaGlobalNameMap["jl_vararg_type"] = Core.TypeofVararg
+end
+@static if VERSION >= v"1.10.0"
+    JuliaGlobalNameMap["jl_binding_type"] = Core.Binding
+end
 
 include("absint.jl")
 
