@@ -1058,7 +1058,6 @@ const JuliaGlobalNameMap = Dict{String, Any}(
 
     "jl_array_int32_type" => Array{Int32, 1},
 
-    "jl_array_uint64_type" => Array{UInt64, 1},
 
     "jl_expr_type" => Expr,
 
@@ -1068,7 +1067,6 @@ const JuliaGlobalNameMap = Dict{String, Any}(
     "jl_const_type" => Core.Const,
     "jl_llvmpointer_type" => Core.LLVMPtr,
 
-    "jl_opaque_closure_type" => Core.OpaqueClosure,
 
     "jl_namedtuple_type" => NamedTuple,
 
@@ -1082,6 +1080,10 @@ const JuliaGlobalNameMap = Dict{String, Any}(
 )
 @static if VERSION >= v"1.7.0"
     JuliaGlobalNameMap["jl_vararg_type"] = Core.TypeofVararg
+    JuliaGlobalNameMap["jl_opaque_closure_type"] = Core.OpaqueClosure
+end
+@static if VERSION >= v"1.8.0"
+    JuliaGlobalNameMap["jl_array_uint64_type"] = Array{UInt64, 1}
 end
 @static if VERSION >= v"1.10.0"
     JuliaGlobalNameMap["jl_binding_type"] = Core.Binding
@@ -4216,6 +4218,12 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
 
     realparms = LLVM.Value[]
     i = 1
+
+    for attr in collect(function_attributes(enzymefn))
+        if kind(attr) == "enzymejl_world"
+            push!(function_attributes(llvm_f), attr)
+        end
+    end
 
     if returnRoots
         sret = params[i]

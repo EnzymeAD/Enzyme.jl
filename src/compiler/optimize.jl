@@ -813,8 +813,12 @@ function fix_decayaddr!(mod::LLVM.Module)
 					    if operands(st)[2] == inst
 							 LLVM.API.LLVMSetOperand(st, 2-1, operands(inst)[1])
 							 continue
-						 end
+						end
 					 end
+                     if isa(st, LLVM.LoadInst)
+                        LLVM.API.LLVMSetOperand(st, 1-1, operands(inst)[1])
+                        continue
+                     end
                      # if isa(st, LLVM.InsertValueInst)
                      #    if operands(st)[1] == inst
                      #        push!(invalid, st)
