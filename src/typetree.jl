@@ -214,7 +214,7 @@ function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
     end
 
     @static if VERSION >= v"1.7.0"
-        if is_concrete_tuple(T) && any((T2 isa Core.TypeofVararg || T2 == Any) for T2 in T.parameters)
+        if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
             return TypeTree()
         end
     end
