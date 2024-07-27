@@ -306,7 +306,7 @@ end
                 v = load!(B, pllty, v)
             end
         else
-            v = makeInstanceOf(ppfuncT)
+            v = makeInstanceOf(mod, ppfuncT)
         end
 
         if refed
@@ -526,13 +526,13 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_fwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(mod, runtime_newtask_fwd),
+                       unsafe_to_llvm(mod, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
+                       unsafe_to_llvm(mod, Val(width)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -577,14 +577,14 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_augfwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(mod, runtime_newtask_augfwd),
+                       unsafe_to_llvm(mod, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
-                       unsafe_to_llvm(Val(ModifiedBetween)),
+                       unsafe_to_llvm(mod, Val(width)),
+                       unsafe_to_llvm(mod, Val(ModifiedBetween)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)

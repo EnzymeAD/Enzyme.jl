@@ -981,6 +981,87 @@ function emit_svec!(B, args)::LLVM.Value
     call!(B, fty, fn, [LLVM.ConstantInt(sz, length(args)), args...])
 end
 
+const JuliaGlobalNameMap = (
+    ("jl_type_type", Type),
+    ("jl_any_type", Any),
+    ("jl_datatype_type", DataType),
+    ("jl_methtable_type", Core.MethodTable),
+    ("jl_symbol_type", Symbol),
+    ("jl_simplevector_type", Core.SimpleVector),
+    ("jl_nothing_type", Nothing),
+
+    ("jl_tvar_type", TypeVar),
+    ("jl_typeofbottom_type", Core.TypeofBottom),
+    ("jl_bottom_type", Union{}),
+    ("jl_unionall_type", UnionAll),
+
+    ("jl_uniontype_type", Union),
+    ("jl_vararg_type", Core.TypeofVararg),
+    ("jl_emptytuple_type", Tuple{}),
+    ("jl_emptytuple", ()),
+    ("jl_int32_type", Int32),
+    ("jl_int64_type", Int64),
+    ("jl_uint32_type", UInt32),
+    ("jl_uint64_type", UInt64),
+    ("jl_uint8_type", UInt8),
+    ("jl_uint16_type", UInt16),
+    ("jl_ssavalue_type", Core.SSAValue),
+    ("jl_slotnumber_type", Core.SlotNumber),
+    ("jl_argument_type", Core.Argument),
+    ("jl_bool_type", Bool),
+    ("jl_false", false),
+    ("jl_true", true),
+    ("jl_abstractstring_type", AbstractString),
+    ("jl_string_type", String),
+    ("jl_an_empty_string", ""),
+    ("jl_function_type", Function),
+    ("jl_builtin_type", Core.Builtin),
+    ("jl_module_type", Core.Module),
+    ("jl_binding_type", Core.Binding),
+    ("jl_globalref_type", Core.GlobalRef),
+    ("jl_ref_type", Ref),
+    ("jl_pointer_typename", Ptr),
+    ("jl_voidpointer_type", Ptr{Nothing}),
+
+    ("jl_abstractarray_type", AbstractArray),
+
+    ("jl_densearray_type", DenseArray),
+
+    ("jl_array_type", Array),
+
+    ("jl_array_any_type", Array{Any, 1}),
+
+    ("jl_array_symbol_type", Array{Symbol, 1}),
+
+    ("jl_array_uint8_type", Array{UInt8, 1}),
+
+    # ("jl_array_uint32_type", Array{UInt32, 1}),
+
+    ("jl_array_int32_type", Array{Int32, 1}),
+
+    ("jl_array_uint64_type", Array{UInt64, 1}),
+
+    ("jl_expr_type", Expr),
+
+    ("jl_method_type", Method),
+    ("jl_method_instance_type", Core.MethodInstance),
+    ("jl_code_instance_type", Core.CodeInstance),
+    ("jl_const_type", Core.Const),
+    ("jl_llvmpointer_type", Core.LLVMPtr),
+
+    ("jl_opaque_closure_type", Core.OpaqueClosure),
+
+    ("jl_namedtuple_type", NamedTuple),
+
+    ("jl_task_type", Task),
+
+    ("jl_uint8pointer_type", Ptr{UInt8}),
+
+    ("jl_nothing", nothing),
+
+    ("jl_anytuple_type", Tuple),
+)
+
 include("absint.jl")
 
 function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
@@ -1001,7 +1082,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
     end
 
     if legal
-        return unsafe_to_llvm(Ty{found...})
+        return unsafe_to_llvm(mod, Ty{found...})
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1011,7 +1092,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
 
     generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
     f_apply_type, _ = get_function!(mod, "jl_f_apply_type", generic_FT)
-    Ty = unsafe_to_llvm(Ty)
+    Ty = unsafe_to_llvm(mod, Ty)
 
     @static if VERSION < v"1.9.0-"
         FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
@@ -1047,7 +1128,7 @@ function emit_tuple!(B, args)::LLVM.Value
     end
 
     if legal
-        return unsafe_to_llvm((found...,))
+        return unsafe_to_llvm(mod, (found...,))
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1075,14 +1156,14 @@ function emit_tuple!(B, args)::LLVM.Value
 end
 
 function emit_jltypeof!(B::LLVM.IRBuilder, arg::LLVM.Value)::LLVM.Value
-    legal, val = abs_typeof(arg)
-    if legal
-        return unsafe_to_llvm(val)
-    end
-
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
+
+    legal, val = abs_typeof(arg)
+    if legal
+        return unsafe_to_llvm(mod, val)
+    end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -1101,7 +1182,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
     sizeT = convert(LLVMType, Csize_t)
     psizeT = LLVM.PointerType(sizeT)
 
-    primalvaltys = LLVM.Value[unsafe_to_llvm(Core.Typeof(func))]
+    primalvaltys = LLVM.Value[unsafe_to_llvm(mod, Core.Typeof(func))]
     for a in args
         push!(primalvaltys, emit_jltypeof!(B, a))
     end
@@ -1122,7 +1203,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
 #    sv = emit_svec!(B, tosv[2:end])
 #
 
-    meth = unsafe_to_llvm(meth)
+    meth = unsafe_to_llvm(mod, meth)
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -1142,7 +1223,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
     @static if VERSION < v"1.8.0-"
     methodmatch = call!(B, FT, worlds, LLVM.Value[tag, LLVM.ConstantInt(sizeT, world), minworld, maxworld])
     else
-    methodmatch = call!(B, FT, worlds, LLVM.Value[tag, unsafe_to_llvm(nothing), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
+    methodmatch = call!(B, FT, worlds, LLVM.Value[tag, unsafe_to_llvm(mod, nothing), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
     end
     # emit_jl!(B, methodmatch)
     # emit_jl!(B, emit_jltypeof!(B, methodmatch))
@@ -2776,7 +2857,7 @@ function julia_default_tape_type(C::LLVM.API.LLVMContextRef)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     return T_prjlvalue.ref
 end
-function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8)::LLVM.API.LLVMValueRef
+function julia_undef_value_for_type(mod::LLVM.API.LLVMModuleRef, Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8)::LLVM.API.LLVMValueRef
     ty = LLVM.LLVMType(Ty)
     if !any_jltypes(ty)
         if forceZero != 0
@@ -2786,7 +2867,7 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
         end
     end
     if isa(ty, LLVM.PointerType)
-        val = unsafe_to_llvm(nothing)
+        val = unsafe_to_llvm(LLVM.Module(mod), nothing)
         if !is_opaque(ty)
             val = const_pointercast(val, LLVM.PointerType(eltype(ty), Tracked))
         end
@@ -2796,13 +2877,13 @@ function julia_undef_value_for_type(Ty::LLVM.API.LLVMTypeRef, forceZero::UInt8):
         return val.ref
     end
     if isa(ty, LLVM.ArrayType)
-        st = LLVM.Value(julia_undef_value_for_type(eltype(ty).ref, forceZero))
+        st = LLVM.Value(julia_undef_value_for_type(mod, eltype(ty).ref, forceZero))
         return ConstantArray(eltype(ty), [st for i in 1:length(ty)]).ref
     end
     if isa(ty, LLVM.StructType)
         vals = LLVM.Constant[]
         for st in LLVM.elements(ty)
-            push!(vals, LLVM.Value(julia_undef_value_for_type(st.ref, forceZero)))
+            push!(vals, LLVM.Value(julia_undef_value_for_type(mod, st.ref, forceZero)))
         end
         return ConstantStruct(ty, vals).ref
     end
@@ -2820,7 +2901,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         @assert has 
         rt = active_reg_inner(Ty, (), world)
         if rt == ActiveState || rt == MixedState
-            operands(V)[3] = unsafe_to_llvm(Base.RefValue{Ty})
+            operands(V)[3] = unsafe_to_llvm(LLVM.parent(fn), Base.RefValue{Ty})
         end
     end
     nothing
@@ -2851,7 +2932,7 @@ function fixup_return(B, retval)
     if isa(ty, LLVM.StructType)
         elems = LLVM.elements(ty)
         if length(elems) == 2 && elems[1] == T_prjlvalue
-            fill_val = unsafe_to_llvm(nothing)
+            fill_val = unsafe_to_llvm(mod, nothing)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
             retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
@@ -2885,7 +2966,8 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
         if isa(ty, LLVM.PointerType)
             if any_jltypes(ty)
                 loc = gep!(builder, LLVMType, nobj, path)
-                fill_val = unsafe_to_llvm(nothing)
+                mod = LLVM.parent(LLVM.parent(Base.position(builder)))
+                fill_val = unsafe_to_llvm(mod, nothing)
                 loc = bitcast!(builder, loc, LLVM.PointerType(T_prjlvalue, addrspace(value_type(loc))))
                 store!(builder, fill_val, loc)
             elseif zeroAll
@@ -3024,7 +3106,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
             end
 
             # Obtain tag
-            tag = unsafe_to_llvm(ETT)
+            tag = unsafe_to_llvm(mod, ETT)
         else
             if sizeof(Int) == sizeof(Int64)
                 boxed_count = emit_box_int64!(B, Count)
@@ -3033,7 +3115,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
                 Count = trunc!(B, Count, T_size_t)
                 boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(TT)))
+            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(mod, TT)))
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -3150,7 +3232,7 @@ function __init__()
         fixup_return, LLVM.API.LLVMValueRef,
         (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)))
     API.EnzymeSetUndefinedValueForType(@cfunction(
-                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMTypeRef,UInt8))) 
+                                            julia_undef_value_for_type, LLVM.API.LLVMValueRef, (LLVM.API.LLVMModuleRef, LLVM.API.LLVMTypeRef,UInt8))) 
     API.EnzymeSetShadowAllocRewrite(@cfunction(
                                                shadow_alloc_rewrite, Cvoid, (LLVM.API.LLVMValueRef,API.EnzymeGradientUtilsRef)))
     register_alloc_rules()
@@ -4309,7 +4391,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 end
                 @assert !(isghostty(combinedReturn) || Core.Compiler.isconstType(combinedReturn) )
                 @assert Core.Compiler.isconstType(ty)
-                eval = makeInstanceOf(ty)
+                eval = makeInstanceOf(mod, ty)
                 eval = fixup_abi(i, eval)
                 ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
@@ -4339,7 +4421,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
         for returnNum in 0:(count_Sret-1)
             eval = fixup_abi(returnNum+1, if count_llvm_Sret == 0
-                makeInstanceOf(sret_types[returnNum+1])
+                makeInstanceOf(mod, sret_types[returnNum+1])
             elseif count_llvm_Sret == 1
                 val
             else
@@ -4360,7 +4442,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     eval = fixup_abi(returnNum+1, if !isghostty(actualRetType)
                         extract_value!(builder, val, returnNum)
                     else
-                        makeInstanceOf(sret_types[returnNum+1])
+                        makeInstanceOf(mod, sret_types[returnNum+1])
                     end)
                     store!(builder, eval, inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), length(elements(jltype))-1 )]))
                     returnNum+=1
@@ -4982,7 +5064,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                     position!(builder, BB)
 
                     if isghostty(jlrettype) || Core.Compiler.isconstType(jlrettype)
-                        fill_val = unsafe_to_llvm(jlrettype.instance)
+                        fill_val = unsafe_to_llvm(mod, jlrettype.instance)
                         ret!(builder, fill_val)
                     else
                         nobj = if sretPtr !== nothing

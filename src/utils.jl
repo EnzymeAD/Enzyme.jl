@@ -18,10 +18,23 @@ export Tracked, Derived
 const captured_constants = Base.IdSet{Any}()
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(val)
+function unsafe_to_llvm(mod::LLVM.Module, @nospecialize(val))
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+
+    for (k, v) in Compiler.JuliaGlobalNameMap
+        if v === val
+            globs = LLVM.globals(mod)
+            if Base.haskey(globs, "ejl_"*k)
+                return globs["ejl_"*k]
+            end
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            LLVM.metadata(gv)["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
+            return gv
+        end
+    end
+
     # XXX: This prevents code from being runtime relocatable
     #      We likely should emit global variables and use something
     #      like `absolute_symbol_materialization` and write out cache-files
@@ -43,10 +56,10 @@ function unsafe_to_llvm(val)
 end
 export unsafe_to_llvm
 
-function makeInstanceOf(@nospecialize(T))
+function makeInstanceOf(mod::LLVM.Module, @nospecialize(T))
     @assert Core.Compiler.isconstType(T)
     @assert T <: Type
-    return unsafe_to_llvm(T.parameters[1])
+    return unsafe_to_llvm(mod, T.parameters[1])
 end
 
 export makeInstanceOf
