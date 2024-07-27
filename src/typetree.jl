@@ -161,7 +161,7 @@ end
         offset = 0
 
         tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T)
+        if !allocatedinline(T) && Base.isconcretetype(T)
             merge!(tt, TypeTree(API.DT_Pointer, ctx))
             only!(tt, 0)
         end
@@ -184,7 +184,7 @@ else
     function typetree_inner(::Type{<:GenericMemory{kind, T}}, ctx, dl, seen::TypeTreeTable) where {kind, T}
         offset = 0
         tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T)
+        if !allocatedinline(T) && Base.isconcretetype(T)
             merge!(tt, TypeTree(API.DT_Pointer, ctx))
             only!(tt, 0)
         end

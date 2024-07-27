@@ -3236,6 +3236,23 @@ end
     @test ad_eta[1] ≈ 0.0
 end
 
+function absset(out, x)
+    @inbounds out[1] = (x,)
+    return nothing
+end
+
+@testset "Abstract Array element type" begin
+    out = Tuple{Any}[(9.7,)]
+    dout = Tuple{Any}[(4.3,)]
+
+    autodiff(Enzyme.Forward,
+                      absset,
+                      Duplicated(out, dout),
+                      Duplicated(3.1, 2.4)
+                      )
+    @test dout[1][1] ≈ 2.4
+end
+
 @testset "Tape Width" begin
     struct Roo
         x::Float64
