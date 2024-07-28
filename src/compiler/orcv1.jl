@@ -131,7 +131,8 @@ function resolver(name, ctx)
 
         found = false
         val = nothing
-        hnd = Libdl.dlopen("libjulia")
+
+        hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))    
         for (k, v) in Compiler.JuliaGlobalNameMap
             if "ejl_"*k == name
                 val = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
