@@ -132,7 +132,7 @@ function __init__()
         jit[] = CompilerInstance(lljit, nothing, nothing)
     end
 
-    hnd = @static if VERSION > v"1.8"
+    hnd = @static if VERSION >= v"1.10"
         unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
     else
         Libdl.dlopen("libjulia")
