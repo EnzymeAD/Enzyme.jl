@@ -1,7 +1,7 @@
 module JIT
 
 using LLVM
-using Libdl
+using Libdlg
 import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob, JuliaContext
@@ -131,6 +131,7 @@ function resolver(name, ctx)
 
         found = false
         val = nothing
+        hnd = Libdl.dlopen("libjulia")
         for (k, v) in Compiler.JuliaGlobalNameMap
             if "ejl_"*k == name
                 val = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
