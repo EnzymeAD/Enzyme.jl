@@ -1,7 +1,7 @@
 module JIT
 
 using LLVM
-using Libdlg
+using Libdl
 import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob, JuliaContext
