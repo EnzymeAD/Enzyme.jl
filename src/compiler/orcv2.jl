@@ -134,7 +134,9 @@ function __init__()
 
     hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
     for (k, v) in Compiler.JuliaGlobalNameMap
+        @show k, v
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
+        @show "post", k, v
         LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
     end
 
