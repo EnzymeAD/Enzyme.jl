@@ -132,11 +132,13 @@ function __init__()
         jit[] = CompilerInstance(lljit, nothing, nothing)
     end
 
-    hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
+    hnd = @static if VERSION > v"1.8"
+        unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
+    else
+        Libdl.dlopen("libjulia")
+    end
     for (k, v) in Compiler.JuliaGlobalNameMap
-        @show hnd, k, v
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
-        @show "post", k, v
         LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
     end
 
