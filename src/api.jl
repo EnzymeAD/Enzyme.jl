@@ -103,6 +103,7 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
+SetMD(v::Union{LLVM.Instruction, LLVM.GlobalVariable}, kind::String, node::LLVM.Metadata) = ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), v, kind, LLVM.Value(node))
 
 @static if !isdefined(LLVM, :ValueMetadataDict)
 Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =

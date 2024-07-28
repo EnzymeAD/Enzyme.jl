@@ -306,7 +306,7 @@ end
                 v = load!(B, pllty, v)
             end
         else
-            v = makeInstanceOf(ppfuncT)
+            v = makeInstanceOf(B, ppfuncT)
         end
 
         if refed
@@ -516,7 +516,6 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -526,13 +525,13 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_fwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(B, runtime_newtask_fwd),
+                       unsafe_to_llvm(B, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
+                       unsafe_to_llvm(B, Val(width)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -560,7 +559,6 @@ end
     end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -577,14 +575,14 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_augfwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(B, runtime_newtask_augfwd),
+                       unsafe_to_llvm(B, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
-                       unsafe_to_llvm(Val(ModifiedBetween)),
+                       unsafe_to_llvm(B, Val(width)),
+                       unsafe_to_llvm(B, Val(ModifiedBetween)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)

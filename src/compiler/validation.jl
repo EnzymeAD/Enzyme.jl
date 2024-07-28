@@ -861,7 +861,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
                 if reg == ActiveState || reg == MixedState
                     NTy = Base.RefValue{Ty}
                     @assert sizeof(Ty) == sizeof(NTy)
-                    LLVM.API.LLVMSetOperand(cur, 2, unsafe_to_llvm(NTy))
+                    LLVM.API.LLVMSetOperand(cur, 2, unsafe_to_llvm(LLVM.IRBuilder(cur), NTy))
                 end
                 continue
             end

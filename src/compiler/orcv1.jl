@@ -1,6 +1,7 @@
 module JIT
 
 using LLVM
+using Libdl
 import LLVM: TargetMachine
 
 import GPUCompiler: CompilerJob, JuliaContext
@@ -127,11 +128,37 @@ function resolver(name, ctx)
                 name = name[2:end]
             end
         end
-        LLVM.API.LLVMSearchForAddressOfSymbol(name)
+
+        found = false
+        val = nothing
+        hnd = Libdl.dlopen("libjulia")
+        for (k, v) in Compiler.JuliaGlobalNameMap
+            if "ejl_"*k == name
+                val = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
+                found = true
+                break
+            end
+        end
+
+        if !found
+            for (k, v) in Compiler.JuliaEnzymeNameMap
+                if "ejl_"*k == name
+                    val = Compiler.unsafe_to_ptr(v)
+                    found = true
+                    break
+                end
+            end
+        end
+
+        if found
+            val
+        else
+            LLVM.API.LLVMSearchForAddressOfSymbol(name)
+        end
         ## Step 4: Lookup in libatomic
         # TODO: Do we need to do this?
     catch ex
-        @error "Enzyme: Lookup failed" jl_name exception=(ex, Base.catch_backtrace())
+        @error "Enzyme: Lookup failed" name exception=(ex, Base.catch_backtrace())
         C_NULL
     end
     if ptr === C_NULL

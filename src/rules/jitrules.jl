@@ -1158,7 +1158,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     ActivityList = LLVM.Value[]
 
     @assert length(ops) != 0
-    fill_val = unsafe_to_llvm(nothing)
+    fill_val = unsafe_to_llvm(B, nothing)
 
     vals = LLVM.Value[]
 
@@ -1185,7 +1185,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         active = !is_constant_value(gutils, op)
         
         if !active
-            push!(ActivityList, unsafe_to_llvm(false))
+            push!(ActivityList, unsafe_to_llvm(B, false))
         else
             inverted = invert_pointer(gutils, op, B)
             if lookup
@@ -1197,9 +1197,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
                 else
                     extract_value!(B, inverted, 0)
                 end
-                push!(ActivityList, select!(B, icmp!(B, LLVM.API.LLVMIntNE, val, inv_0), unsafe_to_llvm(true), unsafe_to_llvm(false)))
+                push!(ActivityList, select!(B, icmp!(B, LLVM.API.LLVMIntNE, val, inv_0), unsafe_to_llvm(B, true), unsafe_to_llvm(B, false)))
             else
-                push!(ActivityList, unsafe_to_llvm(true))
+                push!(ActivityList, unsafe_to_llvm(B, true))
             end
         end
 
@@ -1227,7 +1227,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             pushfirst!(vals, tape)
         end
     else
-        pushfirst!(vals, unsafe_to_llvm(Val(ReturnType)))
+        pushfirst!(vals, unsafe_to_llvm(B, Val(ReturnType)))
     end
     
     if firstconst && firstconst_after_tape
@@ -1248,10 +1248,10 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
         for idx in 1:(length(ops)+firstconst)
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
         end
-        pushfirst!(vals, unsafe_to_llvm(Val((ModifiedBetween...,))))
+        pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))
     end
 
-    pushfirst!(vals, unsafe_to_llvm(Val(Int(width))))
+    pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
     etup0 = emit_tuple!(B, ActivityList)
     etup =  emit_apply_type!(B, Base.Val, [etup0])
     if isa(etup, LLVM.Instruction)
@@ -1264,7 +1264,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     mi = emit_methodinstance!(B, func, vals)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(func))
+    pushfirst!(vals, unsafe_to_llvm(B, func))
 
     @static if VERSION < v"1.7.0-" || true
     else

@@ -872,20 +872,20 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     end
 
     AA = Val(AnyArray(Int(width)))
-    vals = LLVM.Value[unsafe_to_llvm(AA)]
+    vals = LLVM.Value[unsafe_to_llvm(B, AA)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[2]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(rt_jl_getfield_aug))
+    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_aug))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -965,13 +965,13 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[2]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(rt_jl_getfield_rev))
+    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_rev))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1050,7 +1050,7 @@ end
     end
 
     AA = Val(AnyArray(Int(width)))
-    vals = LLVM.Value[unsafe_to_llvm(AA)]
+    vals = LLVM.Value[unsafe_to_llvm(B, AA)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[2])
@@ -1058,13 +1058,13 @@ end
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[1]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[1]))))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(idx_jl_getfield_aug))
+    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_aug))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1146,13 +1146,13 @@ end
     sym = emit_apply_type!(B, Base.Val, [sym])
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(Val(is_constant_value(gutils, ops[1]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[1]))))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(idx_jl_getfield_rev))
+    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_rev))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1262,16 +1262,18 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
             nothing
         end
 
+        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
         for idx in 1:width
             vals = LLVM.Value[
               (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1),
               new_from_original(gutils, origops[3]),
-              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
               new_from_original(gutils, origops[4]),
-              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) : ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)),
             ]
             
-            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_aug))
+            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_aug))
 
             cal = emit_apply_generic!(B, vals)
 
@@ -1294,17 +1296,19 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
         else
             nothing
         end
+        
+        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
         for idx in 1:width
             vals = LLVM.Value[
               lookup_value(gutils, (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx-1), B),
               lookup_value(gutils, new_from_original(gutils, origops[3]), B),
-              unsafe_to_llvm(Val(is_constant_value(gutils, origops[4]))),
+              unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
               lookup_value(gutils, new_from_original(gutils, origops[4]), B),
-              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(nothing) : lookup_value(gutils, ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)), B),
+              is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) : lookup_value(gutils, ((width == 1) ? shadowval : extract_value!(B, shadowval, idx-1)), B),
             ]
             
-            pushfirst!(vals, unsafe_to_llvm(rt_jl_setfield_rev))
+            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev))
 
             cal = emit_apply_generic!(B, vals)
 
@@ -1375,6 +1379,8 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
     
     mi = new_from_original(gutils, origmi)
 
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
     shadowres = if width == 1
         newops = LLVM.Value[mi, shadowh, new_from_original(gutils, origkey)]
         if offset != 1
@@ -1384,7 +1390,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
         callconv!(cal, callconv(orig))
    
     
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(errfn), emit_jltypeof!(B, cal)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, errfn), emit_jltypeof!(B, cal)])
         cal
     else
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
@@ -1396,7 +1402,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             end
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(errfn), emit_jltypeof!(B, cal)])
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, errfn), emit_jltypeof!(B, cal)])
             shadow = insert_value!(B, shadow, cal, j-1)
         end
         shadow
