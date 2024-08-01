@@ -6866,6 +6866,8 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
     return CompileResult(adjoint_ptr, primal_ptr, TapeType)
 end
 
+const DumpPostOpt = Ref(false)
+
 # actual compilation
 function _thunk(job, postopt::Bool=true)
     mod, meta = codegen(:llvm, job; optimize=false)
@@ -6888,6 +6890,9 @@ function _thunk(job, postopt::Bool=true)
     if postopt 
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
+            if DumpPostOpt[]
+                API.EnzymeDumpModuleRef(mod.ref)
+            end
         else
             propagate_returned!(mod)
         end

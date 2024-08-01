@@ -763,6 +763,10 @@ function EnzymeReplaceFunctionImplementation(mod)
     ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
 
+function EnzymeDumpModuleRef(mod)
+    ccall((:EnzymeDumpModuleRef, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
+end
+
 EnzymeComputeByteOffsetOfGEP(B, V, T) = LLVM.Value(ccall((:EnzymeComputeByteOffsetOfGEP, libEnzyme), LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMTypeRef), B, V, T))
 
 EnzymeAllocaType(al) = LLVM.LLVMType(ccall((:EnzymeAllocaType, libEnzyme), LLVM.API.LLVMTypeRef, (LLVM.API.LLVMValueRef,), al))
