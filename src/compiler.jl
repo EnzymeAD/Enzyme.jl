@@ -5659,6 +5659,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         llvmfn = functions(mod)[k_name]
         if llvmfn == primalf
             actualRetType = k.ci.rettype
+            @show k
+            @show k.ci
+            @show actualRetType
         end
        
         if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
@@ -6946,6 +6949,8 @@ end
     rrt = something(Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals), Any)
     rrt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
 
+    @show rrt, mi
+
     run_enzyme = true
 
     A2 = if rrt == Union{}
@@ -6970,6 +6975,8 @@ end
         # @assert eltype(A) == rrt
         A2
     end
+
+    @show rt2
    
     params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
     job    = if World isa Nothing

@@ -4,17 +4,25 @@ authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu
 version = "0.12.27"
 
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
+DiffResults = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
+FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
+Functors = "d9f16b24-f501-4c13-a1f2-28368ffc5196"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
+Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SimpleUnPack = "ce78b400-467f-4804-87d8-8f486da07d0a"
+StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
 
 [weakdeps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
