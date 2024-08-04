@@ -3374,7 +3374,6 @@ GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParam
     Interpreter.EnzymeInterpreter(GPUCompiler.ci_cache_token(job), GPUCompiler.method_table(job), job.world, job.config.params.mode)
 else
 
-@static if VERSION >= v"1.6"
 # the codeinstance cache to use -- should only be used for the constructor
 # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
 # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
@@ -3387,8 +3386,9 @@ function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
         GLOBAL_REV_CACHE
     end
 end
-else
-enzyme_ci_cache(job) = GPUCompiler.ci_cache(job)
+
+@static if VERSION < v"1.8"
+GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = enzyme_ci_cache(job)
 end
 
 GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
