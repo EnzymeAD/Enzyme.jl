@@ -252,10 +252,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         Val(codegen_world_age(Core.Typeof(f.val), tt))
     end
 
-    @show A, rt
     if A <: Active
-        @show allocatedinline(rt)
-        @show rt isa Union
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             forward, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI)
             res = forward(f, args...)
