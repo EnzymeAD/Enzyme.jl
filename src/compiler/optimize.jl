@@ -44,6 +44,14 @@ end
 @static if VERSION < v"1.11.0-DEV.428"
 else
     barrier_noop!(pm) = nothing
+
+    function run!(pb, pm::LLVM.NewPMFunctionPassManager, f::LLVM.Function,
+                  tm::Union{Nothing,LLVM.TargetMachine} = nothing,
+                  aa_stack::AbstractVector{<:LLVM.NewPMAliasAnalysis} = LLVM.default_aa_pipeline())
+        analysis_managers(pb, tm, aa_stack) do lam, fam, cam, mam
+            dispose(LLVM.PreservedAnalyses(API.LLVMRunNewPMFunctionPassManager(pm, f, fam)))
+        end
+    end
 end
 
 @static if VERSION < v"1.11-"
@@ -54,10 +62,9 @@ else
     function gc_invariant_verifier_tm!(pm, tm, cond)
         function gc_invariant_verifier(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, GCInvariantVerifierPass(GCInvariantVerifierPassOptions(;strong=cond)))
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, GCInvariantVerifierPass(GCInvariantVerifierPassOptions(;strong=cond)))
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -73,10 +80,9 @@ else
     function propagate_julia_addrsp_tm!(pm, tm)
         function prop_julia_addr(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, PropagateJuliaAddrspacesPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, PropagateJuliaAddrspacesPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -92,10 +98,9 @@ else
     function alloc_opt_tm!(pm, tm)
         function alloc_opt(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, AllocOptPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, AllocOptPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -111,10 +116,9 @@ else
     function remove_ni_tm!(pm, tm)
         function remove_ni(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMModulePassManager(pb) do fpm
-                    add!(fpm, RemoveNIPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMModulePassManager()
+                add!(fpm, RemoveNIPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -130,10 +134,9 @@ else
     function julia_licm_tm!(pm, tm)
         function julia_licm(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMLoopPassManager(pb) do fpm
-                    add!(fpm, JuliaLICMPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMLoopPassManager()
+                add!(fpm, JuliaLICMPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -150,10 +153,9 @@ else
     function lower_simdloop_tm!(pm, tm)
         function lower_simdloop(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMLoopPassManager(pb) do fpm
-                    add!(fpm, LowerSIMDLoopPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMLoopPassManager()
+                add!(fpm, LowerSIMDLoopPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -170,10 +172,9 @@ else
     function demote_float16_tm!(pm, tm)
         function demote_float16(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, DemoteFloat16Pass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, DemoteFloat16Pass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -189,10 +190,9 @@ else
     function lower_exc_handlers_tm!(pm, tm)
         function lower_exc_handlers(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, LowerExcHandlersPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, LowerExcHandlersPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -208,10 +208,9 @@ else
     function lower_ptls_tm!(pm, tm, dump_native)
         function lower_ptls(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMModulePassManager(pb) do fpm
-                    add!(fpm, LowerPTLSPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMModulePassManager()
+                add!(fpm, LowerPTLSPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -227,10 +226,9 @@ else
     function combine_mul_add_tm!(pm, tm)
         function combine_mul_add(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, CombineMulAddPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, CombineMulAddPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -246,10 +244,9 @@ else
     function late_lower_gc_frame_tm!(pm, tm)
         function late_lower_gc_frame(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, LateLowerGCPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, LateLowerGCPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -265,10 +262,9 @@ else
     function final_lower_gc_tm!(pm, tm)
         function final_lower_gc(f)
             @dispose pb=NewPMPassBuilder() begin
-                NewPMFunctionPassManager(pb) do fpm
-                    add!(fpm, FinalLowerGCPass())
-                    run!(fpm, f, tm)
-                end
+                fpm = NewPMFunctionPassManager()
+                add!(fpm, FinalLowerGCPass())
+                run!(pb, fpm, f, tm)
             end
             return true
         end
@@ -330,7 +326,7 @@ end
 #   
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
-function memcpy_alloca_to_loadstore(mod)
+function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     dl = datalayout(mod) 
     for f in functions(mod)
         if length(blocks(f)) != 0
