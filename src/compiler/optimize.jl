@@ -45,22 +45,50 @@ end
 else
     barrier_noop!(pm) = nothing
 
-    function analysis_managers(f::Core.Function, pb::LLVM.NewPMPassBuilder,
-                           tm::LLVM.TargetMachine)
-        @dispose lam=LoopAnalysisManager() fam=FunctionAnalysisManager() cam=CGSCCAnalysisManager() mam=ModuleAnalysisManager() begin
+    abstract type AnalysisManager end
+
+    LLVM.@checked struct ModuleAnalysisManager <: AnalysisManager
+        ref::LLVM.API.LLVMModuleAnalysisManagerRef
+        roots::Vector{Any}
+    end
+    LLVM.@checked struct CGSCCAnalysisManager <: AnalysisManager
+        ref::LLVM.API.LLVMCGSCCAnalysisManagerRef
+        roots::Vector{Any}
+    end
+
+    LLVM.@checked mutable struct FunctionAnalysisManager <: AnalysisManager
+        ref::LLVM.API.LLVMFunctionAnalysisManagerRef
+        roots::Vector{Any}
+    end
+
+    LLVM.@checked struct LoopAnalysisManager <: AnalysisManager
+        ref::LLVM.API.LLVMLoopAnalysisManagerRef
+        roots::Vector{Any}
+    end
+
+    ModuleAnalysisManager() = ModuleAnalysisManager(LLVM.API.LLVMCreateNewPMModuleAnalysisManager(), [])
+    CGSCCAnalysisManager() = CGSCCAnalysisManager(LLVM.API.LLVMCreateNewPMCGSCCAnalysisManager(), [])
+    FunctionAnalysisManager() = FunctionAnalysisManager(LLVM.API.LLVMCreateNewPMFunctionAnalysisManager(), [])
+    LoopAnalysisManager() = LoopAnalysisManager(LLVM.API.LLVMCreateNewPMLoopAnalysisManager(), [])
+
+    LLVM.dispose(mam::ModuleAnalysisManager) = LLVM.API.LLVMDisposeNewPMModuleAnalysisManager(mam)
+    LLVM.dispose(cgmam::CGSCCAnalysisManager) = LLVM.API.LLVMDisposeNewPMCGSCCAnalysisManager(cgmam)
+    LLVM.dispose(fam::FunctionAnalysisManager) = LLVM.API.LLVMDisposeNewPMFunctionAnalysisManager(fam)
+    LLVM.dispose(lam::LoopAnalysisManager) = LLVM.API.LLVMDisposeNewPMLoopAnalysisManager(lam)
+
+    function run!(pb::LLVM.NewPMPassBuilder, pm, f::LLVM.Function,
+            tm::LLVM.TargetMachine)
+        LLVM.@dispose lam=LoopAnalysisManager() fam=FunctionAnalysisManager() cam=CGSCCAnalysisManager() mam=ModuleAnalysisManager() begin
             add!(fam, TargetIRAnalysis(tm))
             add!(fam, TargetLibraryAnalysis(triple(tm)))
             pipeline = "basic-aa,scoped-noalias-aa,tbaa"
             LLVM.@check LLVM.API.LLVMRegisterAliasAnalyses(fam, pb, tm, pipeline, length(pipeline))
-            register!(pb, lam, fam, cam, mam)
-            f(lam, fam, cam, mam)
-        end
-    end
-
-    function run!(pb, pm, f::LLVM.Function,
-                  tm::Union{Nothing,LLVM.TargetMachine} = nothing,
-                  aa_stack = [BasicAA(), ScopedNoAliasAA(), TypeBasedAA()])
-        analysis_managers(pb, tm, aa_stack) do lam, fam, cam, mam
+            
+            LLVM.register!(pb, lam)
+            LLVM.API.LLVMPassBuilderRegisterFunctionAnalyses(pb, fam)
+            LLVM.register!(pb, cgam)
+            LLVM.register!(pb, mam)
+            LLVM.API.LLVMPassBuilderCrossRegisterProxies(pb, lam, fam, cgam, mam)
             dispose(LLVM.PreservedAnalyses(API.LLVMRunNewPMFunctionPassManager(pm, f, fam)))
         end
     end
