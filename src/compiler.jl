@@ -3962,7 +3962,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     end
     ModulePassManager() do pm
         dce!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
@@ -5252,7 +5252,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
 	ModulePassManager() do pm
         always_inliner!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(wrapper_f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), kind(EnumAttribute("returns_twice")))
@@ -5330,7 +5330,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         # Kill the temporary staging function
         global_dce!(pm)
         global_optimizer!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
         unsafe_delete!(mod, globals(mod)["llvm.used"])
@@ -5408,7 +5408,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#true)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
 
     primalf = meta.entry
@@ -5436,7 +5436,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     if bitcode_replacement() && API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
         ModulePassManager() do pm
             instruction_combining!(pm)
-            run!(pm, mod)
+            LLVM.run!(pm, mod)
         end
         toremove = []
         for f in functions(mod)
@@ -5479,7 +5479,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
         ModulePassManager() do pm
             always_inliner!(pm)
-            run!(pm, mod)
+            LLVM.run!(pm, mod)
         end
         for fname in toremove
             if haskey(functions(mod), fname)
@@ -5490,7 +5490,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
         ModulePassManager() do pm
             global_optimizer!(pm)
-            run!(pm, mod)
+            LLVM.run!(pm, mod)
         end
     end
     
@@ -6119,7 +6119,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
         ModulePassManager() do pm
             always_inliner!(pm)
-            run!(pm, mod)
+            LLVM.run!(pm, mod)
         end
         for fname in toremove
             if haskey(functions(mod), fname)
@@ -6134,7 +6134,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     LLVM.ModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, #=Begin=#false)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     if parent_job !== nothing
         if parent_job.config.target isa GPUCompiler.PTXCompilerTarget
@@ -6883,7 +6883,7 @@ function _thunk(job, postopt::Bool=true)
  
     LLVM.ModulePassManager() do pm
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
 
     # Run post optimization pipeline

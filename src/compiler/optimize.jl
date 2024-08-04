@@ -47,7 +47,7 @@ else
 
     function run!(pb, pm, f::LLVM.Function,
                   tm::Union{Nothing,LLVM.TargetMachine} = nothing,
-                  aa_stack::AbstractVector{<:LLVM.NewPMAliasAnalysis} = LLVM.default_aa_pipeline())
+                  aa_stack = LLVM.default_aa_pipeline())
         analysis_managers(pb, tm, aa_stack) do lam, fam, cam, mam
             dispose(LLVM.PreservedAnalyses(API.LLVMRunNewPMFunctionPassManager(pm, f, fam)))
         end
