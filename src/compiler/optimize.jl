@@ -45,6 +45,18 @@ end
 else
     barrier_noop!(pm) = nothing
 
+    function analysis_managers(f::Core.Function, pb::LLVM.NewPMPassBuilder,
+                           tm::LLVM.TargetMachine)
+        @dispose lam=LoopAnalysisManager() fam=FunctionAnalysisManager() cam=CGSCCAnalysisManager() mam=ModuleAnalysisManager() begin
+            add!(fam, TargetIRAnalysis(tm))
+            add!(fam, TargetLibraryAnalysis(triple(tm)))
+            pipeline = "basic-aa,scoped-noalias-aa,tbaa"
+            LLVM.@check LLVM.API.LLVMRegisterAliasAnalyses(fam, pb, tm, pipeline, length(pipeline))
+            register!(pb, lam, fam, cam, mam)
+            f(lam, fam, cam, mam)
+        end
+    end
+
     function run!(pb, pm, f::LLVM.Function,
                   tm::Union{Nothing,LLVM.TargetMachine} = nothing,
                   aa_stack = [BasicAA(), ScopedNoAliasAA(), TypeBasedAA()])
