@@ -33,7 +33,7 @@ function run_jl_pipeline(pm, tm; kwargs...)
         @dispose pb=NewPMPassBuilder() begin
             NewPMModulePassManager(pb) do mpm
                 @ccall jl_build_newpm_pipeline(mpm.ref::Ptr{Cvoid}, pb.ref::Ptr{Cvoid}, config::Ptr{PipelineConfig})::Cvoid
-                run!(mpm, m, tm)
+                LLVM.run!(mpm, m, tm)
             end
         end
         return true
@@ -47,7 +47,7 @@ else
 
     function run!(pb, pm, f::LLVM.Function,
                   tm::Union{Nothing,LLVM.TargetMachine} = nothing,
-                  aa_stack = LLVM.default_aa_pipeline())
+                  aa_stack = [BasicAA(), ScopedNoAliasAA(), TypeBasedAA()])
         analysis_managers(pb, tm, aa_stack) do lam, fam, cam, mam
             dispose(LLVM.PreservedAnalyses(API.LLVMRunNewPMFunctionPassManager(pm, f, fam)))
         end
@@ -1802,7 +1802,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
     ModulePassManager() do pm
         global_dce!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
@@ -1891,7 +1891,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
         alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         cse!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     propagate_returned!(mod)
     pre_attr!(mod)
@@ -1899,7 +1899,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
         if LLVM.version().major >= 13
             ModulePassManager() do pm
                 API.EnzymeAddAttributorLegacyPass(pm)
-                run!(pm, mod)
+                LLVM.run!(pm, mod)
             end
         end 
     end
@@ -1915,7 +1915,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
             end
         end
         cse!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     post_attr!(mod)
     propagate_returned!(mod)
@@ -2026,7 +2026,7 @@ end
         correlated_value_propagation!(pm)
         # SLP_Vectorizer -- not for Enzyme
         
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
 
         aggressive_dce!(pm)
         instruction_combining!(pm)
@@ -2044,7 +2044,7 @@ end
         jl_inst_simplify!(pm)
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
         gvn!(pm) # Exxtra
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     removeDeadArgs!(mod, tm)
     detect_writeonly!(mod)
@@ -2236,7 +2236,7 @@ function post_optimze!(mod, tm, machine=true)
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm, LLVM.triple(mod))
         addOptimizationPasses!(pm, tm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     if machine
         # TODO enable validate_return_roots
@@ -2244,7 +2244,7 @@ function post_optimze!(mod, tm, machine=true)
         LLVM.ModulePassManager() do pm
             addJuliaLegalizationPasses!(pm, tm, true)
             addMachinePasses!(pm, tm)
-            run!(pm, mod)
+            LLVM.run!(pm, mod)
         end
     end
     # @safe_show "post_mod", mod
