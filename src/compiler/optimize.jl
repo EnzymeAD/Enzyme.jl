@@ -45,7 +45,7 @@ end
 else
     barrier_noop!(pm) = nothing
 
-    function run!(pb, pm::LLVM.NewPMFunctionPassManager, f::LLVM.Function,
+    function run!(pb, pm, f::LLVM.Function,
                   tm::Union{Nothing,LLVM.TargetMachine} = nothing,
                   aa_stack::AbstractVector{<:LLVM.NewPMAliasAnalysis} = LLVM.default_aa_pipeline())
         analysis_managers(pb, tm, aa_stack) do lam, fam, cam, mam
