@@ -996,18 +996,44 @@ end
 
 AnyArray(Length::Int) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
 
-const JuliaEnzymeNameMap = Dict{String, Any}(
+struct EnzymeRuntimeException <: Base.Exception
+    msg::Cstring
+end
 
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    print(io, "Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeMutabilityException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeMutabilityException)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeRuntimeActivityError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_val_true" => Val(true),
     "enz_val_false" => Val(false),
-
     "enz_val_1" => Val(1),
-
     "enz_any_array_1" => AnyArray(1),
     "enz_any_array_2" => AnyArray(2),
     "enz_any_array_3" => AnyArray(3),
     "enz_runtime_exc" => EnzymeRuntimeException,
     "enz_mut_exc" => EnzymeMutabilityException,
+    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError,
 )
 
 const JuliaGlobalNameMap = Dict{String, Any}(
@@ -1797,25 +1823,6 @@ end
     return
 end
 
-struct EnzymeRuntimeException <: Base.Exception
-    msg::Cstring
-end
-
-function Base.showerror(io::IO, ece::EnzymeRuntimeException)
-    print(io, "Enzyme execution failed.\n")
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
-end
-
-struct EnzymeMutabilityException <: Base.Exception
-    msg::Cstring
-end
-
-function Base.showerror(io::IO, ece::EnzymeMutabilityException)
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
-end
-
 function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeException)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -1842,14 +1849,10 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
 
     # 2. Call error function and insert unreachable
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
-    LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
+    if EnzymeMutabilityException != errty
+        LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
+    end
     return ct
-    # FIXME(@wsmoses): Allow for emission of new BB in this code path
-    # unreachable!(B)
-
-    # 3. Change insertion point so that we don't stumble later
-    # after_error = BasicBlock(fn, "after_error"; ctx)
-    # position!(B, after_error)
 end
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
@@ -2499,7 +2502,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
             end
         end
-        emit_error(b, nothing, msg2)
+        emit_error(b, nothing, msg2, EnzymeRuntimeActivityError)
         return C_NULL
     elseif errtype == API.ET_GetIndexError
         @assert B != C_NULL
