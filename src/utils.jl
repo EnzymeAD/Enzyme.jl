@@ -5,7 +5,7 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
+@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
 export unsafe_to_pointer
 
 @inline is_concrete_tuple(x::Type{T2}) where T2 = (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)

@@ -864,6 +864,18 @@ function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     call!(B, FT, fn, [val])
 end
 
+function emit_jl_throw!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    T_void = LLVM.VoidType()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 12)
+    FT = LLVM.FunctionType(T_void, [T_prjlvalue])
+    fn, _ = get_function!(mod, "jl_throw", FT)
+    call!(B, FT, fn, [val])
+end
+
 function emit_box_int32!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -1793,21 +1805,21 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeException)
     print(io, msg, '\n')
 end
 
-function throwerr(cstr::Cstring)
-    throw(EnzymeRuntimeException(cstr))
+struct EnzymeMutabilityException <: Base.Exception
+    msg::Cstring
 end
 
-function emit_error(B::LLVM.IRBuilder, orig, string)
+function Base.showerror(io::IO, ece::EnzymeMutabilityException)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeException)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
     # 1. get the error function
-    funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[LLVM.PointerType(LLVM.Int8Type())])
-    ptr = @cfunction(throwerr, Union{}, (Cstring,))
-    ptr = convert(UInt, ptr)
-    ptr = LLVM.ConstantInt(ptr)
-    func = inttoptr!(B, ptr, LLVM.PointerType(funcT))
     if orig !== nothing
         bt = GPUCompiler.backtrace(orig)
         function printBT(io)
@@ -1820,7 +1832,10 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         GPUCompiler.emit_exception!(B, string, orig)
     else
-        call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
+        err = emit_allocobj!(B, errty)
+        err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+        store!(B, globalstring_ptr!(B, string), err2)
+        emit_jl_throw!(B, addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
     end
 
     # 2. Call error function and insert unreachable
@@ -2062,15 +2077,11 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
             position!(builder, good)
             ret!(builder)
             # ret!(builder, inp)
-            
             position!(builder, bad)
-    
-            funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[LLVM.PointerType(LLVM.Int8Type())])
-            ptr = @cfunction(throwerr, Union{}, (Cstring,))
-            ptr = convert(UInt, ptr)
-            ptr = LLVM.ConstantInt(ptr)
-            func = inttoptr!(builder, ptr, LLVM.PointerType(funcT))
-            call!(builder, funcT, func, LLVM.Value[sval])
+            err = emit_allocobj!(builder, EnzymeRuntimeException)
+            err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+            store!(builder, globalstring_ptr!(builder, string), err2)
+            emit_jl_throw!(builder, addrspacecast!(builder, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
             unreachable!(builder)
 
             dispose(builder)
@@ -6146,7 +6157,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     if slegal
                         resstr *= "of type "*string(foundv)
                     end
-                    emit_error(builder, user, resstr)
+                    emit_error(builder, user, resstr, EnzymeMutabilityException)
                 end
             end
         end
