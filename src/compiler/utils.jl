@@ -110,6 +110,9 @@ function is_noreturn(f::LLVM.Function)
 end
 
 function is_readonly(f::LLVM.Function)
+    if LLVM.name(f) == "llvm.assume"
+        return true
+    end
     for attr in collect(function_attributes(f))
         if kind(attr) == kind(EnumAttribute("readonly"))
             return true
@@ -129,6 +132,9 @@ function is_readonly(f::LLVM.Function)
 end
 
 function is_readnone(f::LLVM.Function)
+    if LLVM.name(f) == "llvm.assume"
+        return true
+    end
     for attr in collect(function_attributes(cur))
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
@@ -145,6 +151,9 @@ function is_readnone(f::LLVM.Function)
 end
 
 function is_writeonly(f::LLVM.Function)
+    if LLVM.name(f) == "llvm.assume"
+        return true
+    end
     for attr in collect(function_attributes(cur))
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
