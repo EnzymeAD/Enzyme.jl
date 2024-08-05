@@ -6141,9 +6141,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
                     builder = LLVM.IRBuilder()
                     position!(builder, user)
-                    emit_error(builder, user, "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\n
-                    See https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information\n.
-                    The potentially writing call is "*string(user)*", using "*string(cur))
+                    resstr = "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information\n.The potentially writing call is "*string(user)*", using "*string(cur)
+                    slegal , foundv = absint(user)
+                    if slegal
+                        resstr *= "of type "*string(foundv)
+                    end
+                    emit_error(builder, user, resstr)
                 end
             end
         end
