@@ -1,5 +1,4 @@
-using Enzyme: Active, Duplicated, pick_batchsize
-using EnzymeCore: Forward
+using Enzyme: Active, Duplicated, Forward, pick_batchsize
 using Test
 
 mode = Forward
