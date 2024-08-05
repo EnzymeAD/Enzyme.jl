@@ -1005,7 +1005,9 @@ const JuliaEnzymeNameMap = Dict{String, Any}(
 
     "enz_any_array_1" => AnyArray(1),
     "enz_any_array_2" => AnyArray(2),
-    "enz_any_array_3" => AnyArray(3)
+    "enz_any_array_3" => AnyArray(3),
+    "enz_runtime_exc" => EnzymeRuntimeException,
+    "enz_mut_exc" => EnzymeMutabilityException,
 )
 
 const JuliaGlobalNameMap = Dict{String, Any}(
