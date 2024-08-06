@@ -268,7 +268,7 @@ end
 
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk = autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     TapeType = EnzymeRules.tape_type(fwd_thunk)
@@ -293,7 +293,7 @@ end
 
 function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk =  autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     Enzyme.pmap(pmap_rev, count.val, tapes, rev_thunk, body, args...)

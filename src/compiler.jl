@@ -6154,6 +6154,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     if isa(user, LLVM.CallInst)
                         called = LLVM.called_operand(user)
                         if isa(called, LLVM.Function)
+                            nm = LLVM.name(called)
+                            if  nm == "ijl_alloc_array_1d" || nm == "jl_alloc_array_1d" ||
+                                nm == "ijl_alloc_array_2d" || nm == "jl_alloc_array_2d" ||
+                                nm == "ijl_alloc_array_3d" || nm == "jl_alloc_array_3d"
+                                continue
+                            end
                             if is_readonly(called)
                                 slegal , foundv = abs_typeof(user)
                                 if slegal

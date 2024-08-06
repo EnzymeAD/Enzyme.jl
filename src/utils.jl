@@ -66,8 +66,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
-                world = Compiler.enzyme_extract_world(fn)
-                if Compiler.guaranteed_const_nongen(jTy, world)
+                if Compiler.guaranteed_const_nongen(jTy, nothing)
                     API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
                 end
             end
@@ -88,8 +87,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
-                world = Compiler.enzyme_extract_world(fn)
-                if Compiler.guaranteed_const_nongen(jTy, world)
+                if Compiler.guaranteed_const_nongen(jTy, nothing)
                     API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
                 end
             end

@@ -343,18 +343,22 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 end
             else
         	    legal, RT = abs_typeof(larg)
-                if legal && RT <: Array && Base.isconcretetype(RT)
-                    @static if VERSION < v"1.11-"
-                        T = eltype(RT)
+                if legal
+                    if RT <: Array && Base.isconcretetype(RT)
+                        @static if VERSION < v"1.11-"
+                            T = eltype(RT)
 
-                        if offset == 0
-                            return (true, Ptr{T})
+                            if offset == 0
+                                return (true, Ptr{T})
+                            end
+
+                            return (true, Int)
                         end
-
-                        return (true, Int)
+                    end
+                    if RT <: Ptr && Base.isconcretetype(RT)
+                        return (true, eltype(RT))
                     end
                 end
-
             end
         end
     end

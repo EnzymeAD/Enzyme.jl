@@ -2120,8 +2120,8 @@ end
             -t
             nothing
         end
-        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), Const(false))
-        autodiff(Forward, tobedifferentiated, Duplicated(F, L), Const(false))
+        autodiff(Reverse, Const(tobedifferentiated), Duplicated(F, L), Const(false))
+        autodiff(Forward, Const(tobedifferentiated), Duplicated(F, L), Const(false))
     end
 
     main()
@@ -2853,9 +2853,9 @@ end
     J_r_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(5))
     J_r_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(5))
 
-    J_f_1(A, x) = Enzyme.jacobian(Forward, θ -> f_test_1(A, θ), x)
-    J_f_2(A, x) = Enzyme.jacobian(Forward, θ -> f_test_2(A, θ), x)
-    J_f_3(u, A, x) = Enzyme.jacobian(Forward, θ -> f_test_3!(u, A, θ), x)
+    J_f_1(A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_1(A, θ)), x)
+    J_f_2(A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_2(A, θ)), x)
+    J_f_3(u, A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_3!(u, A, θ)), x)
 
     x = ones(6)
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
