@@ -3422,7 +3422,17 @@ end
 
 @generated function primal_return_type(::ReverseMode, ::Val{world}, ::Type{FT}, ::Type{TT}) where {world, FT, TT}
     mode = Enzyme.API.DEM_ReverseModeCombined
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(Enzyme.Compiler.GLOBAL_REV_CACHE, nothing, world, mode)
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(job.config.target), job.config.always_inline, GPUCompiler.method_table(job),
+            typeof(job.config.params), false,
+        )
+    else
+        Enzyme.Compiler.GLOBAL_REV_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
     res = Core.Compiler._return_type(interp, Tuple{FT, TT.parameters...})
     return quote
         Base.@_inline_meta
@@ -3432,7 +3442,17 @@ end
 
 @generated function primal_return_type(::ForwardMode, ::Val{world}, ::Type{FT}, ::Type{TT}) where {world, FT, TT}
     mode = Enzyme.API.DEM_ForwardMode
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(Enzyme.Compiler.GLOBAL_FWD_CACHE, nothing, world, mode)
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(job.config.target), job.config.always_inline, GPUCompiler.method_table(job),
+            typeof(job.config.params), false,
+        )
+    else
+        Enzyme.Compiler.GLOBAL_FWD_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
     res = Core.Compiler._return_type(interp, Tuple{FT, TT.parameters...})
     return quote
         Base.@_inline_meta
