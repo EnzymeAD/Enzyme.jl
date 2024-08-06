@@ -162,7 +162,9 @@ else
             @dispose pb=NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
                     add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, LowerSIMDLoopPass())
+                        add!(fpm, NewPMLoopPassManager()) do lpm
+                            add!(lpm, LowerSIMDLoopPass())
+                        end
                     end
                 end
                 run!(pb, mod)
