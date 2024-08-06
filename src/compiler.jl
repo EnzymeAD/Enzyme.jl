@@ -807,9 +807,7 @@ function emit_allocobj!(B, T::DataType)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     # Obtain tag
-    tag = LLVM.ConstantInt(convert(UInt, Base.pointer_from_objref(T)))  # do we need to root ETT
-    tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
-    tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
+    tag = unsafe_to_llvm(B, T)
 
     T_size_t = convert(LLVM.LLVMType, UInt)
     Size = LLVM.ConstantInt(T_size_t, sizeof(T))
@@ -6113,10 +6111,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     end
 
                     if !mayWriteToMemory(user)
-                        slegal , foundv = absint(user)
+                        slegal , foundv = abs_typeof(user)
                         if slegal
                             reg2 = active_reg_inner(foundv, (), world)
-                            if reg == ActiveState || reg == AnyState
+                            if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
                         end
@@ -6128,10 +6126,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                         called = LLVM.called_operand(user)
                         if isa(called, LLVM.Function)
                             if is_readonly(called)
-                                slegal , foundv = absint(user)
+                                slegal , foundv = abs_typeof(user)
                                 if slegal
                                     reg2 = active_reg_inner(foundv, (), world)
-                                    if reg == ActiveState || reg == AnyState
+                                    if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
                                 end
@@ -6140,12 +6138,14 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                             end
                             if !isempty(blocks(called)) && length(collect(LLVM.uses(called))) == 1
                                 for (parm, op) in zip(LLVM.parameters(called), operands(user)[1:end-1])
-                                    push!(todo, parm)
+                                    if op == cur
+                                        push!(todo, parm)
+                                    end
                                 end
-                                slegal , foundv = absint(user)
+                                slegal , foundv = abs_typeof(user)
                                 if slegal
                                     reg2 = active_reg_inner(foundv, (), world)
-                                    if reg == ActiveState || reg == AnyState
+                                    if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
                                 end
@@ -6157,8 +6157,8 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
                     builder = LLVM.IRBuilder()
                     position!(builder, user)
-                    resstr = "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information\n.The potentially writing call is "*string(user)*", using "*string(cur)
-                    slegal , foundv = absint(user)
+                    resstr = "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information.\nThe potentially writing call is "*string(user)*", using "*string(cur)
+                    slegal , foundv = absint(cur)
                     if slegal
                         resstr *= "of type "*string(foundv)
                     end

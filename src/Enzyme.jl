@@ -1024,7 +1024,11 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 @inline function gradient(rm::ReverseMode, f::F, x::X) where {F, X}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
-        autodiff(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        if f isa Const
+            autodiff(rm, Const(f.val∘only), Active, Duplicated(Ref(x), dx))
+        else
+            autodiff(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        end
         return only(dx)
     else
         dx = make_zero(x)
@@ -1041,7 +1045,11 @@ Like [`gradient`](@ref), except it using deferred mode.
 @inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
-        autodiff_deferred(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        if f isa Const
+            autodiff_deferred(rm, Const(f.val∘only), Active, Duplicated(Ref(x), dx))
+        else
+            autodiff_deferred(rm, f∘only, Active, Duplicated(Ref(x), dx))
+        end
         return only(dx)
     else
         dx = make_zero(x)

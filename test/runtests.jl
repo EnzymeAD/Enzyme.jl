@@ -261,11 +261,9 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
     
-    Enzyme.API.printall!(true)
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
-    Enzyme.API.printall!(false)
     @test occursin("diffe",fn)
     if count("call fastcc void @diffejulia__mapreduce", fn) != 1
         println(sprint() do io

@@ -2,6 +2,10 @@
 
 # Return (bool if could interpret, julia object interpreted to)
 function absint(arg::LLVM.Value, partial::Bool=false)
+    if isa(arg, LLVM.BitCastInst) ||
+       isa(arg, LLVM.AddrSpaceCastInst)
+        return absint(operands(arg)[1], partial)
+    end
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
@@ -146,6 +150,10 @@ function absint(arg::LLVM.Value, partial::Bool=false)
 end
 
 function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Type},Tuple{Bool, Nothing}}
+    if isa(arg, LLVM.BitCastInst) ||
+       isa(arg, LLVM.AddrSpaceCastInst)
+        return abs_typeof(operands(arg)[1], partial)
+    end
 	if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
@@ -292,6 +300,16 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 f = LLVM.Function(LLVM.API.LLVMGetParamParent(larg))
                 idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == larg])
                 typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+                @static if VERSION < v"1.11-"
+                    if typ !== nothing && typ <: Array && Base.isconcretetype(typ)
+                        T = eltype(typ)
+                        if offset === nothing || offset == 0
+                            return (true, Ptr{T})
+                        else
+                            return (true, Int)
+                        end
+                    end
+                end
                 if typ !== nothing && byref == GPUCompiler.BITS_REF
                     if offset === nothing
                         return (true, typ)
@@ -321,9 +339,22 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                                 end
                             end
                         end
-                        # @show "not found", typ, offset, [fieldoffset(typ, i) for i in 1:fieldcount(typ)]
                     end
                 end
+            else
+        	    legal, RT = abs_typeof(larg)
+                if legal && RT <: Array && Base.isconcretetype(RT)
+                    @static if VERSION < v"1.11-"
+                        T = eltype(RT)
+
+                        if offset == 0
+                            return (true, Ptr{T})
+                        end
+
+                        return (true, Int)
+                    end
+                end
+
             end
         end
     end
