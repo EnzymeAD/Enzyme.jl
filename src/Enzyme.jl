@@ -249,7 +249,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
 
     rt = if A isa UnionAll
-        Compiler.primal_return_type(rmode, Val(codegen_world_age(FTy, tt)), FTy, tt)
+        @static if VERSION >= v"1.8.0"
+            Compiler.primal_return_type(rmode, Val(codegen_world_age(FTy, tt)), FTy, tt)
+        else
+            Core.Compiler.return_type(f.val, tt)
+        end
     else
         eltype(A)    
     end
@@ -335,7 +339,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function autodiff(mode::CMode, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, CMode<:Mode, Nargs}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = if mode isa ReverseMode
+    rt    = if mode isa ReverseMode && VERSION >= v"1.8.0"
         Compiler.primal_return_type(mode, Val(codegen_world_age(eltype(FA), tt)), eltype(FA), tt)
     else
         Core.Compiler.return_type(f.val, tt)
@@ -552,7 +556,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
 
 @inline function autodiff_deferred(mode::M, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, M<:Mode, Nargs}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = if mode isa ReverseMode
+    rt    = if mode isa ReverseMode && VERSION >= v"1.8.0"
         Compiler.primal_return_type(mode, Val(codegen_world_age(eltype(FA), tt)), eltype(FA), tt)
     else
         Core.Compiler.return_type(f.val, tt)
