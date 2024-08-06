@@ -6098,6 +6098,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(primalf, i)))) for i in 1:length(collect(parameters(primalf))))
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]  
             done = Set{LLVM.Value}()  
+            doneInst = Set{LLVM.Instruction}()  
             while length(todo) != 0
                 cur = pop!(todo)
                 if cur in done
@@ -6120,6 +6121,21 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                         end
                         push!(todo, user)
                         continue
+                    end
+
+                    if isa(user, LLVM.StoreInst)
+                        # we are capturing the variable
+                        if operands(user)[1] == cur
+                            base = operands(user)[2]
+                            while isa(base, LLVM.BitCastInst) || isa(base, LLVM.AddrSpaceCastInst) || isa(base,  LLVM.GetElementPtrInst) 
+                                base = operands(base)[1]
+                            end
+                            if isa(base, LLVM.AllocaInst)
+                                push!(doneInst, user)
+                                push!(todo, base)
+                                continue
+                            end
+                        end
                     end
 
                     if isa(user, LLVM.CallInst)
