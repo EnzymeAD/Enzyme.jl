@@ -1058,7 +1058,7 @@ end
     @test res.y == nothing
 end
 
-@testset "Methoe errors" begin
+@testset "Method errors" begin
      fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
      @test_throws MethodError fwd(ones(10))
      @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
@@ -1165,7 +1165,7 @@ end
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
     Enzyme.API.runtimeActivity!(true)
-	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.autodiff(Enzyme.Reverse, Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
