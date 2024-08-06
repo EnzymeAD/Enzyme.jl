@@ -3361,7 +3361,7 @@ struct EnzymeCacheToken
     always_inline
     method_table::Core.MethodTable
     param_type::Type
-    is_fwd::API.CDerivativeMode
+    is_fwd::Bool
 end
 
 GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -3425,8 +3425,8 @@ end
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(job.config.target), job.config.always_inline, GPUCompiler.method_table(job),
-            typeof(job.config.params), false,
+            typeof(DefaultCompilerTarget()), #=job.config.always_inline=#false, GPUCompiler.GLOBAL_METHOD_TABLE,
+            EnzymeCompilerParams, false,
         )
     else
         Enzyme.Compiler.GLOBAL_REV_CACHE
@@ -3445,8 +3445,8 @@ end
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(job.config.target), job.config.always_inline, GPUCompiler.method_table(job),
-            typeof(job.config.params), false,
+            typeof(DefaultCompilerTarget()), #=always_inline=#false, GPUCompiler.GLOBAL_METHOD_TABLE,
+            EnzymeCompilerParams, false,
         )
     else
         Enzyme.Compiler.GLOBAL_FWD_CACHE
