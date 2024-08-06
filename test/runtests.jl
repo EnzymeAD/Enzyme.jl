@@ -935,7 +935,7 @@ function grad_closure(f, x)
     dy = zeros(n)
     dy[1] = 1.0
 
-    autodiff(Reverse, noretval, Duplicated(x,dx), Duplicated(y, dy))
+    autodiff(Reverse, Const(noretval), Duplicated(x,dx), Duplicated(y, dy))
     return dx
 end
 
