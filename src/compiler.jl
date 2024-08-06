@@ -6107,6 +6107,9 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 push!(done, cur)
                 for u in LLVM.uses(cur)
                     user = LLVM.user(u)
+                    if user in doneInst
+                        continue
+                    end
                     if LLVM.API.LLVMIsAReturnInst(user) != C_NULL
                         continue
                     end
@@ -6134,6 +6137,16 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                 push!(doneInst, user)
                                 push!(todo, base)
                                 continue
+                            end
+                        end
+                        # we are storing into the variable
+                        if operands(user)[2] == cur
+                            slegal , foundv = abs_typeof(operands(user)[1])
+                            if slegal
+                                reg2 = active_reg_inner(foundv, (), world)
+                                if reg2 == AnyState
+                                    continue
+                                end
                             end
                         end
                     end
