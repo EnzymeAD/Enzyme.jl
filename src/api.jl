@@ -29,7 +29,9 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Half = 3,
   DT_Float = 4,
   DT_Double = 5,
-  DT_Unknown = 6
+  DT_Unknown = 6,
+  DT_FP80 = 7,
+  DT_BFloat16 = 8
 )
 
 function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
@@ -39,6 +41,10 @@ function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
     return LLVM.FloatType()
   elseif cc == DT_Double
     return LLVM.DoubleType()
+  elseif cc == DT_FP80
+    return LLVM.X86FP80Type()
+  elseif cc == DT_BFloat16
+    return LLVM.BFloatType()
   else
     return nothing
   end
