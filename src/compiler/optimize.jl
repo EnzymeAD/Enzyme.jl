@@ -118,9 +118,7 @@ else
         function remove_ni(mod)
             @dispose pb=NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, RemoveNIPass())
-                    end
+                    add!(fpm, RemoveNIPass())
                 end
                 run!(pb, mod)
             end
