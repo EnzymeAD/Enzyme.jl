@@ -1022,6 +1022,35 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     print(io, msg, '\n')
 end
 
+struct EnzymeNoTypeError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoTypeError)
+    print(io, "Enzyme cannot deduce type\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeNoShadowError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoShadowError)
+    print(io, "Enzyme could not find shadow for value\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeNoDerivativeError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
 @static if VERSION >= v"1.8.0"
 const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_val_true" => Val(true),
@@ -1033,6 +1062,9 @@ const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_runtime_exc" => EnzymeRuntimeException,
     "enz_mut_exc" => EnzymeMutabilityException,
     "enz_runtime_activity_exc" => EnzymeRuntimeActivityError,
+    "enz_no_type_exc" => EnzymeNoTypeError,
+    "enz_no_shadow_exc" => EnzymeNoShadowError,
+    "enz_no_derivative_exc" => EnzymeNoDerivativeError,
 )
 else
 const JuliaEnzymeNameMap = Dict{String, Any}()
@@ -2139,21 +2171,27 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         if occursin("No create nofree of empty function", msg) || occursin("No forward mode derivative found for", msg) || occursin("No augmented forward pass", msg) || occursin("No reverse pass found", msg)
             ir = nothing
         end
-        exc = NoDerivativeException(msg, ir, bt)
         if B != C_NULL
             B = IRBuilder(B)
-            msg2 = sprint() do io
-                Base.showerror(io, exc)
+            msg2 = sprint() do io            
+                if ir !== nothing
+                    print(io, "Current scope: \n")
+                    print(io, ir)
+                end
+                print(io, '\n', msg, '\n')
+                if bt !== nothing
+                    Base.show_backtrace(io, bt)
+                    println(io)
+                end
             end
-            emit_error(B, nothing, msg2)
+            emit_error(B, nothing, msg2, EnzymeNoDerivativeError)
             return C_NULL
         end
-        throw(exc)
+        throw(NoDerivativeException(msg, ir, bt))
     elseif errtype == API.ET_NoShadow
         gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
 
         msgN = sprint() do io::IO
-            print(io, "Enzyme could not find shadow for value\n")
             if isa(val, LLVM.Argument)
                 fn = parent_scope(val)
                 ir = string(LLVM.name(fn))*string(function_type(fn))
@@ -2174,7 +2212,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 println(io)
             end
         end
-        emit_error(IRBuilder(B), nothing, msgN)
+        emit_error(IRBuilder(B), nothing, msgN, EnzymeNoShadowError)
         return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
@@ -2199,7 +2237,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
         API.EnzymeStringFree(ip)
 
         msg2 = sprint() do io::IO
-            print(io, "Enzyme cannot deduce type\n")
             if !occursin("Cannot deduce single type of store", msg)
                 if ir !== nothing
                     print(io, "Current scope: \n")
@@ -2220,7 +2257,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 println(io, "within ", mi)
             end
         end
-        emit_error(B, nothing, msg2)
+        emit_error(B, nothing, msg2, EnzymeNoTypeError)
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
