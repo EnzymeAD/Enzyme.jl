@@ -140,7 +140,9 @@ else
             @dispose pb=NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
                     add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, JuliaLICMPass())
+                        add!(fpm, NewPMLoopPassManager()) do lpm
+                            add!(lpm, JuliaLICMPass())
+                        end
                     end
                 end
                 run!(pb, mod)
