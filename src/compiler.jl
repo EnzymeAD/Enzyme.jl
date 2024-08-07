@@ -807,9 +807,7 @@ function emit_allocobj!(B, T::DataType)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     # Obtain tag
-    tag = LLVM.ConstantInt(convert(UInt, Base.pointer_from_objref(T)))  # do we need to root ETT
-    tag = LLVM.const_inttoptr(tag, T_prjlvalue_UT)
-    tag = LLVM.const_addrspacecast(tag, T_prjlvalue)
+    tag = unsafe_to_llvm(B, T)
 
     T_size_t = convert(LLVM.LLVMType, UInt)
     Size = LLVM.ConstantInt(T_size_t, sizeof(T))
@@ -861,6 +859,18 @@ function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
     fn, _ = get_function!(mod, "jl_", FT)
+    call!(B, FT, fn, [val])
+end
+
+function emit_jl_throw!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    T_void = LLVM.VoidType()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 12)
+    FT = LLVM.FunctionType(T_void, [T_prjlvalue])
+    fn, _ = get_function!(mod, "jl_throw", FT)
     call!(B, FT, fn, [val])
 end
 
@@ -984,17 +994,49 @@ end
 
 AnyArray(Length::Int) = NamedTuple{ntuple(i->Symbol(i), Val(Length)),NTuple{Length,Any}}
 
-const JuliaEnzymeNameMap = Dict{String, Any}(
+struct EnzymeRuntimeException <: Base.Exception
+    msg::Cstring
+end
 
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    print(io, "Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeMutabilityException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeMutabilityException)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeRuntimeActivityError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+@static if VERSION >= v"1.8.0"
+const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_val_true" => Val(true),
     "enz_val_false" => Val(false),
-
     "enz_val_1" => Val(1),
-
     "enz_any_array_1" => AnyArray(1),
     "enz_any_array_2" => AnyArray(2),
-    "enz_any_array_3" => AnyArray(3)
+    "enz_any_array_3" => AnyArray(3),
+    "enz_runtime_exc" => EnzymeRuntimeException,
+    "enz_mut_exc" => EnzymeMutabilityException,
+    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError,
 )
+else
+const JuliaEnzymeNameMap = Dict{String, Any}()
+end
 
 const JuliaGlobalNameMap = Dict{String, Any}(
     "jl_type_type" => Type,
@@ -1783,31 +1825,12 @@ end
     return
 end
 
-struct EnzymeRuntimeException <: Base.Exception
-    msg::Cstring
-end
-
-function Base.showerror(io::IO, ece::EnzymeRuntimeException)
-    print(io, "Enzyme execution failed.\n")
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
-end
-
-function throwerr(cstr::Cstring)
-    throw(EnzymeRuntimeException(cstr))
-end
-
-function emit_error(B::LLVM.IRBuilder, orig, string)
+function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeException)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
     # 1. get the error function
-    funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[LLVM.PointerType(LLVM.Int8Type())])
-    ptr = @cfunction(throwerr, Union{}, (Cstring,))
-    ptr = convert(UInt, ptr)
-    ptr = LLVM.ConstantInt(ptr)
-    func = inttoptr!(B, ptr, LLVM.PointerType(funcT))
     if orig !== nothing
         bt = GPUCompiler.backtrace(orig)
         function printBT(io)
@@ -1820,19 +1843,18 @@ function emit_error(B::LLVM.IRBuilder, orig, string)
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         GPUCompiler.emit_exception!(B, string, orig)
     else
-        call!(B, funcT, func, LLVM.Value[globalstring_ptr!(B, string)])
+        err = emit_allocobj!(B, errty)
+        err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+        store!(B, globalstring_ptr!(B, string), err2)
+        emit_jl_throw!(B, addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
     end
 
     # 2. Call error function and insert unreachable
     LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), EnumAttribute("noreturn"))
-    LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
+    if EnzymeMutabilityException != errty
+        LLVM.API.LLVMAddCallSiteAttribute(ct, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex), StringAttribute("enzyme_error"))
+    end
     return ct
-    # FIXME(@wsmoses): Allow for emission of new BB in this code path
-    # unreachable!(B)
-
-    # 3. Change insertion point so that we don't stumble later
-    # after_error = BasicBlock(fn, "after_error"; ctx)
-    # position!(B, after_error)
 end
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
@@ -2062,15 +2084,11 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
             position!(builder, good)
             ret!(builder)
             # ret!(builder, inp)
-            
             position!(builder, bad)
-    
-            funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[LLVM.PointerType(LLVM.Int8Type())])
-            ptr = @cfunction(throwerr, Union{}, (Cstring,))
-            ptr = convert(UInt, ptr)
-            ptr = LLVM.ConstantInt(ptr)
-            func = inttoptr!(builder, ptr, LLVM.PointerType(funcT))
-            call!(builder, funcT, func, LLVM.Value[sval])
+            err = emit_allocobj!(builder, EnzymeRuntimeException)
+            err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+            store!(builder, globalstring_ptr!(builder, string), err2)
+            emit_jl_throw!(builder, addrspacecast!(builder, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
             unreachable!(builder)
 
             dispose(builder)
@@ -2486,7 +2504,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 Base.show_backtrace(io, bt)
             end
         end
-        emit_error(b, nothing, msg2)
+        emit_error(b, nothing, msg2, EnzymeRuntimeActivityError)
         return C_NULL
     elseif errtype == API.ET_GetIndexError
         @assert B != C_NULL
@@ -3331,6 +3349,8 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     expectedTapeType::Type
     # Whether to use the pointer ABI, default true
     ABI::Type{<:ABI}
+    # Whether to error if the function is written to
+    err_if_func_written::Bool
 end
 
 struct UnknownTapeType end
@@ -6114,6 +6134,119 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     TapeType::Type = Cvoid
 
+    if params.err_if_func_written
+        FT = TT.parameters[1]
+        Ty = eltype(FT)
+        reg = active_reg_inner(Ty, (), world)
+        if reg == DupState || reg == MixedState
+            swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(primalf, i)))) for i in 1:length(collect(parameters(primalf))))
+            todo = LLVM.Value[parameters(primalf)[1+swiftself]]  
+            done = Set{LLVM.Value}()  
+            doneInst = Set{LLVM.Instruction}()  
+            while length(todo) != 0
+                cur = pop!(todo)
+                if cur in done
+                    continue
+                end
+                push!(done, cur)
+                for u in LLVM.uses(cur)
+                    user = LLVM.user(u)
+                    if user in doneInst
+                        continue
+                    end
+                    if LLVM.API.LLVMIsAReturnInst(user) != C_NULL
+                        continue
+                    end
+
+                    if !mayWriteToMemory(user)
+                        slegal , foundv = abs_typeof(user)
+                        if slegal
+                            reg2 = active_reg_inner(foundv, (), world)
+                            if reg2 == ActiveState || reg2 == AnyState
+                                continue
+                            end
+                        end
+                        push!(todo, user)
+                        continue
+                    end
+
+                    if isa(user, LLVM.StoreInst)
+                        # we are capturing the variable
+                        if operands(user)[1] == cur
+                            base = operands(user)[2]
+                            while isa(base, LLVM.BitCastInst) || isa(base, LLVM.AddrSpaceCastInst) || isa(base,  LLVM.GetElementPtrInst) 
+                                base = operands(base)[1]
+                            end
+                            if isa(base, LLVM.AllocaInst)
+                                push!(doneInst, user)
+                                push!(todo, base)
+                                continue
+                            end
+                        end
+                        # we are storing into the variable
+                        if operands(user)[2] == cur
+                            slegal , foundv = abs_typeof(operands(user)[1])
+                            if slegal
+                                reg2 = active_reg_inner(foundv, (), world)
+                                if reg2 == AnyState
+                                    continue
+                                end
+                            end
+                        end
+                    end
+
+                    if isa(user, LLVM.CallInst)
+                        called = LLVM.called_operand(user)
+                        if isa(called, LLVM.Function)
+                            nm = LLVM.name(called)
+                            if  nm == "ijl_alloc_array_1d" || nm == "jl_alloc_array_1d" ||
+                                nm == "ijl_alloc_array_2d" || nm == "jl_alloc_array_2d" ||
+                                nm == "ijl_alloc_array_3d" || nm == "jl_alloc_array_3d"
+                                continue
+                            end
+                            if is_readonly(called)
+                                slegal , foundv = abs_typeof(user)
+                                if slegal
+                                    reg2 = active_reg_inner(foundv, (), world)
+                                    if reg2 == ActiveState || reg2 == AnyState
+                                        continue
+                                    end
+                                end
+                                push!(todo, user)
+                                continue
+                            end
+                            if !isempty(blocks(called)) && length(collect(LLVM.uses(called))) == 1
+                                for (parm, op) in zip(LLVM.parameters(called), operands(user)[1:end-1])
+                                    if op == cur
+                                        push!(todo, parm)
+                                    end
+                                end
+                                slegal , foundv = abs_typeof(user)
+                                if slegal
+                                    reg2 = active_reg_inner(foundv, (), world)
+                                    if reg2 == ActiveState || reg2 == AnyState
+                                        continue
+                                    end
+                                end
+                                push!(todo, user)
+                                continue
+                            end
+                        end
+                    end
+
+                    builder = LLVM.IRBuilder()
+                    position!(builder, user)
+                    resstr = "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information.\nThe potentially writing call is "*string(user)*", using "*string(cur)
+                    slegal , foundv = absint(cur)
+                    if slegal
+                        resstr *= "of type "*string(foundv)
+                    end
+                    emit_error(builder, user, resstr, EnzymeMutabilityException)
+                end
+            end
+        end
+    end
+
     if params.run_enzyme
         # Generate the adjoint
         memcpy_alloca_to_loadstore(mod)
@@ -6988,9 +7121,9 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
-@inline function thunkbase(ctx, mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}   
+@inline function thunkbase(ctx, mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten}   
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten)
     tmp_job    = if World isa Nothing
 		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
 	else
@@ -7029,7 +7162,7 @@ end
         A2
     end
    
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten)
     job    = if World isa Nothing
     	Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
     else
@@ -7066,7 +7199,7 @@ end
     end
 end
 
-@inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI}
+@inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten}
   ts_ctx = JuliaContext()
   ctx = @static if VERSION >= v"1.9.0-DEV.115"
     context(ts_ctx)
@@ -7075,7 +7208,7 @@ end
   end
   activate(ctx)
   try
-    return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+    return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
   finally
     deactivate(ctx)
     @static if VERSION >= v"1.9.0-DEV.115"
@@ -7084,7 +7217,7 @@ end
   end
 end
 
-@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI}
+@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten}
   mi = fspec(eltype(FA), TT, World)
   ts_ctx = JuliaContext()
   ctx = @static if VERSION >= v"1.9.0-DEV.115"
@@ -7094,7 +7227,7 @@ end
   end
   activate(ctx)
   res = try
-    thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI)
+    thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
   finally
     deactivate(ctx)
     @static if VERSION >= v"1.9.0-DEV.115"
@@ -7110,14 +7243,14 @@ end
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{TT}, ::Val{A},::Val{Mode},
-        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}=Val(false),::Val{ShadowInit}=Val(false),::Type{ExpectedTapeType}=UnknownTapeType) where {World, FA<:Annotation,TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType}
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit},::Type{ExpectedTapeType}, ::Val{ErrIfFuncWritten}) where {World, FA<:Annotation,TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, ErrIfFuncWritten}
     JuliaContext() do ctx
         Base.@_inline_meta
         mi = fspec(eltype(FA), TT, World)
         target = EnzymeTarget()
 
         rt2 = if A isa UnionAll 
-            params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+            params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten)
             tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
             
             interp = GPUCompiler.get_interpreter(tmp_job)
@@ -7141,7 +7274,7 @@ import GPUCompiler: deferred_codegen_jobs
             A
         end
         
-        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI)
+        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         addr = get_trampoline(job)

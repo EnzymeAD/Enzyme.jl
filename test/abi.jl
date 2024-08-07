@@ -9,11 +9,11 @@ using Test
     res = autodiff(Reverse, f, Const, Const(nothing))
     @test res === ((nothing,),)
     
-    res = autodiff(ReverseMode{false,NonGenABI, false}(), f, Const, Const(nothing))
+    res = autodiff(ReverseMode{false,NonGenABI, false, false}(), f, Const, Const(nothing))
     @test res === ((nothing,),)
     
     @test () === autodiff(Forward, f, Const, Const(nothing))
-    @test () === autodiff(ForwardMode{NonGenABI}(), f, Const, Const(nothing))
+    @test () === autodiff(ForwardMode{NonGenABI, false}(), f, Const, Const(nothing))
 
     res = autodiff(Reverse, f, Const(nothing))
     @test res === ((nothing,),)
@@ -22,11 +22,11 @@ using Test
 
     res = autodiff_deferred(Reverse, f, Const(nothing))
     @test res === ((nothing,),)
-    res = autodiff_deferred(ReverseMode{false,NonGenABI, false}(), f, Const, Const(nothing))
+    res = autodiff_deferred(ReverseMode{false,NonGenABI, false, false}(), f, Const, Const(nothing))
     @test res === ((nothing,),)
     
     @test () === autodiff_deferred(Forward, f, Const(nothing))
-    @test () === autodiff_deferred(ForwardMode{NonGenABI}(), f, Const, Const(nothing))
+    @test () === autodiff_deferred(ForwardMode{NonGenABI, false}(), f, Const, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(Reverse, f, Const, Const(Int))
@@ -65,7 +65,7 @@ using Test
     _, res0 = autodiff(Reverse, unused, Active, Const(nothing), Active(2.0))[1]
     @test res0 ≈ 1.0
     
-    _, res0 = autodiff(ReverseMode{false, NonGenABI, false}(), unused, Active, Const(nothing), Active(2.0))[1]
+    _, res0 = autodiff(ReverseMode{false, NonGenABI, false, false}(), unused, Active, Const(nothing), Active(2.0))[1]
     @test res0 ≈ 1.0
     
     res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
@@ -73,7 +73,7 @@ using Test
     res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
     @test res0 ≈ 1.0
     
-    res0, = autodiff(ForwardMode{NonGenABI}(), unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
+    res0, = autodiff(ForwardMode{NonGenABI, false}(), unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
 
     _, res0 = autodiff(Reverse, unused, Const(nothing), Active(2.0))[1]
@@ -409,7 +409,39 @@ end
 
     @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(ABar()), Duplicated(3.0, 1.0))[1] ≈ 2.0
     @test Enzyme.autodiff(Forward, ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
+
+    struct RWClos
+        x::Vector{Float64}
+    end
+
+    function (c::RWClos)(y)
+       c.x[1] *= y
+       return y
+    end
+
+    c = RWClos([4.])
+
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(Reverse, c, Active(3.0))
+
+    @test autodiff(Reverse, Const(c), Active(3.0))[1][1] ≈ 1.0
+    @test autodiff(Reverse, Duplicated(c, RWClos([2.7])), Active(3.0))[1][1] ≈ (1.0 + 2.7 * 4 * 3)
+
+    struct RWClos2
+        x::Vector{Float64}
+    end
+
+    function (c::RWClos2)(y)
+       return y + c.x[1]
+    end
+
+    c2 = RWClos2([4.])
+
+    @test autodiff(Reverse, c2, Active(3.0))[1][1] ≈ 1.0
+    @test autodiff(Reverse, Const(c2), Active(3.0))[1][1] ≈ 1.0
+    @test autodiff(Reverse, Duplicated(c2, RWClos2([2.7])), Active(3.0))[1][1] ≈ 1.0
 end
+
+
 
 @testset "Promotion" begin
     x = [1.0, 2.0]; dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];

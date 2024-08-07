@@ -340,7 +340,7 @@ end
 
 @testset "Closure rule" begin
     cl = Closure([3.14])
-    res = autodiff(Reverse, cl, Active, Active(2.7))[1][1]
+    res = autodiff(Reverse, Const(cl), Active, Active(2.7))[1][1]
     @test res ≈ 7 * 2.7 + 3.14 * 1000
     @test cl.v[1] ≈ 0.0
 end

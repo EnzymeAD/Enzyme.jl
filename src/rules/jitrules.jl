@@ -205,7 +205,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
         opt_mi = Val(world)
-        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
@@ -308,7 +308,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         opt_mi = Val(world)
         forward, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
                                  annotationA, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
 
         internal_tape, origRet, initShadow = forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)
         annotation = annotationA
@@ -444,7 +444,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         opt_mi = Val(world)
         _, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
 
         tup = if annotation0 <: Active
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
@@ -702,7 +702,7 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
     end
     opt_mi = Val(world)
     res = thunk(opt_mi, FA, annotation, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI)(fa, args...)
+                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))(fa, args...)
     return if annotation <: Const
         ReturnType(allFirst(Val(width+1), res))
     else
@@ -837,7 +837,7 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
         opt_mi = Val(world)
         forward, adjoint = thunk(opt_mi, FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
         forward(fa, args...)
     else
         nothing, primal_tuple(args...), annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
@@ -984,7 +984,7 @@ function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween
         opt_mi = Val(world)
         forward, adjoint = thunk(opt_mi, FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI)
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
         
         args2 = if tape.shadow_return !== nothing
             if width == 1

@@ -238,30 +238,31 @@ function tcholsolv_upper(A, B, i)
     return c[i]
 end
 
+
 @testset "Cholesky PotRS 3x5" begin
 
     x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
     for i in 1:15
          B = [3.1 2.7 5.9 2.4 1.6; 7.9 8.2 1.3 9.4 5.5; 4.7 2.9 9.8 7.1 4.3]
-         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_lower(x, B, i), B)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_lower(x, B, i)), B)
          # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_lower(x, B, i), B)), size(B))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_lower(x, B, i), B)[1]
          @test reverse_grad  ≈ finite_diff 
          # @test forward_grad  ≈ finite_diff 
          
-         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_upper(x, B, i), B)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_upper(x, B, i)), B)
          # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_upper(x, B, i), B)), size(B))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_upper(x, B, i), B)[1]
          @test reverse_grad  ≈ finite_diff 
          # @test forward_grad  ≈ finite_diff
 
-         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_lower(x, B, i), x)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_lower(x, B, i)), x)
          #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_lower(x, B, i), x)), size(x))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_lower(x, B, i), x)[1]
          @test reverse_grad  ≈ finite_diff 
          #@test forward_grad  ≈ finite_diff 
          # 
-         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_upper(x, B, i), x)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_upper(x, B, i)), x)
          #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_upper(x, B, i), x)), size(x))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_upper(x, B, i), x)[1]
          @test reverse_grad  ≈ finite_diff 

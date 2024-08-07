@@ -209,7 +209,7 @@ const DefaultABI = FFIABI
 
 Abstract type for what differentiation mode will be used.
 """
-abstract type Mode{ABI} end
+abstract type Mode{ABI, ErrIfFuncWritten} end
 
 """
     struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI}
@@ -219,11 +219,14 @@ Reverse mode differentiation.
 - `ABI`: What runtime ABI to use
 - `Holomorphic`: Whether the complex result function is holomorphic and we should compute d/dz
 """
-struct ReverseMode{ReturnPrimal,ABI,Holomorphic} <: Mode{ABI} end
-const Reverse = ReverseMode{false,DefaultABI, false}()
-const ReverseWithPrimal = ReverseMode{true,DefaultABI, false}()
-const ReverseHolomorphic = ReverseMode{false,DefaultABI, true}()
-const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true}()
+struct ReverseMode{ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten} end
+const Reverse = ReverseMode{false,DefaultABI, false, false}()
+const ReverseWithPrimal = ReverseMode{true,DefaultABI, false, false}()
+const ReverseHolomorphic = ReverseMode{false,DefaultABI, true, false}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true, false}()
+
+@inline set_err_if_func_written(::ReverseMode{ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,ABI,Holomorphic,true}()
+@inline clear_err_if_func_written(::ReverseMode{ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,ABI,Holomorphic,false}()
 
 """
     struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}
@@ -234,19 +237,23 @@ Reverse mode differentiation.
 - `Width`: Batch Size (0 if to be automatically derived)
 - `ModifiedBetween`: Tuple of each argument's modified between state (true if to be automatically derived).
 """
-struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI} end
-const ReverseSplitNoPrimal = ReverseModeSplit{false, true, 0, true,DefaultABI}()
-const ReverseSplitWithPrimal = ReverseModeSplit{true, true, 0, true,DefaultABI}()
-@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, MBO, ABI}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,Width,MB,MBO,ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI}()
-@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, WidthO, MB, ABI}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,Width,MB,WidthO,ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI}()
+struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI, ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten} end
+const ReverseSplitNoPrimal = ReverseModeSplit{false, true, 0, true,DefaultABI, false}()
+const ReverseSplitWithPrimal = ReverseModeSplit{true, true, 0, true,DefaultABI, false}()
+@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, MBO, ABI, ErrIfFuncWritten}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,Width,MB,MBO,ABI, ErrIfFuncWritten} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI, ErrIfFuncWritten}()
+@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, WidthO, MB, ABI, ErrIfFuncWritten}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,Width,MB,WidthO,ABI, ErrIfFuncWritten} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,MB,ABI, ErrIfFuncWritten}()
 """
     struct Forward <: Mode
 
 Forward mode differentiation
 """
-struct ForwardMode{ABI} <: Mode{ABI}
+struct ForwardMode{ABI, ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten}
 end
-const Forward = ForwardMode{DefaultABI}()
+const Forward = ForwardMode{DefaultABI, false}()
+
+
+@inline set_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten}) where {ABI,ErrIfFuncWritten} = ForwardMode{ABI,true}()
+@inline clear_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten}) where {ABI,ErrIfFuncWritten} = ForwardMode{ABI,false}()
 
 function autodiff end
 function autodiff_deferred end
