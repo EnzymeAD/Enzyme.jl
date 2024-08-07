@@ -1022,6 +1022,7 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     print(io, msg, '\n')
 end
 
+@static if VERSION >= v"1.8.0"
 const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_val_true" => Val(true),
     "enz_val_false" => Val(false),
@@ -1033,6 +1034,9 @@ const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_mut_exc" => EnzymeMutabilityException,
     "enz_runtime_activity_exc" => EnzymeRuntimeActivityError,
 )
+else
+const JuliaEnzymeNameMap = Dict{String, Any}()
+end
 
 const JuliaGlobalNameMap = Dict{String, Any}(
     "jl_type_type" => Type,
