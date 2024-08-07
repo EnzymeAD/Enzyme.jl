@@ -2494,7 +2494,7 @@ end
 @testset "Exception" begin
 
     f_no_derv(x) = ccall("extern doesnotexist", llvmcall, Float64, (Float64,), x)
-    @test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, f_no_derv, Active, Active(0.5))
+    @test_throws Enzyme.Compiler.EnzymeNoDerivativeError autodiff(Reverse, f_no_derv, Active, Active(0.5))
 
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond,x)*x
