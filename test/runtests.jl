@@ -3028,7 +3028,7 @@ end
 
     c = ones(3)
     inner(e) = c .+ e
-    fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
+    fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
 end
@@ -3131,7 +3131,7 @@ end
 	end
 
     Enzyme.API.runtimeActivity!(true)
-	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
+    res = autodiff(Forward, Const(f2), Duplicated, Duplicated(0.2, 1.0))
     Enzyme.API.runtimeActivity!(false)
     @test res[1] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}

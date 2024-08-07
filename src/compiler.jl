@@ -3436,6 +3436,26 @@ Create the methodinstance pair, and lookup the primal return type.
     return primal
 end
 
+@generated function primal_return_type(::ReverseMode, ::Val{world}, ::Type{FT}, ::Type{TT}) where {world, FT, TT}
+    mode = Enzyme.API.DEM_ReverseModeCombined
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(Enzyme.Compiler.GLOBAL_REV_CACHE, nothing, world, mode)
+    res = Core.Compiler._return_type(interp, Tuple{FT, TT.parameters...})
+    return quote
+        Base.@_inline_meta
+        $res
+    end
+end
+
+@generated function primal_return_type(::ForwardMode, ::Val{world}, ::Type{FT}, ::Type{TT}) where {world, FT, TT}
+    mode = Enzyme.API.DEM_ForwardMode
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(Enzyme.Compiler.GLOBAL_FWD_CACHE, nothing, world, mode)
+    res = Core.Compiler._return_type(interp, Tuple{FT, TT.parameters...})
+    return quote
+        Base.@_inline_meta
+        $res
+    end
+end
+
 ##
 # Enzyme compiler step
 ##
