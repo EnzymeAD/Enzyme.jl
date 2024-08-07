@@ -228,6 +228,8 @@ const ReverseHolomorphicWithPrimal = ReverseMode{true,DefaultABI, true, false}()
 @inline set_err_if_func_written(::ReverseMode{ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,ABI,Holomorphic,true}()
 @inline clear_err_if_func_written(::ReverseMode{ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,ABI,Holomorphic,false}()
 
+@inline set_abi(::ReverseMode{ReturnPrimal,OldABI,Holomorphic,ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal,OldABI,Holomorphic,ErrIfFuncWritten,NewABI<:ABI} = ReverseMode{ReturnPrimal,NewABI,Holomorphic,ErrIfFuncWritten}()
+
 """
     struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI} <: Mode{ABI}
 
@@ -254,6 +256,8 @@ const Forward = ForwardMode{DefaultABI, false}()
 
 @inline set_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten}) where {ABI,ErrIfFuncWritten} = ForwardMode{ABI,true}()
 @inline clear_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten}) where {ABI,ErrIfFuncWritten} = ForwardMode{ABI,false}()
+
+@inline set_abi(::ForwardMode{OldABI,ErrIfFuncWritten}, ::Type{NewABI}) where {OldABI,ErrIfFuncWritten,NewABI<:ABI} = ForwardMode{NewABI,ErrIfFuncWritten}()
 
 function autodiff end
 function autodiff_deferred end

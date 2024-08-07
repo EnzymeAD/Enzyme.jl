@@ -9,11 +9,11 @@ using Test
     res = autodiff(Reverse, f, Const, Const(nothing))
     @test res === ((nothing,),)
     
-    res = autodiff(ReverseMode{false,NonGenABI, false, false}(), f, Const, Const(nothing))
+    res = autodiff(Enzyme.set_abi(Reverse, NonGenABI), f, Const, Const(nothing))
     @test res === ((nothing,),)
     
     @test () === autodiff(Forward, f, Const, Const(nothing))
-    @test () === autodiff(ForwardMode{NonGenABI, false}(), f, Const, Const(nothing))
+    @test () === autodiff(Enzyme.set_abi(Forward, NonGenABI), f, Const, Const(nothing))
 
     res = autodiff(Reverse, f, Const(nothing))
     @test res === ((nothing,),)
@@ -22,11 +22,11 @@ using Test
 
     res = autodiff_deferred(Reverse, f, Const(nothing))
     @test res === ((nothing,),)
-    res = autodiff_deferred(ReverseMode{false,NonGenABI, false, false}(), f, Const, Const(nothing))
+    res = autodiff_deferred(Enzyme.set_abi(Reverse, NonGenABI), f, Const, Const(nothing))
     @test res === ((nothing,),)
     
     @test () === autodiff_deferred(Forward, f, Const(nothing))
-    @test () === autodiff_deferred(ForwardMode{NonGenABI, false}(), f, Const, Const(nothing))
+    @test () === autodiff_deferred(Enzyme.set_abi(Forward, NonGenABI), f, Const, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(Reverse, f, Const, Const(Int))
@@ -65,7 +65,7 @@ using Test
     _, res0 = autodiff(Reverse, unused, Active, Const(nothing), Active(2.0))[1]
     @test res0 ≈ 1.0
     
-    _, res0 = autodiff(ReverseMode{false, NonGenABI, false, false}(), unused, Active, Const(nothing), Active(2.0))[1]
+    _, res0 = autodiff(Enzyme.set_abi(Reverse, NonGenABI), unused, Active, Const(nothing), Active(2.0))[1]
     @test res0 ≈ 1.0
     
     res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
@@ -73,7 +73,7 @@ using Test
     res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
     @test res0 ≈ 1.0
     
-    res0, = autodiff(ForwardMode{NonGenABI, false}(), unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
+    res0, = autodiff(Enzyme.set_abi(Forward, NonGenABI), unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
 
     _, res0 = autodiff(Reverse, unused, Const(nothing), Active(2.0))[1]
