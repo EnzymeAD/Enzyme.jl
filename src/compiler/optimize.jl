@@ -279,9 +279,7 @@ else
         function lower_ptls(mod)
             @dispose pb=NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, LowerPTLSPass())
-                    end
+                    add!(mpm, LowerPTLSPass())
                 end
                 run!(pb, mod)
             end
