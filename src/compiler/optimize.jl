@@ -56,7 +56,7 @@ else
             @dispose pb=NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
                     add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, GCInvariantVerifierPass(GCInvariantVerifierPassOptions(;strong=cond)))
+                        add!(fpm, GCInvariantVerifierPass(LLVM.Interop.GCInvariantVerifierPassOptions(;strong=cond)))
                     end
                 end
                 run!(pb, mod)
