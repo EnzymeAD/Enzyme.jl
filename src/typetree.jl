@@ -111,6 +111,10 @@ function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
+function typetree_inner(::Type{Core.BFloat16}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_BFloat16, -1, ctx)
+end
+
 function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
