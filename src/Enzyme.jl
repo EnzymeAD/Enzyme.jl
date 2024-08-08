@@ -1417,9 +1417,9 @@ of shape `size(output)` of values of the input type.
         inshape = size(x)
 
         st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
+            Base.stack(rows)
         else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+            reshape(cat(rows..., dims=length(outshape)), (outshape..., inshape...))
         end
 
         st2 = if length(outshape) == 1 || VERSION < v"1.9"
@@ -1470,9 +1470,9 @@ end
     if x isa AbstractArray
         inshape = size(x)
         st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
+            Base.stack(rows)
         else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+            reshape(cat(rows..., dims=length(outshape)), (outshape..., inshape...))
         end
 
         st2 = if length(outshape) == 1 || VERSION < v"1.9"
