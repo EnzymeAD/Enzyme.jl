@@ -1398,9 +1398,7 @@ of shape `size(output)` of values of the input type.
             dx[idx][]
         end) : dx, (i == 1 ? size(res[3][1]) : nothing)
     end
-    @show tmp
     rows = tupleconcat(map(first, tmp)...)
-    @show rows
     outshape = tmp[1][2]
     if x isa AbstractArray
         inshape = size(x)
@@ -1448,9 +1446,7 @@ end
         adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
         return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
     end
-    @show tmp
     rows = map(first, tmp)
-    @show rows
     outshape = tmp[1][2]
     if x isa AbstractArray
         inshape = size(x)
