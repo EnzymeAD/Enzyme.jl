@@ -1243,9 +1243,13 @@ of shape `size(input)` of values of the output type.
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = Base.stack(cols)
+        st = @static if VERSION >= v"1.9"
+            Base.stack(cols)
+        else
+            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+        end
 
-        st3 = if length(inshape) <= 1
+        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1275,9 +1279,13 @@ end
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = Base.stack(cols)
+        st = @static if VERSION >= v"1.9"
+            Base.stack(cols)
+        else
+            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+        end
 
-        st3 = if length(inshape) <= 1
+        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1303,9 +1311,13 @@ end
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = Base.stack(cols)
+        st = @static if VERSION >= v"1.9"
+            Base.stack(cols)
+        else
+            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+        end
 
-        st3 = if length(inshape) <= 1
+        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1402,8 +1414,14 @@ of shape `size(output)` of values of the input type.
     outshape = tmp[1][2]
     if x isa AbstractArray
         inshape = size(x)
-        st = Base.stack(rows)
-        st2 = if length(outshape) == 1
+
+        st = @static if VERSION >= v"1.9"
+            Base.stack(cols)
+        else
+            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+        end
+
+        st2 = if length(outshape) == 1 || VERSION < v"1.9"
             st
         else
             reshape(st, (inshape..., outshape...))
@@ -1450,8 +1468,13 @@ end
     outshape = tmp[1][2]
     if x isa AbstractArray
         inshape = size(x)
-        st = Base.stack(rows)
-        st2 = if length(outshape) == 1
+        st = @static if VERSION >= v"1.9"
+            Base.stack(cols)
+        else
+            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
+        end
+
+        st2 = if length(outshape) == 1 || VERSION < v"1.9"
             st
         else
             reshape(st, (inshape..., outshape...))
