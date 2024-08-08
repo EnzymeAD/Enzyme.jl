@@ -86,6 +86,10 @@ if VERSION >= v"1.7.0-DEV.577"
 Core.Compiler.verbose_stmt_info(interp::EnzymeInterpreter) = false
 end
 
+if VERSION >= v"1.8.0"
+Core.Compiler.infer_compilation_signature(interp::EnzymeInterpreter) = true
+end
+
 if isdefined(Base.Experimental, Symbol("@overlay"))
 Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
