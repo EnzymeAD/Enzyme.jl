@@ -3886,7 +3886,12 @@ include("rules/activityrules.jl")
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: DuplicatedNoNeed = API.DFT_DUP_NONEED
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
 
+const DumpPreEnzyme = Ref(false)
+
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
+    if DumpPreEnzyme[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     rt = job.config.params.rt

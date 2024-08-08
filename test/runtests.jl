@@ -2803,6 +2803,131 @@ end
 end
 end
 
+@testset "Simple Jacobian" begin
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0]) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(1)) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(1)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(1)) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(2)) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(2)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(2)) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(1)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(2)) ≈ [1.0, 2.0]
+
+    x = float.(reshape(1:6, 2, 3))
+
+    fillabs2(x) = [sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x), 1000*sum(abs2, x)]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x)
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x, Val(1))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x, Val(2))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, Val(4), Val(1))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, Val(4), Val(2))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    struct InpStruct
+        i1::Float64
+        i2::Float64
+        i3::Float64
+    end
+
+    fillinpabs2(x) = [(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 10*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 100*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 1000*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3)]
+
+    x2 = InpStruct(1.0, 2.0, 3.0)
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, Val(4), Val(1))
+
+    @test jac[1] == InpStruct(2.0, 4.0, 6.0)
+    @test jac[2] == InpStruct(20.0, 40.0, 60.0)
+    @test jac[3] == InpStruct(200.0, 400.0, 600.0)
+    @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, Val(4), Val(2))
+
+    @test jac[1] == InpStruct(2.0, 4.0, 6.0)
+    @test jac[2] == InpStruct(20.0, 40.0, 60.0)
+    @test jac[3] == InpStruct(200.0, 400.0, 600.0)
+    @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
+
+    struct OutStruct
+        i1::Float64
+        i2::Float64
+        i3::Float64
+    end
+
+    filloutabs2(x) = OutStruct(sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x))
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x)
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x, Val(1))
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x, Val(2))
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+end
+
+
 @testset "Jacobian" begin
     function inout(v)
        [v[2], v[1]*v[1], v[1]*v[1]*v[1]]
