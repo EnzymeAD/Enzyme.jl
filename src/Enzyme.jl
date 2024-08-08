@@ -1419,7 +1419,7 @@ of shape `size(output)` of values of the input type.
         st = @static if VERSION >= v"1.9"
             Base.stack(rows)
         else
-            reshape(cat(rows..., dims=length(outshape)), (outshape..., inshape...))
+            reshape(cat(rows..., dims=length(inshape)), (outshape..., inshape...))
         end
 
         st2 = if length(outshape) == 1 || VERSION < v"1.9"
@@ -1472,7 +1472,7 @@ end
         st = @static if VERSION >= v"1.9"
             Base.stack(rows)
         else
-            reshape(cat(rows..., dims=length(outshape)), (outshape..., inshape...))
+            reshape(cat(rows..., dims=length(inshape)), (outshape..., inshape...))
         end
 
         st2 = if length(outshape) == 1 || VERSION < v"1.9"
