@@ -173,11 +173,24 @@ function setup_macro_wraps(forwardMode::Bool, N::Int, Width::Int, base=nothing, 
 end
 
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
-    nnothing = ntuple(i->nothing, Val(Width+1))
-    nres = ntuple(i->:(res[1]), Val(Width+1))
-    ModifiedBetween = ntuple(i->false, Val(N+1))
-    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
-    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
+    nnothing = Vector{Nothing}(undef, Width+1)
+    nres = Vector{Expr}(undef, Width+1)
+    fill!(nnothing, nothing)
+    fill!(nres, :(res[1]))
+    ModifiedBetween = Vector{Bool}(undef, N+1)
+    fill!(ModifiedBetween, false)
+    ElTypes = Vector{Expr}(undef, N)
+    Types = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds ElTypes[i] = :(eltype(Core.Typeof(args[$i])))
+        @inbounds Types[i] = :(Core.Typeof(args[$i]))
+    end
+
+    retres = if Width == 1
+        :(return ReturnType((res[1], res[2])))
+    else
+        :(return ReturnType((res[1], res[2]...)))
+    end
     return quote
         args = ($(wrapped...),)
 
@@ -205,22 +218,18 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
         opt_mi = Val(world)
-        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val($ModifiedBetween), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(($(ModifiedBetween...),)), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
 
         res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
 
         if length(res) == 0
-            return ReturnType($nnothing)
+            return ReturnType(($(nnothing...),))
         end
         if annotation <: Const
             return ReturnType(($(nres...),))
         end
 
-        if $Width == 1
-            return ReturnType((res[1], res[2]))
-        else
-            return ReturnType((res[1], res[2]...))
-        end
+        $retres
     end
 end
 
@@ -242,17 +251,21 @@ end
 end
 
 function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
-    nnothing = ntuple(i->nothing, Val(Width+1))
-    nres = ntuple(i->:(origRet), Val(Width+1))
-    nzeros = ntuple(i->:(Ref(make_zero(origRet))), Val(Width))
-    nres3 = ntuple(i->:(res[3]), Val(Width))
-    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
-
-    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
-
-    Types = ntuple(i->Symbol("type_$i"), Val(N))
-
-    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
+    nres = Vector{Symbol}(undef, Width+1)
+    fill!(nres, :origRet)
+    nzeros = Vector{Expr}(undef, Width)
+    fill!(nzeros, :(Ref(make_zero(origRet))))
+    
+    ElTypes = Vector{Expr}(undef, N)
+    MakeTypes = Vector{Expr}(undef, N)
+    Types = Vector{Symbol}(undef, N)
+    MixedTypes = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds ElTypes[i] = :(eltype($(Symbol("type_$i"))))
+        @inbounds MakeTypes[i] = :($(Symbol("type_$i")) = Core.Typeof(args[$i]))
+        @inbounds Types[i] = Symbol("type_$i")
+        @inbounds MixedTypes[i] = :($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i")))
+    end
 
     ending = if Width == 1
         quote
@@ -279,7 +292,19 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             end
         end
     end
-        
+       
+    shadowretinit = if Width == 1
+        :(Ref(make_zero(origRet)))
+    else
+        :(shadow_return = ($(nzeros...),))
+    end
+    
+    shadowretret = if Width == 1
+        :(return ReturnType((origRet, shadow_return, tape)))
+    else
+        :(return ReturnType((origRet, shadow_return..., tape)))
+    end
+
     return quote
         $(active_refs...)
         args = ($(wrapped...),)
@@ -319,17 +344,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
-            if $Width == 1
-                shadow_return = Ref(make_zero(origRet))
-            else
-                shadow_return = ($(nzeros...),)
-            end
+            $shadowretinit
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
-            if $Width == 1
-                return ReturnType((origRet, shadow_return, tape))
-            else
-                return ReturnType((origRet, shadow_return..., tape))
-            end
+            $shadowretret
         end
 
         $ending
@@ -409,13 +426,20 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         shadowret = :(($(shadowret...),))
     end
 
-    ElTypes = ntuple(i->:(eltype($(Symbol("type_$i")))), Val(N))
+    ElTypes = Vector{Expr}(undef, N)
+    MakeTypes = Vector{Expr}(undef, N)
+    Types = Vector{Symbol}(undef, N)
+    for i in 1:N
+        @inbounds ElTypes[i] = :(eltype($(Symbol("type_$i"))))
+        @inbounds MakeTypes[i] = :($(Symbol("type_$i")) = Core.Typeof(args[$i]))
+        @inbounds Types[i] = Symbol("type_$i")
+    end
 
-    MakeTypes = ntuple(i->:($(Symbol("type_$i")) = Core.Typeof(args[$i])), Val(N))
-
-    Types = ntuple(i->Symbol("type_$i"), Val(N))
-
-    MixedTypes = ntuple(i->:($(Symbol("active_ref_$i") == MixedState) ? Ref($(Symbol("type_$i"))) : $(Symbol("type_$i"))), Val(N))
+    mixedadjoint = if Width == 1
+        :(adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1])
+    else
+        :(adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret..., tape.internal_tape)[1])
+    end
 
     quote
         $(active_refs...)
@@ -449,11 +473,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         tup = if annotation0 <: Active
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
         elseif annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
-            if $Width == 1
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
-            else
-                adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret..., tape.internal_tape)[1]
-            end
+            $mixedadjoint
         else
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
         end
@@ -715,7 +735,10 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
 end
 
 function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
-    wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
+    wrappedexexpand = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds wrappedexexpand[i] = :($(wrapped[i])...)
+    end
     return quote
         $(active_refs...)
         args = ($(wrappedexexpand...),)
@@ -742,50 +765,67 @@ end
     return body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 end
 
-function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
-    ntuple(Val(Nargs)) do i
+@generated function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
+    expr = Vector{Expr}(Nargs, undef)
+    for i in Nargs
+        expr[i] = :(args[$i].val)
+    end
+    return quote
         Base.@_inline_meta
-        args[i].val
+        ($(expr...),)
     end
 end
 
-function shadow_tuple(::Type{Ann}, ::Val{1}, args::Vararg{Annotation, Nargs}) where {Ann, Nargs}
-    res = ntuple(Val(Nargs)) do i
-        Base.@_inline_meta
-        @assert !(args[i] isa Active)
-        if args[i] isa Const
-            args[i].val
-        elseif args[i] isa MixedDuplicated
-            args[i].dval[]
-        else 
-            args[i].dval
-        end
-    end
-    if Ann <: MixedDuplicated
-        Ref(res)
-    else
-        res
-    end
-end
-
-function shadow_tuple(::Type{Ann}, ::Val{width}, args::Vararg{Annotation, Nargs}) where {Ann, width, Nargs}
-    ntuple(Val(width)) do w
-        res = ntuple(Val(Nargs)) do i
-            Base.@_inline_meta
-            @assert !(args[i] isa Active)
-            if args[i] isa Const
-                args[i].val
-            elseif args[i] isa BatchMixedDuplicated
-                args[i].dval[w][]
+@generated function shadow_tuple(::Type{Ann}, ::Val{1}, args::Vararg{Annotation, Nargs}) where {Ann, Nargs}
+    expr = Vector{Expr}(Nargs, undef)
+    for i in 1:Nargs
+        expr[i] = quote
+            @assert !(args[$i] isa Active)
+            if args[$i] isa Const
+                args[$i].val
+            elseif args[$i] isa MixedDuplicated
+                args[$i].dval[]
             else 
-                args[i].dval[w]
+                args[$i].dval
             end
         end
-        if Ann <: BatchMixedDuplicated
-            Ref(res)
-        else
-            res
+    end
+    rval = :(($(expr...),))
+    if Ann <: MixedDuplicated
+        rval = :(Ref(rval))
+    end
+    return quote
+        Base.@_inline_meta
+        $rval
+    end
+end
+
+@generated function shadow_tuple(::Type{Ann}, ::Val{width}, args::Vararg{Annotation, Nargs}) where {Ann, width, Nargs}
+    wexpr = Vector{Expr}(Nargs, undef)
+    for w in 1:width
+        expr = Vector{Expr}(Nargs, undef)
+        for i in Nargs
+            expr[i] = quote
+                @assert !(args[$i] isa Active)
+                if args[$i] isa Const
+                    args[$i].val
+                elseif args[$i] isa MixedDuplicated
+                    args[$i].dval[$w][]
+                else 
+                    args[$i].dval[$w]
+                end
+            end
         end
+        rval = :(($(expr...),))
+        if Ann <: MixedDuplicated
+            rval = :(Ref(rval))
+        end
+        wexpr[w] = rval
+    end
+
+    return quote
+        Base.@_inline_meta
+        ($(wexpr...),)
     end
 end
 
@@ -887,10 +927,13 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
 end
 
 function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
-    wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
-    results = Expr[]
+    wrappedexexpand = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds wrappedexexpand[i] = :($(wrapped[i])...)
+    end
+    results = Vector{Expr}(undef, Width+1)
     for i in 1:(Width+1)
-        push!(results, :(tmpvals[$i]))
+        results[i] = :(tmpvals[$i])
     end
     return quote
         refs = Base.RefValue[]
@@ -935,148 +978,158 @@ function add_into_vec!(val::T, expr, vec, idx_in_vec) where T
 end
 
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
-function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween0}, ::Val{lengths}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, tape, shadowargs, args::Vararg{Annotation, Nargs})::Nothing where {width, dupClosure0, ModifiedBetween0, lengths, FT, tt′, DF, Nargs}
-    ReturnPrimal = Val(true)
-    ModifiedBetween = Val(ModifiedBetween0)
+@generated function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween0}, ::Val{lengths}, ::Type{FT}, ::Type{ttp}, f::FT, df::DF, tape, shadowargs, args::Vararg{Annotation, Nargs})::Nothing where {width, dupClosure0, ModifiedBetween0, lengths, FT, ttp, DF, Nargs}
 
-    dupClosure = dupClosure0 && !guaranteed_const(FT)
-    FA = dupClosure ? Duplicated{FT} : Const{FT}
-
-    tt    = Enzyme.vaEltypes(tt′)
-
-    rt = Core.Compiler.return_type(f, tt)
-    annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-    annotation = if width != 1
-        if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-            BatchDuplicated{rt, width}
-        elseif annotation0 <: MixedDuplicated
-            BatchMixedDuplicated{rt, width}
-        elseif annotation0 <: Active
-            Active{rt}
+    nontupexprs = Vector{Expr}(undef, Nargs)
+    for i in 1:Nargs
+        mid = if width == 1
+            :(tape.shadow_return[][$i])
         else
-            Const{rt}
-        end
-    else
-        if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-            Duplicated{rt}
-        elseif annotation0 <: MixedDuplicated
-            MixedDuplicated{rt}
-        elseif annotation0 <: Active
-            Active{rt}
-        else
-            Const{rt}
-        end
-    end
-
-    tup = if f != Base.tuple
-        world = codegen_world_age(FT, tt)
-
-        fa = if dupClosure
-            if width == 1
-                Duplicated(f, df)
-            else
-                BatchDuplicated(f, df)
+            mexprs = Vector{Expr}(undef, width)
+            for w in 1:width
+                @inbounds mexprs[i] = :(tape.shadow_return[$w][][$i])
             end
-        else
-            Const(f)
-        end
-        opt_mi = Val(world)
-        forward, adjoint = thunk(opt_mi, FA,
-                                 annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
-        
-        args2 = if tape.shadow_return !== nothing
-            if width == 1
-                (args..., tape.shadow_return[])
-            else
-                shads = ntuple(Val(width)) do w
-                    Base.@_inline_meta
-                    tape.shadow_return[w][]
-                end
-                if annotation <: MixedDuplicated || annotation <: BatchMixedDuplicated
-                    (args..., shads...,)
-                else
-                    (args..., shads)
-                end
+            quote
+                ($(mexprs...),)
             end
-        else
-            args
         end
 
-        adjoint(fa, args2..., tape.internal_tape)[1]
-    else
-        ntuple(Val(Nargs)) do i
-            Base.@_inline_meta
-            if args[i] isa Active
-                if width == 1
-                    tape.shadow_return[][i]
-                else
-                    ntuple(Val(width)) do w
-                        Base.@_inline_meta
-                        tape.shadow_return[w][][i]
-                    end
-                end
-            elseif args[i] isa MixedDuplicated || args[i] isa BatchMixedDuplicated
-                if width == 1
-                    tape.shadow_return[][i]
-                else
-                    ntuple(Val(width)) do w
-                        Base.@_inline_meta
-                        tape.shadow_return[w][][i]
-                    end
-                end
+        @inbounds nontupexprs[i] = quote
+            if args[$i] isa Active || args[$i] isa MixedDuplicated || args[$i] isa BatchMixedDuplicated
+                $mid
             else
                 nothing
             end
         end
     end
 
-    ntuple(Val(Nargs)) do i
-        Base.@_inline_meta
-
-        ntuple(Val(width)) do w
-            Base.@_inline_meta
-            if args[i] isa Active || args[i] isa MixedDuplicated || args[i] isa BatchMixedDuplicated
-                expr = if args[i] isa Active || f == Base.tuple
-                    if width == 1
-                        tup[i]
-                    else
-                        tup[i][w]
-                    end
-                elseif args[i] isa MixedDuplicated
-                    args[i].dval[]
-                else
-                    # if args[i] isa BatchMixedDuplicated
-                    args[i].dval[w][]
-                end
-
-                idx_of_vec, idx_in_vec = lengths[i]
-                vec = @inbounds shadowargs[idx_of_vec][w]
-                if vec isa Base.RefValue
-                    vecld = vec[]                    
-                    T = Core.Typeof(vecld)
-                    vec[] = splatnew(T, ntuple(Val(fieldcount(T))) do i
-                        Base.@_inline_meta
-                        prev = getfield(vecld, i)
-                        if i == idx_in_vec
-                            recursive_add(prev, expr, identity, guaranteed_nonactive)
+    endexprs = Matrix{Expr}(undef, Nargs, width)
+    for i in 1:Nargs
+        for w in 1:width
+            @inbounds endexprs[i, w] = quote
+                if args[$i] isa Active || args[$i] isa MixedDuplicated || args[$i] isa BatchMixedDuplicated
+                    expr = if args[$i] isa Active || f == Base.tuple
+                        if $width == 1
+                            tup[$i]
                         else
-                            prev
+                            tup[$i][$w]
                         end
-                    end)
-                else
-                    val = @inbounds vec[idx_in_vec]
-                    add_into_vec!(Base.inferencebarrier(val), expr, vec, idx_in_vec)
+                    elseif args[$i] isa MixedDuplicated
+                        args[$i].dval[]
+                    else
+                        # if args[$i] isa BatchMixedDuplicated
+                        args[$i].dval[$w][]
+                    end
+
+                    idx_of_vec, idx_in_vec = $(lengths[i])
+                    vec = @inbounds shadowargs[idx_of_vec][$w]
+                    if vec isa Base.RefValue
+                        vecld = vec[]                    
+                        T = Core.Typeof(vecld)
+                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), expr)
+                    else
+                        val = @inbounds vec[idx_in_vec]
+                        add_into_vec!(Base.inferencebarrier(val), expr, vec, idx_in_vec)
+                    end
                 end
             end
+        end
+    end
 
-            nothing
+    annotation = if width != 1
+        quote
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                BatchDuplicated{rt, $width}
+            elseif annotation0 <: MixedDuplicated
+                BatchMixedDuplicated{rt, $width}
+            elseif annotation0 <: Active
+                Active{rt}
+            else
+                Const{rt}
+            end
+        end
+    else
+        quote
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                Duplicated{rt}
+            elseif annotation0 <: MixedDuplicated
+                MixedDuplicated{rt}
+            elseif annotation0 <: Active
+                Active{rt}
+            else
+                Const{rt}
+            end
+        end
+    end
+
+    shadargs = if width == 1
+        :((args..., tape.shadow_return[]))
+    else
+        mexprs = Vector{Expr}(undef, width)
+        for w in 1:width
+            @inbounds mexprs[i] = :(tape.shadow_return[$w][])
+        end
+        quote
+            ($(mexprs...),)
+        end
+    end
+        
+    tt = Enzyme.vaEltypes(ttp)
+
+    return quote
+        ReturnPrimal = Val(true)
+        ModifiedBetween = Val($ModifiedBetween0)
+
+        dupClosure = $dupClosure0 && !guaranteed_const($FT)
+        FA = dupClosure ? Duplicated{$FT} : Const{$FT}
+
+        tt    = $tt
+
+        rt = Core.Compiler.return_type(f, tt)
+        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+        annotation = $annotation
+
+        tup = if f != Base.tuple
+            world = codegen_world_age(FT, tt)
+
+            fa = if dupClosure
+                $(width == 1 ? :Duplicated : :BatchDuplicated)(f, df)
+            else
+                Const(f)
+            end
+            opt_mi = Val(world)
+            forward, adjoint = thunk(opt_mi, FA,
+                                     annotation, ttp, Val(API.DEM_ReverseModePrimal), Val($width),
+                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+            
+            args2 = if tape.shadow_return !== nothing
+                $shadargs
+            else
+                args
+            end
+
+            adjoint(fa, args2..., tape.internal_tape)[1]
+        else
+            ($(nontupexprs...),)
         end
 
+        $(endexprs...)
         nothing
     end
-    nothing
+end
+
+@generated function ntuple_pair(::Val{Len}, ::Val{i}) where {Len, i}
+    mexprs = Vector{Expr}(undef, Len)
+    for j in 1:Len
+        @inbounds mexprs[j] = quote
+            ($i, $j)
+        end
+    end
+    quote
+        Base.@_inline_meta
+        ($(mexprs...),)
+    end
 end
 
 function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shadowargs, active_refs)
@@ -1084,23 +1137,23 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
     if Width == 1
         shadowret = :(tape.shadow_return[])
     else
-        shadowret = []
+        shadowret = Expr[]
         for w in 1:Width
             push!(shadowret, :(tape.shadow_return[$w][]))
         end
         shadowret = :(($(shadowret...),))
     end
 
-    ElTypes = ntuple(i->:(eltype(Core.Typeof(args[$i]))), Val(N))
-    Types = ntuple(i->:(Core.Typeof(args[$i])), Val(N))
-
-    wrappedexexpand = ntuple(i->:($(wrapped[i])...), Val(N))
-    lengths = ntuple(i->quote
-        (ntuple(Val(length($(primargs[i])))) do j
-            Base.@_inline_meta
-            ($i, j)
-        end)
-    end, Val(N))
+    wrappedexexpand = Vector{Expr}(undef, N)
+    for i in 1:N
+        wrappedexexpand[i] = :($(wrapped[i])...)
+    end
+    lengths = Vector{Expr}(undef, N)
+    for i in 1:N
+        lengths[i] = quote
+            ntuple_pair(Val(length($(primargs[i]))), Val($i))
+        end
+    end
 
     shadowsplat = Expr[]
     for s in shadowargs

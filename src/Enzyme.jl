@@ -1494,7 +1494,7 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, n_out_val,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten}
     res = f(x)
     jac = if res isa AbstractArray
         jacobian(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
