@@ -296,7 +296,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
     shadowretinit = if Width == 1
         :(Ref(make_zero(origRet)))
     else
-        :(shadow_return = ($(nzeros...),))
+        :(($(nzeros...),))
     end
     
     shadowretret = if Width == 1
@@ -344,7 +344,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
-            $shadowretinit
+            shadow_return = $shadowretinit
             tape = Tape{typeof(internal_tape), typeof(shadow_return), resT}(internal_tape, shadow_return)
             $shadowretret
         end
