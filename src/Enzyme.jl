@@ -1349,7 +1349,7 @@ grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], Val(2))
 
 # output
 
-2×3 Matrix{Float64}:
+2×3 transpose(::Matrix{Float64}) with eltype Float64:
  3.0  2.0  0.0
  0.0  1.0  1.0
 ```
