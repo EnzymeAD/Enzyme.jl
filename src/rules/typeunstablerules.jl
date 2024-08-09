@@ -720,7 +720,7 @@ end
     N = fieldCount(dRT)
     exprs = Vector{Expr}(undef, N)
     for i in 1:N
-        @inbounds expr[i] = if fieldname(dRT, i) == symname
+        @inbounds exprs[i] = if fieldname(dRT, i) == symname
             :(recursive_add(getfield(vload, $i), dret, identity, guaranteed_nonactive))
         else
             :(getfield(vload, $i))
@@ -783,7 +783,7 @@ end
     N = fieldcount(dRT)
     exprs = Vector{Expr}(undef, N)
     for i in 1:N
-        @inbounds expr[i] = if i == symname
+        @inbounds exprs[i] = if i == symname
             :(recursive_add(getfield(vload, $i), dret, identity, guaranteed_nonactive))
         else
             :(getfield(vload, $i))
