@@ -1566,7 +1566,6 @@ res
  16.201003759768003
 ```
 """
-
 @inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
     Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
@@ -1606,7 +1605,6 @@ grad
  1.920340573300732
 ```
 """
-
 @inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
     Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
     return nothing
