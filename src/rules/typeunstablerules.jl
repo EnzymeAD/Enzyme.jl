@@ -623,7 +623,7 @@ end
     end
 end
 
-@generated function ntuple_lookup(::Val{N}, ptrs, symname) where {N, RT}
+@generated function ntuple_lookup(::Val{N}, ptrs, symname) where {N}
     expr = Vector{Expr}(undef, N)
     for i in 1:N
         @inbounds expr[i] = quote

@@ -5488,6 +5488,8 @@ function no_type_setting(@nospecialize(specTypes); world=nothing)
     return (false, false)
 end
 
+const DumpPreOpt = Ref(false)
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, toplevel::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -6082,6 +6084,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         if !isempty(blocks(exc))
             linkage!(exc, LLVM.API.LLVMExternalLinkage)
         end
+    end
+
+    if DumpPreOpt[]
+        API.EnzymeDumpModuleRef(mod.ref)
     end
 
     # Run early pipeline

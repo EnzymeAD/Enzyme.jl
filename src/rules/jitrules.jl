@@ -766,7 +766,7 @@ end
 end
 
 @generated function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
-    expr = Vector{Expr}(Nargs, undef)
+    expr = Vector{Expr}(undef, Nargs)
     for i in Nargs
         expr[i] = :(args[$i].val)
     end
