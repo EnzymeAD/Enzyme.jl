@@ -599,7 +599,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 @generated function ntuple_ref_zero(::Val{N}, ::Type{RT}, res) where {N, RT}
-    expr = Vector{Expr}(N, undef)
+    expr = Vector{Expr}(undef, N)
     fill!(expr, :(Ref{$RT}(make_zero(res))))
     return quote
         Base.@_inline_meta
@@ -608,7 +608,7 @@ end
 end
 
 @generated function ntuple_ref_lookup(::Val{N}, ::Type{RT}, dptrs, symname) where {N, RT}
-    expr = Vector{Expr}(N, undef)
+    expr = Vector{Expr}(undef, N)
     for i in 1:N
         @inbounds expr[i] = quote
             begin
@@ -624,7 +624,7 @@ end
 end
 
 @generated function ntuple_lookup(::Val{N}, ptrs, symname) where {N, RT}
-    expr = Vector{Expr}(N, undef)
+    expr = Vector{Expr}(undef, N)
     for i in 1:N
         @inbounds expr[i] = quote
             begin
@@ -780,7 +780,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
 end
 
 @generated function recursive_index_add(::Type{dRT}, vload, ::Val{symname}, dret) where {dRT, symname}
-    N = fieldCount(dRT)
+    N = fieldcount(dRT)
     exprs = Vector{Expr}(undef, N)
     for i in 1:N
         @inbounds expr[i] = if i == symname
