@@ -190,7 +190,7 @@ julia> output_size = Val(2) # here we have to provide the output size of `foo` s
 
 julia> chunk_size = Val(2) # By specifying the optional chunk size argument, we can use vector inverse mode to propogate derivatives of multiple outputs at once.
        jacobian(Reverse, foo, [1.0, 2.0], output_size, chunk_size)
-2×2 Matrix{Float64}:
+2×2 transpose(::Matrix{Float64}) with eltype Float64:
  -400.0  200.0
     2.0    1.0
 
