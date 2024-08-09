@@ -84,6 +84,7 @@ Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false)
 
 include("abi.jl")
 include("typetree.jl")
+include("utils.jl")
 
 @static if Enzyme.EnzymeRules.issupported()
     include("rules.jl")
@@ -3698,4 +3699,3 @@ end
 
 
 end
-
