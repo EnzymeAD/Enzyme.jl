@@ -628,7 +628,7 @@ end
     for i in 1:N
         @inbounds expr[i] = quote
             begin
-                dv = dptrs[$i]
+                dv = ptrs[$i]
                 getfield(dv isa Base.RefValue ? dv[] : dv, symname)
             end
         end
