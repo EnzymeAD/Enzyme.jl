@@ -184,7 +184,7 @@ julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
 julia> output_size = Val(2) # here we have to provide the output size of `foo` since it cannot be statically inferred
        jacobian(Reverse, foo, [1.0, 2.0], output_size) 
-2×2 Matrix{Float64}:
+2×2 transpose(::Matrix{Float64}) with eltype Float64:
  -400.0  200.0
     2.0    1.0
 
@@ -217,7 +217,7 @@ julia> f(x) = sin(x[1] * x[2]);
 
 julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
 2-element Vector{Float64}:
- 19.6926882637302
+ 19.69268826373025
  16.201003759768003
 ```
 
@@ -232,7 +232,7 @@ julia> hvp!(res, f, [2.0, 3.0], [5.0, 2.7]);
 
 julia> res
 2-element Vector{Float64}:
- 19.6926882637302
+ 19.69268826373025
  16.201003759768003
 ```
 
@@ -249,7 +249,7 @@ julia> hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
 
 julia> res
 2-element Vector{Float64}:
- 19.6926882637302
+ 19.69268826373025
  16.201003759768003
 
 julia> grad
