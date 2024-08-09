@@ -1067,7 +1067,7 @@ end
     else
         mexprs = Vector{Expr}(undef, width)
         for w in 1:width
-            @inbounds mexprs[i] = :(tape.shadow_return[$w][])
+            @inbounds mexprs[w] = :(tape.shadow_return[$w][])
         end
         quote
             ($(mexprs...),)
