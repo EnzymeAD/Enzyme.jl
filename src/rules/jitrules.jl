@@ -767,8 +767,8 @@ end
 
 @generated function primal_tuple(args::Vararg{Annotation, Nargs}) where Nargs
     expr = Vector{Expr}(undef, Nargs)
-    for i in Nargs
-        expr[i] = :(args[$i].val)
+    for i in 1:Nargs
+        @inbounds expr[i] = :(args[$i].val)
     end
     return quote
         Base.@_inline_meta
@@ -777,7 +777,7 @@ end
 end
 
 @generated function shadow_tuple(::Type{Ann}, ::Val{1}, args::Vararg{Annotation, Nargs}) where {Ann, Nargs}
-    expr = Vector{Expr}(Nargs, undef)
+    expr = Vector{Expr}(undef, Nargs)
     for i in 1:Nargs
         expr[i] = quote
             @assert !(args[$i] isa Active)
@@ -801,9 +801,9 @@ end
 end
 
 @generated function shadow_tuple(::Type{Ann}, ::Val{width}, args::Vararg{Annotation, Nargs}) where {Ann, width, Nargs}
-    wexpr = Vector{Expr}(Nargs, undef)
+    wexpr = Vector{Expr}(undef, Nargs)
     for w in 1:width
-        expr = Vector{Expr}(Nargs, undef)
+        expr = Vector{Expr}(undef, Nargs)
         for i in Nargs
             expr[i] = quote
                 @assert !(args[$i] isa Active)
