@@ -1598,9 +1598,6 @@ res
 grad
 # output
 2-element Vector{Float64}:
- 19.6926882637302
- 16.201003759768003
-2-element Vector{Float64}:
  2.880510859951098
  1.920340573300732
 ```
