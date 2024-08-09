@@ -717,7 +717,7 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
 end
 
 @generated function recursive_field_add(::Type{dRT}, vload, ::Val{symname}, dret) where {dRT, symname}
-    N = fieldCount(dRT)
+    N = fieldcount(dRT)
     exprs = Vector{Expr}(undef, N)
     for i in 1:N
         @inbounds exprs[i] = if fieldname(dRT, i) == symname
