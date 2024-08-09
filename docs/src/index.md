@@ -225,6 +225,7 @@ Enzyme also provides an in-place variant which will store the hessian vector pro
 
 ```jldoctest hvp2; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
 julia> f(x) = sin(x[1] * x[2])
+f (generic function with 1 method)
 
 julia> res = Vector{Float64}(undef, 2);
 
