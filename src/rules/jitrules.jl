@@ -1062,18 +1062,15 @@ end
         end
     end
 
-    shadargs = if width == 1
-        :((args..., tape.shadow_return[]))
+    shadargs = Vector{Expr}(undef, width)
+    if width == 1
+        @inbounds shadargs[1] = :(tape.shadow_return[])
     else
-        mexprs = Vector{Expr}(undef, width)
         for w in 1:width
-            @inbounds mexprs[w] = :(tape.shadow_return[$w][])
-        end
-        quote
-            ($(mexprs...),)
+            @inbounds shadargs[w] = :(tape.shadow_return[$w][])
         end
     end
-        
+
     tt = Enzyme.vaEltypes(ttp)
 
     return quote
@@ -1103,13 +1100,12 @@ end
                                      annotation, ttp, Val(API.DEM_ReverseModePrimal), Val($width),
                                      ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
             
-            args2 = if tape.shadow_return !== nothing
-                $shadargs
+            if tape.shadow_return !== nothing
+                adjoint(fa, args..., $(shadargs...), tape.internal_tape)[1]
             else
-                args
+                adjoint(fa, args..., tape.internal_tape)[1]
             end
 
-            adjoint(fa, args2..., tape.internal_tape)[1]
         else
             ($(nontupexprs...),)
         end
