@@ -792,7 +792,7 @@ end
     end
     rval = :(($(expr...),))
     if Ann <: MixedDuplicated
-        rval = :(Ref(rval))
+        rval = :(Ref($rval))
     end
     return quote
         Base.@_inline_meta
@@ -1062,13 +1062,14 @@ end
         end
     end
 
-    shadargs = Vector{Expr}(undef, width)
-    if width == 1
-        @inbounds shadargs[1] = :(tape.shadow_return[])
+    shadargs = if width == 1
+        :(tape.shadow_return[])
     else
+        margs = Vector{Expr}(undef, width)
         for w in 1:width
-            @inbounds shadargs[w] = :(tape.shadow_return[$w][])
+            @inbounds margs[w] = :(tape.shadow_return[$w][])
         end
+        :($(margs...))
     end
 
     tt = Enzyme.vaEltypes(ttp)
@@ -1101,7 +1102,7 @@ end
                                      ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
             
             if tape.shadow_return !== nothing
-                adjoint(fa, args..., $(shadargs...), tape.internal_tape)[1]
+                adjoint(fa, args..., $shadargs, tape.internal_tape)[1]
             else
                 adjoint(fa, args..., tape.internal_tape)[1]
             end
