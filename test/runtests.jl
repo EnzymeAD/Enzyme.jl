@@ -3693,6 +3693,10 @@ end
         include("ext/chainrulescore.jl")
     end
     include("ext/logexpfunctions.jl")
+
+    @testset "BFloat16s ext" begin
+        include("ext/bfloat16s.jl")
+    end
 end
 
 
