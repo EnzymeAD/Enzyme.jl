@@ -823,7 +823,7 @@ end
 function EnzymeRules.forward(func::Const{Colon},
                              RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
                                               BatchDuplicated,BatchDuplicatedNoNeed}},
-                             start::Annotation, step::Annotation, stop::Annotation)
+                             start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
     ret = func.val(start.val, step.val, stop.val)
     dstart = if start isa Const
         zero(eltype(ret))

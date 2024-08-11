@@ -5488,6 +5488,8 @@ function no_type_setting(@nospecialize(specTypes); world=nothing)
     return (false, false)
 end
 
+const DumpPreOpt = Ref(false)
+
 function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                  libraries::Bool=true, deferred_codegen::Bool=true, optimize::Bool=true, toplevel::Bool=true,
                  strip::Bool=false, validate::Bool=true, only_entry::Bool=false, parent_job::Union{Nothing, CompilerJob} = nothing)
@@ -6084,6 +6086,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
+    if DumpPreOpt[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end
+
     # Run early pipeline
     optimize!(mod, target_machine)
 
@@ -6676,15 +6682,13 @@ end
         end
 
         if !RawCall && !(CC <: PrimalErrorThunk)
-            if rettype <: Active 
+            if rettype <: Active || rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
                 if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
                     return quote
-                        throw(MethodError($CC(fptr), (fn, args...)))
-                    end
-                end
-            elseif rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
-                if length(argtypes) + is_adjoint * width + needs_tape != length(argexprs)
-                    return quote
+                        @show $width
+                        @show $(length(argtypes)), $is_adjoint, $needs_tape, $(length(argexprs))
+                        @show $argtypes
+                        @show $argexprs
                         throw(MethodError($CC(fptr), (fn, args...)))
                     end
                 end
@@ -6879,15 +6883,8 @@ end
                     NTuple{width, jlRT}
                 end
                 push!(types, j_drT)
-                if width == 1 || rettype <: Active
-                    push!(ccexprs, argexprs[i])
-                    i+=1
-                else
-                    push!(ccexprs, quote
-                        ($(argexprs[i:i+width-1]...),)
-                    end)
-                    i+=width
-                end
+                push!(ccexprs, argexprs[i])
+                i+=1
             end
         end
 

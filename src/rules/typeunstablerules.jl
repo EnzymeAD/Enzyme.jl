@@ -598,6 +598,47 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     return false
 end
 
+@generated function ntuple_ref_zero(::Val{N}, ::Type{RT}, res) where {N, RT}
+    expr = Vector{Expr}(undef, N)
+    fill!(expr, :(Ref{$RT}(make_zero(res))))
+    return quote
+        Base.@_inline_meta
+        ($(expr...),)
+    end
+end
+
+@generated function ntuple_ref_lookup(::Val{N}, ::Type{RT}, dptrs, symname) where {N, RT}
+    expr = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds expr[i] = quote
+            begin
+                dv = dptrs[$i]
+                Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
+            end
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(expr...),)
+    end
+end
+
+@generated function ntuple_lookup(::Val{N}, ptrs, symname) where {N}
+    expr = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds expr[i] = quote
+            begin
+                dv = ptrs[$i]
+                getfield(dv isa Base.RefValue ? dv[] : dv, symname)
+            end
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(expr...),)
+    end
+end
+
 function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {NT, T, T2, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname)
@@ -611,41 +652,27 @@ function rt_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isco
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
         else
-            return NT(ntuple(Val(1+length(dptrs))) do i
-                Base.@_inline_meta
-                Ref{RT}(make_zero(res))
-            end)
+            return NT(ntuple_ref_zero(Val(1+length(dptrs)), RT, res))
         end
     elseif actreg == MixedState
         if length(dptrs) == 0
             return Ref{RT}(res)
         else
-            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                dv = dptrs[i]
-                Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname))
-            end)...))
+            fval = NT((Ref{RT}(res), ntuple_ref_lookup(Val(length(dptrs)), RT, dptrs, symname)...))
             return fval
         end
     elseif isconst
         if length(dptrs) == 0
             return make_zero(res)
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                make_zero(res)
-            end)...))
+            fval = NT((res, ntuple_ref_zero(Val(length(dptrs)), RT, res)...))
             return fval
         end
     else
         if length(dptrs) == 0
             return res
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                dv = dptrs[i]
-                getfield(dv isa Base.RefValue ? dv[] : dv, symname)
-            end)...))
+            fval = NT((res, ntuple_lookup(Val(length(dptrs)), dptrs, symname)...))
             return fval
         end
     end
@@ -663,43 +690,46 @@ function idx_jl_getfield_aug(::Val{NT}, dptr::T, ::Type{Val{symname}}, ::Val{isc
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
         else
-            return NT(ntuple(Val(1+length(dptrs))) do i
-                Base.@_inline_meta
-                Ref{RT}(make_zero(res))
-            end)
+            return NT(ntuple_ref_zero(Val(1+length(dptrs)), RT, res))
         end
     elseif actreg == MixedState
         if length(dptrs) == 0
             return Ref{RT}(res)
         else
-            fval = NT((Ref{RT}(res), (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                dv = dptrs[i]
-                Ref{RT}(getfield(dv isa Base.RefValue ? dv[] : dv, symname+1))
-            end)...))
+            fval = NT((Ref{RT}(res), ntuple_ref_lookup(Val(length(dptrs)), RT, dptrs, symname+1)...))
             return fval
         end
     elseif isconst
         if length(dptrs) == 0
             return make_zero(res)::Any
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                make_zero(res)
-            end)...))
+            fval = NT((res, ntuple_ref_zero(Val(length(dptrs)), RT, res)...))
             return fval
         end
     else
         if length(dptrs) == 0
             return res::Any
         else
-            fval = NT((res, (ntuple(Val(length(dptrs))) do i
-                Base.@_inline_meta
-                dv = dptrs[i]
-                getfield(dv isa Base.RefValue ? dv[] : dv, symname+1)
-            end)...))
+            fval = NT((res, ntuple_lookup(Val(length(dptrs)), dptrs, symname+1)...))
             return fval
         end
+    end
+end
+
+@generated function recursive_field_add(::Type{dRT}, vload, ::Val{symname}, dret) where {dRT, symname}
+    N = fieldcount(dRT)
+    exprs = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds exprs[i] = if fieldname(dRT, i) == symname
+            :(recursive_add(getfield(vload, $i), dret, identity, guaranteed_nonactive))
+        else
+            :(getfield(vload, $i))
+        end
+    end
+    res = Expr(:splatnew, dRT, :(($(exprs...)),))
+    return quote
+        Base.@_inline_meta
+        $res
     end
 end
 
@@ -718,15 +748,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
             if dptr isa Base.RefValue
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
-                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do i
-                    Base.@_inline_meta
-                    prev = getfield(vload, i)
-                    if fieldname(dRT, i) == symname
-                        recursive_add(prev, dret[], identity, guaranteed_nonactive)
-                    else
-                        prev
-                    end
-                end)
+                dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[])
             else
                 setfield!(dptr, symname, recursive_add(cur, dret[], identity, guaranteed_nonactive))
             end
@@ -734,15 +756,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
             if dptr isa Base.RefValue
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
-                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
-                    Base.@_inline_meta
-                    prev = getfield(vload, j)
-                    if fieldname(dRT, j) == symname
-                        recursive_add(prev, dret[1][], identity, guaranteed_nonactive)
-                    else
-                        prev
-                    end
-                end)
+                dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[1][])
             else
                 setfield!(dptr, symname, recursive_add(cur, dret[1][]))
             end
@@ -750,15 +764,7 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
                 if dptrs[i] isa Base.RefValue
                     vload = dptrs[i][]
                     dRT = Core.Typeof(vload)
-                    dptrs[i][] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
-                        Base.@_inline_meta
-                        prev = getfield(vload, j)
-                        if fieldname(dRT, j) == symname
-                            recursive_add(prev, dret[1+i][], identity, guaranteed_nonactive)
-                        else
-                            prev
-                        end
-                    end)
+                    dptrs[i][] = recursive_field_add(dRT, vload, Val(symname), dret[1+i][])
                 else
                     curi = if dptr isa Base.RefValue
                        Base.getfield(dptrs[i][], symname)
@@ -771,6 +777,23 @@ function rt_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst},
         end
     end
     return nothing
+end
+
+@generated function recursive_index_add(::Type{dRT}, vload, ::Val{symname}, dret) where {dRT, symname}
+    N = fieldcount(dRT)
+    exprs = Vector{Expr}(undef, N)
+    for i in 1:N
+        @inbounds exprs[i] = if i == symname
+            :(recursive_add(getfield(vload, $i), dret, identity, guaranteed_nonactive))
+        else
+            :(getfield(vload, $i))
+        end
+    end
+    res = Expr(:splatnew, dRT, :(($(exprs...)),))
+    return quote
+        Base.@_inline_meta
+        $res
+    end
 end
 
 function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
@@ -788,15 +811,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
             if dptr isa Base.RefValue
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
-                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do i
-                    Base.@_inline_meta
-                    prev = getfield(vload, i)
-                    if i == symname+1
-                        recursive_add(prev, dret[], identity, guaranteed_nonactive)
-                    else
-                        prev
-                    end
-                end)
+                dptr[] = recursive_index_add(dRT, vload, Val(symname+1), dret[])
             else
                 setfield!(dptr, symname+1, recursive_add(cur, dret[], identity, guaranteed_nonactive))
             end
@@ -804,15 +819,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
             if dptr isa Base.RefValue
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
-                dptr[] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
-                    Base.@_inline_meta
-                    prev = getfield(vload, j)
-                    if j == symname+1
-                        recursive_add(prev, dret[1][], identity, guaranteed_nonactive)
-                    else
-                        prev
-                    end
-                end)
+                dptr[] = recursive_index_add(dRT, vload, Val(symname+1), dret[1][])
             else
                 setfield!(dptr, symname+1, recursive_add(cur, dret[1][], identity, guaranteed_nonactive))
             end
@@ -820,15 +827,7 @@ function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}
                 if dptrs[i] isa Base.RefValue
                     vload = dptrs[i][]
                     dRT = Core.Typeof(vload)
-                    dptrs[i][] = splatnew(dRT, ntuple(Val(fieldcount(dRT))) do j
-                        Base.@_inline_meta
-                        prev = getfield(vload, j)
-                        if j == symname+1
-                            recursive_add(prev, dret[1+i][], identity, guaranteed_nonactive)
-                        else
-                            prev
-                        end
-                    end)
+                    dptrs[i][] = recursive_index_add(dRT, vload, Val(symname+1), dret[1+i][])
                 else
                     curi = if dptr isa Base.RefValue
                        Base.getfield(dptrs[i][], symname+1)
