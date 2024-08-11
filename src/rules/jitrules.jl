@@ -435,12 +435,6 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         @inbounds Types[i] = Symbol("type_$i")
     end
 
-    mixedadjoint = if Width == 1
-        :(adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1])
-    else
-        :(adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret..., tape.internal_tape)[1])
-    end
-
     quote
         $(active_refs...)
         args = ($(wrapped...),)
@@ -470,10 +464,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
 
-        tup = if annotation0 <: Active
+        tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
-        elseif annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
-            $mixedadjoint
         else
             adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
         end
@@ -779,7 +771,7 @@ end
 @generated function shadow_tuple(::Type{Ann}, ::Val{1}, args::Vararg{Annotation, Nargs}) where {Ann, Nargs}
     expr = Vector{Expr}(undef, Nargs)
     for i in 1:Nargs
-        expr[i] = quote
+        @inbounds expr[i] = quote
             @assert !(args[$i] isa Active)
             if args[$i] isa Const
                 args[$i].val
@@ -801,15 +793,15 @@ end
 end
 
 @generated function shadow_tuple(::Type{Ann}, ::Val{width}, args::Vararg{Annotation, Nargs}) where {Ann, width, Nargs}
-    wexpr = Vector{Expr}(undef, Nargs)
+    wexpr = Vector{Expr}(undef, width)
     for w in 1:width
         expr = Vector{Expr}(undef, Nargs)
-        for i in Nargs
-            expr[i] = quote
+        for i in 1:Nargs
+            @inbounds expr[i] = quote
                 @assert !(args[$i] isa Active)
                 if args[$i] isa Const
                     args[$i].val
-                elseif args[$i] isa MixedDuplicated
+                elseif args[$i] isa BatchMixedDuplicated
                     args[$i].dval[$w][]
                 else 
                     args[$i].dval[$w]
@@ -817,10 +809,10 @@ end
             end
         end
         rval = :(($(expr...),))
-        if Ann <: MixedDuplicated
-            rval = :(Ref(rval))
+        if Ann <: BatchMixedDuplicated
+            rval = :(Ref($rval))
         end
-        wexpr[w] = rval
+        @inbounds wexpr[w] = rval
     end
 
     return quote
@@ -1036,59 +1028,60 @@ end
         end
     end
 
-    annotation = if width != 1
-        quote
-            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-                BatchDuplicated{rt, $width}
-            elseif annotation0 <: MixedDuplicated
-                BatchMixedDuplicated{rt, $width}
-            elseif annotation0 <: Active
-                Active{rt}
-            else
-                Const{rt}
+    tgen = if FT == typeof(Base.tuple)
+        :(tup = ($(nontupexprs...),))
+    else
+        annotation = if width != 1
+            quote
+                if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                    BatchDuplicated{rt, $width}
+                elseif annotation0 <: MixedDuplicated
+                    BatchMixedDuplicated{rt, $width}
+                elseif annotation0 <: Active
+                    Active{rt}
+                else
+                    Const{rt}
+                end
+            end
+        else
+            quote
+                if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                    Duplicated{rt}
+                elseif annotation0 <: MixedDuplicated
+                    MixedDuplicated{rt}
+                elseif annotation0 <: Active
+                    Active{rt}
+                else
+                    Const{rt}
+                end
             end
         end
-    else
-        quote
-            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-                Duplicated{rt}
-            elseif annotation0 <: MixedDuplicated
-                MixedDuplicated{rt}
-            elseif annotation0 <: Active
-                Active{rt}
-            else
-                Const{rt}
+
+        shadadj = if width == 1
+            :(adjoint(fa, args..., tape.shadow_return[], tape.internal_tape)[1])
+        else
+            margs = Vector{Expr}(undef, width)
+            for w in 1:width
+                @inbounds margs[w] = :(tape.shadow_return[$w][])
             end
+            :(adjoint(fa, args..., ($(margs...),), tape.internal_tape)[1])
         end
-    end
 
-    shadargs = if width == 1
-        :(tape.shadow_return[])
-    else
-        margs = Vector{Expr}(undef, width)
-        for w in 1:width
-            @inbounds margs[w] = :(tape.shadow_return[$w][])
-        end
-        :($(margs...))
-    end
+        tt = Enzyme.vaEltypes(ttp)
 
-    tt = Enzyme.vaEltypes(ttp)
+        quote
+            ReturnPrimal = Val(true)
+            ModifiedBetween = Val($ModifiedBetween0)
 
-    return quote
-        ReturnPrimal = Val(true)
-        ModifiedBetween = Val($ModifiedBetween0)
+            dupClosure = $dupClosure0 && !guaranteed_const($FT)
+            FA = dupClosure ? Duplicated{$FT} : Const{$FT}
 
-        dupClosure = $dupClosure0 && !guaranteed_const($FT)
-        FA = dupClosure ? Duplicated{$FT} : Const{$FT}
+            tt    = $tt
 
-        tt    = $tt
+            rt = Core.Compiler.return_type(f, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
-        rt = Core.Compiler.return_type(f, tt)
-        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-        annotation = $annotation
-
-        tup = if f != Base.tuple
+            annotation = $annotation
             world = codegen_world_age(FT, tt)
 
             fa = if dupClosure
@@ -1098,19 +1091,19 @@ end
             end
             opt_mi = Val(world)
             forward, adjoint = thunk(opt_mi, FA,
-                                     annotation, ttp, Val(API.DEM_ReverseModePrimal), Val($width),
+                                     annotation, $ttp, Val(API.DEM_ReverseModePrimal), Val($width),
                                      ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
             
-            if tape.shadow_return !== nothing
-                adjoint(fa, args..., $shadargs, tape.internal_tape)[1]
+            tup = if tape.shadow_return !== nothing
+                $shadadj
             else
                 adjoint(fa, args..., tape.internal_tape)[1]
             end
-
-        else
-            ($(nontupexprs...),)
         end
+    end
 
+    return quote
+        $tgen
         $(endexprs...)
         nothing
     end
