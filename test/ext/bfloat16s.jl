@@ -2,8 +2,6 @@ using Enzyme
 using Test
 using BFloat16s
 
-Enzyme.API.printall!(true)
-
 msum(x) = sum(x)
 
 @test Enzyme.gradient(Reverse, msum, ones(BFloat16, 10)) ≈ ones(BFloat16, 10)
