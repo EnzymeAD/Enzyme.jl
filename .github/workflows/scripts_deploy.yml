@@ -16,11 +16,14 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
+      - uses: julia-actions/cache@v1
       - run: |
           julia --project=docs -e '
             using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.develop([PackageSpec(path="lib/EnzymeCore"), PackageSpec(path=pwd()), PackageSpec(path="lib/EnzymeTestUtils")])
             Pkg.instantiate()'
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - run: |
           julia --project=docs -e '
             using Documenter: DocMeta, doctest
@@ -28,12 +31,3 @@ jobs:
             DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
             doctest(Enzyme)'
       - run: julia --project=docs docs/make.jl
-
-      - uses: wsmoses/action-deploy-scripts@main
-        with:
-          locker: 'enzyme-compiler'
-          remote: julia
-          privateKey: ${{ secrets.SCRIPTS_PRIVATE_KEY }}
-          rmRemote: true
-          local: docs/build
-

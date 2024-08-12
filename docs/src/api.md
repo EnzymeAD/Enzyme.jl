@@ -1,22 +1,22 @@
-# API
+# API reference
 
 ## Types and constants
 
 ```@index
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
 Order = [:type, :constant]
 ```
 
 ## Functions and macros
 
 ```@index
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
 Order = [:macro, :function]
 ```
 
-# Documentation
+## Documentation
 
 ```@autodocs
-Modules = [Enzyme]
+Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
 Order = [:module, :type, :constant, :macro, :function]
 ```

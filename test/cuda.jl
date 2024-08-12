@@ -11,7 +11,7 @@ function mul_kernel(A)
 end
 
 function grad_mul_kernel(A, dA)
-    Enzyme.autodiff_deferred(mul_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, mul_kernel, Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -34,7 +34,7 @@ function exp_kernel(A)
 end
 
 function grad_exp_kernel(A, dA)
-    Enzyme.autodiff_deferred(exp_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, exp_kernel, Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -57,7 +57,7 @@ function cos_kernel(A)
 end
 
 function grad_cos_kernel(A, dA)
-    Enzyme.autodiff_deferred(cos_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, cos_kernel, Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -75,8 +75,8 @@ function val_kernel!(_, ::Val{N}) where N
     return nothing
 end
 
-function dval_kernel!(du, ::Val{N}) where N
-    Enzyme.autodiff_deferred(val_kernel!, Const, du, Val(N))
+function dval_kernel!(du, ::Val{N}) where {N}
+    autodiff_deferred(Reverse, val_kernel!, Const, du, Const(Val(N)))
     return nothing
 end
 
@@ -121,11 +121,12 @@ function ddense!(
   ::Val{nfeat_out}, ::Val{nfeat_in}, ::Val{ndof}
 ) where {nfeat_out, nfeat_in, ndof}
 
-  Enzyme.autodiff_deferred(
+  autodiff_deferred(
+    Reverse,
     dense!,
     Const,
     dfeats_out, dfeats_in, dW, db,
-    Val(nfeat_out), Val(nfeat_in), Val(ndof)
+    Const(Val(nfeat_out)), Const(Val(nfeat_in)), Const(Val(ndof))
   )
   return nothing
 

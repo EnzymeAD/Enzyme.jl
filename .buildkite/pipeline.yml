@@ -1,23 +1,80 @@
 steps:
-  - label: "Julia v1.6"
+  - label: "CUDA Julia v{{matrix.version}}"
+    matrix:
+      setup:
+        version:
+          - "1.10"
     plugins:
       - JuliaCI/julia#v1:
-          version: "1.6"
-      - JuliaCI/julia-test#v1: ~
+          version: "{{matrix.version}}"
     agents:
       queue: "juliagpu"
       cuda: "*"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
+    commands: |
+      echo "--- Setup Julia packages"
+      julia --color=yes -e '
+          import Pkg
+          Pkg.develop(; path = pwd())
+          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+          Pkg.develop(; name = "CUDA")' || exit 3
 
-steps:
-  - label: "Julia v1"
+      echo "+++ Run tests"
+      julia --color=yes test/cuda.jl
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+
+  - label: "AMDGPU Julia v{{matrix.version}}"
+    matrix:
+      setup:
+        version:
+          - "1.10"
     plugins:
       - JuliaCI/julia#v1:
-          version: "1"
-      - JuliaCI/julia-test#v1: ~
+          version: "{{matrix.version}}"
     agents:
       queue: "juliagpu"
-      cuda: "*"
+      rocm: "*"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
+    commands: |
+      echo "--- Setup Julia packages"
+      julia --color=yes -e '
+          import Pkg
+          Pkg.develop(; path = pwd())
+          Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+          Pkg.develop(; name = "AMDGPU")' || exit 3
+
+      echo "+++ Run tests"
+      julia --color=yes test/amdgpu.jl
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+
+  # - label: "Metal Julia v{{matrix.version}}"
+  #   matrix:
+  #     setup:
+  #       version:
+  #         - "1.8"
+  #         - "1.9"
+  #   plugins:
+  #     - JuliaCI/julia#v1:
+  #         version: "{{matrix.version}}"
+  #   agents:
+  #     queue: "juliaecosystem"
+  #     os: "macos"
+  #     arch: "aarch64"
+  #   if: build.message !~ /\[skip tests\]/
+  #   timeout_in_minutes: 60
+  #   commands: |
+  #     echo "--- Setup Julia packages"
+  #     julia --color=yes -e '
+  #         import Pkg
+  #         Pkg.develop(; path = pwd())
+  #         Pkg.develop(; path = joinpath(pwd(), "lib", "EnzymeCore"))
+  #         Pkg.develop(; name = "Metal")' || exit 3
+
+  #     echo "+++ Run tests"
+  #     julia --color=yes test/metal.jl
+  #   env:
+  #     JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager

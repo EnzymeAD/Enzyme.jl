@@ -1,9 +1,17 @@
 pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..")) # add Enzyme to environment stack
+pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..", "lib")) # add EnzymeCore to environment stack
 
 using Enzyme
+using EnzymeCore
+using EnzymeTestUtils
 using Documenter
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+DocMeta.setdocmeta!(EnzymeCore, :DocTestSetup, :(using EnzymeCore); recursive=true)
+DocMeta.setdocmeta!(EnzymeTestUtils, :DocTestSetup, :(using EnzymeTestUtils); recursive=true)
+@eval EnzymeCore begin
+    const Enzyme = $(Enzyme)
+end
 
 # Generate examples
 
@@ -13,7 +21,9 @@ const EXAMPLES_DIR = joinpath(@__DIR__, "..", "examples")
 const OUTPUT_DIR = joinpath(@__DIR__, "src/generated")
 
 examples = Pair{String,String}[
+    "Basics" => "autodiff"
     "Box model" => "box"
+    "Custom rules" => "custom_rule"
 ]
 
 for (_, name) in examples
@@ -24,7 +34,7 @@ end
 examples = [title => joinpath("generated", string(name, ".md")) for (title, name) in examples]
 
 makedocs(;
-    modules=[Enzyme],
+    modules=[Enzyme, EnzymeCore, EnzymeTestUtils],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
     repo="https://github.com/EnzymeAD/Enzyme.jl/blob/{commit}{path}#{line}",
     sitename="Enzyme.jl",
@@ -41,14 +51,14 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Examples" => examples,
-        "API" => "api.md",
-        "Implementing pullbacks" => "pullbacks.md",
-        "For developers" => "dev_docs.md",
-        "Internal API" => "internal_api.md",
+        "FAQ" => "faq.md",
+        "API reference" => "api.md",
+        "Advanced" => [
+            "For developers" => "dev_docs.md",
+            "Internal API" => "internal_api.md",
+        ]
     ],
     doctest = true,
-    linkcheck = true,
-    strict = true,
 )
 
 deploydocs(;
