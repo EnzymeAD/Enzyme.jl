@@ -21,4 +21,6 @@ end
     end
 end
 
+@inline Enzyme._gradient_output(res, x::StaticArray) = similar_type(x)(res)
+
 end

@@ -1108,6 +1108,11 @@ Like [`gradient!`](@ref), except it using deferred mode.
     dx
 end
 
+
+@inline _gradient_output(res, x) = res
+@inline _gradient_output(res, x::AbstractFloat) = res
+@inline _gradient_output(res, x::AbstractArray) = collect(res)
+
 """
     gradient(::ForwardMode, f, x; shadow=onehot(x))
 
@@ -1134,11 +1139,7 @@ grad = gradient(Forward, f, [2.0, 3.0])
         return ()
     end
     res = values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
+    _gradient_output(res, x)
 end
 
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
@@ -1185,23 +1186,20 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
         values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     res = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
+    _gradient_output(res, x)
 end
 
 @inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
     res = ntuple(length(shadow)) do i
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
+    _gradient_output(res, x)
 end
+
+@inline _jacobian_output(cols, x::AbstractFloat) = cols[1]
+# this doesn't use Base.stack for sake of StaticArrays
+@inline _jacobian_output(cols, x::AbstractArray) = reduce(hcat, cols)
+@inline _jacobian_output(cols, x) = cols
 
 """
     jacobian(::ForwardMode, f, x; shadow=onehot(x))
@@ -1237,31 +1235,7 @@ of shape `size(input)` of values of the output type.
     else
         values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
     end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
+    _jacobian_output(cols, x)
 end
 
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
@@ -1273,31 +1247,7 @@ end
         values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     cols = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
+    _jacobian_output(cols, x)
 end
 
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
@@ -1305,31 +1255,7 @@ end
         Base.@_inline_meta
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
+    _jacobian_output(cols, x)
 end
 
 """
@@ -1494,6 +1420,7 @@ end
     end
 end
 
+#WARN: this seems broken, doesn't have ReverseMode constructor
 @inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten}
     res = f(x)
     jac = if res isa AbstractArray
