@@ -2776,14 +2776,16 @@ end
 
     x = @SVector [1.0, 2.0, 3.0]
     y = onehot(x)
-    @test eltype(y) ≡ SVector{3,Float64}
+    # this should be a very specific type of SArray, but there
+    # is a bizarre issue with older julia versions where it can be MArray
+    @test eltype(y) <: StaticVector
     @test length(y) == 3
     @test y[1] == [1.0, 0.0, 0.0]
     @test y[2] == [0.0, 1.0, 0.0]
     @test y[3] == [0.0, 0.0, 1.0]
 
     y = onehot(x, 2, 3)
-    @test eltype(y) ≡ SVector{3,Float64}
+    @test eltype(y) <: StaticVector
     @test length(y) == 2
     @test y[1] == [0.0, 1.0, 0.0]
     @test y[2] == [0.0, 0.0, 1.0]
