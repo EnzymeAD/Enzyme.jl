@@ -1196,10 +1196,12 @@ end
     _gradient_output(res, x)
 end
 
-@inline _jacobian_output(cols, x::AbstractFloat) = cols[1]
-# this doesn't use Base.stack for sake of StaticArrays
-@inline _jacobian_output(cols, x::AbstractArray) = reduce(hcat, cols)
-@inline _jacobian_output(cols, x) = cols
+@inline _jacobian_output(cols, col1, x::Number) = cols[1]
+@inline _jacobian_output(cols, col1::Number, x::AbstractArray) = collect(cols)
+@inline function _jacobian_output(cols, col1::AbstractArray, x::AbstractArray)
+    reshape(reduce(hcat, cols), size(col1)..., size(x)...)
+end
+@inline _jacobian_output(cols, col1, x) = cols
 
 """
     jacobian(::ForwardMode, f, x; shadow=onehot(x))
@@ -1235,7 +1237,7 @@ of shape `size(input)` of values of the output type.
     else
         values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
     end
-    _jacobian_output(cols, x)
+    _jacobian_output(cols, cols[1], x)
 end
 
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
@@ -1247,7 +1249,7 @@ end
         values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     cols = tupleconcat(tmp...)
-    _jacobian_output(cols, x)
+    _jacobian_output(cols, cols[1], x)
 end
 
 @inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
@@ -1255,7 +1257,7 @@ end
         Base.@_inline_meta
         autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
-    _jacobian_output(cols, x)
+    _jacobian_output(cols, cols[1], x)
 end
 
 """

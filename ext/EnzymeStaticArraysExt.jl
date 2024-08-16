@@ -23,4 +23,12 @@ end
 
 @inline Enzyme._gradient_output(res, x::StaticArray) = similar_type(x)(res)
 
+@inline _combine_size(::Size{s1}, ::Size{s2}) where {s1,s2} = Size{(s1..., s2...)}()
+
+@inline Enzyme._jacobian_output(cols, col1::Number, x::StaticArray) = similar_type(x)(cols)
+
+@inline function Enzyme._jacobian_output(cols, cols1::StaticArray, x::StaticArray)
+    reshape(reduce(hcat, cols), _combine_size(Size(cols1), Size(x)))
+end
+
 end
