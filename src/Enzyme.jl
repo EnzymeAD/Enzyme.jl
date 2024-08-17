@@ -783,7 +783,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA, TT.parameters...}, API.DEM_ReverseModeGradient, width,
         Compiler.remove_innerty(A), true, #=abiwrap=#false, ModifiedBetweenT,
-        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI
+        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI, #=errifwritte=#false
     )
     job    = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel=false))
 
