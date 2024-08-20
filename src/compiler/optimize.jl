@@ -701,6 +701,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if addr == 11 && isa(v, LLVM.ConstantExpr)
                         if opcode(v) == LLVM.API.LLVMAddrSpaceCast
                             v2 = operands(v)[1]
+                            if addrspace(value_type(v2)) == 10
+                                return v2, offset, hasload
+                            end
                             if addrspace(value_type(v2)) == 0
                                 if addr == 11
                                     v2 = const_addrspacecast(v2, LLVM.PointerType(eltype(value_type(v)), 10))
