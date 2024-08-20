@@ -3268,6 +3268,54 @@ end
     end
 end
 
+@inline function uns_mymean(f, A, ::Type{T}, c) where T
+    c && return Base.inferencebarrier(nothing)
+    x1 = f(@inbounds A[1]) / 1
+    return @inbounds A[1][1]
+end
+
+function uns_sum2(x::Array{T})::T where T
+    op = Base.add_sum
+    itr = x
+    y = iterate(itr)::Tuple{T, Int}
+    v = y[1]::T
+    while true
+        y = iterate(itr, y[2])
+        y === nothing && break
+        v = (v + y[1])::T
+    end
+    return v
+end
+
+function uns_ad_forward(scale_diag::Vector{T}, c) where T 
+    ccall(:jl_, Cvoid, (Any,), scale_diag) 
+    res = uns_mymean(uns_sum2, [scale_diag,], T, c)
+	return res
+end
+
+@testset "Split box float32" begin
+    q = ones(Float32, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float32[1.0]
+    q = ones(Float64, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float64[1.0]
+end
+
 @static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
 @inline extract_bc(bc, ::Val{:north}) = (bc.north)
 @inline extract_bc(bc, ::Val{:top}) = (bc.top)
