@@ -66,13 +66,7 @@ end
 function EnzymeRules.inactive(::typeof(Core.kwfunc), args...)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Random.rand), ::Random.AbstractRNG, ::Random.Sampler)
-    return nothing
-end
 function EnzymeRules.inactive(::typeof(Random.rand!), ::Random.AbstractRNG, ::Random.Sampler, ::AbstractArray)
-    return nothing
-end
-function EnzymeRules.inactive(::typeof(Random.randn), args...)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.randn!), args...)

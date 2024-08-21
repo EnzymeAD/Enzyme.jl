@@ -1445,7 +1445,7 @@ end
 function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
 
     if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return nothing
@@ -1562,7 +1562,7 @@ end
 function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
 
     if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return nothing
@@ -1759,7 +1759,7 @@ end
 function common_apply_iterate_rev(offset, B, orig, gutils, tape)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
 
     if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return nothing
@@ -1882,7 +1882,7 @@ end
 function common_invoke_rev(offset, B, orig, gutils, tape)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
-    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
 
     if (is_constant_value(gutils, orig) || needsShadowP[] == 0 ) && is_constant_inst(gutils, orig)
         return nothing

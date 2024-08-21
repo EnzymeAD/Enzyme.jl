@@ -2774,6 +2774,22 @@ end
     @test dx isa SArray
     @test dx ≈ [0 30 0]
 
+    x = @SVector [1.0, 2.0, 3.0]
+    y = onehot(x)
+    # this should be a very specific type of SArray, but there
+    # is a bizarre issue with older julia versions where it can be MArray
+    @test eltype(y) <: StaticVector
+    @test length(y) == 3
+    @test y[1] == [1.0, 0.0, 0.0]
+    @test y[2] == [0.0, 1.0, 0.0]
+    @test y[3] == [0.0, 0.0, 1.0]
+
+    y = onehot(x, 2, 3)
+    @test eltype(y) <: StaticVector
+    @test length(y) == 2
+    @test y[1] == [0.0, 1.0, 0.0]
+    @test y[2] == [0.0, 0.0, 1.0]
+
 @static if VERSION ≥ v"1.9-" 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Forward, prod, x)
@@ -3266,6 +3282,54 @@ end
     else
         @test res[2] ≈ 1.0
     end
+end
+
+@inline function uns_mymean(f, A, ::Type{T}, c) where T
+    c && return Base.inferencebarrier(nothing)
+    x1 = f(@inbounds A[1]) / 1
+    return @inbounds A[1][1]
+end
+
+function uns_sum2(x::Array{T})::T where T
+    op = Base.add_sum
+    itr = x
+    y = iterate(itr)::Tuple{T, Int}
+    v = y[1]::T
+    while true
+        y = iterate(itr, y[2])
+        y === nothing && break
+        v = (v + y[1])::T
+    end
+    return v
+end
+
+function uns_ad_forward(scale_diag::Vector{T}, c) where T 
+    ccall(:jl_, Cvoid, (Any,), scale_diag) 
+    res = uns_mymean(uns_sum2, [scale_diag,], T, c)
+	return res
+end
+
+@testset "Split box float32" begin
+    q = ones(Float32, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float32[1.0]
+    q = ones(Float64, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float64[1.0]
 end
 
 @static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
