@@ -100,6 +100,7 @@ module FFI
             "jl_array_isassigned", "ijl_array_isassigned",
             "jl_array_ptr_copy", "ijl_array_ptr_copy",
             "jl_array_typetagdata", "ijl_array_typetagdata",
+            "jl_idtable_rehash"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)

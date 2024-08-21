@@ -66,13 +66,7 @@ end
 function EnzymeRules.inactive(::typeof(Core.kwfunc), args...)
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Random.rand), ::Random.AbstractRNG, ::Random.Sampler)
-    return nothing
-end
 function EnzymeRules.inactive(::typeof(Random.rand!), ::Random.AbstractRNG, ::Random.Sampler, ::AbstractArray)
-    return nothing
-end
-function EnzymeRules.inactive(::typeof(Random.randn), args...)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.randn!), args...)
@@ -268,7 +262,7 @@ end
 
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk = autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     TapeType = EnzymeRules.tape_type(fwd_thunk)
@@ -293,7 +287,7 @@ end
 
 function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk =  autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     Enzyme.pmap(pmap_rev, count.val, tapes, rev_thunk, body, args...)
@@ -823,7 +817,7 @@ end
 function EnzymeRules.forward(func::Const{Colon},
                              RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
                                               BatchDuplicated,BatchDuplicatedNoNeed}},
-                             start::Annotation, step::Annotation, stop::Annotation)
+                             start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
     ret = func.val(start.val, step.val, stop.val)
     dstart = if start isa Const
         zero(eltype(ret))

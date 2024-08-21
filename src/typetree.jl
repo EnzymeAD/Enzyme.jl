@@ -111,12 +111,13 @@ function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
+@static if VERSION >= v"1.11-"
+function typetree_inner(::Type{Core.BFloat16}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_BFloat16, -1, ctx)
+end
 end
 
-function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:AbstractFloat}
-    GPUCompiler.@safe_warn "Unknown floating point type" T
+function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
@@ -217,6 +218,10 @@ function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
         if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
             return TypeTree()
         end
+    end
+
+    if T <: AbstractFloat
+        throw(AssertionError("Unknown floating point type $T"))
     end
 
     try

@@ -144,10 +144,10 @@ end
     @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -156,7 +156,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI)
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -167,7 +167,7 @@ end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI)
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false))
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -176,7 +176,7 @@ end
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI)
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI, Val(false))
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -261,11 +261,9 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
     
-    Enzyme.API.printall!(true)
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
-    Enzyme.API.printall!(false)
     @test occursin("diffe",fn)
     if count("call fastcc void @diffejulia__mapreduce", fn) != 1
         println(sprint() do io
@@ -937,7 +935,7 @@ function grad_closure(f, x)
     dy = zeros(n)
     dy[1] = 1.0
 
-    autodiff(Reverse, noretval, Duplicated(x,dx), Duplicated(y, dy))
+    autodiff(Reverse, Const(noretval), Duplicated(x,dx), Duplicated(y, dy))
     return dx
 end
 
@@ -1060,7 +1058,7 @@ end
     @test res.y == nothing
 end
 
-@testset "Methoe errors" begin
+@testset "Method errors" begin
      fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
      @test_throws MethodError fwd(ones(10))
      @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
@@ -1167,7 +1165,7 @@ end
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
     Enzyme.API.runtimeActivity!(true)
-	Enzyme.autodiff(Enzyme.Reverse, smallrf, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.autodiff(Enzyme.Reverse, Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
@@ -2122,8 +2120,8 @@ end
             -t
             nothing
         end
-        autodiff(Reverse, tobedifferentiated, Duplicated(F, L), Const(false))
-        autodiff(Forward, tobedifferentiated, Duplicated(F, L), Const(false))
+        autodiff(Reverse, Const(tobedifferentiated), Duplicated(F, L), Const(false))
+        autodiff(Forward, Const(tobedifferentiated), Duplicated(F, L), Const(false))
     end
 
     main()
@@ -2496,7 +2494,7 @@ end
 @testset "Exception" begin
 
     f_no_derv(x) = ccall("extern doesnotexist", llvmcall, Float64, (Float64,), x)
-    @test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, f_no_derv, Active, Active(0.5))
+    @test_throws Enzyme.Compiler.EnzymeNoDerivativeError autodiff(Reverse, f_no_derv, Active, Active(0.5))
 
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond,x)*x
@@ -2776,6 +2774,22 @@ end
     @test dx isa SArray
     @test dx ≈ [0 30 0]
 
+    x = @SVector [1.0, 2.0, 3.0]
+    y = onehot(x)
+    # this should be a very specific type of SArray, but there
+    # is a bizarre issue with older julia versions where it can be MArray
+    @test eltype(y) <: StaticVector
+    @test length(y) == 3
+    @test y[1] == [1.0, 0.0, 0.0]
+    @test y[2] == [0.0, 1.0, 0.0]
+    @test y[3] == [0.0, 0.0, 1.0]
+
+    y = onehot(x, 2, 3)
+    @test eltype(y) <: StaticVector
+    @test length(y) == 2
+    @test y[1] == [0.0, 1.0, 0.0]
+    @test y[2] == [0.0, 0.0, 1.0]
+
 @static if VERSION ≥ v"1.9-" 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Forward, prod, x)
@@ -2804,6 +2818,131 @@ end
     @test dx ≈ [-1.0, 43.74, 0]
 end
 end
+
+@testset "Simple Jacobian" begin
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0]) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(1)) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(1)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(1)) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(2)) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(2)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(2)) ≈ [4.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(1)) ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(2)) ≈ [1.0, 2.0]
+
+    x = float.(reshape(1:6, 2, 3))
+
+    fillabs2(x) = [sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x), 1000*sum(abs2, x)]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x)
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x, Val(1))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Forward, fillabs2, x, Val(2))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, Val(4), Val(1))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, Val(4), Val(2))
+
+    @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
+    @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
+    @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
+    @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
+
+    struct InpStruct
+        i1::Float64
+        i2::Float64
+        i3::Float64
+    end
+
+    fillinpabs2(x) = [(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 10*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 100*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 1000*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3)]
+
+    x2 = InpStruct(1.0, 2.0, 3.0)
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, Val(4), Val(1))
+
+    @test jac[1] == InpStruct(2.0, 4.0, 6.0)
+    @test jac[2] == InpStruct(20.0, 40.0, 60.0)
+    @test jac[3] == InpStruct(200.0, 400.0, 600.0)
+    @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
+
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, Val(4), Val(2))
+
+    @test jac[1] == InpStruct(2.0, 4.0, 6.0)
+    @test jac[2] == InpStruct(20.0, 40.0, 60.0)
+    @test jac[3] == InpStruct(200.0, 400.0, 600.0)
+    @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
+
+    struct OutStruct
+        i1::Float64
+        i2::Float64
+        i3::Float64
+    end
+
+    filloutabs2(x) = OutStruct(sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x))
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x)
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x, Val(1))
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+    jac = Enzyme.jacobian(Enzyme.Forward, filloutabs2, x, Val(2))
+
+    @test jac[1, 1] == OutStruct(2.0, 20.0, 200.0)
+    @test jac[2, 1] == OutStruct(4.0, 40.0, 400.0)
+
+    @test jac[1, 2] == OutStruct(6.0, 60.0, 600.0)
+    @test jac[2, 2] == OutStruct(8.0, 80.0, 800.0)
+
+    @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
+    @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
+
+end
+
 
 @testset "Jacobian" begin
     function inout(v)
@@ -2855,9 +2994,9 @@ end
     J_r_2(A, x) = Enzyme.jacobian(Reverse, θ -> f_test_2(A, θ), x, Val(5))
     J_r_3(u, A, x) = Enzyme.jacobian(Reverse, θ -> f_test_3!(u, A, θ), x, Val(5))
 
-    J_f_1(A, x) = Enzyme.jacobian(Forward, θ -> f_test_1(A, θ), x)
-    J_f_2(A, x) = Enzyme.jacobian(Forward, θ -> f_test_2(A, θ), x)
-    J_f_3(u, A, x) = Enzyme.jacobian(Forward, θ -> f_test_3!(u, A, θ), x)
+    J_f_1(A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_1(A, θ)), x)
+    J_f_2(A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_2(A, θ)), x)
+    J_f_3(u, A, x) = Enzyme.jacobian(Forward, Const(θ -> f_test_3!(u, A, θ)), x)
 
     x = ones(6)
     A = Matrix{Float64}(LinearAlgebra.I, 5, 5)
@@ -3030,7 +3169,7 @@ end
 
     c = ones(3)
     inner(e) = c .+ e
-    fres = Enzyme.autodiff(Enzyme.Forward, inner, Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
+    fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
 end
@@ -3133,7 +3272,7 @@ end
 	end
 
     Enzyme.API.runtimeActivity!(true)
-	res = autodiff(Forward, f2, Duplicated, Duplicated(0.2, 1.0))
+    res = autodiff(Forward, Const(f2), Duplicated, Duplicated(0.2, 1.0))
     Enzyme.API.runtimeActivity!(false)
     @test res[1] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
@@ -3143,6 +3282,54 @@ end
     else
         @test res[2] ≈ 1.0
     end
+end
+
+@inline function uns_mymean(f, A, ::Type{T}, c) where T
+    c && return Base.inferencebarrier(nothing)
+    x1 = f(@inbounds A[1]) / 1
+    return @inbounds A[1][1]
+end
+
+function uns_sum2(x::Array{T})::T where T
+    op = Base.add_sum
+    itr = x
+    y = iterate(itr)::Tuple{T, Int}
+    v = y[1]::T
+    while true
+        y = iterate(itr, y[2])
+        y === nothing && break
+        v = (v + y[1])::T
+    end
+    return v
+end
+
+function uns_ad_forward(scale_diag::Vector{T}, c) where T 
+    ccall(:jl_, Cvoid, (Any,), scale_diag) 
+    res = uns_mymean(uns_sum2, [scale_diag,], T, c)
+	return res
+end
+
+@testset "Split box float32" begin
+    q = ones(Float32, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float32[1.0]
+    q = ones(Float64, 1)
+    dx = make_zero(q)
+    res, y = Enzyme.autodiff(
+        Enzyme.ReverseWithPrimal,
+        uns_ad_forward,
+        Enzyme.Active,
+        Enzyme.Duplicated(q, dx),
+        Enzyme.Const(false),
+    )
+    @test dx ≈ Float64[1.0]
 end
 
 @static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
@@ -3570,6 +3757,10 @@ end
         include("ext/chainrulescore.jl")
     end
     include("ext/logexpfunctions.jl")
+
+    @testset "BFloat16s ext" begin
+        include("ext/bfloat16s.jl")
+    end
 end
 
 
