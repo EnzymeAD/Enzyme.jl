@@ -2774,6 +2774,22 @@ end
     @test dx isa SArray
     @test dx ≈ [0 30 0]
 
+    x = @SVector [1.0, 2.0, 3.0]
+    y = onehot(x)
+    # this should be a very specific type of SArray, but there
+    # is a bizarre issue with older julia versions where it can be MArray
+    @test eltype(y) <: StaticVector
+    @test length(y) == 3
+    @test y[1] == [1.0, 0.0, 0.0]
+    @test y[2] == [0.0, 1.0, 0.0]
+    @test y[3] == [0.0, 0.0, 1.0]
+
+    y = onehot(x, 2, 3)
+    @test eltype(y) <: StaticVector
+    @test length(y) == 2
+    @test y[1] == [0.0, 1.0, 0.0]
+    @test y[2] == [0.0, 0.0, 1.0]
+
 @static if VERSION ≥ v"1.9-" 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Forward, prod, x)
