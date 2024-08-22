@@ -352,6 +352,31 @@ else
     end
 end
 
+@static if VERSION < v"1.11-"
+    function cpu_features_tm!(pm, tm)
+        @static if isdefined(LLVM.Interop, :cpu_features!)
+                LLVM.Interop.cpu_features!(pm)
+        else
+        @static if isdefined(GPUCompiler, :cpu_features!)
+                GPUCompiler.cpu_features!(pm)
+        end
+        end
+    end
+else
+    function cpu_features_tm!(pm, tm)
+        function cpu_features(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, CPUFeaturesPass())
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("CPUFeatures", cpu_features))
+    end
+end
+
 function addNA(inst, node::LLVM.Metadata, MD)
     md = metadata(inst)
     next = nothing 
@@ -2041,13 +2066,7 @@ function optimize!(mod::LLVM.Module, tm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         dce!(pm)
-@static if isdefined(LLVM.Interop, :cpu_features!)
-        LLVM.Interop.cpu_features!(pm)
-else
-@static if isdefined(GPUCompiler, :cpu_features!)
-        GPUCompiler.cpu_features!(pm)
-end
-end
+        cpu_features_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
