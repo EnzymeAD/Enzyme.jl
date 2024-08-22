@@ -6079,10 +6079,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
 
     # annotate
     annotate!(mod, mode)
-    if haskey(functions(mod), "gpu_report_exception")
-        exc = functions(mod)["gpu_report_exception"]
-        if !isempty(blocks(exc))
-            linkage!(exc, LLVM.API.LLVMExternalLinkage)
+    for name in ("gpu_report_exception", "report_exception")
+        if haskey(functions(mod), name)
+            exc = functions(mod)[name]
+            if !isempty(blocks(exc))
+                linkage!(exc, LLVM.API.LLVMExternalLinkage)
+            end
         end
     end
 
@@ -6097,10 +6099,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         GPUCompiler.optimize_module!(parent_job, mod)
     end
     
-    if haskey(functions(mod), "gpu_report_exception")
-        exc = functions(mod)["gpu_report_exception"]
-        if !isempty(blocks(exc))
-            linkage!(exc, LLVM.API.LLVMInternalLinkage)
+    for name in ("gpu_report_exception", "report_exception")
+        if haskey(functions(mod), name)
+            exc = functions(mod)[name]
+            if !isempty(blocks(exc))
+                linkage!(exc, LLVM.API.LLVMInternalLinkage)
+            end
         end
     end
 
