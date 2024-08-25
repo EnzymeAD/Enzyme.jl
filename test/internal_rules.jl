@@ -133,6 +133,21 @@ end
 
     y = A \ b
     @test dA ≈ (-z * transpose(y))
+
+    # Ensure multi dim doesn't crash
+    function test2!(A)
+        A .= A \ [1.0 0;0.0 1.0]
+        return nothing
+    end
+
+    A = rand(2,2)
+    dA = [1.0 0.0; 0.0 0.0]
+
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        test2!,
+        Enzyme.Duplicated(A,dA),
+    )
 end
 
 function tr_solv(A, B, uplo, trans, diag, idx)
