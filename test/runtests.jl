@@ -782,7 +782,7 @@ end
     @test hess[2][2] ≈ 0.0
 
     function f_ip(x, tmp)
-        tmp .= identity.(x)
+        tmp .= x ./ 2
         return dot(tmp, x)
     end
 
