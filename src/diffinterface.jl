@@ -43,8 +43,6 @@ end
 
 @inline onehot(x::AbstractFloat) = (one(x),)
 
-@inline chunkedonehot(x, ::Val{1}) = onehot(x)
-
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
     sz = length(x)
     num = ((sz + chunk - 1) ÷ chunk)
@@ -54,9 +52,7 @@ end
     end
 end
 
-@inline function chunkedonehot(x::AbstractFloat, ::Val{chunk}) where chunk
-    return ((one(x),),)
-end
+@inline chunkedonehot(x::AbstractFloat, ::Val{chunk}) where chunk = ((one(x),),)
 
 
 
@@ -82,11 +78,6 @@ end
     tupleconcat(tmp...)
 end
 
-@inline function valderivative(mode::ForwardMode, f, x; shadow=onehot(x))
-    (y, df) = autodiff(mode, f, BatchDuplicated, BatchDuplicated(x, shadow))
-    (y, values(df))
-end
-
 @inline function _split_tuple_of_tuples(tpl::Tuple)
     t1 = ntuple(i -> tpl[i][1], length(tpl))
     t2 = ntuple(i -> values(tpl[i][2]), length(tpl))        
@@ -109,11 +100,6 @@ end
                           shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
     df = derivative(mode, f, x, Val(chunk); shadow)
     gradient_output(df, x)
-end
-
-@inline function valgradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
-    (y, df) = valderivative(mode, f, x; shadow)
-    (y, gradient_output(df, x))
 end
 
 #WARN: presumably this is done in this particular way for efficiency, but it's not super clear that
@@ -190,22 +176,25 @@ end
 
 @inline jacobian_output(df, df1, x) = df
 
+#TODO: are you really sure this always works?
+@inline jacobian_output(df, df1, x::Number) = df1
+
+@inline jacobian_output(df, df1::Number, x) = gradient_output(df, x)
+
+# resolves method ambiguity
+@inline jacobian_output(df, df1::Number, x::Number) = df1
+
 # static array packages can overload this
-@inline jacsize(df1::AbstractArray, x::AbstractArray) = (size(x)..., size(df1)...)
+@inline jacsize(dfshape, xshape) = (xshape..., dfshape...)
 
 @inline function jacobian_output(df, df1::AbstractArray, x::AbstractArray)
-    reshape(reduce(hcat, df), jacsize(df1, x))
+    reshape(reduce(hcat, df), jacsize(size(df1), size(x)))
 end
 
 
 @inline function jacobian(mode::ForwardMode, f, x; shadow=onehot(x))
     df = derivative(mode, f, x; shadow)
     jacobian_output(df, df[1], x)
-end
-
-@inline function valjacobian(mode::ForwardMode, f, x; shadow=onehot(x))
-    (y, df) = valderivative(mode, f, x; shadow)
-    (y, jacobian_output(df, df[1], x))
 end
 
 @inline function jacobian(mode::ForwardMode, f::F, x::X, ::Val{chunk};
@@ -217,6 +206,8 @@ end
 #TODO: it's very confusing from an API point of view that Reverse has the ReturnPrimal type
 #paramter, but Forward has to specify whether to do this a completely different way
 
+
+#WARN: obviously all the reverse mode stuff below is completely FUBAR right now
 
 """
     jacobian(::ReverseMode, f, x, ::Val{num_outs}, ::Val{chunk}=Val(1))
@@ -247,7 +238,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X,
+@inline function _OLD_jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X,
                           n_outs::Val{n_out_val},
                           ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten}
     num = ((n_out_val + chunk - 1) ÷ chunk)
@@ -286,6 +277,8 @@ of shape `size(output)` of values of the input type.
                                                   #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false),
                                                   RABI, Val(ErrIfFuncWritten))
     end
+
+    #WARN: need to re-do this stuff
 
     tmp = ntuple(num) do i
         Base.@_inline_meta
@@ -337,14 +330,48 @@ of shape `size(output)` of values of the input type.
     end
 end
 
-#TODO: what about transpose in general case? how does that make sense?
-@inline jacobian_output_rev(df, df1, x) = df
-
-@inline function jacobian_output_rev(df, df1::AbstractArray, x::AbstractArray)
-    reshape(reduce(vcat, map(transpose, df)), jacsize(df1, x))
+#WARN: these are most definitely not done
+@inline function reverse_jacobian_out(shape, df, x::AbstractArray)
+    reshape(cat(df..., dims=length(size(x))), jacsize(shape, size(x)))
+end
+@inline function reverse_jacobian_out(shape, df, x)
+    reshape(collect(df), shape)    
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X,
+function jacobian(mode::ReverseMode{false,RABI,ErrIfFuncWritten}, f::F, x::X, n_outs::Val,
+                  chunks::Val{1}=Val(1)) where {RABI,ErrIfFuncWritten,F,X}
+    XT = Core.Typeof(x) 
+    MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+    tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
+    tt    = Tuple{XT}
+    rt = Core.Compiler.return_type(f, tt)
+    ModifiedBetween = Val((false, false))
+    FA = Const{Core.Typeof(f)}
+    opt_mi = if RABI <: NonGenABI
+        Compiler.fspec(eltype(FA), tt′)
+    else
+        Val(codegen_world_age(Core.Typeof(f), tt))
+    end
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′,
+                                            #=Split=# Val(API.DEM_ReverseModeGradient),
+                                            #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false),
+                                            #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    tmp = ntuple(n_outs) do i
+        Base.@_inline_meta
+        z = make_zero(x)
+        dx = MD ? Ref(z) : z
+        res = primal(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx))
+        tape = res[1]
+        @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
+        adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
+        return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
+    end
+    shape = tmp[1][2]
+    df = map(first, tmp)
+    reverse_jacobian_out(shape, df, x)
+end
+
+@inline function _OLD_jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X,
                           n_outs::Val{n_out_val}, ::Val{1}=Val(1)) where {F, X, n_out_val,RABI<:ABI, ErrIfFuncWritten}
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
