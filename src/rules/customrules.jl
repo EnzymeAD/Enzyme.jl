@@ -422,7 +422,7 @@ end
         end
     end
     
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
     if swiftself
@@ -696,6 +696,8 @@ end
 
     if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa UnionAll) && !(aug_RT isa Union) && !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
+    else
+        TapeT = Any
     end
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -752,7 +754,9 @@ end
         end
     end
 
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    println(string(llvmf))
+
+    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -778,6 +782,12 @@ end
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots = get_return_info(miRT)
+    sret_union = is_sret_union(miRT)
+
+    if sret_union    
+        emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " had a union sret of type "*string(miRT)*" which is not currently supported")
+        return tapeV
+    end
 
     if !forward
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
@@ -786,6 +796,7 @@ end
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (!applicablefn)
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
+            @show "pre tape", tape, TapeT, innerTy
             if innerTy != value_type(tape)
                 if isabstracttype(TapeT) || TapeT isa UnionAll || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
                     msg = sprint() do io
@@ -821,6 +832,7 @@ end
                 end
                 tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
             end
+            @show "post tape", tape, TapeT, innerTy
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
@@ -922,6 +934,7 @@ end
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn")), collect(function_attributes(llvmf))))
 
     if hasNoRet
+        @show "has no ret", llvmf
         return tapeV
     end
 
@@ -960,16 +973,29 @@ end
                 ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadowJL ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
             end
         end
+        abstract = false
         if aug_RT != ST
-            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
-            emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
-            return tapeV
+            abs = (EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, T} where T)
+            if aug_RT <: abs
+                abstract = true
+            else
+                ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
+                emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
+                return tapeV
+            end
+        end
+
+        resV = if abstract
+            StructTy = convert(LLVMType, EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Nothing})
+            load!(B, StructTy, bitcast!(B, res, LLVM.PointerType(StructTy, addrspace(value_type(res)))))
+        else
+            res
         end
 
         idx = 0
         if needsPrimal
             @assert !isghostty(RealRt)
-            normalV = extract_value!(B, res, idx)
+            normalV = extract_value!(B, resV, idx)
             if get_return_info(RealRt)[2] !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
                 store!(B, normalV, val)
@@ -982,7 +1008,7 @@ end
         if needsShadow
             if needsShadowJL
                 @assert !isghostty(RealRt)
-                shadowV = extract_value!(B, res, idx)
+                shadowV = extract_value!(B, resV, idx)
                 if get_return_info(RealRt)[2] !== nothing
                     dval = invert_pointer(gutils, operands(orig)[1], B)
 
@@ -1002,7 +1028,12 @@ end
             end
         end
         if needsTape
-            tapeV = extract_value!(B, res, idx).ref
+            tapeV = if abstract
+                emit_nthfield!(B, res, LLVM.ConstantInt(2)).ref
+            else
+                extract_value!(B, res, idx).ref
+            end
+            @show tapeV, abstract
             idx+=1
         end
     else
@@ -1076,6 +1107,7 @@ end
         return true
     end
     tape = enzyme_custom_common_rev(#=forward=#true, B, orig, gutils, normalR, shadowR, #=tape=#nothing)
+    @show "aug fwd", tape
     if tape != C_NULL
         unsafe_store!(tapeR, tape)
     end
@@ -1086,6 +1118,7 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return
     end
+    @show "rev tape", tape
     enzyme_custom_common_rev(#=forward=#false, B, orig, gutils, #=normalR=#C_NULL, #=shadowR=#C_NULL, #=tape=#tape)
     return nothing
 end

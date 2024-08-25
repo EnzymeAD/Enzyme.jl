@@ -15,6 +15,45 @@ end
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
 
+
+unstabletape(x) = x^2
+
+function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(unstabletape)}, ::Type{<:Active}, x::Active)
+    tape = if x.val < 3
+        400
+    else
+        (x.val +7 ) * 10
+    end
+    @show typeof(tape), tape
+    if needs_primal(config)
+        return AugmentedReturn{eltype(x), Nothing, typeof(tape)}(func.val(x.val), nothing, tape)
+    else
+        return AugmentedReturn{Nothing, Nothing, typeof(tape)}(nothing, nothing, tape)
+    end
+end
+
+function reverse(config::ConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where T
+    @show tape
+    return (T(tape)::T,)
+end
+
+unstabletapesq(x) = unstabletape(x)^2
+
+Enzyme.API.printall!(true)
+
+@testset "Unstable Tape" begin
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletape, Active(2.0))[1][1] ≈ 400.0
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletape, Active(2.0))[1][1] ≈ 400.0
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletape, Active(5.0))[1][1] ≈ (5.0 + 7) * 10
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletape, Active(5.0))[1][1] ≈ (5.0 + 7) * 10
+
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(2.0))[1][1] ≈ 2 * (400.0) * 2.0
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(2.0))[1][1] ≈ 2 * (4.0) * 2.0
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(5.0))[1][1] ≈ 2 * ((5.0 + 7) * 10) * 5.0
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ 2 * ((5.0 + 7) * 10) * 5.0
+end
+
+
 function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
