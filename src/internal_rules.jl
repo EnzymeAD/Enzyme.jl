@@ -327,6 +327,8 @@ end
     return LinearAlgebra.qr(cache_A, ColumnNorm())
 end
 
+@inline onedimensionalize(::Type{T}) where T <: Array = Vector{eltype(T)}
+
 # y=inv(A) B
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
@@ -371,7 +373,7 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
 
 @static if VERSION < v"1.8.0"
     UT = Union{
-        LinearAlgebra.Diagonal{eltype(AT), BT},
+        LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
         LinearAlgebra.LowerTriangular{eltype(AT), AT},
         LinearAlgebra.UpperTriangular{eltype(AT), AT},
         LinearAlgebra.LU{eltype(AT), AT},
@@ -379,11 +381,11 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     }
 else
     UT = Union{
-        LinearAlgebra.Diagonal{eltype(AT), BT},
+        LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
         LinearAlgebra.LowerTriangular{eltype(AT), AT},
         LinearAlgebra.UpperTriangular{eltype(AT), AT},
         LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
-        LinearAlgebra.QRPivoted{eltype(AT), AT, BT, Vector{Int}}
+        LinearAlgebra.QRPivoted{eltype(AT), AT, onedimensionalize(BT), Vector{Int}}
     }
 end
 
