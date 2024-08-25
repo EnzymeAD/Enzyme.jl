@@ -811,7 +811,7 @@ end
     tmp = similar(x)
 
     f_hvp!(hv, x, v, tmp)
-    @test hv ≈ [-2.0]
+    @test hv ≈ [-1.0]
 end
 
 @testset "Array tests" begin
