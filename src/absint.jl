@@ -6,6 +6,11 @@ function absint(arg::LLVM.Value, partial::Bool=false)
        isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
+    if isa(arg, ConstantExpr)
+        if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
+            return absint(operands(arg)[1], partial)
+        end
+    end
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
@@ -92,19 +97,14 @@ function absint(arg::LLVM.Value, partial::Bool=false)
     end
     if isa(arg, ConstantExpr)
         ce = arg
-        while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-                ce = operands(ce)[1]
-            else
-                break
+        if opcode(ce) == LLVM.API.LLVMIntToPtr
+            ce = operands(ce)[1]
+            if isa(ce, LLVM.ConstantInt)
+                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+                typ = Base.unsafe_pointer_to_objref(ptr)
+                return (true, typ)
             end
         end
-        if !isa(ce, LLVM.ConstantInt)
-            return (false, nothing)
-        end
-        ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-        typ = Base.unsafe_pointer_to_objref(ptr)
-        return (true, typ)
     end
 
     if isa(arg, GlobalVariable)    
@@ -154,6 +154,12 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
        isa(arg, LLVM.AddrSpaceCastInst)
         return abs_typeof(operands(arg)[1], partial)
     end
+    if isa(arg, ConstantExpr)
+        if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
+            return abs_typeof(operands(arg)[1], partial)
+        end
+    end
+
 	if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
