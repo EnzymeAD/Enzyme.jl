@@ -862,6 +862,52 @@ function emit_jl!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     call!(B, FT, fn, [val])
 end
 
+function emit_getfield!(B::LLVM.IRBuilder, val::LLVM.Value, fld::LLVM.Value)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type()
+
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+    inv, _ = get_function!(mod, "jl_f_getfield", gen_FT)
+
+    args = [val, fld]
+
+    @static if VERSION < v"1.9.0-"
+        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
+        inv = bitcast!(B, inv, LLVM.PointerType(FT))
+        res = call!(B, FT, inv, args)
+        LLVM.callconv!(res, 37)
+    else
+        julia_call, FT = get_function!(mod, "julia.call",
+            LLVM.FunctionType(T_prjlvalue,
+                              [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
+        res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
+    end
+    return res
+end
+
+
+function emit_nthfield!(B::LLVM.IRBuilder, val::LLVM.Value, fld::LLVM.Value)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)    
+    T_size_t = convert(LLVM.LLVMType, Int)
+
+    gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_size_t])
+    inv, _ = get_function!(mod, "jl_get_nth_field_checked", gen_FT)
+
+    args = [val, fld]
+    call!(B, gen_FT, inv, args)
+end
+
 function emit_jl_throw!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
