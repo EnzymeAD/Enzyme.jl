@@ -422,7 +422,7 @@ end
         end
     end
     
-    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     swiftself = any(any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(llvmf, i)))) for i in 1:length(collect(parameters(llvmf))))
     if swiftself
@@ -754,9 +754,7 @@ end
         end
     end
 
-    println(string(llvmf))
-
-    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -796,7 +794,6 @@ end
             tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (!applicablefn)
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
-            @show "pre tape", tape, TapeT, innerTy
             if innerTy != value_type(tape)
                 if isabstracttype(TapeT) || TapeT isa UnionAll || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
                     msg = sprint() do io
@@ -832,7 +829,6 @@ end
                 end
                 tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
             end
-            @show "post tape", tape, TapeT, innerTy
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
@@ -934,7 +930,6 @@ end
     hasNoRet = any(map(k->kind(k)==kind(EnumAttribute("noreturn")), collect(function_attributes(llvmf))))
 
     if hasNoRet
-        @show "has no ret", llvmf
         return tapeV
     end
 
@@ -987,7 +982,11 @@ end
 
         resV = if abstract
             StructTy = convert(LLVMType, EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Nothing})
-            load!(B, StructTy, bitcast!(B, res, LLVM.PointerType(StructTy, addrspace(value_type(res)))))
+            if StructTy != LLVM.VoidType()
+                load!(B, StructTy, bitcast!(B, res, LLVM.PointerType(StructTy, addrspace(value_type(res)))))
+            else
+                res
+            end
         else
             res
         end
@@ -1033,7 +1032,6 @@ end
             else
                 extract_value!(B, res, idx).ref
             end
-            @show tapeV, abstract
             idx+=1
         end
     else
@@ -1107,7 +1105,6 @@ end
         return true
     end
     tape = enzyme_custom_common_rev(#=forward=#true, B, orig, gutils, normalR, shadowR, #=tape=#nothing)
-    @show "aug fwd", tape
     if tape != C_NULL
         unsafe_store!(tapeR, tape)
     end
@@ -1118,7 +1115,6 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return
     end
-    @show "rev tape", tape
     enzyme_custom_common_rev(#=forward=#false, B, orig, gutils, #=normalR=#C_NULL, #=shadowR=#C_NULL, #=tape=#tape)
     return nothing
 end
