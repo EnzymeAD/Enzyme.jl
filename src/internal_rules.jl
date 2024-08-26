@@ -861,6 +861,59 @@ function EnzymeRules.forward(func::Const{Colon},
     end
 end
 
+
+
+function EnzymeRules.augmented_primal(config, func::Const{Colon}, ::Type{<:Active},
+                          start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
+
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, step.val, stop.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
+                 start::Annotation{T1}, step::Annotation{T2}, stop::Annotation{T3}) where {T1<:AbstractFloat, T2<:AbstractFloat, T3<:AbstractFloat}
+
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        T1(dret.val.ref.hi)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            T1(dret.val[i].ref.hi)
+        end
+    end
+
+    dstep = if step isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        T2(dret.val.step.hi)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            T2(dret.val[i].step.hi)
+        end
+    end
+
+    dstop = if stop isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(T3)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(T3)
+        end
+    end
+
+    return (dstart, dstep, dstop)
+end
+
+
 function EnzymeRules.forward(
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
