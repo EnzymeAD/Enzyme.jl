@@ -696,6 +696,18 @@ end
 
     if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa UnionAll) && !(aug_RT isa Union) && !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
+    elseif (aug_RT isa UnionAll) && (aug_RT <: EnzymeRules.AugmentedReturn) && aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            TapeT = aug_RT.body.parameters[3].ub
+        else
+            TapeT = Any
+        end
+    elseif (aug_RT isa UnionAll) && (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturnFlexShadow.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            TapeT = aug_RT.body.parameters[3].ub
+        else
+            TapeT = Any
+        end
     else
         TapeT = Any
     end
