@@ -143,6 +143,17 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
     dx
 end
 
+"""
+    gradient_deferred!(::ReverseMode, f, x)
+
+Like [`gradient!`](@ref), except it using deferred mode.
+"""
+@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+    make_zero!(dx)
+    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
+    dx
+end
+
 @inline jacobian_output_forward(df, df1, x) = df
 
 #TODO: are you really sure this always works?
@@ -327,3 +338,97 @@ end
 
 @inline jacobian(mode::ReverseMode{false}, f::F, x::X) where {F,X} = _jacobian(mode, f, x)[2]
 @inline jacobian(mode::ReverseMode{true}, f::F, x::X) where {F,X} = _jacobian(mode, f, x)
+
+"""
+    hvp(f::F, x::X, v::X) where {F, X}
+
+Compute the Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+
+In other words, compute hessian(f)(x) * v
+
+See [`hvp!`](@ref) for a version which stores the result in an existing buffer and also [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+hvp(f, [2.0, 3.0], [5.0, 2.7])
+
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+@inline function hvp(f::F, x::X, v::X) where {F, X}
+    res = make_zero(x)
+    hvp!(res, f, x, v)
+    return res
+end
+
+"""
+    hvp!(res::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
+The result will be stored into `res`. The function still allocates and zero's a buffer to store the intermediate gradient, which is
+not returned to the user.
+
+In other words, compute res .= hessian(f)(x) * v
+
+See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
+
+Example:
+
+```jldoctest hvpip; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+# output
+2-element Vector{Float64}:
+ 19.6926882637302
+ 16.201003759768003
+```
+"""
+@inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
+    grad = make_zero(x)
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
+"""
+    hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+
+Compute an in-place Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v` as well as
+the gradient, storing the gradient into `grad`. Both the hessian vector product and the gradient can be computed together more efficiently
+than computing them separately.
+
+The result will be stored into `res`. The gradient will be stored into `grad`.
+
+In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, f)(x)
+
+Example:
+
+```jldoctest hvp_and_gradient; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Vector{Float64}(undef, 2)
+grad = Vector{Float64}(undef, 2)
+hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+
+res
+grad
+# output
+2-element Vector{Float64}:
+ 2.880510859951098
+ 1.920340573300732
+```
+"""
+@inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
+    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
+    return nothing
+end
+
