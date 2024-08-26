@@ -406,7 +406,7 @@ unstabletapesq(x) = unstabletape(x)^2
     @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletape, Active(5.0))[1][1] ≈ (5.0 + 7) * 10
 
     @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(2.0))[1][1] ≈ (400.0)
-    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(2.0))[1][1] ≈ (4.0)
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(2.0))[1][1] ≈ (400.0)
     @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
     @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
 end
