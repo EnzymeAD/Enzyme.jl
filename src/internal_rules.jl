@@ -861,6 +861,66 @@ function EnzymeRules.forward(func::Const{Colon},
     end
 end
 
+
+
+function EnzymeRules.augmented_primal(config, func::Const{Colon}, ::Type{<:Active},
+                          start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
+
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, step.val, stop.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
+                 start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
+
+    primal = func.val(start.val, step.val, stop.val)
+
+    #fixedreverse = if _dret.start > _dret.stop && _dret.step > 0
+    #     _dret.stop:_dret.step:_dret.start
+    #else
+    #    _dret
+    #end
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        eltype(start)(dret.ref)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            eltype(start)(dret[i].ref)
+        end
+    end
+
+    dstep = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        eltype(step)(dret.step)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            eltype(step)(dret[i].step)
+        end
+    end
+
+    dstop = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(eltype(dstop))
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(eltype(dstop))
+        end
+    end
+
+    return (dstart, dstep, dstop)
+end
+
+
 function EnzymeRules.forward(
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
@@ -921,29 +981,4 @@ function EnzymeRules.reverse(
         kwargs...,
     )
     return ()
-end
-
-function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, ::Type{<:Active},
-                          start, step ,stop)
-
-    if EnzymeRules.needs_primal(config)
-        primal = func.val(start.val, step.val, stop.val)
-    else
-        primal = nothing
-    end
-    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
-end
-
-function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth{1}, func::Const{Colon}, dret, tape::Nothing,
-                 start, step, stop)
-
-    #fixedreverse = if _dret.start > _dret.stop && _dret.step > 0
-    #     _dret.stop:_dret.step:_dret.start
-    #else
-    #    _dret
-    #end
-    dstart = start isa Const ? nothing : one(eltype(dret.val))
-    dstep = step isa Const ? nothing : one(eltype(dret.val))
-    dstop = stop isa Const ? nothing : zero(eltype(dret.val))
-    return (dstart, dstep, dstop)
 end
