@@ -875,7 +875,7 @@ function EnzymeRules.augmented_primal(config, func::Const{Colon}, ::Type{<:Activ
 end
 
 function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
-                 start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
+                 start::Annotation{T1}, step::Annotation{T2}, stop::Annotation{T3}) where {T1<:AbstractFloat, T2<:AbstractFloat, T3<:AbstractFloat}
 
     primal = func.val(start.val, step.val, stop.val)
 
@@ -887,33 +887,33 @@ function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
     dstart = if start isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        eltype(start)(dret.ref)
+        T1(dret.ref)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            eltype(start)(dret[i].ref)
+            T1(dret[i].ref)
         end
     end
 
-    dstep = if start isa Const
+    dstep = if step isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        eltype(step)(dret.step)
+        T2(dret.step)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            eltype(step)(dret[i].step)
+            T2(dret[i].step)
         end
     end
 
-    dstop = if start isa Const
+    dstop = if stop isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        zero(eltype(dstop))
+        zero(T3)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            zero(eltype(dstop))
+            zero(T3)
         end
     end
 
