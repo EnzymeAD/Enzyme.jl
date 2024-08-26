@@ -877,32 +877,25 @@ end
 function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
                  start::Annotation{T1}, step::Annotation{T2}, stop::Annotation{T3}) where {T1<:AbstractFloat, T2<:AbstractFloat, T3<:AbstractFloat}
 
-    primal = func.val(start.val, step.val, stop.val)
-
-    #fixedreverse = if _dret.start > _dret.stop && _dret.step > 0
-    #     _dret.stop:_dret.step:_dret.start
-    #else
-    #    _dret
-    #end
     dstart = if start isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        T1(dret.ref)
+        T1(dret.val.ref.hi)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            T1(dret[i].ref)
+            T1(dret.val[i].ref.hi)
         end
     end
 
     dstep = if step isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        T2(dret.step)
+        T2(dret.val.step.hi)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            T2(dret[i].step)
+            T2(dret.val[i].step.hi)
         end
     end
 

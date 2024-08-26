@@ -669,10 +669,16 @@ end
     @test Enzyme.autodiff(Forward, f4, BatchDuplicated(0.12, (1.0, 2.0))) ==
           ((var"1"=0.0, var"2"=0.0),)
 
-    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.25)) == ((78,),)
-    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.25)) == ((1.0,),)
-    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.25)) == ((12,),)
-    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.25)) == ((0.0,),)
+    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.1)) == ((75.0,),)
+    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.12)) == ((0.0,),)
+    
+    # Batch active rule isnt setup
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f1(x); nothing end,  Active(1.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f2(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f3(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((75.0,150.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f4(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((0.0,0.0)),)
 end
 
 end # InternalRules
