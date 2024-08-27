@@ -21,9 +21,9 @@ end
     end
 end
 
-Enzyme.gradient_output_forward(df, x::StaticArray) = similar_type(x)(df)
+Enzyme.gradient_output_forward(df, df1::Number, x::StaticArray) = similar_type(x)(df)
 
-_jacsize(::Size{s1}, ::Size{s2}) where {s1,s2} = Size(s1..., s2...)
-Enzyme.jacsize(df1::StaticArray, x::StaticArray) = _jacsize(Size(df1), Size(x))
+_gradsize(::Size{s1}, ::Size{s2}) where {s1,s2} = Size(s1..., s2...)
+Enzyme.gradient_output_size(df1::StaticArray, x::StaticArray) = _gradsize(Size(df1), Size(x))
 
 end

@@ -54,8 +54,6 @@ end
 
 @inline chunkedonehot(x::AbstractFloat, ::Val{chunk}) where chunk = ((one(x),),)
 
-
-
 @inline tupleconcat(x) = x
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
@@ -79,28 +77,28 @@ end
     tupleconcat(tmp...)
 end
 
-@inline function _split_tuple_of_tuples(tpl::Tuple)
-    t1 = ntuple(i -> tpl[i][1], length(tpl))
-    t2 = ntuple(i -> values(tpl[i][2]), length(tpl))        
-    (t1, tupleconcat(t2...))
+@inline gradient_output_size(df1, x) = (size(df1)..., size(x)...)
+
+@inline gradient_output_forward(df, df1, x) = df
+@inline gradient_output_forward(df, df1::Number, x::Number) = df1
+@inline gradient_output_forward(df, df1, x::AbstractArray) = copyto!(similar(x, eltype(df)), df)
+@inline gradient_output_forward(df, df1::AbstractArray, x::Number) = reduce(hcat, df)
+@inline function gradient_output_forward(df, df1::AbstractArray, x::AbstractArray)
+    reshape(reduce(hcat, df), gradient_output_size(df1, x))
 end
-
-# note that we don't provide valderivative for batched mode because it causes it to re-evaluate
-
-@inline gradient_output_forward(df, x) = df
 
 # this should handle general mutable array types
 @inline gradient_output_forward(df, x::AbstractArray) = copyto!(similar(x), df)
 
 @inline function gradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
     df = derivative(mode, f, x; shadow)
-    gradient_output_forward(df, x)
+    gradient_output_forward(df, df[1], x)
 end
 
 @inline function gradient(mode::ForwardMode, f::F, x::X, ::Val{chunk};
                           shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
     df = derivative(mode, f, x, Val(chunk); shadow)
-    gradient_output_forward(df, x)
+    gradient_output_forward(df, df[1], x)
 end
 
 @inline function gradient(mode::ReverseMode, f::F, x::X) where {F,X}
@@ -154,45 +152,27 @@ Like [`gradient!`](@ref), except it using deferred mode.
     dx
 end
 
-@inline jacobian_output_forward(df, df1, x) = df
-
-#TODO: are you really sure this always works?
-@inline jacobian_output_forward(df, df1, x::Number) = df1
-
-@inline jacobian_output_forward(df, df1::Number, x) = gradient_output_forward(df, x)
-
-# resolves method ambiguity
-@inline jacobian_output_forward(df, df1::Number, x::Number) = df1
-
-# static array packages can overload this
-@inline jacsize(df1, x) = (size(df1)..., size(x)...)
-
-@inline function jacobian_output_forward(df, df1::AbstractArray, x::AbstractArray)
-    reshape(reduce(hcat, df), jacsize(df1, x))
-end
-
-
 @inline function jacobian(mode::ForwardMode, f, x; shadow=onehot(x))
-    df = derivative(mode, f, x; shadow)
-    jacobian_output_forward(df, df[1], x)
+    gradient(mode, f, x; shadow)
 end
 
 @inline function jacobian(mode::ForwardMode, f::F, x::X, ::Val{chunk};
                           shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
-    df = derivative(mode, f, x, Val(chunk); shadow)
-    jacobian_output_forward(df, df[1], x)
+    gradient(mode, f, x, Val(chunk); shadow)
 end
 
-_jacobian_output_reverse_size_comp(df1::AbstractVector) = df1
-_jacobian_output_reverse_size_comp(df1::AbstractArray) = transpose(df1)
+@inline gradient_output_reverse(df, df1, x) = df
 
-@inline function jacobian_output_reverse(df, df1::AbstractArray, x)
-    dftmp = _jacobian_output_reverse_size_comp(df1)
-    reshape(reduce(vcat, map(transpose, df)), jacsize(dftmp, x))
+@inline gradient_output_reverse(df, df1::AbstractArray, x::Number) = reduce(vcat, df)
+
+@inline function gradient_output_reverse(df, df1::AbstractArray{T1,n1}, x::AbstractArray{T2,n2}) where {T1,T2,n1,n2}
+    # gives us \partial_{ij}y_{kl}
+    tmp = reshape(reduce(hcat, df), gradient_output_size(x, df1))
+    dims = ntuple(Val(n1+n2)) do j
+        j ≤ n1 ? n2+j : j-n1
+    end
+    permutedims(tmp, dims)  # we must permute to get \partial_{kl}y_{ij}
 end
-
-@inline _jac_maybe_rewrap(tmp::Tuple, ::Number) = tuple(collect(tmp))
-@inline _jac_maybe_rewrap(tmp::Tuple, tmp1) = tmp
 
 """
     jacobian(::ReverseMode, f, x, ::Val{num_outs}, ::Val{chunk}=Val(1))
@@ -276,11 +256,11 @@ of shape `size(output)` of values of the input type.
         return MD ? (ntuple(Val(i == num ? last_size : chunk)) do idx
             Base.@_inline_meta
             dx[idx][]
-        end) : dx
+        end) : dx, (i == 1 ? res[3][1] : nothing)
     end
-    tmp′ = tupleconcat(tmp...)
-    df = _jac_maybe_rewrap(tmp′, tmp′[1])
-    jacobian_output_reverse(df, df[1], x)
+    df1 = tmp[1][2]
+    df = tupleconcat(map(first, tmp)...)
+    gradient_output_reverse(df, df1, x)
 end
 
 @inline function jacobian(mode::ReverseMode{false,RABI,ErrIfFuncWritten}, f::F, x::X,
@@ -311,11 +291,11 @@ end
         tape = res[1]
         @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
         adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
-        MD ? dx[] : dx
+        (MD ? dx[] : dx, (i == 1 ? res[3] : nothing))
     end
-    # this is not ideal; x as number winds up being special case here
-    df = _jac_maybe_rewrap(tmp, tmp[1])
-    jacobian_output_reverse(df, df[1], x)
+    df1 = tmp[1][2]
+    df = map(first, tmp)
+    gradient_output_reverse(df, df1, x)
 end
 
 # resolves ambiguity
@@ -328,7 +308,7 @@ end
     y = f(x)
     df = if y isa AbstractArray
         jacobian(ReverseMode{false,RABI,ErrIfFuncWritten,T}(), f, x, Val(length(y)))
-    elseif res isa AbstractFloat
+    elseif y isa AbstractFloat
         gradient(ReverseMode{false,RABI,ErrIfFuncWritten,T}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))

@@ -2868,6 +2868,15 @@ end
     @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(1)) ≈ [1.0, 2.0]
     @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(2)) ≈ [1.0, 2.0]
 
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, x^2], 3.0) ≈ [1.0, 6.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, x^2], 3.0) ≈ [1.0, 6.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+
     x = float.(reshape(1:6, 2, 3))
 
     fillabs2(x) = [sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x), 1000*sum(abs2, x)]
@@ -2975,6 +2984,21 @@ end
 
 end
 
+@testset "Gradient" begin
+    x = 3.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> x^2, x) ≈ 6.0
+    @test Enzyme.gradient(Enzyme.Reverse, x -> x^2, x) ≈ 6.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x, x^2], x) ≈ [1.0, 6.0]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x, x^2], x) ≈ [1.0, 6.0]
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+    @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+end
 
 @testset "Jacobian" begin
     function inout(v)
