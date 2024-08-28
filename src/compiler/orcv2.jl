@@ -6,14 +6,10 @@ import LLVM:TargetMachine
 
 import GPUCompiler
 import ..Compiler
-import ..Compiler: API, cpu_name, cpu_features, LLVM_VERSION
+import ..Compiler: API, cpu_name, cpu_features
 
 @inline function use_ojit()
-    if LLVM_VERSION < v"8"
-        return LLVM.has_julia_ojit() && !Sys.iswindows()
-    else
-        return !Sys.iswindows()
-    end
+        return (VERSION >= v"1.10.0-DEV.1395") && !Sys.iswindows()
 end
 
 export get_trampoline
