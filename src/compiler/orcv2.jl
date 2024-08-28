@@ -6,10 +6,10 @@ import LLVM:TargetMachine
 
 import GPUCompiler
 import ..Compiler
-import ..Compiler: API, cpu_name, cpu_features
+import ..Compiler: API, cpu_name, cpu_features, LLVM_VERSION
 
 @inline function use_ojit()
-    if (VERSION < v"1.9") || (pkgversion(LLVM) < v"8")
+    if LLVM_VERSION < v"8"
         return LLVM.has_julia_ojit() && !Sys.iswindows()
     else
         return !Sys.iswindows()

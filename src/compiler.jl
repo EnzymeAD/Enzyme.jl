@@ -19,6 +19,14 @@ import GPUCompiler: CompilerJob, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 
+@static if VERSION < v"1.9"
+    import TOML
+    const LLVM_VERSION = VersionNumber(TOML.parsefile(joinpath(Base.pkgdir(LLVM), 
+        "Project.toml"))["version"])
+else
+    const LLVM_VERSION = pkgversion(LLVM)
+end
+
 using Printf
 
 using Preferences
@@ -47,7 +55,7 @@ import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
 
-if ((VERSION < v"1.9") || (pkgversion(LLVM) < v"8")) && LLVM.has_orc_v1()
+if (LLVM_VERSION < v"8") && LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else
     include("compiler/orcv2.jl")
