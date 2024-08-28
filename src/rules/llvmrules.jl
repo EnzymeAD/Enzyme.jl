@@ -104,7 +104,22 @@ include("parallelrules.jl")
         end
     end
 
-    emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
+    err = emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
+    
+    newo = new_from_original(gutils, orig)
+
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
 
     return false
 end
@@ -145,7 +160,21 @@ end
         end
     end
 
-    emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
+    err = emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
+    newo = new_from_original(gutils, orig)
+
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
 
     return false
 end
