@@ -47,7 +47,7 @@ import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
 
-if (pkgversion(LLVM) < v"8") && LLVM.has_orc_v1()
+if ((VERSION < v"1.9") || (pkgversion(LLVM) < v"8")) && LLVM.has_orc_v1()
     include("compiler/orcv1.jl")
 else
     include("compiler/orcv2.jl")
