@@ -9,7 +9,7 @@ import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
 @inline function use_ojit()
-    return LLVM.has_julia_ojit() && !Sys.iswindows()
+        return (VERSION >= v"1.10.0-DEV.1395") && !Sys.iswindows()
 end
 
 export get_trampoline
