@@ -87,9 +87,6 @@ end
     reshape(reduce(hcat, df), gradient_output_size(df1, x))
 end
 
-# this should handle general mutable array types
-@inline gradient_output_forward(df, x::AbstractArray) = copyto!(similar(x), df)
-
 @inline function gradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
     df = derivative(mode, f, x; shadow)
     gradient_output_forward(df, df[1], x)
