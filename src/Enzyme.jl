@@ -1006,64 +1006,75 @@ end
     return (one(x),)
 end
 
-"""
-    gradient(::ReverseMode, f, x)
-
-Compute the gradient of a real-valued function `f` using reverse mode.
-This will allocate and return new array `make_zero(x)` with the gradient result.
-
-Besides arrays, for struct `x` it returns another instance of the same type,
-whose fields contain the components of the gradient.
-In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
-while `grad.c == x.c` for other types.
-
-Examples:
-
-```jldoctest gradient
-f(x) = x[1]*x[2]
-
-grad = gradient(Reverse, f, [2.0, 3.0])
-
-# output
-
-2-element Vector{Float64}:
- 3.0
- 2.0
-```
-
-```jldoctest gradient
-grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
-
-# output
-
-(a = 3.0, b = [2.0], c = "str")
-```
-"""
-@inline function gradient(rm::ReverseMode, f::F, x::X) where {F, X}
-    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-        dx = Ref(make_zero(x))
-        autodiff(rm, f, Active, MixedDuplicated(x, dx))
-        return only(dx)
-    else
-        dx = make_zero(x)
-        autodiff(rm, f, Active, Duplicated(x, dx))
-        return dx
+@inline function chunkedonehot(x, ::Val{chunk}) where chunk
+    sz = length(x)
+    num = ((sz + chunk - 1) ÷ chunk)
+    ntuple(Val(num)) do i
+        Base.@_inline_meta
+        onehot(x, (i-1)*chunk+1, i == num ? sz : (i*chunk) )
     end
 end
 
-"""
-    gradient_deferred(::ReverseMode, f, x)
+@inline function chunkedonehot(x::AbstractFloat, ::Val{chunk}) where chunk
+    return ((one(x),),)
+end
 
-Like [`gradient`](@ref), except it using deferred mode.
-"""
-@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
+@inline tupleconcat(x) = x
+@inline tupleconcat(x, y) = (x..., y...)
+@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+
+@inline function derivative(mode::ForwardMode, f, x; shadow=onehot(x))
+    values(only(autodiff(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+end
+@inline function derivative_deferred(mode::ForwardMode, f, x; shadow=onehot(x))
+    values(only(autodiff_deferred(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+end
+
+@inline _chunkcheck(::Val{0}) = throw(ArgumentError("Cannot differentiate with a batch size of 0"))
+@inline _chunkcheck(::Val) = nothing
+
+@inline function derivative(mode::ForwardMode, f::F, x::X, ::Val{chunk};
+                            shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
+    _chunkcheck(Val(chunk))
+    tmp = ntuple(length(shadow)) do i
+        values(autodiff(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+    end
+    tupleconcat(tmp...)
+end
+
+@inline gradient_output_size(df1, x) = (size(df1)..., size(x)...)
+
+@inline gradient_output_forward(df, df1, x) = df
+@inline gradient_output_forward(df, df1::Number, x::Number) = df1
+
+#NOTE: this is needed to be non-breaking. the commented line is the more consistent behavior
+@inline gradient_output_forward(df, df1::Number, x::AbstractArray) = df
+#@inline gradient_output_forward(df, df1, x::AbstractArray) = copyto!(similar(x, eltype(df)), df)
+
+@inline gradient_output_forward(df, df1::AbstractArray, x::Number) = reduce(hcat, df)
+@inline function gradient_output_forward(df, df1::AbstractArray, x::AbstractArray)
+    reshape(reduce(hcat, df), gradient_output_size(df1, x))
+end
+
+@inline function gradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
+    df = derivative(mode, f, x; shadow)
+    gradient_output_forward(df, df[1], x)
+end
+
+@inline function gradient(mode::ForwardMode, f::F, x::X, ::Val{chunk};
+                          shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
+    df = derivative(mode, f, x, Val(chunk); shadow)
+    gradient_output_forward(df, df[1], x)
+end
+
+@inline function gradient(mode::ReverseMode, f::F, x::X) where {F,X}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
-        autodiff_deferred(rm, f, Active, MixedDuplicated(x, dx))
+        autodiff(mode, f, Active, MixedDuplicated(x, dx))
         return only(dx)
     else
         dx = make_zero(x)
-        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
+        autodiff(mode, f, Active, Duplicated(x, dx))
         return dx
     end
 end
@@ -1096,7 +1107,6 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
     dx
 end
 
-
 """
     gradient_deferred!(::ReverseMode, f, x)
 
@@ -1108,228 +1118,39 @@ Like [`gradient!`](@ref), except it using deferred mode.
     dx
 end
 
-"""
-    gradient(::ForwardMode, f, x; shadow=onehot(x))
+#NOTE: the following are to work around breaking changes but are inconsistent
+@inline jacobian_output_forward(df, df1, x) = gradient_output_forward(df, df1, x)
+@inline function jacobian_output_forward(df, df1::AbstractArray, x::AbstractArray)
+    reshape(reduce(hcat, df), gradient_output_size(df1, x))
+end
+@inline jacobian_output_forward(df, df1, x::AbstractArray) = copyto!(similar(x, eltype(df)), df)
 
-Compute the gradient of an array-input function `f` using forward mode. The
-optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
-which are used to forward-propagate into the return. For performance reasons,
-this should be computed once, outside the call to `gradient`, rather than
-within this call.
-
-Example:
-
-```jldoctest
-f(x) = x[1]*x[2]
-
-grad = gradient(Forward, f, [2.0, 3.0])
-
-# output
-
-(3.0, 2.0)
-```
-"""
-@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
-    if length(shadow) == 0
-        return ()
-    end
-    res = values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
+@inline function jacobian(mode::ForwardMode, f, x; shadow=onehot(x))
+    #NOTE: these requires special handling to prevent breaking API
+    #gradient(mode, f, x; shadow)
+    df = derivative(mode, f, x; shadow)
+    jacobian_output_forward(df, df[1], x)
 end
 
-@inline function chunkedonehot(x, ::Val{chunk}) where chunk
-    sz = length(x)
-    num = ((sz + chunk - 1) ÷ chunk)
-    ntuple(Val(num)) do i
-        Base.@_inline_meta
-        onehot(x, (i-1)*chunk+1, i == num ? sz : (i*chunk) )
-    end
+@inline function jacobian(mode::ForwardMode, f::F, x::X, ::Val{chunk};
+                          shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
+    #NOTE: again, to prevent breaking API
+    #gradient(mode, f, x, Val(chunk); shadow)
+    df = derivative(mode, f, x, Val(chunk); shadow)
+    jacobian_output_forward(df, df[1], x)
 end
 
-@inline function chunkedonehot(x::AbstractFloat, ::Val{chunk}) where chunk
-    return ((one(x),),)
-end
+@inline gradient_output_reverse(df, df1, x) = df
 
-@inline tupleconcat(x) = x
-@inline tupleconcat(x, y) = (x..., y...)
-@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+@inline gradient_output_reverse(df, df1::AbstractArray, x::Number) = reduce(vcat, df)
 
-"""
-    gradient(::ForwardMode, f, x::Union{Array,NTuple}, ::Val{chunk}; shadow=onehot(x))
-
-Compute the gradient of an array-input function `f` using vector forward mode.
-Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
-`chunk` derivatives in a single call.
-
-Example:
-
-```jldoctest
-f(x) = x[1]*x[2]
-
-grad = gradient(Forward, f, [2.0, 3.0], Val(2))
-
-# output
-
-(3.0, 2.0)
-```
-"""
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
+@inline function gradient_output_reverse(df, df1::AbstractArray{T1,n1}, x::AbstractArray{T2,n2}) where {T1,T2,n1,n2}
+    # gives us \partial_{ij}y_{kl}
+    tmp = reshape(reduce(hcat, df), gradient_output_size(x, df1))
+    dims = ntuple(Val(n1+n2)) do j
+        j ≤ n1 ? n2+j : j-n1
     end
-    tmp = ntuple(length(shadow)) do i
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    res = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
-end
-
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
-    res = ntuple(length(shadow)) do i
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        res[1]
-    else
-        res
-    end
-end
-
-"""
-    jacobian(::ForwardMode, f, x; shadow=onehot(x))
-    jacobian(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
-
-Compute the jacobian of an array or scalar-input function `f` using (potentially vector)
-forward mode. All relevant arguments of the forward-mode [`gradient`](@ref) function
-apply here.
-
-Example:
-
-```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
-
-grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
-
-# output
-
-2×3 Matrix{Float64}:
- 3.0  2.0  0.0
- 0.0  1.0  1.0
-```
-
-For functions which return an AbstractArray, this function will return an array
-whose shape is `(size(output)..., size(input)...)`
-
-For functions who return other types, this function will retun an array or tuple
-of shape `size(input)` of values of the output type. 
-"""
-@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
-    cols = if length(shadow) == 0
-        ()
-    else
-        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
-    end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
-end
-
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-    tmp = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    cols = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
-end
-
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
-    cols = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
-
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
-    end
+    permutedims(tmp, dims)  # we must permute to get \partial_{kl}y_{ij}
 end
 
 """
@@ -1361,13 +1182,11 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{false,RABI,ErrIfFuncWritten}, f::F, x::X,
+                          n_outs::Val{n_out_val},
+                          ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten}
+    _chunkcheck(Val(chunk))
     num = ((n_out_val + chunk - 1) ÷ chunk)
-    
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{BatchMixedDuplicated{XT, chunk}} : Tuple{BatchDuplicated{XT, chunk}}
@@ -1380,17 +1199,24 @@ of shape `size(output)` of values of the input type.
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
-    
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′,
+                                            #=Split=# Val(API.DEM_ReverseModeGradient),
+                                            #=width=#Val(chunk), ModifiedBetween,
+                                            #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false),
+                                            RABI, Val(ErrIfFuncWritten))
     if num * chunk == n_out_val
         last_size = chunk
         primal2, adjoint2 = primal, adjoint
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′,
+                                                  #=Split=# Val(API.DEM_ReverseModeGradient),
+                                                  #=width=#Val(last_size), ModifiedBetween,
+                                                  #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false),
+                                                  RABI, Val(ErrIfFuncWritten))
     end
-
+    #TODO: this is broken for static arrays
     tmp = ntuple(num) do i
         Base.@_inline_meta
         dx = ntuple(Val(i == num ? last_size : chunk)) do idx
@@ -1409,39 +1235,16 @@ of shape `size(output)` of values of the input type.
         return MD ? (ntuple(Val(i == num ? last_size : chunk)) do idx
             Base.@_inline_meta
             dx[idx][]
-        end) : dx, (i == 1 ? size(res[3][1]) : nothing)
+        end) : dx, (i == 1 ? res[3][1] : nothing)
     end
-    rows = tupleconcat(map(first, tmp)...)
-    outshape = tmp[1][2]
-    if x isa AbstractArray
-        inshape = size(x)
-
-        st = @static if VERSION >= v"1.9"
-            Base.stack(rows)
-        else
-            reshape(cat(rows..., dims=length(inshape)), (inshape..., outshape...))
-        end
-
-        st2 = if length(outshape) == 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (inshape..., outshape...))
-        end
-
-        st3 = if length(outshape) == 1 && length(inshape) == 1
-            transpose(st2)
-        else
-            transp = ( ((length(inshape)+1):(length(inshape)+length(outshape)))... , (1:length(inshape))...  )
-            PermutedDimsArray(st2, transp)
-        end
-
-        st3
-    else
-        reshape(collect(rows), outshape)
-    end
+    df1 = tmp[1][2]
+    df = tupleconcat(map(first, tmp)...)
+    gradient_output_reverse(df, df1, x)
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(mode::ReverseMode{false,RABI,ErrIfFuncWritten}, f::F, x::X,
+                          n_outs::Val{n_out_val},
+                          chunks::Val{1}) where {RABI<:ABI,ErrIfFuncWritten,F,X,n_out_val}
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
@@ -1454,7 +1257,11 @@ end
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′,
+                                            #=Split=# Val(API.DEM_ReverseModeGradient),
+                                            #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false),
+                                            #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    #TODO: this is broken for static arrays
     tmp = ntuple(n_outs) do i
         Base.@_inline_meta
         z = make_zero(x)
@@ -1463,53 +1270,33 @@ end
         tape = res[1]
         @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
         adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
-        return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
+        (MD ? dx[] : dx, (i == 1 ? res[3] : nothing))
     end
-    rows = map(first, tmp)
-    outshape = tmp[1][2]
-    if x isa AbstractArray
-        inshape = size(x)
-        st = @static if VERSION >= v"1.9"
-            Base.stack(rows)
-        else
-            reshape(cat(rows..., dims=length(inshape)), (inshape..., outshape...))
-        end
-
-        st2 = if length(outshape) == 1 || VERSION < v"1.9"
-            st
-        else
-            reshape(st, (inshape..., outshape...))
-        end
-
-        st3 = if length(outshape) == 1 && length(inshape) == 1
-            transpose(st2)
-        else
-            transp = ( ((length(inshape)+1):(length(inshape)+length(outshape)))... , (1:length(inshape))...  )
-            PermutedDimsArray(st2, transp)
-        end
-
-        st3
-    else
-        reshape(collect(rows), outshape)
-    end
+    df1 = tmp[1][2]
+    df = map(first, tmp)
+    gradient_output_reverse(df, df1, x)
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten}
-    res = f(x)
-    jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
-    elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x)
+# resolves ambiguity
+@inline function jacobian(mode::ReverseMode{false}, f::F, x::X, n_outs::Val) where {F,X}
+    jacobian(mode, f, x, n_outs, Val(1))
+end
+
+@inline function _jacobian(::ReverseMode{ReturnPrimal,RABI,ErrIfFuncWritten,T},
+                           f::F, x::X) where {ReturnPrimal,F,X,T,RABI<:ABI, ErrIfFuncWritten}
+    y = f(x)
+    df = if y isa AbstractArray
+        jacobian(ReverseMode{false,RABI,ErrIfFuncWritten,T}(), f, x, Val(length(y)))
+    elseif y isa AbstractFloat
+        gradient(ReverseMode{false,RABI,ErrIfFuncWritten,T}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
     end
-
-    if ReturnPrimal
-        (res, jac)
-    else
-        jac
-    end
+    (y, df)
 end
+
+@inline jacobian(mode::ReverseMode{false}, f::F, x::X) where {F,X} = _jacobian(mode, f, x)[2]
+@inline jacobian(mode::ReverseMode{true}, f::F, x::X) where {F,X} = _jacobian(mode, f, x)
 
 """
     hvp(f::F, x::X, v::X) where {F, X}
