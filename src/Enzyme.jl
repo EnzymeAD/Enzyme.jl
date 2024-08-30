@@ -1056,6 +1056,27 @@ end
     reshape(reduce(hcat, df), gradient_output_size(df1, x))
 end
 
+"""
+    gradient(::ForwardMode, f, x; shadow=onehot(x))
+
+Compute the gradient of an array-input function `f` using forward mode. The
+optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
+which are used to forward-propagate into the return. For performance reasons,
+this should be computed once, outside the call to `gradient`, rather than
+within this call.
+
+Example:
+
+```jldoctest
+f(x) = x[1]*x[2]
+
+grad = gradient(Forward, f, [2.0, 3.0])
+
+# output
+
+(3.0, 2.0)
+```
+"""
 @inline function gradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
     df = derivative(mode, f, x; shadow)
     gradient_output_forward(df, df[1], x)
@@ -1067,6 +1088,39 @@ end
     gradient_output_forward(df, df[1], x)
 end
 
+"""
+    gradient(::ReverseMode, f, x)
+
+Compute the gradient of a real-valued function `f` using reverse mode.
+This will allocate and return new array `make_zero(x)` with the gradient result.
+
+Besides arrays, for struct `x` it returns another instance of the same type,
+whose fields contain the components of the gradient.
+In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
+while `grad.c == x.c` for other types.
+
+Examples:
+
+```jldoctest gradient
+f(x) = x[1]*x[2]
+
+grad = gradient(Reverse, f, [2.0, 3.0])
+
+# output
+
+2-element Vector{Float64}:
+ 3.0
+ 2.0
+```
+
+```jldoctest gradient
+grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
+
+# output
+
+(a = 3.0, b = [2.0], c = "str")
+```
+"""
 @inline function gradient(mode::ReverseMode, f::F, x::X) where {F,X}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
@@ -1125,6 +1179,34 @@ end
 end
 @inline jacobian_output_forward(df, df1, x::AbstractArray) = copyto!(similar(x, eltype(df)), df)
 
+"""
+    jacobian(::ForwardMode, f, x; shadow=onehot(x))
+    jacobian(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
+
+Compute the jacobian of an array or scalar-input function `f` using (potentially vector)
+forward mode. All relevant arguments of the forward-mode [`gradient`](@ref) function
+apply here.
+
+Example:
+
+```jldoctest
+f(x) = [ x[1] * x[2], x[2] + x[3] ]
+
+grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
+
+# output
+
+2×3 Matrix{Float64}:
+ 3.0  2.0  0.0
+ 0.0  1.0  1.0
+```
+
+For functions which return an AbstractArray, this function will return an array
+whose shape is `(size(output)..., size(input)...)`
+
+For functions who return other types, this function will retun an array or tuple
+of shape `size(input)` of values of the output type. 
+"""
 @inline function jacobian(mode::ForwardMode, f, x; shadow=onehot(x))
     #NOTE: these requires special handling to prevent breaking API
     #gradient(mode, f, x; shadow)
