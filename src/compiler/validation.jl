@@ -196,8 +196,12 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     if changed
                         prevname = LLVM.name(inst)
                         LLVM.name!(inst, "")
-                        newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(map(LLVM.OperandBundleDef, operand_bundles(inst))), prevname)
-                        for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
+                        if !isdefined(LLVM, :OperandBundleDef)
+			  newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(operand_bundles(inst)), prevname)
+			else
+			  newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(map(LLVM.OperandBundleDef, operand_bundles(inst))), prevname)
+			end
+			for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
                             idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                             count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx);
                             Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
@@ -213,13 +217,27 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     end
                     continue
                 end
-                newbundles = OperandBundleDef[]
-                for bunduse in operand_bundles(inst)
-                    bunduse = LLVM.OperandBundleDef(bunduse)
-                    if LLVM.tag_name(bunduse) != "jl_roots"
-                        push!(newbundles, bunduse)
-                        continue
-                    end
+                if !isdefined(LLVM, :OperandBundleDef)
+                  newbundles = OperandBundle[]
+		else
+		  newbundles = OperandBundleDef[]
+		end
+		for bunduse in operand_bundles(inst)
+                    if isdefined(LLVM, :OperandBundleDef)
+		      bunduse = LLVM.OperandBundleDef(bunduse)
+		    end
+
+                    if !isdefined(LLVM, :OperandBundleDef)
+			    if LLVM.tag(bunduse) != "jl_roots"
+				push!(newbundles, bunduse)
+				continue
+			    end
+		    else
+			    if LLVM.tag_name(bunduse) != "jl_roots"
+				push!(newbundles, bunduse)
+				continue
+			    end
+		    end
                     uservals = LLVM.Value[]
                     subchanged = false
                     for lval in LLVM.inputs(bunduse)
@@ -246,7 +264,11 @@ function rewrite_ccalls!(mod::LLVM.Module)
                         continue
                     end
                     changed = true
-                    push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                    if !isdefined(LLVM, :OperandBundleDef)
+                      push!(newbundles, OperandBundle(LLVM.tag(bunduse), uservals))
+                    else
+                      push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                    end
                 end
                 changed = false
                 if changed
