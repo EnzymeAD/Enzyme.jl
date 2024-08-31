@@ -1064,6 +1064,13 @@ struct EnzymeRuntimeActivityError <: Base.Exception
 end
 
 function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
+    println(io, "Constant memory is stored (or returned) to a differentiable variable.\n")
+    println(io, "As a result, Enzyme cannot provably ensure correctness and throws this error.\n")
+    println(io, "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage).\n")
+    println(io, "If Enzyme should be able to prove this use non-differentable, open an issue!\n");
+    println(io, "To work around this issue, either:\n");
+    println(io, " a) rewrite this variable to not be conditionally active (fastest, but requires a code change, or\n")
+    println(io, " a) set Enzyme.API.runtimeActivity!(true) immediately after loading Enzyme (which maintains correctness, but may slightly reduce performance).\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
@@ -2582,7 +2589,6 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
             if illegalVal !== nothing
                 println(io, " llvalue="*string(illegalVal))
             end
-            println(io, "You may be using a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage). If not, please open an issue, and either rewrite this variable to not be conditionally active or use Enzyme.API.runtimeActivity!(true) as a workaround for now")
             if bt !== nothing
                 Base.show_backtrace(io, bt)
             end
