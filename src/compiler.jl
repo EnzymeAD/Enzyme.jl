@@ -1875,7 +1875,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         exc = functions(mod)["gpu_report_exception"]
 
-        name = globalstring_ptr!(builder, string, "exception")
+        name = globalstring_ptr!(B, string, "exception")
         call!(B, exc, [name])
 
 	call!(B, GPUCompiler.Runtime.get(:signal_exception))
