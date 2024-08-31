@@ -193,15 +193,21 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.deepcopy)}
         x.val
     end
 
-    shadow = ntuple(Val(EnzymeRules.width(config))) do _
-        Base.@_inline_meta
-        Enzyme.make_zero(source,
-            #=copy_if_inactive=#Val(!EnzymeRules.needs_primal(config))
-        )
-    end
-
-    if EnzymeRules.width(config) == 1
-        shadow = shadow[1]
+    shadow = if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            Enzyme.make_zero(source,
+                #=copy_if_inactive=#Val(!EnzymeRules.needs_primal(config))
+            )
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                Base.@_inline_meta
+                Enzyme.make_zero(source,
+                    #=copy_if_inactive=#Val(!EnzymeRules.needs_primal(config))
+                )
+            end
+        end
+    else
+        nothing
     end
 
     return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
@@ -241,11 +247,13 @@ end
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{RT}, shadow, x::Annotation{Ty}) where {RT, Ty}
-    if EnzymeRules.width(config) == 1
-        accumulate_into(x.dval, IdDict(), shadow)
-    else
-        for i in 1:EnzymeRules.width(config)
-            accumulate_into(x.dval[i], IdDict(), shadow[i])
+    if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            accumulate_into(x.dval, IdDict(), shadow)
+        else
+            for i in 1:EnzymeRules.width(config)
+                accumulate_into(x.dval[i], IdDict(), shadow[i])
+            end
         end
     end
 
