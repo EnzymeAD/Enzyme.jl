@@ -1873,7 +1873,20 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
     end
 
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-        GPUCompiler.emit_exception!(B, string, orig)
+        exc = functions(mod)["gpu_report_exception"]
+
+        name = globalstring_ptr!(builder, string, "exception")
+        call!(B, exc, [name])
+
+	call!(B, GPUCompiler.Runtime.get(:signal_exception))
+
+	trap_ft = LLVM.FunctionType(LLVM.VoidType())
+	trap = if haskey(functions(mod), "llvm.trap")
+	  functions(mod)["llvm.trap"]
+	else
+	  LLVM.Function(mod, "llvm.trap", trap_ft)
+	end
+	call!(builder, trap_ft, trap)
     else
         err = emit_allocobj!(B, errty)
         err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
