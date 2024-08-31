@@ -196,7 +196,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     if changed
                         prevname = LLVM.name(inst)
                         LLVM.name!(inst, "")
-                        newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(map(LLVM.OperandBundleDef, operand_bundles(inst))), prevname)
+                        newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(operand_bundles(inst)), prevname)
                         for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
                             idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                             count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx);
@@ -213,10 +213,9 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     end
                     continue
                 end
-                newbundles = OperandBundleDef[]
+                newbundles = OperandBundle[]
                 for bunduse in operand_bundles(inst)
-                    bunduse = LLVM.OperandBundleDef(bunduse)
-                    if LLVM.tag_name(bunduse) != "jl_roots"
+                    if LLVM.tag(bunduse) != "jl_roots"
                         push!(newbundles, bunduse)
                         continue
                     end
@@ -246,7 +245,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                         continue
                     end
                     changed = true
-                    push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                    push!(newbundles, OperandBundle(LLVM.tag_name(bunduse), uservals))
                 end
                 changed = false
                 if changed
