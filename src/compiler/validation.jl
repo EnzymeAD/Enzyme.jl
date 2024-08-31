@@ -265,7 +265,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     end
                     changed = true
                     if !isdefined(LLVM, :OperandBundleDef)
-                      push!(newbundles, OperandBundle(LLVM.tag_name(bunduse), uservals))
+                      push!(newbundles, OperandBundle(LLVM.tag(bunduse), uservals))
                     else
                       push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
                     end
