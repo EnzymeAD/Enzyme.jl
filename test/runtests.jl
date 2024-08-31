@@ -2987,6 +2987,24 @@ tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
 
 end
 
+@testset "Gradient" begin
+    x = 3.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> x^2, x) ≈ 6.0
+    @test Enzyme.gradient(Enzyme.Reverse, x -> x^2, x) ≈ 6.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x, x^2], x) ≈ [1.0, 6.0]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x, x^2], x) ≈ [1.0, 6.0]
+
+    #NOTE: the discrepancy here is the same issue with the interface that causes there to be much
+    #special handling of gradients and jacobians.  Presumably these should be made consistent at
+    #some point but it would be a breaking change.
+    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), [1.0,1.0]), (2.0, 2.0))
+    @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+end
 
 @testset "Jacobian" begin
     function inout(v)

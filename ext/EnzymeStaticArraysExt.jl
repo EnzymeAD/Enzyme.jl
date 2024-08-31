@@ -22,10 +22,9 @@ end
 end
 
 
-#NOTE: the following fix spurious allocations but at least one of these methods is API breaking
-#Enzyme.gradient_output_forward(df, df1::Number, x::StaticArray) = similar_type(x)(df)
+Enzyme.gradient_output_forward(df, df1::Number, x::StaticArray) = similar_type(x)(df)
 
-#_gradsize(::Size{s1}, ::Size{s2}) where {s1,s2} = Size(s1..., s2...)
-#Enzyme.gradient_output_size(df1::StaticArray, x::StaticArray) = _gradsize(Size(df1), Size(x))
+_gradsize(::Size{s1}, ::Size{s2}) where {s1,s2} = Size(s1..., s2...)
+Enzyme.gradient_output_size(df1::StaticArray, x::StaticArray) = _gradsize(Size(df1), Size(x))
 
 end
