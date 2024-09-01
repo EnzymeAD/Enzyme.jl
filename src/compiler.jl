@@ -2446,7 +2446,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if v != tmp
                         changed = true
                     end
-                    push!(todo, tmp)
+                    push!(cvals, tmp)
                 end
 
                 cur2 = if changed
