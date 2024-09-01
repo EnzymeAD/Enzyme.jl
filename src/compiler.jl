@@ -2460,7 +2460,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if v != tmp
                         changed = true
                     end
-                    push!(todo, tmp)
+                    push!(cvals, tmp)
                 end
 
                 cur2 = if changed
@@ -2474,7 +2474,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 return cur2
             end
             if isa(cur, LLVM.ConstantInt)
-                if LLVM.width(value_type(cur)) <= 8
+	        if LLVM.width(value_type(cur)) <= sizeof(Int)*8
+                    return make_batched(ncur, prevbb)
+                end
+		if LLVM.width(value_type(cur)) == sizeof(Int)*8 && abs(convert(Int, cur)) < 10000
                     return make_batched(ncur, prevbb)
                 end
                 # if storing a constant int as a non-pointer, presume it is not a GC'd var and is safe
@@ -2483,6 +2486,35 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
             end
+            
+	    if isa(cur, LLVM.SelectInst)
+                lhs = make_replacement(operands(cur)[2], prevbb)
+                if illegal
+                    return ncur
+                end
+                rhs = make_replacement(operands(cur)[3], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(cur)[2] && rhs == operands(cur)[3]
+                    return make_batched(ncur, prevbb)
+                end
+                if width == 1
+		    nv = select!(prevbb, new_from_original(gutils, operands(cur)[1]), lhs, rhs)
+                    push!(created, nv)
+                    seen[cur] = nv
+                    return nv
+                else
+                    shadowres = LLVM.UndefValue(value_type(lhs))
+                    for idx in 1:width
+		        shadowres = insert_value!(prevbb, shadowres, select!(new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
+                        if isa(shadowres, LLVM.Instruction)
+                            push!(created, shadowres)
+                        end
+                    end
+                    return shadowres
+                end
+	    end
             
             if isa(cur, LLVM.InsertValueInst)
                 lhs = make_replacement(operands(cur)[1], prevbb)
