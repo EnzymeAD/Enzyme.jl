@@ -2486,14 +2486,14 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
                 if width == 1
-		    nv = select!(prevbb, new_from_original!(gutils, operands(cur)[1]), lhs, rhs)
+		    nv = select!(prevbb, new_from_original(gutils, operands(cur)[1]), lhs, rhs)
                     push!(created, nv)
                     seen[cur] = nv
                     return nv
                 else
                     shadowres = LLVM.UndefValue(value_type(lhs))
                     for idx in 1:width
-		        shadowres = insert_value!(prevbb, shadowres, select!(new_from_original!(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
+		        shadowres = insert_value!(prevbb, shadowres, select!(new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
                         if isa(shadowres, LLVM.Instruction)
                             push!(created, shadowres)
                         end
