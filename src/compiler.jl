@@ -1069,8 +1069,8 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     println(io, "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage).")
     println(io, "If Enzyme should be able to prove this use non-differentable, open an issue!");
     println(io, "To work around this issue, either:");
-    println(io, " a) rewrite this variable to not be conditionally active (fastest, but requires a code change, or")
-    println(io, " a) set Enzyme.API.runtimeActivity!(true) immediately after loading Enzyme (which maintains correctness, but may slightly reduce performance).")
+    println(io, " a) rewrite this variable to not be conditionally active (fastest, but requires a code change), or")
+    println(io, " b) set Enzyme.API.runtimeActivity!(true) immediately after loading Enzyme (which maintains correctness, but may slightly reduce performance).")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
