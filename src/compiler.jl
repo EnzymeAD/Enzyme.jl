@@ -1887,7 +1887,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
 	else
 	  LLVM.Function(mod, "llvm.trap", trap_ft)
 	end
-	call!(builder, trap_ft, trap)
+	call!(B, trap_ft, trap)
     else
         err = emit_allocobj!(B, errty)
         err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
