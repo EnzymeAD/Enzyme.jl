@@ -2854,7 +2854,7 @@ end
 # ≈ doesn't recurse into tuples. this will also check both type and length implicitly
 tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
 
-@testset "Simple Jacobian" begin
+@testset "Gradient and Jacobian Outputs" begin
     @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> 2*x, 3.0), (2.0,))
     @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> 2*x, 3.0, Val(2)), (2.0,))
     @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [x, 2*x], 3.0), ([1.0,2.0],))
@@ -2864,6 +2864,59 @@ tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
     @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0]), ([0.0,1.0],[-1.0,0.0]))
     @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0], Val(2)), ([0.0,1.0],[-1.0,0.0]))
 
+    x = 3.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> x^2, x) ≈ 6.0
+    @test Enzyme.gradient(Enzyme.Reverse, x -> x^2, x) ≈ 6.0
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x, x^2], x) ≈ [1.0, 6.0]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x, x^2], x) ≈ [1.0, 6.0]
+
+    #NOTE: the discrepancy here is the same issue with the interface that causes there to be much
+    #special handling of gradients and jacobians.  Presumably these should be made consistent at
+    #some point but it would be a breaking change.
+    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), [1.0,1.0]), (2.0, 2.0))
+    @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
+
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+
+    x = 1.0
+    @test gradient(Forward, x -> 2*x, x) ≈ 2.0
+    @test gradient(Reverse, x -> 2*x, x) ≈ 2.0
+    @test jacobian(Forward, x -> 2*x, x) ≈ 2.0
+    @test jacobian(Reverse, x -> 2*x, x) ≈ 2.0
+    @test gradient(Forward, x -> [x, 2*x], x) ≈ [1.0, 2.0]
+
+    #TODO: fixes needed for reverse mode
+    @test_broken gradient(Reverse, x -> [x, 2*x], x) ≈ [1.0, 2.0]
+
+    @test jacobian(Forward, x -> [x, 2*x], x) ≈ [1.0, 2.0]
+    @test jacobian(Reverse, x -> [x, 2*x], x) ≈ [1.0, 2.0]
+
+    x = ones(2)
+
+    #NOTE: this is the case that should be changed but would be breaking
+    @test tplapprox(gradient(Forward, x -> sum(2*x), x), (2.0, 2.0))
+
+    @test gradient(Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test gradient(Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
+    @test_broken gradient(Reverse, x -> 2*x, x)
+    @test jacobian(Forward, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test jacobian(Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test jacobian(Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
+    @test jacobian(Reverse, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
+    
+    jac = jacobian(Forward, x -> x .* x', x)
+    @test jac[:,:,1] ≈ [2.0 1.0; 1.0 0.0]
+    @test jac[:,:,2] ≈ [0.0 1.0; 1.0 2.0]
+
+    jac = jacobian(Reverse, x -> x .* x', x) 
+    @test jac[:,:,1] ≈ [2.0 1.0; 1.0 0.0]
+    @test jac[:,:,2] ≈ [0.0 1.0; 1.0 2.0]
+end
+
+@testset "Simple Jacobian" begin
     @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0) ≈ 2.0
     @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0) ≈ [1.0, 2.0]
     @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0]) ≈ [4.0, 6.0]
@@ -2985,25 +3038,6 @@ tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
     @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
     @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
 
-end
-
-@testset "Gradient" begin
-    x = 3.0
-
-    @test Enzyme.gradient(Enzyme.Forward, x -> x^2, x) ≈ 6.0
-    @test Enzyme.gradient(Enzyme.Reverse, x -> x^2, x) ≈ 6.0
-
-    @test Enzyme.gradient(Enzyme.Forward, x -> [x, x^2], x) ≈ [1.0, 6.0]
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x, x^2], x) ≈ [1.0, 6.0]
-
-    #NOTE: the discrepancy here is the same issue with the interface that causes there to be much
-    #special handling of gradients and jacobians.  Presumably these should be made consistent at
-    #some point but it would be a breaking change.
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), [1.0,1.0]), (2.0, 2.0))
-    @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
-
-    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
 end
 
 @testset "Jacobian" begin
