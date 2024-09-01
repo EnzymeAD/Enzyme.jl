@@ -1925,26 +1925,29 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
+    if !isa(string, LLVM.Value)
+        string = globalstring_ptr!(B, string, "enz_exception")
+    end
+
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
         exc = functions(mod)["gpu_report_exception"]
 
-        name = globalstring_ptr!(B, string, "exception")
-        call!(B, LLVM.function_type(exc), exc, [name])
+        call!(B, LLVM.function_type(exc), exc, [string])
 
-	sig = GPUCompiler.Runtime.get(:signal_exception)
-	call!(B, sig)
+    	sig = GPUCompiler.Runtime.get(:signal_exception)
+    	call!(B, sig)
 
-	trap_ft = LLVM.FunctionType(LLVM.VoidType())
-	trap = if haskey(functions(mod), "llvm.trap")
-	  functions(mod)["llvm.trap"]
-	else
-	  LLVM.Function(mod, "llvm.trap", trap_ft)
-	end
-	call!(B, trap_ft, trap)
+    	trap_ft = LLVM.FunctionType(LLVM.VoidType())
+    	trap = if haskey(functions(mod), "llvm.trap")
+    	  functions(mod)["llvm.trap"]
+    	else
+    	  LLVM.Function(mod, "llvm.trap", trap_ft)
+    	end
+    	call!(B, trap_ft, trap)
     else
         err = emit_allocobj!(B, errty)
         err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-        store!(B, globalstring_ptr!(B, string), err2)
+        store!(B, string, err2)
         emit_jl_throw!(B, addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
     end
 
@@ -2182,14 +2185,11 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
 
             position!(builder, good)
             ret!(builder)
-            # ret!(builder, inp)
-            position!(builder, bad)
-            err = emit_allocobj!(builder, EnzymeRuntimeException)
-            err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-            store!(builder, globalstring_ptr!(builder, string), err2)
-            emit_jl_throw!(builder, addrspacecast!(builder, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
-            unreachable!(builder)
 
+            position!(builder, bad)
+
+            emit_error(builder, nothing, sval, EnzymeNoDerivativeError)
+            unreachable!(builder)
             dispose(builder)
         end
     end
