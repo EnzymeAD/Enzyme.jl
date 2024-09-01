@@ -1023,10 +1023,17 @@ end
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
-@inline function derivative(mode::ForwardMode, f, x; shadow=onehot(x))
+"""
+    unstructured_derivative(mode::Mode, f, x, [chunk::Val]; shadow=onehot(x))
+
+A simple wrapper of [`autodiff`](@ref) which returns output which internally is
+restructured by [`gradient`](@ref) and [`jacobian`](@ref).  The latter functions can
+be thought of as utilities for restructuring the output of this function.
+"""
+@inline function unstructured_derivative(mode::ForwardMode, f, x; shadow=onehot(x))
     values(only(autodiff(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
 end
-@inline function derivative_deferred(mode::ForwardMode, f, x; shadow=onehot(x))
+@inline function unstructured_derivative_deferred(mode::ForwardMode, f, x; shadow=onehot(x))
     values(only(autodiff_deferred(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
 end
 
@@ -1036,11 +1043,11 @@ end
 @inline _chunk_duplicated_arg(::Val{1}, x, shadow) = Duplicated(x, shadow)
 @inline _chunk_duplicated_arg(::Val, x, shadow) = BatchDuplicated(x, shadow)
 
-@inline function derivative(mode::ForwardMode, f::F, x::X, ::Val{chunk};
+@inline function unstructured_derivative(mode::ForwardMode, f::F, x::X, ::Val{chunk};
                             shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
     _chunkcheck(Val(chunk))
     tmp = ntuple(length(shadow)) do i
-        values(autodiff(mode, f, BatchDuplicatedNoNeed, _chunk_duplicated_arg(Val(chunk), x, shadow))[1])
+        values(autodiff(mode, f, BatchDuplicatedNoNeed, _chunk_duplicated_arg(Val(chunk), x, shadow[i]))[1])
     end
     tupleconcat(tmp...)
 end
@@ -1081,13 +1088,13 @@ grad = gradient(Forward, f, [2.0, 3.0])
 ```
 """
 @inline function gradient(mode::ForwardMode, f::F, x::X; shadow=onehot(x)) where {F,X}
-    df = derivative(mode, f, x; shadow)
+    df = unstructured_derivative(mode, f, x; shadow)
     gradient_output_forward(df, df[1], x)
 end
 
 @inline function gradient(mode::ForwardMode, f::F, x::X, ::Val{chunk};
                           shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
-    df = derivative(mode, f, x, Val(chunk); shadow)
+    df = unstructured_derivative(mode, f, x, Val(chunk); shadow)
     gradient_output_forward(df, df[1], x)
 end
 
@@ -1213,7 +1220,7 @@ of shape `size(input)` of values of the output type.
 @inline function jacobian(mode::ForwardMode, f, x; shadow=onehot(x))
     #NOTE: these requires special handling to prevent breaking API
     #gradient(mode, f, x; shadow)
-    df = derivative(mode, f, x; shadow)
+    df = unstructured_derivative(mode, f, x; shadow)
     jacobian_output_forward(df, df[1], x)
 end
 
@@ -1221,7 +1228,7 @@ end
                           shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
     #NOTE: again, to prevent breaking API
     #gradient(mode, f, x, Val(chunk); shadow)
-    df = derivative(mode, f, x, Val(chunk); shadow)
+    df = unstructured_derivative(mode, f, x, Val(chunk); shadow)
     jacobian_output_forward(df, df[1], x)
 end
 

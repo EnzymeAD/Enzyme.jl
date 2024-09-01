@@ -2855,14 +2855,14 @@ end
 tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
 
 @testset "Gradient and Jacobian Outputs" begin
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> 2*x, 3.0), (2.0,))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> 2*x, 3.0, Val(2)), (2.0,))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [x, 2*x], 3.0), ([1.0,2.0],))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [x, 2*x], 3.0, Val(2)), ([1.0,2.0],))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> sum(abs2, x), [2.0, 3.0]), (4.0, 6.0))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> sum(abs2, x), [2.0, 3.0], Val(2)), (4.0, 6.0))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0]), ([0.0,1.0],[-1.0,0.0]))
-    @test tplapprox(Enzyme.derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0], Val(2)), ([0.0,1.0],[-1.0,0.0]))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> 2*x, 3.0), (2.0,))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> 2*x, 3.0, Val(2)), (2.0,))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> [x, 2*x], 3.0), ([1.0,2.0],))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> [x, 2*x], 3.0, Val(2)), ([1.0,2.0],))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> sum(abs2, x), [2.0, 3.0]), (4.0, 6.0))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> sum(abs2, x), [2.0, 3.0], Val(2)), (4.0, 6.0))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0]), ([0.0,1.0],[-1.0,0.0]))
+    @test tplapprox(Enzyme.unstructured_derivative(Enzyme.Forward, x -> [-x[2], x[1]], [-2.0, 1.0], Val(2)), ([0.0,1.0],[-1.0,0.0]))
 
     x = 3.0
 
