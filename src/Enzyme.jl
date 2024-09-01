@@ -1033,11 +1033,14 @@ end
 @inline _chunkcheck(::Val{0}) = throw(ArgumentError("Cannot differentiate with a batch size of 0"))
 @inline _chunkcheck(::Val) = nothing
 
+@inline _chunk_duplicated_arg(::Val{1}, x, shadow) = Duplicated(x, shadow)
+@inline _chunk_duplicated_arg(::Val, x, shadow) = BatchDuplicated(x, shadow)
+
 @inline function derivative(mode::ForwardMode, f::F, x::X, ::Val{chunk};
                             shadow=chunkedonehot(x, Val(chunk))) where {F,X,chunk}
     _chunkcheck(Val(chunk))
     tmp = ntuple(length(shadow)) do i
-        values(autodiff(mode, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+        values(autodiff(mode, f, BatchDuplicatedNoNeed, _chunk_duplicated_arg(Val(chunk), x, shadow))[1])
     end
     tupleconcat(tmp...)
 end
