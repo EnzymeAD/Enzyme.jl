@@ -6247,13 +6247,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                         Ptr{source_typ}
                     end
                 else
-                    codegen_typ
+                    source_typ
                 end
 
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(inst, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(typetree(typ, ctx, dl, seen))))
                 else
-                    metadata(inst)["enzyme_type"] = to_md(typetree(arg.typ, ctx, dl, seen), ctx)
+                    metadata(inst)["enzyme_type"] = to_md(typetree(typ, ctx, dl, seen), ctx)
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)

@@ -77,7 +77,7 @@ Construct a Enzyme typetree from a Julia type.
     When using a memoized lookup by providing `seen` across multiple calls to typtree
     the user must call `copy` on the returned value before mutating it.
 """
-function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
+function typetree(@nospecialize(T::Type), ctx, dl, seen=TypeTreeTable())
     if haskey(seen, T)
         tree = seen[T]
         if tree === nothing
@@ -205,7 +205,7 @@ else
     ismutabletype(T) = isa(T, DataType) && T.mutable
 end
 
-function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
+function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
