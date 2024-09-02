@@ -2851,6 +2851,18 @@ end
 end
 end
 
+# used mainly in gradient and jacobian tests
+struct InpStruct
+    i1::Float64
+    i2::Float64
+    i3::Float64
+end
+struct OutStruct
+    i1::Float64
+    i2::Float64
+    i3::Float64
+end
+
 # ≈ doesn't recurse into tuples. this will also check both type and length implicitly
 tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
 
@@ -2866,54 +2878,99 @@ tplapprox(a::Tuple, b::Tuple) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
 
     x = 3.0
 
+    # ∂ scalar / ∂ scalar
     @test Enzyme.gradient(Enzyme.Forward, x -> x^2, x) ≈ 6.0
     @test Enzyme.gradient(Enzyme.Reverse, x -> x^2, x) ≈ 6.0
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, x) ≈ 2.0
+    @test Enzyme.gradient(Enzyme.Reverse, x -> 2*x, x) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x -> 2*x, x) ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> 2*x, x) ≈ 2.0
 
+    # ∂ vector / ∂ scalar
     @test Enzyme.gradient(Enzyme.Forward, x -> [x, x^2], x) ≈ [1.0, 6.0]
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x, x^2], x) ≈ [1.0, 6.0]
-
     #NOTE: the discrepancy here is the same issue with the interface that causes there to be much
     #special handling of gradients and jacobians.  Presumably these should be made consistent at
     #some point but it would be a breaking change.
     @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), [1.0,1.0]), (2.0, 2.0))
     @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), [1.0,1.0]) ≈ [2.0, 2.0]
-
-    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
-
-    x = 1.0
-    @test gradient(Forward, x -> 2*x, x) ≈ 2.0
-    @test gradient(Reverse, x -> 2*x, x) ≈ 2.0
-    @test jacobian(Forward, x -> 2*x, x) ≈ 2.0
-    @test jacobian(Reverse, x -> 2*x, x) ≈ 2.0
-    @test gradient(Forward, x -> [x, 2*x], x) ≈ [1.0, 2.0]
-
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x, 2*x], x) ≈ [1.0, 2.0]
     #TODO: fixes needed for reverse mode
     @test_broken gradient(Reverse, x -> [x, 2*x], x) ≈ [1.0, 2.0]
-
     @test jacobian(Forward, x -> [x, 2*x], x) ≈ [1.0, 2.0]
     @test jacobian(Reverse, x -> [x, 2*x], x) ≈ [1.0, 2.0]
 
     x = ones(2)
 
+    # ∂ scalar / ∂ vector
     #NOTE: this is the case that should be changed but would be breaking
-    @test tplapprox(gradient(Forward, x -> sum(2*x), x), (2.0, 2.0))
+    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> sum(2*x), x), (2.0, 2.0))
+    @test Enzyme.gradient(Enzyme.Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
+    @test_broken gradient(Enzyme.Reverse, x -> 2*x, x)
+    @test Enzyme.jacobian(Enzyme.Forward, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
 
-    @test gradient(Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
-    @test gradient(Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
-    @test_broken gradient(Reverse, x -> 2*x, x)
-    @test jacobian(Forward, x -> sum(2*x), x) ≈ [2.0, 2.0]
-    @test jacobian(Reverse, x -> sum(2*x), x) ≈ [2.0, 2.0]
-    @test jacobian(Forward, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
-    @test jacobian(Reverse, x -> 2*x, x) ≈ [2.0 0.0; 0.0 2.0]
-    
+    # ∂ vector / ∂ vector
+    @test Enzyme.gradient(Enzyme.Forward, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> 2*x, [1.0,1.0]) ≈ Float64[2 0; 0 2]
     jac = jacobian(Forward, x -> x .* x', x)
     @test jac[:,:,1] ≈ [2.0 1.0; 1.0 0.0]
     @test jac[:,:,2] ≈ [0.0 1.0; 1.0 2.0]
-
     jac = jacobian(Reverse, x -> x .* x', x) 
     @test jac[:,:,1] ≈ [2.0 1.0; 1.0 0.0]
     @test jac[:,:,2] ≈ [0.0 1.0; 1.0 2.0]
+
+    # ∂ scalar / ∂ matrix
+    #NOTE: this is a case that should change
+    @test tplapprox(Enzyme.gradient(Enzyme.Forward, sum, ones(2,2)), (1.0, 1.0, 1.0, 1.0))
+    @test Enzyme.gradient(Enzyme.Reverse, sum, ones(2,2)) ≈ [1.0 1.0; 1.0 1.0]
+    @test Enzyme.jacobian(Enzyme.Forward, sum, ones(2,2)) ≈ [1.0 1.0; 1.0 1.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, sum, ones(2,2)) ≈ [1.0 1.0; 1.0 1.0]
+
+    # ∂ matrix / ∂ scalar
+    #NOTE: these all give some very strange errors
+    # it has been explicitly confirmed that these existed *before* #1760
+    @test_broken Enzyme.gradient(Enzyme.Forward, x -> Float64[1 x; 1 1], 1.0) ≈ [0.0 1.0; 0.0 0.0]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> Float64[1 x; 1 1], 1.0) ≈ [0.0 1.0; 0.0 0.0]
+    @test_broken Enzyme.jacobian(Enzyme.Forward, x -> Float64[1 x; 1 1], 1.0) ≈ [0.0 1.0; 0.0 0.0]
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> Float64[1 x; 1 1], 1.0) ≈ [0.0 1.0; 0.0 0.0]
+
+    # ∂ vector / ∂ matrix
+    df = Enzyme.jacobian(Enzyme.Forward, x -> [x[1], x[2]], ones(2,2))
+    @test df[:,:,1] ≈ [1.0 0.0; 0.0 1.0]
+    @test df[:,:,2] ≈ zeros(2,2)
+    df = Enzyme.jacobian(Enzyme.Reverse, x -> [x[1], x[2]], ones(2,2))
+    @test df[:,:,1] ≈ [1.0 0.0; 0.0 1.0]
+    @test df[:,:,2] ≈ zeros(2,2)
+
+    #WARN: uh oh, these is newly broken in PR
+    # errors are very strange must figure out how to fix...
+    # ∂ matrix / ∂ vector
+    @test_broken Enzyme.jacobian(Enzyme.Forward, x -> [x[1] x[2]; x[2] x[1]], ones(2))
+
+    # ∂ struct / ∂ scalar
+    df = Enzyme.gradient(Enzyme.Forward, x -> InpStruct(x, x^2, x^3), 1.0)
+    @test df == (InpStruct(1.0,2.0,3.0),)
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> InpStruct(x, x^2, x^3), 1.0) == (InpStruct(1.0,2.0,3.0),)
+    df = Enzyme.jacobian(Enzyme.Forward, x -> InpStruct(x, x^2, x^3), 1.0)
+    @test df == (InpStruct(1.0,2.0,3.0),)
+    #NOTE: this gives an explicit error but presumably should work at some point
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> InpStruct(x, x^2, x^3), 1.0) == (InpStruct(1.0,2.0,3.0),)
+
+    # ∂ struct / ∂ vector
+    df = Enzyme.gradient(Enzyme.Forward, x -> InpStruct(x[1], x[2], x[2]^2), x)
+    #NOTE: we expect this to be an array after breaking change! (same as current jacobian)
+    @test df == (InpStruct(1.0, 0.0, 0.0), InpStruct(0.0, 1.0, 2.0))
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> InpStruct(x[1], x[2], x[2]^2), x) ==
+        (InpStruct(1.0, 0.0, 0.0), InpStruct(0.0, 1.0, 2.0))
+    df = Enzyme.jacobian(Enzyme.Forward, x -> InpStruct(x[1], x[2], x[2]^2), x)
+    @test df == [InpStruct(1.0, 0.0, 0.0), InpStruct(0.0, 1.0, 2.0)]
+    #NOTE: again, gives explicit error but not clear why it shouldn't work
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> InpStruct(x[1], x[2], x[2]^2), x) ==
+        [InpStruct(1.0, 0.0, 0.0), InpStruct(0.0, 1.0, 2.0)]
 end
 
 @testset "Simple Jacobian" begin
@@ -2973,12 +3030,6 @@ end
     @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
     @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
 
-    struct InpStruct
-        i1::Float64
-        i2::Float64
-        i3::Float64
-    end
-
     fillinpabs2(x) = [(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 10*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 100*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3), 1000*(x.i1*x.i1+x.i2*x.i2+x.i3*x.i3)]
 
     x2 = InpStruct(1.0, 2.0, 3.0)
@@ -2996,12 +3047,6 @@ end
     @test jac[2] == InpStruct(20.0, 40.0, 60.0)
     @test jac[3] == InpStruct(200.0, 400.0, 600.0)
     @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
-
-    struct OutStruct
-        i1::Float64
-        i2::Float64
-        i3::Float64
-    end
 
     filloutabs2(x) = OutStruct(sum(abs2, x), 10*sum(abs2, x), 100*sum(abs2, x))
 

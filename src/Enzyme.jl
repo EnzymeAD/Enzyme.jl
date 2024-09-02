@@ -1382,7 +1382,7 @@ end
     elseif y isa AbstractFloat
         gradient(ReverseMode{false,RABI,ErrIfFuncWritten,T}(), f, x)
     else
-        throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
+        throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(y))"))
     end
     (y, df)
 end
