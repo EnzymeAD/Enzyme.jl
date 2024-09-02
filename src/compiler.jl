@@ -6094,8 +6094,12 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         name = string(name)
         name = T == Float32 ? name*"f" : name
 
-        handleCustom(llvmfn, name, [EnumAttribute("readnone", 0),
-                    StringAttribute("enzyme_shouldrecompute")])
+        attrs = if LLVM.version().major <= 15
+            [LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
+        else
+            [EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
+        end
+        handleCustom(llvmfn, name, attrs)
     end
 
     @assert actualRetType !== nothing
