@@ -1915,24 +1915,31 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    # 1. get the error function
-    if orig !== nothing
-        bt = GPUCompiler.backtrace(orig)
-        function printBT(io)
-            print(io,"\nCaused by:")
-            Base.show_backtrace(io, bt)
-        end
-        string*=sprint(io->Base.show_backtrace(io, bt))
-    end
-
     if !isa(string, LLVM.Value)
         string = globalstring_ptr!(B, string, "enz_exception")
     end
 
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-        exc = functions(mod)["gpu_report_exception"]
+
+        vt = LLVM.VoidType()
+        ptr = convert(LLVMType; Ptr{Cvoid})
+
+        exc, _ = get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
 
         call!(B, LLVM.function_type(exc), exc, [string])
+
+        framefn, ft = get_function!(mod, "gpu_report_exception_frame", LLVM.FunctionType(vt, [LLVM.Int32Type(), ptr, ptr, LLVM.Int32Type()]))
+
+        if orig !== nothing
+            bt = GPUCompiler.backtrace(orig)
+            for (i,frame) in enumerate(bt)
+                idx = ConstantInt(parameters(ft)[1], i)
+                func = globalstring_ptr!(builder, String(frame.func), "di_func")
+                file = globalstring_ptr!(builder, String(frame.file), "di_file")
+                line = ConstantInt(parameters(ft)[4], frame.line)
+                call!(B, ft, framefn, [idx, func, file, line])
+            end
+        end
 
     	sig = GPUCompiler.Runtime.get(:signal_exception)
     	call!(B, sig)
