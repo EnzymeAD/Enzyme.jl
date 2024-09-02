@@ -1494,12 +1494,12 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RABI,ErrIfFuncWritten,T}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten,T}
     res = f(x)
     jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
+        jacobian(ReverseMode{false,RABI, ErrIfFuncWritten,T}(), f, x, Val(length(res)))
     elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x)
+        gradient(ReverseMode{false,RABI, ErrIfFuncWritten,T}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
     end
