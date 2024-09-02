@@ -1369,12 +1369,6 @@ end
         @fwdfunc(jlcall2_fwd),
     )
     register_handler!(
-        ("julia.gc_loaded",),
-        @augfunc(gcloaded_augfwd),
-        @revfunc(gcloaded_rev),
-        @fwdfunc(gcloaded_fwd),
-    )
-    register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),
         @augfunc(generic_augfwd),
         @revfunc(generic_rev),

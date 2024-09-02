@@ -3777,6 +3777,13 @@ function annotate!(mod, mode)
         end
     end
 
+    for fname in ("julia.gc_loaded",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+        end
+    end
+
     for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states", "julia.safepoint", "ijl_throw", "julia.pointer_from_objref",
                   "ijl_array_grow_end", "jl_array_grow_end", "ijl_array_del_end", "jl_array_del_end",
                   "ijl_array_grow_beg", "jl_array_grow_beg", "ijl_array_del_beg", "jl_array_del_beg",
