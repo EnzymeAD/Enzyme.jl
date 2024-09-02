@@ -1922,7 +1922,7 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
 
         vt = LLVM.VoidType()
-        ptr = convert(LLVMType; Ptr{Cvoid})
+        ptr = convert(LLVMType, Ptr{Cvoid})
 
         exc, _ = get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
 
