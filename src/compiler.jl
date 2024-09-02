@@ -1925,12 +1925,29 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
         string*=sprint(io->Base.show_backtrace(io, bt))
     end
 
+    if !isa(string, LLVM.Value)
+        string = globalstring_ptr!(B, string, "enz_exception")
+    end
+
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-        GPUCompiler.emit_exception!(B, string, orig)
+        exc = functions(mod)["gpu_report_exception"]
+
+        call!(B, LLVM.function_type(exc), exc, [string])
+
+    	sig = GPUCompiler.Runtime.get(:signal_exception)
+    	call!(B, sig)
+
+    	trap_ft = LLVM.FunctionType(LLVM.VoidType())
+    	trap = if haskey(functions(mod), "llvm.trap")
+    	  functions(mod)["llvm.trap"]
+    	else
+    	  LLVM.Function(mod, "llvm.trap", trap_ft)
+    	end
+    	call!(B, trap_ft, trap)
     else
         err = emit_allocobj!(B, errty)
         err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-        store!(B, globalstring_ptr!(B, string), err2)
+        store!(B, string, err2)
         emit_jl_throw!(B, addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
     end
 
@@ -2168,14 +2185,11 @@ function julia_sanitize(orig::LLVM.API.LLVMValueRef, val::LLVM.API.LLVMValueRef,
 
             position!(builder, good)
             ret!(builder)
-            # ret!(builder, inp)
-            position!(builder, bad)
-            err = emit_allocobj!(builder, EnzymeRuntimeException)
-            err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-            store!(builder, globalstring_ptr!(builder, string), err2)
-            emit_jl_throw!(builder, addrspacecast!(builder, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)))
-            unreachable!(builder)
 
+            position!(builder, bad)
+
+            emit_error(builder, nothing, sval, EnzymeNoDerivativeError)
+            unreachable!(builder)
             dispose(builder)
         end
     end
@@ -2446,7 +2460,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     if v != tmp
                         changed = true
                     end
-                    push!(todo, tmp)
+                    push!(cvals, tmp)
                 end
 
                 cur2 = if changed
@@ -2460,7 +2474,10 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 return cur2
             end
             if isa(cur, LLVM.ConstantInt)
-                if LLVM.width(value_type(cur)) <= 8
+	        if LLVM.width(value_type(cur)) <= sizeof(Int)*8
+                    return make_batched(ncur, prevbb)
+                end
+		if LLVM.width(value_type(cur)) == sizeof(Int)*8 && abs(convert(Int, cur)) < 10000
                     return make_batched(ncur, prevbb)
                 end
                 # if storing a constant int as a non-pointer, presume it is not a GC'd var and is safe
@@ -2469,6 +2486,35 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
             end
+            
+	    if isa(cur, LLVM.SelectInst)
+                lhs = make_replacement(operands(cur)[2], prevbb)
+                if illegal
+                    return ncur
+                end
+                rhs = make_replacement(operands(cur)[3], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(cur)[2] && rhs == operands(cur)[3]
+                    return make_batched(ncur, prevbb)
+                end
+                if width == 1
+		    nv = select!(prevbb, new_from_original(gutils, operands(cur)[1]), lhs, rhs)
+                    push!(created, nv)
+                    seen[cur] = nv
+                    return nv
+                else
+                    shadowres = LLVM.UndefValue(value_type(lhs))
+                    for idx in 1:width
+		        shadowres = insert_value!(prevbb, shadowres, select!(new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
+                        if isa(shadowres, LLVM.Instruction)
+                            push!(created, shadowres)
+                        end
+                    end
+                    return shadowres
+                end
+	    end
             
             if isa(cur, LLVM.InsertValueInst)
                 lhs = make_replacement(operands(cur)[1], prevbb)
