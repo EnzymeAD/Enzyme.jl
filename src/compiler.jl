@@ -1944,10 +1944,9 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
                 call!(B, ft, framefn, [idx, func, file, line])
             end
         end
-
-    	sig = GPUCompiler.Runtime.get(:signal_exception)
-    	call!(B, sig)
-
+		
+        sigfn, sigft = get_function!(mod, "gpu_signal_exception", LLVM.FunctionType(vt, LLVM.LLVMType[]))
+    	call!(B, sigft, sigfn)
     	trap_ft = LLVM.FunctionType(LLVM.VoidType())
     	trap = if haskey(functions(mod), "llvm.trap")
     	  functions(mod)["llvm.trap"]
