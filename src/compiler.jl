@@ -1926,6 +1926,8 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
 
         exc, _ = get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
 
+        string = ptrtoint!(builder, string, ptr)
+
         call!(B, LLVM.function_type(exc), exc, [string])
 
         framefn, ft = get_function!(mod, "gpu_report_exception_frame", LLVM.FunctionType(vt, [LLVM.Int32Type(), ptr, ptr, LLVM.Int32Type()]))
@@ -1935,7 +1937,9 @@ function emit_error(B::LLVM.IRBuilder, orig, string, errty=EnzymeRuntimeExceptio
             for (i,frame) in enumerate(bt)
                 idx = ConstantInt(parameters(ft)[1], i)
                 func = globalstring_ptr!(builder, String(frame.func), "di_func")
+                func = ptrtoint!(builder, func, ptr)
                 file = globalstring_ptr!(builder, String(frame.file), "di_file")
+                file = ptrtoint!(builder, file, ptr)
                 line = ConstantInt(parameters(ft)[4], frame.line)
                 call!(B, ft, framefn, [idx, func, file, line])
             end
