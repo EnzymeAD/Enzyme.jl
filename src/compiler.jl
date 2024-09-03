@@ -2517,7 +2517,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 else
                     shadowres = LLVM.UndefValue(value_type(lhs))
                     for idx in 1:width
-		        shadowres = insert_value!(prevbb, shadowres, select!(prevbb, new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
+		        shadowres = insert_value!(prevbb, shadowres, select!(prevbb, new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx-1), extract_value!(prevbb, rhs, idx-1)), idx-1)
                         if isa(shadowres, LLVM.Instruction)
                             push!(created, shadowres)
                         end
