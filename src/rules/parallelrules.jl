@@ -3,7 +3,7 @@ function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ss
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     opt_mi = world
-    forward = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
+    forward = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
@@ -18,7 +18,7 @@ function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any,
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     opt_mi = world
-    forward, adjoint = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI)
+    forward, adjoint = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
@@ -194,7 +194,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false)
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             cmod, fwdmodenm, _, _ = _thunk(ejob, #=postopt=#false)
@@ -225,7 +225,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false)
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, #=postopt=#false)
@@ -306,7 +306,7 @@ end
                 v = load!(B, pllty, v)
             end
         else
-            v = makeInstanceOf(ppfuncT)
+            v = makeInstanceOf(B, ppfuncT)
         end
 
         if refed
@@ -516,7 +516,6 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -526,13 +525,13 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_fwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(B, runtime_newtask_fwd),
+                       unsafe_to_llvm(B, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
+                       unsafe_to_llvm(B, Val(width)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -560,7 +559,6 @@ end
     end
     normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow = (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -577,14 +575,14 @@ end
     ops = collect(operands(orig))
 
     vals = LLVM.Value[
-                       unsafe_to_llvm(runtime_newtask_augfwd),
-                       unsafe_to_llvm(Val(world)),
+                       unsafe_to_llvm(B, runtime_newtask_augfwd),
+                       unsafe_to_llvm(B, Val(world)),
                        new_from_original(gutils, ops[1]),
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(Val(width)),
-                       unsafe_to_llvm(Val(ModifiedBetween)),
+                       unsafe_to_llvm(B, Val(width)),
+                       unsafe_to_llvm(B, Val(ModifiedBetween)),
                       ]
 
     ntask = emit_apply_generic!(B, vals)

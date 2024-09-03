@@ -104,7 +104,22 @@ include("parallelrules.jl")
         end
     end
 
-    emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
+    err = emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in forward for "*string(orig))
+    
+    newo = new_from_original(gutils, orig)
+
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
 
     return false
 end
@@ -145,7 +160,21 @@ end
         end
     end
 
-    emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
+    err = emit_error(B, orig, "Enzyme: jl_call calling convention not implemented in aug_forward for "*string(orig))
+    newo = new_from_original(gutils, orig)
+
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
 
     return false
 end
@@ -589,7 +618,12 @@ end
 @register_fwd function boxfloat_fwd(B, orig, gutils, normalR, shadowR)
     origops = collect(operands(orig))
     width = get_width(gutils)
-    if is_constant_value(gutils, orig)
+    
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0
         return true
     end
 
@@ -616,7 +650,12 @@ end
 @register_aug function boxfloat_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origops = collect(operands(orig))
     width = get_width(gutils)
-    if is_constant_value(gutils, orig)
+    
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, get_mode(gutils))
+
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0
         return true
     end
 
@@ -642,30 +681,37 @@ end
 end
 
 @register_rev function boxfloat_rev(B, orig, gutils, tape)
+    
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, API.DEM_ReverseModePrimal)
+
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0
+        return nothing
+    end
+
     origops = collect(operands(orig))
     width = get_width(gutils)
-    if !is_constant_value(gutils, orig)
-        ip = lookup_value(gutils, invert_pointer(gutils, orig, B), B)
-        flt = value_type(origops[1])
-        if width == 1
-            ipc = bitcast!(B, ip, LLVM.PointerType(flt, addrspace(value_type(orig))))
+    ip = lookup_value(gutils, invert_pointer(gutils, orig, B), B)
+    flt = value_type(origops[1])
+    if width == 1
+        ipc = bitcast!(B, ip, LLVM.PointerType(flt, addrspace(value_type(orig))))
+        ld = load!(B, flt, ipc)
+        store!(B, ConstantFP(flt, 0.0), ipc)
+        if !is_constant_value(gutils, origops[1])
+            API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], ld, B, flt)
+        end
+    else
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
+        for idx in 1:width
+            ipc = extract_value!(B, ip, idx-1)
+            ipc = bitcast!(B, ipc, LLVM.PointerType(flt, addrspace(value_type(orig))))
             ld = load!(B, flt, ipc)
             store!(B, ConstantFP(flt, 0.0), ipc)
-            if !is_constant_value(gutils, origops[1])
-                API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], ld, B, flt)
-            end
-        else
-            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
-            for idx in 1:width
-                ipc = extract_value!(B, ip, idx-1)
-                ipc = bitcast!(B, ipc, LLVM.PointerType(flt, addrspace(value_type(orig))))
-                ld = load!(B, flt, ipc)
-                store!(B, ConstantFP(flt, 0.0), ipc)
-                shadowres = insert_value!(B, shadowres, ld, idx-1)
-            end
-            if !is_constant_value(gutils, origops[1])
-                API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], shadowret, B, flt)
-            end
+            shadowres = insert_value!(B, shadowres, ld, idx-1)
+        end
+        if !is_constant_value(gutils, origops[1])
+            API.EnzymeGradientUtilsAddToDiffe(gutils, origops[1], shadowret, B, flt)
         end
     end
     return nothing
@@ -709,6 +755,8 @@ end
         return false
     end
 
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
     width = get_width(gutils)
 
     origh, origkey, origdflt = operands(orig)[1:end-1]
@@ -747,7 +795,7 @@ end
         newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowdflt]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
         callconv!(cal, callconv(orig))
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, cal)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)])
         cal
     else
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
@@ -756,7 +804,7 @@ end
             newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), extract_value!(B, shadowdflt, j-1)]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, cal)])
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)])
             shadow = insert_value!(B, shadow, cal, j-1)
         end
         shadow
@@ -820,10 +868,12 @@ end
         invert_pointer(gutils, origval, B)
     end
 
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
     
     shadowres = if width == 1
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, shadowval)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)])
         newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowval, LLVM.null(value_type(originserted))]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
         callconv!(cal, callconv(orig))
@@ -833,7 +883,7 @@ end
         shadow = LLVM.UndefValue(ST)
         for j in 1:width
             sval2 = extract_value!(B, shadowval, j-1)
-            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(error_if_active), emit_jltypeof!(B, sval2)])
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, sval2)])
             newops = LLVM.Value[extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey), sval2, LLVM.null(value_type(originserted))]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
             callconv!(cal, callconv(orig))
@@ -1317,12 +1367,6 @@ end
         @augfunc(jlcall2_augfwd),
         @revfunc(jlcall2_rev),
         @fwdfunc(jlcall2_fwd),
-    )
-    register_handler!(
-        ("julia.gc_loaded",),
-        @augfunc(gcloaded_augfwd),
-        @revfunc(gcloaded_rev),
-        @fwdfunc(gcloaded_fwd),
     )
     register_handler!(
         ("jl_apply_generic", "ijl_apply_generic"),

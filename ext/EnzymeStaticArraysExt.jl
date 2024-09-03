@@ -14,7 +14,7 @@ end
     ntuple(Val(endl-start+1)) do i
         Base.@_inline_meta
         StaticArrays.SArray{S, T, N, L}(
-        ntuple(Val(N)) do idx
+        ntuple(Val(L)) do idx
             Base.@_inline_meta
             return (i + start - 1 == idx) ? 1.0 : 0.0
         end)

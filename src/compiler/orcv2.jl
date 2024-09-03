@@ -1,6 +1,7 @@
 module JIT
 
 using LLVM
+using Libdl
 import LLVM:TargetMachine
 
 import GPUCompiler
@@ -8,7 +9,7 @@ import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
 @inline function use_ojit()
-    return LLVM.has_julia_ojit() && !Sys.iswindows()
+        return (VERSION >= v"1.10.0-DEV.1395") && !Sys.iswindows()
 end
 
 export get_trampoline
@@ -129,6 +130,21 @@ function __init__()
     catch err
         @warn "OrcV2 initialization failed with" err
         jit[] = CompilerInstance(lljit, nothing, nothing)
+    end
+
+    hnd = @static if VERSION >= v"1.10"
+        unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
+    else
+        Libdl.dlopen("libjulia")
+    end
+    for (k, v) in Compiler.JuliaGlobalNameMap
+        ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
+        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
+    end
+
+    for (k, v) in Compiler.JuliaEnzymeNameMap
+        ptr = Compiler.unsafe_to_ptr(v)
+        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
     end
 
     atexit() do

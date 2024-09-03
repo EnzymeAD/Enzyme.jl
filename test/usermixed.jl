@@ -45,7 +45,7 @@ end
     @test dres[2][][1] ≈ 0.0
     @test dres[2][][2] === dy2
 
-    outs = rev(Const(user_mixret), Active(x), BatchDuplicated(y, (dy, dy2)), (47.0, dy), (56.0, dy), tape)
+    outs = rev(Const(user_mixret), Active(x), BatchDuplicated(y, (dy, dy2)), ((47.0, dy), (56.0, dy)), tape)
 
     @test outs[1][1][1] ≈ 47.0
     @test outs[1][1][2] ≈ 56.0
@@ -86,7 +86,7 @@ end
     @test dres[1][] ≈ 0.0
     @test dres[2][] ≈ 0.0
 
-    outs = rev(Const(user_fltret), Active(x), BatchDuplicated(y, (dy, dy2)), 47.0, 56.0, tape)
+    outs = rev(Const(user_fltret), Active(x), BatchDuplicated(y, (dy, dy2)), (47.0, 56.0), tape)
 
     @test outs[1][1][1] ≈ 47.0
     @test outs[1][1][2] ≈ 56.0
