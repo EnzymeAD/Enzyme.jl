@@ -1,4 +1,4 @@
-mutable struct PipelineConfig
+struct PipelineConfig
     Speedup::Cint
     Size::Cint
     lower_intrinsics::Cint
@@ -17,13 +17,364 @@ end
 
 const RunAttributor = Ref(true) 
 
-function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enalbe_early_simplifications=true,
+function pipeline_options(; lower_intrinsics=true, dump_native=false, external_use=false, llvm_only=false, always_inline=true, enable_early_simplifications=true,
+       enable_early_optimizations=true,
        enable_scalar_optimizations=true,
        enable_loop_optimizations=true,
        enable_vector_pipeline=true,
        remove_ni=true,
        cleanup=true, Size=0, Speedup=3)
     return PipelineConfig(Speedup, Size, lower_intrinsics, dump_native, external_use, llvm_only, always_inline, enable_early_simplifications, enable_early_optimizations, enable_scalar_optimizations, enable_loop_optimizations, enable_vector_pipeline, remove_ni, cleanup)
+end
+
+function run_jl_pipeline(pm, tm; kwargs...) 
+    config = Ref(pipeline_options(;kwargs...))
+    function jl_pipeline(m)
+        @dispose pb=NewPMPassBuilder() begin
+            add!(pb, NewPMModulePassManager()) do mpm
+                @ccall jl_build_newpm_pipeline(mpm.ref::Ptr{Cvoid}, pb.ref::Ptr{Cvoid}, config::Ptr{PipelineConfig})::Cvoid
+            end
+            LLVM.run!(mpm, m, tm)
+        end
+        return true
+    end
+    add!(pm, ModulePass("JLPipeline", jl_pipeline))
+end
+
+@static if VERSION < v"1.11.0-DEV.428"
+else
+    barrier_noop!(pm) = nothing
+end
+
+@static if VERSION < v"1.11-"
+    function gc_invariant_verifier_tm!(pm, tm, cond)
+        gc_invariant_verifier!(pm, cond)
+    end
+else
+    function gc_invariant_verifier_tm!(pm, tm, cond)
+        function gc_invariant_verifier(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, GCInvariantVerifierPass(;strong=cond))
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("GCInvariantVerifier", gc_invariant_verifier))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function propagate_julia_addrsp_tm!(pm, tm)
+        propagate_julia_addrsp!(pm)
+    end
+else
+    function propagate_julia_addrsp_tm!(pm, tm)
+        function prop_julia_addr(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, PropagateJuliaAddrspacesPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("PropagateJuliaAddrSpace", prop_julia_addr))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function alloc_opt_tm!(pm, tm)
+        alloc_opt!(pm)
+    end
+else
+    function alloc_opt_tm!(pm, tm)
+        function alloc_opt(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, AllocOptPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("AllocOpt", alloc_opt))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function remove_ni_tm!(pm, tm)
+        remove_ni!(pm)
+    end
+else
+    function remove_ni_tm!(pm, tm)
+        function remove_ni(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, RemoveNIPass())
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("RemoveNI", remove_ni))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function julia_licm_tm!(pm, tm)
+        julia_licm!(pm)
+    end
+else
+    function julia_licm_tm!(pm, tm)
+        function julia_licm(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, NewPMLoopPassManager()) do lpm
+                            add!(lpm, JuliaLICMPass())
+                        end
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        # really looppass
+        add!(pm, ModulePass("JuliaLICM", julia_licm))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function lower_simdloop_tm!(pm, tm)
+        lower_simdloop!(pm)
+    end
+else
+    function lower_simdloop_tm!(pm, tm)
+        function lower_simdloop(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, NewPMLoopPassManager()) do lpm
+                            add!(lpm, LowerSIMDLoopPass())
+                        end
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        # really looppass
+        add!(pm, ModulePass("LowerSIMDLoop", lower_simdloop))
+    end
+end
+
+
+function loop_optimizations_tm!(pm, tm)
+    @static if true || VERSION < v"1.11-"
+        lower_simdloop_tm!(pm, tm)
+        licm!(pm)
+        if LLVM.version() >= v"15"                      
+            simple_loop_unswitch_legacy!(pm)
+        else
+            loop_unswitch!(pm)
+        end
+    else
+        run_jl_pipeline(pm, tm; lower_intrinsics=false, dump_native=false, external_use=false, llvm_only=false, always_inline=false, enable_early_simplifications=false, enable_early_optimizations=false, enable_scalar_optimizations=false, enable_loop_optimizations=true, enable_vector_pipeline=false, remove_ni=false, cleanup=false)
+    end
+end
+
+
+function more_loop_optimizations_tm!(pm, tm)
+    @static if true || VERSION < v"1.11-"
+        loop_rotate!(pm)
+        # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
+        loop_idiom!(pm)
+
+        # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
+        lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+        licm!(pm)
+        julia_licm_tm!(pm, tm)
+        # Subsequent passes not stripping metadata from terminator
+        instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+        jl_inst_simplify!(pm)
+        
+        ind_var_simplify!(pm)
+        loop_deletion!(pm)
+        loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
+    else
+        # LowerSIMDLoopPass
+        # LoopRotatePass [opt >= 2]
+        # LICMPass
+        # JuliaLICMPass
+        # SimpleLoopUnswitchPass
+        # LICMPass
+        # JuliaLICMPass
+        # IRCEPass
+        # LoopInstSimplifyPass
+        #   - in ours this is instcombine with jlinstsimplify
+        # LoopIdiomRecognizePass
+        # IndVarSimplifyPass
+        # LoopDeletionPass
+        # LoopFullUnrollPass
+        run_jl_pipeline(pm, tm; lower_intrinsics=false, dump_native=false, external_use=false, llvm_only=false, always_inline=false, enable_early_simplifications=false, enable_early_optimizations=false, enable_scalar_optimizations=false, enable_loop_optimizations=true, enable_vector_pipeline=false, remove_ni=false, cleanup=false)
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function demote_float16_tm!(pm, tm)
+        demote_float16!(pm)
+    end
+else
+    function demote_float16_tm!(pm, tm)
+        function demote_float16(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, DemoteFloat16Pass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("DemoteFloat16", demote_float16))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function lower_exc_handlers_tm!(pm, tm)
+        lower_exc_handlers!(pm)
+    end
+else
+    function lower_exc_handlers_tm!(pm, tm)
+        function lower_exc_handlers(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, LowerExcHandlersPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("LowerExcHandlers", lower_exc_handlers))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function lower_ptls_tm!(pm, tm, dump_native)
+        lower_ptls!(pm, dump_native)
+    end
+else
+    function lower_ptls_tm!(pm, tm, dump_native)
+        function lower_ptls(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, LowerPTLSPass())
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("LowerPTLS", lower_ptls))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function combine_mul_add_tm!(pm, tm)
+        combine_mul_add!(pm)
+    end
+else
+    function combine_mul_add_tm!(pm, tm)
+        function combine_mul_add(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, CombineMulAddPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("CombineMulAdd", combine_mul_add))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function late_lower_gc_frame_tm!(pm, tm)
+        late_lower_gc_frame!(pm)
+    end
+else
+    function late_lower_gc_frame_tm!(pm, tm)
+        function late_lower_gc_frame(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, LateLowerGCPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("LateLowerGCFrame", late_lower_gc_frame))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function final_lower_gc_tm!(pm, tm)
+        final_lower_gc!(pm)
+    end
+else
+    function final_lower_gc_tm!(pm, tm)
+        function final_lower_gc(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, NewPMFunctionPassManager()) do fpm
+                        add!(fpm, FinalLowerGCPass())
+                    end
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("FinalLowerGCFrame", final_lower_gc))
+    end
+end
+
+@static if VERSION < v"1.11-"
+    function cpu_features_tm!(pm, tm)
+        @static if isdefined(LLVM.Interop, :cpu_features!)
+                LLVM.Interop.cpu_features!(pm)
+        else
+        @static if isdefined(GPUCompiler, :cpu_features!)
+                GPUCompiler.cpu_features!(pm)
+        end
+        end
+    end
+else
+    function cpu_features_tm!(pm, tm)
+        function cpu_features(mod)
+            @dispose pb=NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, CPUFeaturesPass())
+                end
+                run!(pb, mod)
+            end
+            return true
+        end
+        add!(pm, ModulePass("CPUFeatures", cpu_features))
+    end
 end
 
 function addNA(inst, node::LLVM.Metadata, MD)
@@ -80,7 +431,7 @@ end
 #   
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
-function memcpy_alloca_to_loadstore(mod)
+function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     dl = datalayout(mod) 
     for f in functions(mod)
         if length(blocks(f)) != 0
@@ -375,6 +726,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if addr == 11 && isa(v, LLVM.ConstantExpr)
                         if opcode(v) == LLVM.API.LLVMAddrSpaceCast
                             v2 = operands(v)[1]
+                            if addrspace(value_type(v2)) == 10
+                                return v2, offset, hasload
+                            end
                             if addrspace(value_type(v2)) == 0
                                 if addr == 11
                                     v2 = const_addrspacecast(v2, LLVM.PointerType(eltype(value_type(v)), 10))
@@ -536,7 +890,7 @@ end
 
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
-        invalid = LLVM.AddrSpaceCastInst[]
+        invalid = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
             if !isa(inst, LLVM.AddrSpaceCastInst)
                 continue
@@ -563,8 +917,24 @@ function fix_decayaddr!(mod::LLVM.Module)
 					    if operands(st)[2] == inst
 							 LLVM.API.LLVMSetOperand(st, 2-1, operands(inst)[1])
 							 continue
-						 end
+						end
 					 end
+                     if isa(st, LLVM.LoadInst)
+                        LLVM.API.LLVMSetOperand(st, 1-1, operands(inst)[1])
+                        continue
+                     end
+                     # if isa(st, LLVM.InsertValueInst)
+                     #    if operands(st)[1] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 1-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     #    if operands(st)[2] == inst
+                     #        push!(invalid, st)
+                     #        LLVM.API.LLVMSetOperand(st, 2-1, LLVM.UndefValue(value_type(inst)))
+                     #        continue
+                     #    end
+                     # end
 					 if !isa(st, LLVM.CallInst)
 						  bt = GPUCompiler.backtrace(st)
 						  msg = sprint() do io::IO
@@ -578,7 +948,7 @@ function fix_decayaddr!(mod::LLVM.Module)
 								  println(io)
 							  end
 						  end
-						  throw(AssertionError(msg))
+					  throw(AssertionError(msg))
                 end
                 
                 fop = operands(st)[end]
@@ -626,6 +996,11 @@ function fix_decayaddr!(mod::LLVM.Module)
                 mayread = false
                 maywrite = false
                 sret = true
+                sretkind = kind(if LLVM.version().major >= 12
+                    TypeAttribute("sret", LLVM.Int32Type())
+                else
+                    EnumAttribute("sret")
+                end)
                 for (i, v) in enumerate(operands(st)[1:end-1])
                     if v == inst
                         readnone = false
@@ -633,7 +1008,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         writeonly = false
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
-                            if kind(a) == kind(EnumAttribute("sret"))
+                            if kind(a) == sretkind
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
@@ -803,7 +1178,7 @@ function prop_global!(g)
 end
 
 # From https://llvm.org/doxygen/IR_2Instruction_8cpp_source.html#l00959
-function mayWriteToMemory(inst::LLVM.Instruction)::Bool
+function mayWriteToMemory(inst::LLVM.Instruction; err_is_readonly=false)::Bool
     # we will ignore fense here
     if isa(inst, LLVM.StoreInst)
         return true
@@ -838,8 +1213,13 @@ function mayWriteToMemory(inst::LLVM.Instruction)::Bool
                 return false
             end
             # Note out of spec, and only legal in context of removing unused calls
-            if kind(attr) == kind(StringAttribute("enzyme_error"))
+            if kind(attr) == kind(StringAttribute("enzyme_error")) && err_is_readonly
                 return false
+            end
+            if kind(attr) == kind(StringAttribute("memory"))
+                if is_readonly(MemoryEffect(value(attr)))
+                    return false
+                end
             end
         end
         Libc.free(Attrs)
@@ -887,8 +1267,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         end
         push!(done, cur)
 
-        attrs = collect(function_attributes(cur))
-        if any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) || any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+        if is_readonly(cur)
             continue
         end
 
@@ -899,9 +1278,12 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         if isempty(blocks(cur))
             return false
         end
+
+        err_is_readonly = !is_noreturn(cur)
+
         for bb in blocks(cur)
             for inst in instructions(bb)
-                if !mayWriteToMemory(inst)
+                if !mayWriteToMemory(inst; err_is_readonly)
                     continue
                 end
                 if isa(inst, LLVM.CallInst)
@@ -917,17 +1299,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         end
     end
     
-    changed = false
-    attrs = collect(function_attributes(fn))
-    if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
-        if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
-            delete!(function_attributes(fn), EnumAttribute("writeonly"))
-            push!(function_attributes(fn), EnumAttribute("readnone"))
-        else
-            push!(function_attributes(fn), EnumAttribute("readonly"))
-        end
-        changed = true
-    end
+    changed = set_readonly!(fn)
 
     if length(calls) == 0 || hasUser
         return changed
@@ -1279,8 +1651,11 @@ function detect_writeonly!(mod::LLVM.Module)
         end
         for (i, a) in enumerate(parameters(f))
             if isa(value_type(a), LLVM.PointerType)
-                todo = LLVM.Value[a]
-                seen = Set{LLVM.Value}()
+                todo = Tuple{LLVM.Value, LLVM.Instruction}[]
+                for u in LLVM.uses(a)
+                    push!(todo, (a, LLVM.user(u)))
+                end
+                seen = Set{Tuple{LLVM.Value, LLVM.Instruction}}()
                 mayread = false
                 maywrite = false
                 while length(todo) > 0
@@ -1289,20 +1664,23 @@ function detect_writeonly!(mod::LLVM.Module)
                         continue
                     end
                     push!(seen, cur)
+                    curv, curi = cur
                     
-                    if isa(cur, LLVM.StoreInst)
-                        maywrite = true
-                        continue
+                    if isa(curi, LLVM.StoreInst)
+                        if operands(curi)[1] != curv
+                            maywrite = true
+                            continue
+                        end
                     end
                     
-                    if isa(cur, LLVM.LoadInst)
+                    if isa(curi, LLVM.LoadInst)
                         mayread = true
                         continue
                     end
 
-                    if isa(cur, LLVM.Argument) || isa(cur, LLVM.GetElementPtrInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst)
-                        for u in LLVM.uses(cur)
-                            push!(todo, LLVM.user(u))
+                    if isa(curi, LLVM.GetElementPtrInst) || isa(curi, LLVM.BitCastInst) || isa(curi, LLVM.AddrSpaceCastInst)
+                        for u in LLVM.uses(curi)
+                            push!(todo, (curi, LLVM.user(u)))
                         end
                         continue
                     end
@@ -1345,6 +1723,11 @@ function validate_return_roots!(mod)
         enzyme_srets_v = Int[]
         rroots = Int[]
         rroots_v = Int[]
+        sretkind = kind(if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end)
         for (i, a) in enumerate(parameters(f))
             for attr in collect(parameter_attributes(f, i))
                 if isa(attr, StringAttribute)
@@ -1361,7 +1744,7 @@ function validate_return_roots!(mod)
                         push!(enzyme_srets, i)
                     end
                 end
-                if kind(attr) == kind(EnumAttribute("sret"))
+                if kind(attr) == sretkind
                     push!(srets, (i, attr))
                 end
             end
@@ -1519,7 +1902,7 @@ end
 
 cse!(pm) = LLVM.API.LLVMAddEarlyCSEPass(pm)
 
-function removeDeadArgs!(mod::LLVM.Module)
+function removeDeadArgs!(mod::LLVM.Module, tm)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
@@ -1527,14 +1910,20 @@ function removeDeadArgs!(mod::LLVM.Module)
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
     ModulePassManager() do pm
         global_dce!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg=true)
-    func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
-    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
-    sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
-
+    if LLVM.version().major <= 15
+        func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("readnone"), EnumAttribute("nofree")])
+        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("readonly"), EnumAttribute("nofree"), EnumAttribute("argmemonly")])
+    else
+        func, _ = get_function!(mod, "llvm.enzymefakeuse", funcT, [EnumAttribute("memory", NoEffects.data), EnumAttribute("nofree")])
+        rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, [EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")])
+        sfunc, _ = get_function!(mod, "llvm.enzyme.sret_use", funcT, [EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")])
+    end
+    
     for fn in functions(mod)
         if isempty(blocks(fn))
             continue
@@ -1561,12 +1950,17 @@ function removeDeadArgs!(mod::LLVM.Module)
                 end
             end
         end
+        sretkind = kind(if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end)
         for idx in (1, 2)
             if length(collect(parameters(fn))) < idx
                 continue
             end
             attrs = collect(parameter_attributes(fn, idx))
-            if any( ( kind(attr) == kind(EnumAttribute("sret")) || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
+            if any( ( kind(attr) == sretkind || kind(attr) == kind(StringAttribute("enzyme_sret")) || kind(attr) == kind(StringAttribute("enzyme_sret_v")) ) for attr in attrs)
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
@@ -1602,10 +1996,10 @@ function removeDeadArgs!(mod::LLVM.Module)
     ModulePassManager() do pm
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         cse!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     propagate_returned!(mod)
     pre_attr!(mod)
@@ -1613,7 +2007,7 @@ function removeDeadArgs!(mod::LLVM.Module)
         if LLVM.version().major >= 13
             ModulePassManager() do pm
                 API.EnzymeAddAttributorLegacyPass(pm)
-                run!(pm, mod)
+                LLVM.run!(pm, mod)
             end
         end 
     end
@@ -1621,7 +2015,7 @@ function removeDeadArgs!(mod::LLVM.Module)
     ModulePassManager() do pm
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         if RunAttributor[]
             if LLVM.version().major >= 13
@@ -1629,7 +2023,7 @@ function removeDeadArgs!(mod::LLVM.Module)
             end
         end
         cse!(pm)
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
     post_attr!(mod)
     propagate_returned!(mod)
@@ -1666,19 +2060,17 @@ function optimize!(mod::LLVM.Module, tm)
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
-        propagate_julia_addrsp!(pm)
+        propagate_julia_addrsp_tm!(pm, tm)
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         dce!(pm)
-@static if isdefined(GPUCompiler, :cpu_features!)
-        GPUCompiler.cpu_features!(pm)
-end
+        cpu_features_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
         gvn!(pm) # Extra
         instruction_combining!(pm)
@@ -1693,22 +2085,18 @@ end
         jl_inst_simplify!(pm)
         reassociate!(pm)
         early_cse!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         loop_idiom!(pm)
         loop_rotate!(pm)
-        lower_simdloop!(pm)
-        licm!(pm)
-        if LLVM.version() >= v"15"                      
-            simple_loop_unswitch_legacy!(pm)
-        else
-            loop_unswitch!(pm)
-        end
+        
+        loop_optimizations_tm!(pm, tm)
+
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
         ind_var_simplify!(pm)
         loop_deletion!(pm)
         loop_unroll!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         gvn!(pm)
     
@@ -1722,7 +2110,7 @@ end
         jl_inst_simplify!(pm)
         jump_threading!(pm)
         dead_store_elimination!(pm)
-        alloc_opt!(pm)
+        alloc_opt_tm!(pm, tm)
         cfgsimplification!(pm)
         loop_idiom!(pm)
         loop_deletion!(pm)
@@ -1730,7 +2118,7 @@ end
         correlated_value_propagation!(pm)
         # SLP_Vectorizer -- not for Enzyme
         
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
 
         aggressive_dce!(pm)
         instruction_combining!(pm)
@@ -1740,7 +2128,7 @@ end
 
         # GC passes
         barrier_noop!(pm)
-        gc_invariant_verifier!(pm, false)
+        gc_invariant_verifier_tm!(pm, tm, false)
 
         # FIXME: Currently crashes printing
         cfgsimplification!(pm)
@@ -1748,9 +2136,9 @@ end
         jl_inst_simplify!(pm)
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
         gvn!(pm) # Exxtra
-        run!(pm, mod)
+        LLVM.run!(pm, mod)
     end
-    removeDeadArgs!(mod)
+    removeDeadArgs!(mod, tm)
     detect_writeonly!(mod)
     nodecayed_phis!(mod)
 end
@@ -1762,12 +2150,12 @@ function addTargetPasses!(pm, tm, trip)
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
-function addOptimizationPasses!(pm)
+function addOptimizationPasses!(pm, tm)
     add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
 
     constant_merge!(pm)
 
-    propagate_julia_addrsp!(pm)
+    propagate_julia_addrsp_tm!(pm, tm)
     scoped_no_alias_aa!(pm)
     type_based_alias_analysis!(pm)
     basic_alias_analysis!(pm)
@@ -1783,7 +2171,7 @@ function addOptimizationPasses!(pm)
     # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
     # pass.
 
-    alloc_opt!(pm)
+    alloc_opt_tm!(pm, tm)
     # consider AggressiveInstCombinePass at optlevel > 2
 
     instruction_combining!(pm)
@@ -1801,24 +2189,12 @@ function addOptimizationPasses!(pm)
 
     # Load forwarding above can expose allocations that aren't actually used
     # remove those before optimizing loops.
-    alloc_opt!(pm)
-    loop_rotate!(pm)
-    # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
-    loop_idiom!(pm)
+    alloc_opt_tm!(pm, tm)
 
-    # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-    lower_simdloop!(pm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
-    licm!(pm)
-    julia_licm!(pm)
-    # Subsequent passes not stripping metadata from terminator
-    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
-    jl_inst_simplify!(pm)
-    ind_var_simplify!(pm)
-    loop_deletion!(pm)
-    loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
+    more_loop_optimizations_tm!(pm, tm)
 
     # Run our own SROA on heap objects before LLVM's
-    alloc_opt!(pm)
+    alloc_opt_tm!(pm, tm)
     # Re-run SROA after loop-unrolling (useful for small loops that operate,
     # over the structure of an aggregate)
     scalar_repl_aggregates!(pm)
@@ -1840,7 +2216,7 @@ function addOptimizationPasses!(pm)
 
     # More dead allocation (store) deletion before loop optimization
     # consider removing this:
-    alloc_opt!(pm)
+    alloc_opt_tm!(pm, tm)
 
     # see if all of the constant folding has exposed more loops
     # to simplification and deletion
@@ -1859,31 +2235,31 @@ function addOptimizationPasses!(pm)
     aggressive_dce!(pm)
 end
 
-function addMachinePasses!(pm)
-    combine_mul_add!(pm)
+function addMachinePasses!(pm, tm)
+    combine_mul_add_tm!(pm, tm)
     # TODO: createDivRemPairs[]
 
-    demote_float16!(pm)
+    demote_float16_tm!(pm, tm)
     gvn!(pm)
 end
 
-function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
+function addJuliaLegalizationPasses!(pm, tm, lower_intrinsics=true)
     if lower_intrinsics
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
         # LLVM's devirtualization heuristics, which would result in the entire
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
         barrier_noop!(pm)
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
-        lower_exc_handlers!(pm)
+        lower_exc_handlers_tm!(pm, tm)
         # BUDE.jl demonstrates a bug here TODO
-        gc_invariant_verifier!(pm, false)
+        gc_invariant_verifier_tm!(pm, tm, false)
         verifier!(pm)
 
         # Needed **before** LateLowerGCFrame on LLVM < 12
         # due to bug in `CreateAlignmentAssumption`.
-        remove_ni!(pm)
-        late_lower_gc_frame!(pm)
-        final_lower_gc!(pm)
+        remove_ni_tm!(pm, tm)
+        late_lower_gc_frame_tm!(pm, tm)
+        final_lower_gc_tm!(pm, tm)
         # We need these two passes and the instcombine below
         # after GC lowering to let LLVM do some constant propagation on the tags.
         # and remove some unnecessary write barrier checks.
@@ -1891,22 +2267,25 @@ function addJuliaLegalizationPasses!(pm, lower_intrinsics=true)
         sccp!(pm)
         # Remove dead use of ptls
         dce!(pm)
-        lower_ptls!(pm, #=dump_native=# false)
+        lower_ptls_tm!(pm, tm, #=dump_native=# false)
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
         # Clean up write barrier and ptls lowering
         cfgsimplification!(pm)
     else
         barrier_noop!(pm)
-        remove_ni!(pm)
+        remove_ni_tm!(pm, tm)
     end
 end
 
 function post_optimze!(mod, tm, machine=true)
     addr13NoAlias(mod)
-    removeDeadArgs!(mod)
+    removeDeadArgs!(mod, tm)
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
+    end
+    for f in collect(functions(mod))
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
     out_error = Ref{Cstring}()
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
@@ -1914,16 +2293,16 @@ function post_optimze!(mod, tm, machine=true)
     end
     LLVM.ModulePassManager() do pm
         addTargetPasses!(pm, tm, LLVM.triple(mod))
-        addOptimizationPasses!(pm)
-        run!(pm, mod)
+        addOptimizationPasses!(pm, tm)
+        LLVM.run!(pm, mod)
     end
     if machine
         # TODO enable validate_return_roots
         # validate_return_roots!(mod)
         LLVM.ModulePassManager() do pm
-            addJuliaLegalizationPasses!(pm, true)
-            addMachinePasses!(pm)
-            run!(pm, mod)
+            addJuliaLegalizationPasses!(pm, tm, true)
+            addMachinePasses!(pm, tm)
+            LLVM.run!(pm, mod)
         end
     end
     # @safe_show "post_mod", mod
