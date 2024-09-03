@@ -1330,27 +1330,69 @@ end
     common_setfield_rev(1, B, orig, gutils, tape)
 end
 
-
+function error_if_differentiable(::Type{T}) where T
+    seen = ()
+    areg = active_reg_inner(T, seen, nothing)
+    if areg != AnyState
+        throw(AssertionError("Found unhandled differentiable variable in jl_f_svec_ref $T"))
+    end
+    nothing
+end
 
 function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: unhandled forward for jl_f__svec_ref")
-    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
-    end
-    return false
-end
 
-function error_if_differentiable(::Type{T}) where T
-    seen = ()
-    areg = active_reg_inner(T, seen, nothing, #=justActive=#Val(true))
-    if areg != AnyState
-        throw(AssertionError("Found unhandled differentiable variable in jl_f_svec_ref $T"))
+    width = get_width(gutils)
+
+    origmi, origh, origkey = operands(orig)[offset:end-1]
+
+    shadowh = invert_pointer(gutils, origh, B)
+        
+    newvals = API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal]
+
+    if offset != 1
+        pushfirst!(newvals, API.VT_Primal)
     end
-    nothing
+    
+    mi = new_from_original(gutils, origmi)
+
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
+    shadowres = if width == 1
+        newops = LLVM.Value[mi, shadowh, new_from_original(gutils, origkey)]
+        if offset != 1
+            pushfirst!(newops, operands(orig)[1])
+        end
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+        callconv!(cal, callconv(orig))
+   
+        if is_constant_value(gutils, origh)
+            emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_differentiable), emit_jltypeof!(B, cal)])
+        end
+        cal
+    else
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        shadow = LLVM.UndefValue(ST)
+        for j in 1:width
+            newops = LLVM.Value[mi, extract_value!(B, shadowh, j-1), new_from_original(gutils, origkey)]
+            if offset != 1
+                pushfirst!(newops, operands(orig)[1])
+            end
+            cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, #=lookup=#false)
+            callconv!(cal, callconv(orig))
+            if is_constant_value(gutils, origh)
+                emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, error_if_differentiable), emit_jltypeof!(B, cal)])
+            end
+            shadow = insert_value!(B, shadow, cal, j-1)
+        end
+        shadow
+    end
+
+    unsafe_store!(shadowR, shadowres.ref)
+
+    return false
 end
 
 function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)

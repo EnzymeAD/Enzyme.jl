@@ -149,7 +149,7 @@ end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))
             return common_apply_iterate_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if in(name, ("ijl_f__svec_rev", "jl_f__svec_ref"))
+        if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
