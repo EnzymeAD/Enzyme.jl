@@ -6369,6 +6369,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     if isa(user, LLVM.CallInst)
                         called = LLVM.called_operand(user)
                         if isa(called, LLVM.Function)
+                            intr = LLVM.API.LLVMGetIntrinsicID(called)
+                            if intr == LLVM.Intrinsic("llvm.memset").id
+                                if cur != operands(user)[1]
+                                    continue
+                                end
+                            end
+
                             nm = LLVM.name(called)
                             if  nm == "ijl_alloc_array_1d" || nm == "jl_alloc_array_1d" ||
                                 nm == "ijl_alloc_array_2d" || nm == "jl_alloc_array_2d" ||
