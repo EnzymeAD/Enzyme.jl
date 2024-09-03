@@ -6872,8 +6872,10 @@ end
                 argexpr = :(fn.dval)
                 if isboxed
                     push!(types, Any)
-                else
+                elseif width == 1
                     push!(types, F)
+		else
+		    push!(types, NTuple{width, F})
                 end
                 push!(ccexprs, argexpr)
             end
