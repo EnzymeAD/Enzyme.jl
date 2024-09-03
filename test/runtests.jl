@@ -814,6 +814,37 @@ end
     @test hv ≈ [-1.0]
 end
 
+@testset "Nested Type Error" begin
+    nested_f(x) = sum(tanh, x)
+
+    function nested_df!(dx, x)
+        make_zero!(dx)
+        autodiff_deferred(Reverse, nested_f, Active, Duplicated(x, dx))
+        return nothing
+    end
+
+    function nested_hvp!(hv, v, x)
+        make_zero!(hv)
+        autodiff(Forward, nested_df!, Const, Duplicated(make_zero(x), hv), Duplicated(x, v))
+        return nothing
+    end
+
+    x = [0.5]
+
+    # primal: sanity check
+    @test nested_f(x) ≈ sum(tanh, x)
+
+    # gradient: works
+    dx = make_zero(x)
+    nested_df!(dx, x)
+
+    @test dx ≈ (sech.(x).^2)
+
+    v = first(onehot(x))
+    hv = make_zero(v)
+    nested_hvp!(hv, v, x)
+end
+
 @testset "Array tests" begin
 
     function arsum(f::Array{T}) where T
