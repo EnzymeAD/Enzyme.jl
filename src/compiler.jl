@@ -4495,9 +4495,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         convty = convert(LLVMType, T′; allow_boxed=true)
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
-            al = emit_allocobj!(builder, Base.RefValue{T′})
+            al0 = al = emit_allocobj!(builder, Base.RefValue{T′})
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
+	    emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
