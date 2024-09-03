@@ -133,6 +133,21 @@ end
 
     y = A \ b
     @test dA ≈ (-z * transpose(y))
+
+    # Ensure multi dim doesn't crash
+    function test2!(A)
+        A .= A \ [1.0 0;0.0 1.0]
+        return nothing
+    end
+
+    A = rand(2,2)
+    dA = [1.0 0.0; 0.0 0.0]
+
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        test2!,
+        Enzyme.Duplicated(A,dA),
+    )
 end
 
 function tr_solv(A, B, uplo, trans, diag, idx)
@@ -238,30 +253,31 @@ function tcholsolv_upper(A, B, i)
     return c[i]
 end
 
+
 @testset "Cholesky PotRS 3x5" begin
 
     x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
     for i in 1:15
          B = [3.1 2.7 5.9 2.4 1.6; 7.9 8.2 1.3 9.4 5.5; 4.7 2.9 9.8 7.1 4.3]
-         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_lower(x, B, i), B)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_lower(x, B, i)), B)
          # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_lower(x, B, i), B)), size(B))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_lower(x, B, i), B)[1]
          @test reverse_grad  ≈ finite_diff 
          # @test forward_grad  ≈ finite_diff 
          
-         reverse_grad  = Enzyme.gradient(Reverse, B -> tcholsolv_upper(x, B, i), B)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_upper(x, B, i)), B)
          # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_upper(x, B, i), B)), size(B))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_upper(x, B, i), B)[1]
          @test reverse_grad  ≈ finite_diff 
          # @test forward_grad  ≈ finite_diff
 
-         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_lower(x, B, i), x)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_lower(x, B, i)), x)
          #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_lower(x, B, i), x)), size(x))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_lower(x, B, i), x)[1]
          @test reverse_grad  ≈ finite_diff 
          #@test forward_grad  ≈ finite_diff 
          # 
-         reverse_grad  = Enzyme.gradient(Reverse, x -> tcholsolv_upper(x, B, i), x)
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_upper(x, B, i)), x)
          #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_upper(x, B, i), x)), size(x))
          finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_upper(x, B, i), x)[1]
          @test reverse_grad  ≈ finite_diff 
@@ -616,6 +632,53 @@ end
 
     # Outer rand should be differentiated through, and inner rand and randn should be ignored.
     @test autodiff(Enzyme.Reverse, x -> rand(MyDistribution(x)), Active, Active(1.0)) == ((1.0,),)
+end
+
+@testset "Ranges" begin
+    function f1(x)
+        x = 25.0x
+        ts = Array(0.0:x:3.0)
+        return sum(ts)
+    end
+    function f2(x)
+        x = 25.0x
+        ts = Array(0.0:0.25:3.0)
+        return sum(ts) + x
+    end
+    function f3(x)
+        x = 25.0x
+        ts = Array(x:0.25:3.0)
+        return sum(ts)
+    end
+    function f4(x)
+        x = 25.0x
+        ts = Array(0.0:0.25:x)
+        return sum(ts)
+    end
+    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (75.0,)
+    @test Enzyme.autodiff(Forward, f4, Duplicated(0.12, 1.0)) == (0,)
+
+    @test Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f2, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=75.0, var"2"=150.0),)
+    @test Enzyme.autodiff(Forward, f4, BatchDuplicated(0.12, (1.0, 2.0))) ==
+          ((var"1"=0.0, var"2"=0.0),)
+
+    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.1)) == ((75.0,),)
+    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.12)) == ((0.0,),)
+    
+    # Batch active rule isnt setup
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f1(x); nothing end,  Active(1.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f2(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f3(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((75.0,150.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f4(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((0.0,0.0)),)
 end
 
 end # InternalRules

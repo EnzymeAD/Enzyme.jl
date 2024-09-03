@@ -29,7 +29,9 @@ IntList() = IntList(Ptr{Int64}(0),0)
   DT_Half = 3,
   DT_Float = 4,
   DT_Double = 5,
-  DT_Unknown = 6
+  DT_Unknown = 6,
+  DT_FP80 = 7,
+  DT_BFloat16 = 8
 )
 
 function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
@@ -39,6 +41,10 @@ function EnzymeConcreteTypeIsFloat(cc::CConcreteType)
     return LLVM.FloatType()
   elseif cc == DT_Double
     return LLVM.DoubleType()
+  elseif cc == DT_FP80
+    return LLVM.X86FP80Type()
+  elseif cc == DT_BFloat16
+    return LLVM.BFloatType()
   else
     return nothing
   end
@@ -103,6 +109,7 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
+SetMD(v::Union{LLVM.Instruction, LLVM.GlobalVariable}, kind::String, node::LLVM.Metadata) = ccall((:EnzymeSetStringMD, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef), v, kind, LLVM.Value(node))
 
 @static if !isdefined(LLVM, :ValueMetadataDict)
 Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
@@ -760,6 +767,10 @@ end
 
 function EnzymeReplaceFunctionImplementation(mod)
     ccall((:EnzymeReplaceFunctionImplementation, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
+end
+
+function EnzymeDumpModuleRef(mod)
+    ccall((:EnzymeDumpModuleRef, libEnzyme),Cvoid,(LLVM.API.LLVMModuleRef,), mod)
 end
 
 EnzymeComputeByteOffsetOfGEP(B, V, T) = LLVM.Value(ccall((:EnzymeComputeByteOffsetOfGEP, libEnzyme), LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMTypeRef), B, V, T))

@@ -5,7 +5,7 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(x->x, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
+@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
 export unsafe_to_pointer
 
 @inline is_concrete_tuple(x::Type{T2}) where T2 = (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
@@ -17,16 +17,21 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
-# This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(val)
+function unsafe_nothing_to_llvm(mod::LLVM.Module)
+    globs = LLVM.globals(mod)
+    k = "jl_nothing"
+    if Base.haskey(globs, "ejl_"*k)
+        return globs["ejl_"*k]
+    end
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-    # XXX: This prevents code from being runtime relocatable
-    #      We likely should emit global variables and use something
-    #      like `absolute_symbol_materialization` and write out cache-files
-    #      that have relocation tables.
-    # TODO: What about things like `nothing`
+    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+
+    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+    return gv
+end
+
+function unsafe_to_ptr(@nospecialize(val))
     if !Base.ismutable(val)
         val = Core.Box(val) # FIXME many objects could be leaked here
         @assert Base.ismutable(val)
@@ -37,16 +42,75 @@ function unsafe_to_llvm(val)
         push!(captured_constants, val) # Globally root
         ptr = Base.pointer_from_objref(val)
     end
+    return ptr
+end
+export unsafe_to_ptr
+
+# This mimicks literal_pointer_val / literal_pointer_val_slot
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
+
+    for (k, v) in Compiler.JuliaGlobalNameMap
+        if v === val
+            mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
+            globs = LLVM.globals(mod)
+            if Base.haskey(globs, "ejl_"*k)
+                return globs["ejl_"*k]
+            end
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+
+            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+            legal, jTy = Compiler.abs_typeof(gv, true)
+            if legal
+                curent_bb = position(B)
+                fn = LLVM.parent(curent_bb)
+                if Compiler.guaranteed_const_nongen(jTy, nothing)
+                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+                end
+            end
+            return gv
+        end
+    end
+
+    for (k, v) in Compiler.JuliaEnzymeNameMap
+        if v === val
+            mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
+            globs = LLVM.globals(mod)
+            if Base.haskey(globs, "ejl_"*k)
+                return globs["ejl_"*k]
+            end
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+            legal, jTy = Compiler.abs_typeof(gv, true)
+            if legal
+                curent_bb = position(B)
+                fn = LLVM.parent(curent_bb)
+                if Compiler.guaranteed_const_nongen(jTy, nothing)
+                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+                end
+            end
+            return gv
+        end
+    end
+
+    # XXX: This prevents code from being runtime relocatable
+    #      We likely should emit global variables and use something
+    #      like `absolute_symbol_materialization` and write out cache-files
+    #      that have relocation tables.
+    ptr = unsafe_to_ptr(val)
+
     fill_val = LLVM.ConstantInt(convert(UInt, ptr))
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
-export unsafe_to_llvm
+export unsafe_to_llvm, unsafe_nothing_to_llvm
 
-function makeInstanceOf(@nospecialize(T))
+function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T))
     @assert Core.Compiler.isconstType(T)
     @assert T <: Type
-    return unsafe_to_llvm(T.parameters[1])
+    return unsafe_to_llvm(B, T.parameters[1])
 end
 
 export makeInstanceOf
