@@ -4002,6 +4002,7 @@ include("rules/activityrules.jl")
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
 
 const DumpPreEnzyme = Ref(false)
+const DumpPostWrap = Ref(false)
 
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
     if DumpPreEnzyme[]
@@ -4189,6 +4190,9 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     else
         @assert "Unhandled derivative mode", mode
     end
+    if DumpPostWrap[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end 
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname = augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
@@ -4495,9 +4499,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         convty = convert(LLVMType, T′; allow_boxed=true)
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
-            al = emit_allocobj!(builder, Base.RefValue{T′})
+            al0 = al = emit_allocobj!(builder, Base.RefValue{T′})
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
+	    emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
