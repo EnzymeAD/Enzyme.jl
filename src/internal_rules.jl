@@ -983,3 +983,112 @@ function EnzymeRules.reverse(
     )
     return ()
 end
+
+using SparseArrays
+using SparseArrays: SparseMatrixCSCUnion
+
+const SparseMatAdj = Union{SparseMatrixCSC, Adjoint{T, SparseMatrixCSC} where T}
+function EnzymeRules.augmented_primal(config, 
+                                      func::Const{typeof(LinearAlgebra.mul!)},
+                                      ::Type{RT}, 
+                                      C::Annotation{<:StridedVecOrMat},
+                                      A::Const{<:SparseMatAdj},
+                                      B::Annotation{<:StridedVecOrMat},
+                                      α::Annotation{<:Union{Real,Complex,Bool}},
+                                      β::Annotation{<:Union{Real,Complex,Bool}}
+                                    ) where {RT}
+
+    cache_C = ( EnzymeRules.overwritten(config)[4]) ? copy(C.val) : nothing
+    if typeof(C) <: Duplicated || typeof(A) <: BatchedDuplicated
+        func.val(C.val, A.val, B.val, α.val, β.val)
+    end
+
+    primal = if EnzymeRules.needs_primal(config)
+        C.val
+    else
+        nothing
+    end
+
+    shadow = if EnzymeRules.needs_shadow(config)
+        C.dval
+    else
+        nothing
+    end
+
+    # Check if A is overwritten and B is active (and thus required)
+    cache_A = ( EnzymeRules.overwritten(config)[5]
+                && !(typeof(B) <: Const)
+                && !(typeof(C) <: Const)
+                ) ? copy(A.val) : nothing
+    
+    # Check if A is overwritten and B is active (and thus required)
+    cache_B = ( EnzymeRules.overwritten(config)[6]
+                && !(typeof(A) <: Const)
+                && !(typeof(C) <: Const)
+                ) ? copy(B.val) : nothing
+
+    
+    cache = (cache_C, cache_A, cache_B)
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, cache)
+end
+
+function EnzymeRules.reverse(config, 
+                             ::Const{typeof(LinearAlgebra.mul!)},
+                             ::Type{RT}, cache,
+                             C::Annotation{<:StridedVecOrMat},
+                             A::Const{<:SparseMatAdj},
+                             B::Annotation{<:StridedVecOrMat},
+                             α::Annotation{<:Union{Real,Complex,Bool}},
+                             β::Annotation{<:Union{Real,Complex,Bool}}
+                             ) where {RT}
+
+    cache_C, cache_A, cache_B = cache
+    Cval = !isnothing(cache_C) ? cache_C : C.val
+    Aval = !isnothing(cache_A) ? cache_A : A.val
+    Bval = !isnothing(cache_B) ? cache_B : B.val
+
+
+
+    if !isa(C, Const)
+        if !isa(α, Const)
+            dα = α.dval
+            ABval = Aval*Bval
+        else
+            dα = nothing
+        end
+
+        if !isa(β, Const)
+            dβ = β.dval
+        else
+            dβ = nothing
+        end
+
+        for b in 1:EnzymeRules.width(config)
+            dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[b]
+            # if !isa(A, Const)
+            #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+            #     #dA .+= α*dC*B'
+            #     mul!(dA, dC, Bval', α.val, true)
+            # end
+
+            if !isa(B, Const)
+                dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
+                #dB .+= α*A'*dC
+                mul!(dB, Aval', dC, α.val, true)
+            end
+
+            if !isa(α, Const)
+                dα .+= dot(dC, ABval)
+            end
+
+            if !isa(β, Const)
+                dβ .+= dot(dC, Cval)
+            end
+
+            dC .= 0
+        end
+        return (nothing, nothing, nothing, dα, dβ)
+    end
+    return (nothing, nothing, nothing, nothing, nothing)
+end
