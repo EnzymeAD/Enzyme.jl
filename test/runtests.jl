@@ -26,6 +26,15 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+# symbol is \simeq
+# this is basically a more flexible version of ≈
+(≃)(a, b) = (≈)(a, b)
+(≃)(a::Tuple, b::Tuple) = all(xy -> xy[1] ≃ xy[2], zip(a,b))
+function (≃)(a::AbstractArray{<:Tuple}, b::AbstractArray{<:Tuple})
+    size(a) == size(b) || return false
+    all(xy -> xy[1] ≃ xy[2], zip(a,b))
+end
+
 function isapproxfn(fn, args...; kwargs...)
     isapprox(args...; kwargs...)
 end
@@ -2912,16 +2921,18 @@ struct OutStruct
     i3::Float64
 end
 
-
-# ≈ doesn't recurse into tuples. this will also check both type and length implicitly
-tplapprox(a::AbstractFloat, b::AbstractFloat) = all(xy -> xy[1] ≈ xy[2], zip(a, b))
-tplapprox(a::Tuple, b::Tuple) = all(xy -> tplapprox(xy[1], xy[2]), zip(a, b))
-function tplapprox(a::Array, b::Array)
-    @assert size(a) == size(b)
-    all(xy -> tplapprox(xy[1], xy[2]), zip(a, b))
+for (A, B) ∈ Iterators.product((:InpStruct, :OutStruct), (:InpStruct, :OutStruct))
+    @eval (≃)(a::$A, b::$B) = (a.i1 ≃ b.i1) && (a.i2 ≃ b.i2) && (a.i3 ≃ b.i3)
+    @eval function (≃)(a::AbstractArray{<:$A}, b::AbstractArray{<:$B})
+        size(a) == size(b) || return false
+        all(xy -> xy[1] ≃ xy[2], zip(a, b))
+    end
 end
-tplapprox(a::OutStruct, b::OutStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2, b.i2) &&  tplapprox(a.i3, b.i3)
-tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2, b.i2) &&  tplapprox(a.i3, b.i3)
+
+
+#NOTE: this is needed because of problems with hvcat on 1.10 and something inexplicable on 1.6
+# suffice it to say it's not good that this is required, please remove when possible
+mkarray(sz, args...) = reshape(vcat(args...), sz)
 
 @testset "Gradient and Jacobian Outputs" begin
 
@@ -2946,19 +2957,20 @@ tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2,
 
 
     # ∂ tuple / ∂ scalar
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> (2*x, x^2), scalar), (2.0, 6.0))
+    @test Enzyme.gradient(Enzyme.Forward, x -> (2*x, x^2), scalar) ≃ (2.0, 6.0)
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (2*x, x^2), scalar) ≈ [2.0, 6.0]
 
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> (2*x, x^2), scalar), (2.0, 6.0))
-    @test_broken tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> (2*x, x^2), scalar) ≈ (2.0, 6.0))
+    @test Enzyme.jacobian(Enzyme.Forward, x -> (2*x, x^2), scalar) ≃ (2.0, 6.0)
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (2*x, x^2), scalar) ≃ (2.0, 6.0)
 
+    mkarray1 = x -> mkarray((2,2),2*x,sin(x),x^2,exp(x))
 
     # ∂ matrix / ∂ scalar
-    @test Enzyme.gradient(Enzyme.Forward, x -> [2*x x^2; sin(x) exp(x)], scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [2*x x^2; sin(x) exp(x)], scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
+    @test Enzyme.gradient(Enzyme.Forward, mkarray1, scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
+    @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray1, scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
 
-    @test Enzyme.jacobian(Enzyme.Forward, x -> [2*x x^2; sin(x) exp(x)], scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
-    @test Enzyme.jacobian(Enzyme.Reverse, x -> [2*x x^2; sin(x) exp(x)], scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
+    @test Enzyme.jacobian(Enzyme.Forward, mkarray1, scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
+    @test Enzyme.jacobian(Enzyme.Reverse, mkarray1, scalar) ≈ [2.0 6.0; cos(scalar) exp(scalar)]
 
     # ∂ struct / ∂ scalar
     @test Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x, x^2, x^3), scalar) == OutStruct(1.0,2*scalar,3*scalar^2)
@@ -2971,15 +2983,15 @@ tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2,
     vector = [2.7, 3.1]
 
     # ∂ scalar / ∂ vector
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> x[1] * x[2], vector), (vector[2],vector[1]))
+    @test Enzyme.gradient(Enzyme.Forward, x -> x[1] * x[2], vector) ≃ (vector[2],vector[1])
     @test Enzyme.gradient(Enzyme.Reverse, x -> x[1] * x[2], vector) ≈ [vector[2], vector[1]]
     @test Enzyme.jacobian(Enzyme.Forward, x -> x[1] * x[2], vector) ≈ [vector[2], vector[1]]
     @test Enzyme.jacobian(Enzyme.Reverse, x -> x[1] * x[2], vector) ≈ [vector[2], vector[1]]
 
 
     # ∂ vector / ∂ vector
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], vector),
-                        ([vector[2], -sin(vector[1])], [vector[1], 1.0]))
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], vector) ≃
+        ([vector[2], -sin(vector[1])], [vector[1], 1.0])
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x[1] * x[2], cos(x[1]) + x[2]], vector) ≈ ([vector[2], -sin(vector[1])], [vector[1], 1.0])
     @test Enzyme.jacobian(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], vector) ≈
                         [vector[2] vector[1]; -sin(vector[1])  1.0]
@@ -2987,118 +2999,122 @@ tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2,
                         [vector[2] vector[1]; -sin(vector[1])  1.0]
 
     # ∂ tuple / ∂ vector
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector),
-                        ((vector[2], -sin(vector[1])), (vector[1], 1.0)))
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≈ ([vector[2], -sin(vector[1])], [vector[1], 1.0])
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector),
-                        [(vector[2], -sin(vector[1])), (vector[1], 1.0)])
-    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≈
+    @test Enzyme.gradient(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≃
+        ((vector[2], -sin(vector[1])), (vector[1], 1.0))
+    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≈
+        ([vector[2], -sin(vector[1])], [vector[1], 1.0])
+    @test Enzyme.jacobian(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≃
+        [(vector[2], -sin(vector[1])), (vector[1], 1.0)]
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector)
+
+    mkarray2 = x -> mkarray((2,2), x[1]*x[2], exp(x[2]), cos(x[1])+x[2], x[1])
 
     # ∂ matrix / ∂ vector
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], vector),
-                        ([vector[2] -sin(vector[1]); 0.0 1.0], [vector[1] 1.0; exp(vector[2]) 0.0]))
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], vector)
-    @test Enzyme.jacobian(Enzyme.Forward, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], vector) ≈
+    @test Enzyme.gradient(Enzyme.Forward, mkarray2, vector) ≃
+        ([vector[2] -sin(vector[1]); 0.0 1.0], [vector[1] 1.0; exp(vector[2]) 0.0])
+    @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray2, vector)
+    @test Enzyme.jacobian(Enzyme.Forward, mkarray2, vector) ≈
                         [vector[2] -sin(vector[1]); 0.0 1.0;;; vector[1] 1.0;  exp(vector[2]) 0.0]
-    @test Enzyme.jacobian(Enzyme.Reverse, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], vector) ≈
+    @test Enzyme.jacobian(Enzyme.Reverse, mkarray2, vector) ≈
                         [vector[2] -sin(vector[1]); 0.0 1.0;;; vector[1] 1.0;  exp(vector[2]) 0.0]
 
 
     # ∂ struct / ∂ vector
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), vector),
-                        (OutStruct(vector[2], -sin(vector[1]), 0.0), OutStruct(vector[1], 1.0, exp(vector[2]))))
+    @test Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), vector) ≃
+        (OutStruct(vector[2], -sin(vector[1]), 0.0), OutStruct(vector[1], 1.0, exp(vector[2])))
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≈ ([vector[2], -sin(vector[1])], [vector[1], 1.0])
 
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), vector),
-                        [OutStruct(vector[2], -sin(vector[1]), 0.0), OutStruct(vector[1], 1.0, exp(vector[2]))])
+    @test Enzyme.jacobian(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), vector) ≃
+        [OutStruct(vector[2], -sin(vector[1]), 0.0), OutStruct(vector[1], 1.0, exp(vector[2]))]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), vector) ≈ ([vector[2], -sin(vector[1])], [vector[1], 1.0])
-
 
 
 
     tuplev = (2.7, 3.1)
 
     # ∂ scalar / ∂ tuple
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> x[1] * x[2], tuplev), (tuplev[2],tuplev[1]))
-    @test tplapprox(Enzyme.gradient(Enzyme.Reverse, x -> x[1] * x[2], tuplev), (tuplev[2],tuplev[1]))
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> x[1] * x[2], tuplev), (tuplev[2],tuplev[1]))
-    @test tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> x[1] * x[2], tuplev), (tuplev[2],tuplev[1]))
+    @test Enzyme.gradient(Enzyme.Forward, x -> x[1] * x[2], tuplev) ≃ (tuplev[2],tuplev[1])
+    @test Enzyme.gradient(Enzyme.Reverse, x -> x[1] * x[2], tuplev) ≃ (tuplev[2],tuplev[1])
+    @test Enzyme.jacobian(Enzyme.Forward, x -> x[1] * x[2], tuplev) ≃ (tuplev[2],tuplev[1])
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> x[1] * x[2], tuplev) ≃ (tuplev[2],tuplev[1])
 
     # ∂ vector / ∂ tuple
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev),
-                        ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0]))
+    @test Enzyme.gradient(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev) ≃
+        ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0])
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev) ≈ ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0])
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev) ≈
                         [tuplev[2] tuplev[1]; -sin(tuplev[1])  1.0]
-    @test tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev),
-                    [(tuplev[2], tuplev[1]), (-sin(tuplev[1]), 1.0)])
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> [x[1] * x[2], cos(x[1]) + x[2]], tuplev) ≃
+        [(tuplev[2], tuplev[1]), (-sin(tuplev[1]), 1.0)]
 
     # ∂ tuple / ∂ tuple
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev),
-                        ((vector[2], -sin(vector[1])), (vector[1], 1.0)))
+    @test Enzyme.gradient(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≃
+        ((vector[2], -sin(vector[1])), (vector[1], 1.0))
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≈ ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0])
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev),
-                        ((tuplev[2], -sin(tuplev[1])), (tuplev[1], 1.0)))
+    @test Enzyme.jacobian(Enzyme.Forward, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≃
+        ((tuplev[2], -sin(tuplev[1])), (tuplev[1], 1.0))
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≈
                         [tuplev[2] tuplev[1]; -sin(tuplev[1])  1.0]
 
     # ∂ matrix / ∂ tuple
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], tuplev),
-                        ([tuplev[2] -sin(tuplev[1]); 0.0 1.0], [tuplev[1] 1.0; exp(tuplev[2]) 0.0]))
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], tuplev)
-    @test_broken Enzyme.jacobian(Enzyme.Forward, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], tuplev) ≈
+    @test Enzyme.gradient(Enzyme.Forward, mkarray2, tuplev) ≃
+        ([tuplev[2] -sin(tuplev[1]); 0.0 1.0], [tuplev[1] 1.0; exp(tuplev[2]) 0.0])
+    @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray2, tuplev)
+    @test_broken Enzyme.jacobian(Enzyme.Forward, mkarray2, tuplev) ≈
                         [tuplev[2] -sin(tuplev[1]); 0.0 1.0;;; tuplev[1] 1.0;  exp(tuplev[2]) 0.0]
-    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> [x[1]*x[2]  cos(x[1])+x[2]; exp(x[2]) x[1]], tuplev) ≈
+    @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> mkarray2, tuplev) ≈
                         [tuplev[2] -sin(tuplev[1]); 0.0 1.0;;; tuplev[1] 1.0;  exp(tuplev[2]) 0.0]
 
     # ∂ struct / ∂ tuple
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), tuplev),
-                        (OutStruct(tuplev[2], -sin(tuplev[1]), 0.0), OutStruct(tuplev[1], 1.0, exp(tuplev[2]))))
+    @test Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), tuplev) ≃
+        (OutStruct(tuplev[2], -sin(tuplev[1]), 0.0), OutStruct(tuplev[1], 1.0, exp(tuplev[2])))
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≈ ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0])
 
-    @test_broken tplapprox(Enzyme.jacobian(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), tuplev),
-                        [OutStruct(tuplev[2], -sin(tuplev[1]), 0.0), OutStruct(tuplev[1], 1.0, exp(tuplev[2]))])
+    @test_broken Enzyme.jacobian(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), tuplev) ≃
+        [OutStruct(tuplev[2], -sin(tuplev[1]), 0.0), OutStruct(tuplev[1], 1.0, exp(tuplev[2]))]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x[1] * x[2], cos(x[1]) + x[2]), tuplev) ≈ ([tuplev[2], -sin(tuplev[1])], [tuplev[1], 1.0])
-
 
 
 
     matrix = [2.7 3.1; 4.7 5.6]
 
     # ∂ scalar / ∂ matrix
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x->x[1,1]*x[1,2]+x[2,1]*x[2,2], matrix), (matrix[1,2], matrix[2,2], matrix[1,1], matrix[2,1]))
+    @test Enzyme.gradient(Enzyme.Forward, x->x[1,1]*x[1,2]+x[2,1]*x[2,2], matrix) ≃
+        (matrix[1,2], matrix[2,2], matrix[1,1], matrix[2,1])
     @test Enzyme.gradient(Enzyme.Reverse, x->x[1,1]*x[1,2]+x[2,1]*x[2,2], matrix) ≈ [matrix[1,2] matrix[1,1]; matrix[2,2] matrix[2,1]]
     @test Enzyme.jacobian(Enzyme.Forward, x->x[1,1]*x[1,2]+x[2,1]*x[2,2], matrix) ≈ [matrix[1,2] matrix[1,1]; matrix[2,2] matrix[2,1]]
     @test Enzyme.jacobian(Enzyme.Reverse, x->x[1,1]*x[1,2]+x[2,1]*x[2,2], matrix) ≈ [matrix[1,2] matrix[1,1]; matrix[2,2] matrix[2,1]]
 
     # ∂ vector / ∂ matrix
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix), ([matrix[1,2], 0.0], [0.0, matrix[2,2]], [matrix[1,1], 0.0], [0.0, matrix[2,1]]))
+    @test Enzyme.gradient(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≃
+        ([matrix[1,2], 0.0], [0.0, matrix[2,2]], [matrix[1,1], 0.0], [0.0, matrix[2,1]])
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix)
     @test Enzyme.jacobian(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈ [matrix[1,2] 0.0; 0.0 matrix[2,2];;; matrix[1,1] 0.0; 0.0 matrix[2,1]]
     @test Enzyme.jacobian(Enzyme.Reverse, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈ [matrix[1,2] 0.0; 0.0 matrix[2,2];;; matrix[1,1] 0.0; 0.0 matrix[2,1]]
 
     # ∂ tuple / ∂ matrix
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix), ((matrix[1,2], 0.0), (0.0, matrix[2,2]), (matrix[1,1], 0.0), (0.0, matrix[2,1])))
+    @test Enzyme.gradient(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix) ≃ ((matrix[1,2], 0.0), (0.0, matrix[2,2]), (matrix[1,1], 0.0), (0.0, matrix[2,1]))
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix), 
-                    [(matrix[1,2],0.0) (matrix[1,1],0.0); (0.0,matrix[2,2]) (0.0,matrix[2,1])])
+    @test Enzyme.jacobian(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix) ≃
+        [(matrix[1,2],0.0) (matrix[1,1],0.0); (0.0,matrix[2,2]) (0.0,matrix[2,1])]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)
 
+    mkarray3 = x -> mkarray((2,2), x[1,1]*x[1,2], exp(x[1,1])+x[2,2], x[2,1]*x[2,2], sin(x[1,2])+x[2,1])
 
     # ∂ matrix / ∂ matrix
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x->[x[1,1]*x[1,2] x[2,1]*x[2,2]; exp(x[1,1])+x[2,2] sin(x[1,2])+x[2,1]], matrix),
-        ([matrix[1,2] 0.0; exp(matrix[1,1]) 0.0], [0.0 matrix[2,2]; 0.0 1.0], [matrix[1,1] 0.0; 0.0 cos(matrix[1,2])], [0.0 matrix[2,1]; 1.0 0.0]))
-    @test_broken Enzyme.gradient(Enzyme.Reverse, x->[x[1,1]*x[1,2] x[2,1]*x[2,2]; exp(x[1,1])+x[2,2] sin(x[1,2])+x[2,1]], matrix)
-    @test Enzyme.jacobian(Enzyme.Forward, x->[x[1,1]*x[1,2] x[2,1]*x[2,2]; exp(x[1,1])+x[2,2] sin(x[1,2])+x[2,1]], matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
-    @test Enzyme.jacobian(Enzyme.Reverse, x->[x[1,1]*x[1,2] x[2,1]*x[2,2]; exp(x[1,1])+x[2,2] sin(x[1,2])+x[2,1]], matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
+    @test Enzyme.gradient(Enzyme.Forward, mkarray3, matrix) ≃
+        ([matrix[1,2] 0.0; exp(matrix[1,1]) 0.0], [0.0 matrix[2,2]; 0.0 1.0], [matrix[1,1] 0.0; 0.0 cos(matrix[1,2])], [0.0 matrix[2,1]; 1.0 0.0])
+    @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray3, matrix)
+    @test Enzyme.jacobian(Enzyme.Forward, mkarray3, matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, mkarray3, matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
 
 
     # ∂ tuple / ∂ matrix
-    @test tplapprox(Enzyme.gradient(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix),
-                    (OutStruct(matrix[1,2], 0.0, exp(matrix[1,1])), OutStruct(0.0, matrix[2,2], 0.0), OutStruct(matrix[1,1], 0.0, 0.0), OutStruct(0.0, matrix[2,1], 1.0)))
+    @test Enzyme.gradient(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix) ≃
+        (OutStruct(matrix[1,2], 0.0, exp(matrix[1,1])), OutStruct(0.0, matrix[2,2], 0.0), OutStruct(matrix[1,1], 0.0, 0.0), OutStruct(0.0, matrix[2,1], 1.0))
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)
-    @test tplapprox(Enzyme.jacobian(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix), 
-                    [OutStruct(matrix[1,2],0.0, exp(matrix[1,1])) OutStruct(matrix[1,1],0.0,0.0); OutStruct(0.0,matrix[2,2],0.0) OutStruct(0.0,matrix[2,1], 1.0)])
+    @test Enzyme.jacobian(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix) ≃ 
+        [OutStruct(matrix[1,2],0.0, exp(matrix[1,1])) OutStruct(matrix[1,1],0.0,0.0); OutStruct(0.0,matrix[2,2],0.0) OutStruct(0.0,matrix[2,1], 1.0)]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)
 
 
@@ -3106,16 +3122,15 @@ tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2,
 
     # ∂ scalar / ∂ struct
     @test_broken Enzyme.gradient(Enzyme.Forward, x -> x.i1 * x.i2 + x.i3, istruct)
-    @test tplapprox(Enzyme.gradient(Enzyme.Reverse, x -> x.i1 * x.i2 + x.i3, istruct), InpStruct(istruct.i2, istruct.i1, 1.0))
+    @test Enzyme.gradient(Enzyme.Reverse, x -> x.i1 * x.i2 + x.i3, istruct) ≃ InpStruct(istruct.i2, istruct.i1, 1.0)
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> x.i1 * x.i2 + x.i3, istruct)
-    @test tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> x.i1 * x.i2 + x.i3, istruct), InpStruct(istruct.i2, istruct.i1, 1.0))
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> x.i1 * x.i2 + x.i3, istruct) ≃ InpStruct(istruct.i2, istruct.i1, 1.0)
 
     # ∂ vector / ∂ struct
     @test_broken Enzyme.gradient(Enzyme.Forward, x -> [x.i1 * x.i2, cos(x.i3) + x.i1], istruct)
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x.i1 * x.i2, cos(x.i3) + x.i1], istruct)
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> [x.i1 * x.i2, cos(x.i3) + x.i1], istruct)
-    @test tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> [x.i1 * x.i2, cos(x.i3) + x.i1], istruct),
-                    [InpStruct(istruct.i2, istruct.i1, 0.0), InpStruct(1.0, 0.0, -sin(istruct.i3))])
+    @test Enzyme.jacobian(Enzyme.Reverse, x -> [x.i1 * x.i2, cos(x.i3) + x.i1], istruct) ≃ [InpStruct(istruct.i2, istruct.i1, 0.0), InpStruct(1.0, 0.0, -sin(istruct.i3))]
 
     # ∂ tuple / ∂ struct
     @test_broken Enzyme.gradient(Enzyme.Forward, x -> (x.i1 * x.i2, cos(x.i3) + x.i1), istruct)
@@ -3123,12 +3138,15 @@ tplapprox(a::InpStruct, b::InpStruct) = tplapprox(a.i1, b.i1) && tplapprox(a.i2,
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> (x.i1 * x.i2, cos(x.i3) + x.i1), istruct)
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> (x.i1 * x.i2, cos(x.i3) + x.i1), istruct)
 
+    mkarray4 = x -> mkarray((2,2), x.i1*x.i2, exp(x.i2), cos(x.i3)+x.i1, x.i1)
+
     # ∂ matrix / ∂ struct
     @test_broken Enzyme.gradient(Enzyme.Forward, x -> [x.i1 * x.i2  cos(x.i3) + x.i1; exp(x.i2) x.i1], istruct)
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> [x.i1 * x.i2  cos(x.i3) + x.i1; exp(x.i2) x.i1], istruct)
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> [x.i1 * x.i2  cos(x.i3) + x.i1; exp(x.i2) x.i1], istruct)
-    @test tplapprox(Enzyme.jacobian(Enzyme.Reverse, x -> [x.i1 * x.i2  cos(x.i3) + x.i1; exp(x.i2) x.i1], istruct),
-        [InpStruct(istruct.i2, istruct.i1, 0.0) InpStruct(1.0, 0.0, -sin(istruct.i3)); InpStruct(0.0, exp(istruct.i2), 0.0) InpStruct(1.0, 0.0, 0.0)])
+    @test Enzyme.jacobian(Enzyme.Reverse, mkarray4, istruct) ≃
+        [InpStruct(istruct.i2, istruct.i1, 0.0) InpStruct(1.0, 0.0, -sin(istruct.i3));
+        InpStruct(0.0, exp(istruct.i2), 0.0) InpStruct(1.0, 0.0, 0.0)]
 
     # ∂ struct / ∂ struct
     @test_broken Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x.i1 * x.i2, cos(x.i3) + x.i1, exp(x.i2)), istruct)
@@ -3246,7 +3264,6 @@ end
 
     @test jac[1, 3] == OutStruct(10.0, 100.0, 1000.0)
     @test jac[2, 3] == OutStruct(12.0, 120.0, 1200.0)
-
 end
 
 
