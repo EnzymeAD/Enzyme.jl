@@ -169,7 +169,11 @@ function Core.Compiler.abstract_call_gf_by_type(interp::EnzymeInterpreter, @nosp
     elseif EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
         callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
     end
+    @static if VERSION ≥ v"1.11-"
     return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+    else
+    return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
+    end
 end
 
 function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
