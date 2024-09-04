@@ -149,7 +149,7 @@ end
         if in(name, ("ijl_f__apply_iterate", "jl_f__apply_iterate"))
             return common_apply_iterate_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if in(name, ("ijl_f__svec_rev", "jl_f__svec_ref"))
+        if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
@@ -327,7 +327,12 @@ end
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
             len = get_array_len(B, shadowin)
             length = LLVM.mul!(B, len, elSize)
-            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
+		bt = GPUCompiler.backtrace(orig)
+		btstr = sprint() do io
+		    print(io,"\nCaused by:")
+		    Base.show_backtrace(io, bt)
+		end
+            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
         end
         if API.runtimeActivity()
@@ -345,7 +350,12 @@ end
                 elSize = LLVM.zext!(B, elSize, LLVM.IntType(8*sizeof(Csize_t)))
                 len = get_array_len(B, ev)
                 length = LLVM.mul!(B, len, elSize)
-                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type"
+		bt = GPUCompiler.backtrace(orig)
+		btstr = sprint() do io
+		    print(io,"\nCaused by:")
+		    Base.show_backtrace(io, bt)
+		end
+                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
                 LLVM.memset!(B, get_array_data(B, callv), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
             if API.runtimeActivity()
