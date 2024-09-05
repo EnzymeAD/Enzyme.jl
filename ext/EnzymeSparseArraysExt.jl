@@ -12,7 +12,7 @@ const SparseMatAdj = Union{SparseMatrixCSC, LinearAlgebra.Adjoint{T, SparseMatri
 # or bootstrap ChainRules ProjectTo mechanism to enforce the structural zeros
 # Currently we put the rule on the 5-arg mul!, since spdensemul! isn't a public API and I am unsure
 # how stable it is.
-function EnzymeRules.augmented_primal(config, 
+function EnzymeRules.augmented_primal(config::EnzymeCore.ConfigWidth{1}, 
                                       func::Const{typeof(LinearAlgebra.mul!)},
                                       ::Type{RT}, 
                                       C::Annotation{<:StridedVecOrMat},
@@ -58,7 +58,7 @@ function EnzymeRules.augmented_primal(config,
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
 
-function EnzymeRules.reverse(config, 
+function EnzymeRules.reverse(config::EnzymeCore.ConfigWidth{1}, 
                              func::Const{typeof(LinearAlgebra.mul!)},
                              ::Type{RT}, cache,
                              C::Annotation{<:StridedVecOrMat},
