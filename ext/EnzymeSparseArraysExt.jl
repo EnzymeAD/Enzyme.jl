@@ -90,8 +90,7 @@ function EnzymeRules.reverse(config,
 
         for b in 1:EnzymeRules.width(config)
             dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[b]
-
-            # This rule is incorrect since I need to project dA to have the same 
+            # TODO This rule is incorrect since I need to project dA to have the same 
             # sparsity pattern as A. 
             # if !isa(A, Const)
             #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
