@@ -9,16 +9,18 @@ using LinearAlgebra
     α = 2.0
     β = 1.0
 
-    for Tret in (Duplicated,), Tv in (Const, Duplicated), 
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
         Tα in (Const, Active), Tβ in (Const, Active)
+
+        are_activities_compatible(Tret, Tv, Tα, Tβ) || continue
+
         test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
     end
 
-    for Tret in (Duplicated,), Tv in (Const, Duplicated)
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (true, Const), (true, Const))
-    end
 
     for Tret in (Duplicated,), Tv in (Const, Duplicated), bα in (true, false), bβ in (true, false)
+
+        are_activities_compatible(Tret, Tv) || continue
         test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 end
@@ -30,16 +32,15 @@ end
     α = 2.0
     β = 1.0
 
-    for Tret in (Duplicated,), Tv in (Const, Duplicated), 
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
         Tα in (Const, Active), Tβ in (Const, Active)
+
+        are_activities_compatible(Tret, Tv, Tα, Tβ) || continue
         test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
     end
 
-    for Tret in (Duplicated,), Tv in (Const, Duplicated)
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (true, Const), (true, Const))
-    end
-
     for Tret in (Duplicated,), Tv in (Const, Duplicated), bα in (true, false), bβ in (true, false)
+        are_activities_compatible(Tret, Tv) || continue
         test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 end
