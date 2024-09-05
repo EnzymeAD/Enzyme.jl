@@ -3841,6 +3841,10 @@ end
     @testset "BFloat16s ext" begin
         include("ext/bfloat16s.jl")
     end
+
+    @testset "SparseArrays ext" begin
+        include("ext/sparsearrays.jl")
+    end
 end
 
 
