@@ -1052,7 +1052,7 @@ end
             idx+=1
         end
     else
-        Tys = (A <: Active ? eltype(A) : Nothing for A in activity[2+isKWCall:end])
+        Tys = (A <: Active ? (width == 1 ? eltype(A) : NTuple{Int(width), eltype(A)}) : Nothing for A in activity[2+isKWCall:end])
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
