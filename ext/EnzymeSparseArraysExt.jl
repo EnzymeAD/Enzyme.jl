@@ -45,7 +45,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth,
                 && !(typeof(C) <: Const)
                 ) ? copy(A.val) : nothing
     
-    cache_B = ( EnzymeRules.overwritten(config)[6]) ? copy(B.val) : nothing
+    # cache_B = ( EnzymeRules.overwritten(config)[6]) ? copy(B.val) : nothing
 
     if !isa(α, Const)
         cache_α = A.val*B.val
@@ -53,12 +53,12 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth,
         cache_α = nothing
     end
     
-    cache = (cache_C, cache_A, cache_B, cache_α)
+    cache = (cache_C, cache_A, cache_α)
 
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
 
-function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth, 
+function EnzymeRules.reverse(config,
                              func::Const{typeof(LinearAlgebra.mul!)},
                              ::Type{RT}, cache,
                              C::Annotation{<:StridedVecOrMat},
@@ -68,30 +68,46 @@ function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth,
                              β::Annotation{<:Number}
                              ) where {RT}
 
-    cache_C, cache_A, cache_B, cache_AB = cache
+    cache_C, cache_A, cache_α = cache
     Cval = !isnothing(cache_C) ? cache_C : C.val
     Aval = !isnothing(cache_A) ? cache_A : A.val
-    Bval = !isnothing(cache_B) ? cache_B : B.val
+    # Bval = !isnothing(cache_B) ? cache_B : B.val
 
-    if !isa(α, Const)
-        dα = zero(α.val)
-        ABval = cache_AB
-    else
-        dα = nothing
-    end
-
-    if !isa(β, Const)
-        dβ = zero(β.val)
-    else
-        dβ = nothing
-    end
-
+    N = EnzymeRules.width(config)
     if !isa(C, Const)
+        dCs = C.dval
+        dBs  = isa(B, Const) ? dCs : B.dval
 
-        for b in 1:EnzymeRules.width(config)
-            dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[b]
-            # TODO This rule is incorrect since I need to project dA to have the same 
-            # sparsity pattern as A. 
+        dα = if !isa(α, Const)
+                if N == 1
+                    LinearAlgebra.dot(C.dval, cache_α)
+                else
+                    ntuple(Val(N)) do i
+                        Base.@_inline_meta
+                        LinearAlgebra.dot(C.dval[i], cache_α)
+                    end
+                end
+        else
+            nothing
+        end
+
+        dβ = if !isa(β, Const)
+                if N == 1
+                    LinearAlgebra.dot(C.dval, Cval)
+                else
+                    ntuple(Val(N)) do i
+                        Base.@_inline_meta
+                        LinearAlgebra.dot(C.dval[i], Cval)
+                    end
+                end
+        else
+            nothing
+        end
+
+        for i in 1:N
+
+            # This rule is incorrect since I need to project dA to have the same
+            # sparsity pattern as A.
             # if !isa(A, Const)
             #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
             #     #dA .+= α*dC*B'
@@ -99,23 +115,22 @@ function EnzymeRules.reverse(config::EnzymeRules.ConfigWidth,
             # end
 
             if !isa(B, Const)
-                dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
                 #dB .+= α*A'*dC
-                func.val(dB, Aval', dC, α.val, true)
+                if N ==1
+                    func.val(dBs, Aval', dCs, α.val, true)
+                else
+                    func.val(dBs[i], Aval', dCs[i], α.val, true)
+                end
             end
 
-            if !isa(α, Const)
-                dα += LinearAlgebra.dot(dC, ABval)
+            if N==1
+                dCs .*= β.val
+            else
+                dCs[i] .*= β.val
             end
-
-            if !isa(β, Const)
-                dβ += LinearAlgebra.dot(dC, Cval)
-            end
-
-            # This is needed because dC may be done in place and accumulate into itself
-            dC .= dC.*β.val
         end
     end
+   
     return (nothing, nothing, nothing, dα, dβ)
 end
 

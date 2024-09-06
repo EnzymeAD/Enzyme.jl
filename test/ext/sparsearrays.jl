@@ -18,13 +18,13 @@ using LinearAlgebra
     end
 
     # Batch mode crashes so we skip it
-    # for Tret in (BatchDuplicated,), Tv in (Const,), 
-    #     Tα in (Const, Active), Tβ in (Const, Active)
+    for Tret in (BatchDuplicated,), Tv in (Const,), 
+        Tα in (Const, Active), Tβ in (Const, Active)
 
-    #     are_activities_compatible(Tret, Tret, Tv, Tα, Tβ) || continue
+        are_activities_compatible(Tret, Tret, Tv, Tα, Tβ) || continue
 
-    #     test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
-    # end
+        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+    end
 
 
 
