@@ -22,7 +22,6 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth,
                                       β::Annotation{<:Number}
                                     ) where {RT}
 
-    # Q? Why doesn't EnzymeRules.overwritten(config) detect that C is overwritten?
     cache_C = !(isa(β, Const)) ? copy(C.val) : nothing
     # Always need to do forward pass otherwise primal may not be correct
     func.val(C.val, A.val, B.val, α.val, β.val)
