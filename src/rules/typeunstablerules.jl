@@ -796,7 +796,7 @@ end
     end
 end
 
-function idx_jl_getfield_rev(dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
+function idx_jl_getfield_rev(primal, dptr::T, dret, ::Type{Val{symname}}, ::Val{isconst}, dptrs::Vararg{T2, Nargs}) where {T, T2, Nargs, symname, isconst}
     cur = if dptr isa Base.RefValue
 	   Base.getfield(dptr[], symname+1)
     else
@@ -1135,6 +1135,8 @@ end
     end
 
     vals = LLVM.Value[]
+
+    push!(vals, lookup_value(gutils, new_from_original(gutils, ops[1]), B))
     push!(vals, inps[1])
 
     push!(vals, tape)
