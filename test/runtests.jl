@@ -313,6 +313,23 @@ end
                     BatchDuplicated(ones(3), (ones(3), ones(3))))
 end
 
+struct MyClosure{A}
+    a::A
+end
+
+function (mc::MyClosure)(x)
+    # computes x^2 using internal storage
+    mc.a[1] = x
+    return mc.a[1]^2
+end
+
+@testset "Batch Closure" begin
+    g = MyClosure([0.0])
+    g_and_dgs = BatchDuplicated(g, (make_zero(g), make_zero(g)))
+    x_and_dxs = BatchDuplicated(3.0, (5.0, 7.0))
+    autodiff(Forward, g_and_dgs, BatchDuplicated, x_and_dxs)  # error
+end
+
 # @testset "Split Tape" begin
 #     f(x) = x[1] * x[1]
 

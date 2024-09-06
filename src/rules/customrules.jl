@@ -136,7 +136,12 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
                 if value_type(val) != eltype(value_type(ptr))
                     if overwritten[end]
-                        emit_error(B, orig, "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
+                        emit_error(
+                            B,
+                            orig,
+                            "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). "
+                            * "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                        )
                     end
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)
@@ -1047,7 +1052,7 @@ end
             idx+=1
         end
     else
-        Tys = (A <: Active ? eltype(A) : Nothing for A in activity[2+isKWCall:end])
+        Tys = (A <: Active ? (width == 1 ? eltype(A) : NTuple{Int(width), eltype(A)}) : Nothing for A in activity[2+isKWCall:end])
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))

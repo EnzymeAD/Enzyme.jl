@@ -748,7 +748,7 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do
         LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
     end
 end
-function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::Bool)
+function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::Bool, name::String="")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -792,12 +792,12 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::
     alloc_obj, alty = declare_allocobj!(mod)
 
     @static if VERSION < v"1.8.0"
-        return call!(B, alty, alloc_obj, [ptls, Size, tag])
+        return call!(B, alty, alloc_obj, [ptls, Size, tag], name)
     else
-        return call!(B, alty, alloc_obj, [ct, Size, tag])
+        return call!(B, alty, alloc_obj, [ct, Size, tag], name)
     end
 end
-function emit_allocobj!(B, T::DataType)
+function emit_allocobj!(B, T::DataType, name::String="")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -811,7 +811,7 @@ function emit_allocobj!(B, T::DataType)
 
     T_size_t = convert(LLVM.LLVMType, UInt)
     Size = LLVM.ConstantInt(T_size_t, sizeof(T))
-    emit_allocobj!(B, tag, Size, #=needs_workaround=#false)
+    emit_allocobj!(B, tag, Size, #=needs_workaround=#false, name)
 end
 declare_pointerfromobjref!(mod) = get_function!(mod, "julia.pointer_from_objref") do
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -2459,6 +2459,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
             end
+            if isa(cur, LLVM.ConstantFP)
+		return make_batched(ConstantFP(value_type(cur), 0), prevbb)
+            end
             if isa(cur, LLVM.ConstantDataSequential)
                 cvals = LLVM.Value[] 
                 changed = false
@@ -2517,7 +2520,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 else
                     shadowres = LLVM.UndefValue(value_type(lhs))
                     for idx in 1:width
-		        shadowres = insert_value!(prevbb, shadowres, select!(prevbb, new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx), extract_value!(prevbb, rhs, idx)), idx)
+		        shadowres = insert_value!(prevbb, shadowres, select!(prevbb, new_from_original(gutils, operands(cur)[1]), extract_value!(prevbb, lhs, idx-1), extract_value!(prevbb, rhs, idx-1)), idx-1)
                         if isa(shadowres, LLVM.Instruction)
                             push!(created, shadowres)
                         end
@@ -4002,6 +4005,7 @@ include("rules/activityrules.jl")
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where A <: BatchDuplicatedNoNeed = API.DFT_DUP_NONEED
 
 const DumpPreEnzyme = Ref(false)
+const DumpPostWrap = Ref(false)
 
 function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wrap, modifiedBetween, returnPrimal, expectedTapeType, loweredArgs, boxedArgs)
     if DumpPreEnzyme[]
@@ -4189,6 +4193,9 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     else
         @assert "Unhandled derivative mode", mode
     end
+    if DumpPostWrap[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end 
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname = augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
@@ -4495,10 +4502,10 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         convty = convert(LLVMType, T′; allow_boxed=true)
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
-            al0 = al = emit_allocobj!(builder, Base.RefValue{T′})
+            al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
-            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
+	          emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
@@ -4645,7 +4652,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                         ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
                         for idx in 1:width
                             pv = (width == 1) ? eval : extract_value!(builder, eval, idx-1)
-                            al0 = al = emit_allocobj!(builder, Base.RefValue{eltype(rettype)})
+                            al0 = al = emit_allocobj!(builder, Base.RefValue{eltype(rettype)}, "batchmixedret")
                             llty = value_type(pv)
                             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                             store!(builder, pv, al)
@@ -5232,7 +5239,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                 if arg.arg_i in loweredArgs
                     push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
                 elseif arg.arg_i in raisedArgs
-                    obj = emit_allocobj!(builder, arg.typ)
+                    obj = emit_allocobj!(builder, arg.typ, "raisedArg")
                     bc = bitcast!(builder, obj, LLVM.PointerType(value_type(parm), addrspace(value_type(obj))))
                     store!(builder, parm, bc)
                     emit_writebarrier!(builder, get_julia_inner_types(builder, obj, parm))
@@ -5371,7 +5378,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                         ret!(builder, fill_val)
                     else
                         nobj = if sretPtr !== nothing
-                            obj = emit_allocobj!(builder, jlrettype)
+                            obj = emit_allocobj!(builder, jlrettype, "boxunion")
                             llty = convert(LLVMType, jlrettype)
                             ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
                             store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
@@ -6372,6 +6379,13 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     if isa(user, LLVM.CallInst)
                         called = LLVM.called_operand(user)
                         if isa(called, LLVM.Function)
+                            intr = LLVM.API.LLVMGetIntrinsicID(called)
+                            if intr == LLVM.Intrinsic("llvm.memset").id
+                                if cur != operands(user)[1]
+                                    continue
+                                end
+                            end
+
                             nm = LLVM.name(called)
                             if  nm == "ijl_alloc_array_1d" || nm == "jl_alloc_array_1d" ||
                                 nm == "ijl_alloc_array_2d" || nm == "jl_alloc_array_2d" ||
@@ -6863,8 +6877,10 @@ end
                 argexpr = :(fn.dval)
                 if isboxed
                     push!(types, Any)
-                else
+                elseif width == 1
                     push!(types, F)
+		else
+		    push!(types, NTuple{width, F})
                 end
                 push!(ccexprs, argexpr)
             end
