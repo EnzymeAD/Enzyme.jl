@@ -2459,6 +2459,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
             end
+            if isa(cur, LLVM.ConstantFP)
+		return make_batched(ConstantFP(value_type(cur), 0), prevbb)
+            end
             if isa(cur, LLVM.ConstantDataSequential)
                 cvals = LLVM.Value[] 
                 changed = false
@@ -4502,7 +4505,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
-	    emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
+            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
@@ -5379,6 +5382,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                             llty = convert(LLVMType, jlrettype)
                             ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
                             store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
+                            emit_writebarrier!(builder, get_julia_inner_types(builder, obj, ld))
                             # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(value_type(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
                             obj
                         else
