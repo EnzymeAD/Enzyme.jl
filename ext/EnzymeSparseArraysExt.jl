@@ -6,7 +6,6 @@ using EnzymeCore: EnzymeRules
 
 using SparseArrays
 using SparseArrays: LinearAlgebra, SparseMatrixCSCUnion
-const SparseMatAdj = Union{SparseMatrixCSC, LinearAlgebra.Adjoint{T, SparseMatrixCSC} where T}
 
 # TODO don't limit A to be Const. Currently I'd have to implement a new matmul for this
 # or bootstrap ChainRules ProjectTo mechanism to enforce the structural zeros
@@ -16,7 +15,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.ConfigWidth,
                                       func::Const{typeof(LinearAlgebra.mul!)},
                                       ::Type{RT}, 
                                       C::Annotation{<:StridedVecOrMat},
-                                      A::Const{<:SparseMatAdj},
+                                      A::Const{<:SparseMatrixCSCUnion},
                                       B::Annotation{<:StridedVecOrMat},
                                       α::Annotation{<:Number},
                                       β::Annotation{<:Number}
@@ -61,7 +60,7 @@ function EnzymeRules.reverse(config,
                              func::Const{typeof(LinearAlgebra.mul!)},
                              ::Type{RT}, cache,
                              C::Annotation{<:StridedVecOrMat},
-                             A::Const{<:SparseMatAdj},
+                             A::Const{<:SparseMatrixCSCUnion},
                              B::Annotation{<:StridedVecOrMat},
                              α::Annotation{<:Number},
                              β::Annotation{<:Number}
