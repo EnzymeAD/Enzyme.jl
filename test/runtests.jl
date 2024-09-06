@@ -2921,9 +2921,9 @@ struct OutStruct
     i3::Float64
 end
 
-for (A, B) ∈ Iterators.product((:InpStruct, :OutStruct), (:InpStruct, :OutStruct))
-    @eval (≃)(a::$A, b::$B) = (a.i1 ≃ b.i1) && (a.i2 ≃ b.i2) && (a.i3 ≃ b.i3)
-    @eval function (≃)(a::AbstractArray{<:$A}, b::AbstractArray{<:$B})
+for A ∈ (:InpStruct, :OutStruct)
+    @eval (≃)(a::$A, b::$A) = (a.i1 ≃ b.i1) && (a.i2 ≃ b.i2) && (a.i3 ≃ b.i3)
+    @eval function (≃)(a::AbstractArray{<:$A}, b::AbstractArray{<:$A})
         size(a) == size(b) || return false
         all(xy -> xy[1] ≃ xy[2], zip(a, b))
     end
@@ -3014,10 +3014,9 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
         ([vector[2] -sin(vector[1]); 0.0 1.0], [vector[1] 1.0; exp(vector[2]) 0.0])
     @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray2, vector)
     @test Enzyme.jacobian(Enzyme.Forward, mkarray2, vector) ≈
-                        [vector[2] -sin(vector[1]); 0.0 1.0;;; vector[1] 1.0;  exp(vector[2]) 0.0]
+        mkarray((2,2,2), vector[2], 0.0, -sin(vector[1]), 1.0, vector[1], exp(vector[2]), 1.0, 0.0)
     @test Enzyme.jacobian(Enzyme.Reverse, mkarray2, vector) ≈
-                        [vector[2] -sin(vector[1]); 0.0 1.0;;; vector[1] 1.0;  exp(vector[2]) 0.0]
-
+        mkarray((2,2,2), vector[2], 0.0, -sin(vector[1]), 1.0, vector[1], exp(vector[2]), 1.0, 0.0)
 
     # ∂ struct / ∂ vector
     @test Enzyme.gradient(Enzyme.Forward, x -> OutStruct(x[1] * x[2], cos(x[1]) + x[2], exp(x[2])), vector) ≃
@@ -3089,8 +3088,11 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
     @test Enzyme.gradient(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≃
         ([matrix[1,2], 0.0], [0.0, matrix[2,2]], [matrix[1,1], 0.0], [0.0, matrix[2,1]])
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix)
-    @test Enzyme.jacobian(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈ [matrix[1,2] 0.0; 0.0 matrix[2,2];;; matrix[1,1] 0.0; 0.0 matrix[2,1]]
-    @test Enzyme.jacobian(Enzyme.Reverse, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈ [matrix[1,2] 0.0; 0.0 matrix[2,2];;; matrix[1,1] 0.0; 0.0 matrix[2,1]]
+    # again we can't use array construction syntax because of 1.6
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈
+        mkarray((2,2,2), matrix[1,2], 0.0, 0.0, matrix[2,2], matrix[1,1], 0.0, 0.0, matrix[2,1])
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x[1,1]*x[1,2],x[2,1]*x[2,2]], matrix) ≈
+        mkarray((2,2,2), matrix[1,2], 0.0, 0.0, matrix[2,2], matrix[1,1], 0.0, 0.0, matrix[2,1])
 
     # ∂ tuple / ∂ matrix
     @test Enzyme.gradient(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix) ≃ ((matrix[1,2], 0.0), (0.0, matrix[2,2]), (matrix[1,1], 0.0), (0.0, matrix[2,1]))
@@ -3105,9 +3107,13 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
     @test Enzyme.gradient(Enzyme.Forward, mkarray3, matrix) ≃
         ([matrix[1,2] 0.0; exp(matrix[1,1]) 0.0], [0.0 matrix[2,2]; 0.0 1.0], [matrix[1,1] 0.0; 0.0 cos(matrix[1,2])], [0.0 matrix[2,1]; 1.0 0.0])
     @test_broken Enzyme.gradient(Enzyme.Reverse, mkarray3, matrix)
-    @test Enzyme.jacobian(Enzyme.Forward, mkarray3, matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
-    @test Enzyme.jacobian(Enzyme.Reverse, mkarray3, matrix) ≈ [matrix[1,2] 0.0; exp(matrix[1,1])   0.0;;; 0.0 matrix[2,2]; 0.0 1.0;;;; matrix[1,1] 0.0; 0.0 cos(matrix[1,2]);;; 0.0 matrix[2,1]; 1.0 0.0]
-
+    # array construction syntax broken on 1.6
+    @test Enzyme.jacobian(Enzyme.Forward, mkarray3, matrix) ≈
+        mkarray((2,2,2,2), matrix[1,2],exp(matrix[1,1]),0.0,0.0,0.0,0.0,matrix[2,2],1.0,
+                matrix[1,1],0.0,0.0,cos(matrix[1,2]),0.0,1.0,matrix[2,1],0.0)
+    @test Enzyme.jacobian(Enzyme.Reverse, mkarray3, matrix) ≈
+        mkarray((2,2,2,2), matrix[1,2],exp(matrix[1,1]),0.0,0.0,0.0,0.0,matrix[2,2],1.0,
+                matrix[1,1],0.0,0.0,cos(matrix[1,2]),0.0,1.0,matrix[2,1],0.0)
 
     # ∂ tuple / ∂ matrix
     @test Enzyme.gradient(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix) ≃
