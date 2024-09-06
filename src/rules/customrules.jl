@@ -136,7 +136,12 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
                 if value_type(val) != eltype(value_type(ptr))
                     if overwritten[end]
-                        emit_error(B, orig, "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
+                        emit_error(
+                            B,
+                            orig,
+                            "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). "
+                            * "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                        )
                     end
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)

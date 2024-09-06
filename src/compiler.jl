@@ -2459,6 +2459,9 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                     return make_batched(ncur, prevbb)
                 end
             end
+            if isa(cur, LLVM.ConstantFP)
+		return make_batched(ConstantFP(value_type(cur), 0), prevbb)
+            end
             if isa(cur, LLVM.ConstantDataSequential)
                 cvals = LLVM.Value[] 
                 changed = false
