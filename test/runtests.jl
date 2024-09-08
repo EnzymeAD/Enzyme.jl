@@ -26,6 +26,8 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
+include("systematic.jl")
+
 function isapproxfn(fn, args...; kwargs...)
     isapprox(args...; kwargs...)
 end
@@ -3846,4 +3848,3 @@ end
 
 
 end
-
