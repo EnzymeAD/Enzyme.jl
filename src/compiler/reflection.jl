@@ -35,7 +35,6 @@ function reflect(@nospecialize(func), @nospecialize(A), @nospecialize(types);
     return llvmf, mod
 end
 
-# For VERSION >= v"1.9.0-DEV.516"
 struct jl_llvmf_dump
     TSM::LLVM.API.LLVMOrcThreadSafeModuleRef
     F::LLVM.API.LLVMValueRef
@@ -46,30 +45,12 @@ function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(A), @nospec
                           raw::Bool=false, debuginfo::Symbol=:default, dump_module::Bool=false, mode=API.DEM_ReverseModeCombined)
     JuliaContext() do ctx
         entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode)
-        @static if VERSION >= v"1.9.0-DEV.516"
-            ts_mod = ThreadSafeModule(ir)
-            if VERSION >= v"1.9.0-DEV.672"
-                GC.@preserve ts_mod entry_fn begin
-                    value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))
-                    str = ccall(:jl_dump_function_ir, Ref{String},
-                          (Ptr{jl_llvmf_dump}, Bool, Bool, Ptr{UInt8}),
-                          value, !raw, dump_module, debuginfo)
-                end
-            else
-                GC.@preserve ts_mod entry_fn begin
-                    # N.B. jl_dump_function_ir will `Libc.free` the passed-in pointer
-                    value_ptr = reinterpret(Ptr{jl_llvmf_dump},
-                                            Libc.malloc(sizeof(jl_llvmf_dump)))
-                    unsafe_store!(value_ptr, jl_llvmf_dump(ts_mod.ref, entry_fn.ref))
-                    str = ccall(:jl_dump_function_ir, Ref{String},
-                          (Ptr{jl_llvmf_dump}, Bool, Bool, Ptr{UInt8}),
-                          value_ptr, !raw, dump_module, debuginfo)
-                end
-            end
-        else
+        ts_mod = ThreadSafeModule(ir)
+        GC.@preserve ts_mod entry_fn begin
+            value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))
             str = ccall(:jl_dump_function_ir, Ref{String},
-                  (LLVM.API.LLVMValueRef, Bool, Bool, Ptr{UInt8}),
-                  entry_fn, !raw, dump_module, debuginfo)
+                  (Ptr{jl_llvmf_dump}, Bool, Bool, Ptr{UInt8}),
+                  value, !raw, dump_module, debuginfo)
         end
         print(io, str)
     end
