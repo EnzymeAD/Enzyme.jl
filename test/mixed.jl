@@ -65,3 +65,20 @@ end
 	@test 6.2 ≈ sig[1][2][1]
 	@test 3*6.2 ≈ sig[1][2][2]
 end
+
+struct Foobar
+	x::Int
+	y::Int
+	z::Int
+	q::Int
+	r::Float64
+end
+
+function bad_abi(fb)
+	v = fb.x
+	throw(AssertionError("saw bad val $v"))
+end
+
+@testset "Mixed PrimalError" begin
+	@test_throws AssertionError autodiff(Reverse, bad_abi, MixedDuplicated(Foobar(2, 3, 4, 5, 6.0), Ref(Foobar(2, 3, 4, 5, 6.0))))
+end
