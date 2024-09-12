@@ -133,11 +133,11 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
-function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function EnzymeRules.forward(config, ::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return deepcopy(x.dval)
 end
 
-function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
+function EnzymeRules.forward(config, ::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
     ntuple(Val(N)) do _
         deepcopy(x.dval)
     end
@@ -164,12 +164,12 @@ end
     return seen[shadow]
 end
 
-function EnzymeRules.forward(func::Const{typeof(Base.deepcopy)}, ::Type{<:Duplicated}, x::Duplicated)
+function EnzymeRules.forward(config, func::Const{typeof(Base.deepcopy)}, ::Type{<:Duplicated}, x::Duplicated)
     primal = func.val(x.val)
     return Duplicated(primal, deepcopy_rtact(primal, x.val, IdDict(), x.dval))
 end
 
-function EnzymeRules.forward(func::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
+function EnzymeRules.forward(config, func::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
     primal = func.val(x.val)
     return BatchDuplicated(primal, ntuple(Val(N)) do i
         deepcopy_rtact(primal, x.val, IdDict(), x.dval[i])
@@ -569,7 +569,7 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
     return (nothing, nothing)
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config,
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T};
@@ -587,7 +587,7 @@ function EnzymeRules.forward(
     end
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config,
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
         xs::BatchDuplicated{T, N};
@@ -645,7 +645,7 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config,
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T},
@@ -670,7 +670,7 @@ function EnzymeRules.forward(
     end
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config,
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
         xs::BatchDuplicated{T, N},
@@ -755,7 +755,7 @@ end
 # ->
 # B(out) = inv(A) B(in)
 # dB(out) = inv(A) [ dB(in) - dA B(out) ]
-function EnzymeRules.forward(func::Const{typeof(ldiv!)},
+function EnzymeRules.forward(config, func::Const{typeof(ldiv!)},
                              RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
                              fact::Annotation{<:Cholesky},
                              B::Annotation{<:AbstractVecOrMat};
@@ -810,7 +810,7 @@ end
 # Float64 ranges in Julia use bitwise `&` with higher precision
 # to correct for numerical error, thus we put rules over the
 # operations as this is not directly differentiable
-function EnzymeRules.forward(func::Const{Colon},
+function EnzymeRules.forward(config, func::Const{Colon},
                              RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
                                               BatchDuplicated,BatchDuplicatedNoNeed}},
                              start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
@@ -908,7 +908,7 @@ function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
 end
 
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config, 
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
         kwargs...

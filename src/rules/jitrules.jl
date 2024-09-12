@@ -1234,7 +1234,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 inv_0 = if width == 1
                     inverted
                 else

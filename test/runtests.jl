@@ -1216,8 +1216,7 @@ end
     # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
-    Enzyme.API.runtimeActivity!(true)
-    Enzyme.autodiff(Enzyme.Reverse, Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
@@ -1235,8 +1234,7 @@ end
     weights = [0.2, 0.8]
     dweights = [0.0, 0.0]
 
-    Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
-    Enzyme.API.runtimeActivity!(false)
+    Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
 end
@@ -1379,9 +1377,7 @@ end
 
 @testset "AbstractType calling convention" begin
     # TODO get rid of runtime activity
-    Enzyme.API.runtimeActivity!(true)
-    @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
-    Enzyme.API.runtimeActivity!(false)
+    @test 1.0 ≈ Enzyme.autodiff(set_runtime_activity(Reverse), dxdt_pred, Active(1.0))[1][1]
 end
 
 function fillsum(x)
@@ -1415,11 +1411,9 @@ function rtg_f(V,@nospecialize(cv))
 end
 
 @testset "RuntimeActivity generic call" begin
-    Enzyme.API.runtimeActivity!(true)
-    res = autodiff(Forward, rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    res = autodiff(set_runtime_activity(Forward), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
     @test 3.14 ≈ res[1]
     @test 0.0 ≈ res[2]
-    Enzyme.API.runtimeActivity!(false)
 end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
@@ -2514,14 +2508,11 @@ end
 
 
 @testset "Getfield with reference" begin
-    Enzyme.API.runtimeActivity!(true)
-
     d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
     p = (a = 1.0, b = [0.5, 0.5])
     dp = Enzyme.make_zero(p)
     GFlogpdf(d, p)
-    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
-    Enzyme.API.runtimeActivity!(false)
+    autodiff(set_runtime_activity(Reverse), GFlogpdf, Active, Const(d), Duplicated(p, dp))
 end
 
 @testset "BLAS" begin
@@ -3317,9 +3308,7 @@ end
 		fn(0.0)
 	end
 
-    Enzyme.API.runtimeActivity!(true)
-    res = autodiff(Forward, Const(f2), Duplicated, Duplicated(0.2, 1.0))
-    Enzyme.API.runtimeActivity!(false)
+    res = autodiff(set_runtime_activity(Forward), Const(f2), Duplicated, Duplicated(0.2, 1.0))
     @test res[1] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 

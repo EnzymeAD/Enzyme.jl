@@ -1,42 +1,62 @@
 module EnzymeRules
 
-import EnzymeCore: Annotation, Const, Duplicated
-export Config, ConfigWidth, AugmentedReturn
-export needs_primal, needs_shadow, width, overwritten
+import EnzymeCore: Annotation, Const, Duplicated, Mode
+export RevConfig, RevConfigWidth
+export FwdConfig, FwdConfigWidth
+export AugmentedReturn
+export needs_primal, needs_shadow, width, overwritten, runtime_activity
 export primal_type, shadow_type, tape_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
 """
-    forward(func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+    forward(fwdconfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Calculate the forward derivative. The first argument `func` is the callable
-for which the rule applies to. Either wrapped in a [`Const`](@ref)), or
-a [`Duplicated`](@ref) if it is a closure.
-The second argument is the return type annotation, and all other arguments are
-the annotated function arguments.
+Calculate the forward derivative. The first argument is a [`FwdConfig](@ref) object
+describing parameters of the differentiation.
+The second argument `func` is the callable for which the rule applies to.
+Either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
+The third argument is the return type annotation, and all other arguments are the annotated function arguments.
 """
 function forward end
 
 """
-    Config{NeedsPrimal, NeedsShadow, Width, Overwritten}
-    ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+    FwdConfig{Width, RuntimeActivity}
+    FwdConfigWidth{Width} = FwdConfig{Width}
+
+Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
+* `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
+* `RuntimeActivity`: whether runtime activity is enabled.
+
+Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, and `runtime_activity`.
+"""
+struct FwdConfig{Width, RuntimeActivity} end
+const FwdConfigWidth{Width} = FwdConfig{Width}
+@inline width(::FwdConfig{Width}) where Width = Width
+@inline runtime_activity(::FwdConfig{<:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+
+
+"""
+    RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity}
+    RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
    forward and reverse pass (true if potentially modified between).
+* `RuntimeActivity`: whether runtime activity is enabled.
 
-Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
+Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, and `runtime_activity`.
 """
-struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
-const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity} end
+const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
-@inline needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-@inline needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-@inline width(::Config{<:Any, <:Any, Width}) where Width = Width
-@inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
+@inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 
 """
     AugmentedReturn(primal, shadow, tape)
@@ -240,5 +260,7 @@ end
 Mark a particular type `Ty` as always being inactive.
 """
 inactive_type(::Type) = false
+
+@inline EnzymeCore.set_runtime_activity(::M, ::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(M, runtime_activity(Config))
 
 end # EnzymeRules
