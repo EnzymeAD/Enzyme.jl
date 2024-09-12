@@ -172,7 +172,7 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    mthds = Base._methods_by_ftype(sig, #=lim=# -1,
+    mthds =         Base._methods_by_ftype(sig, #=mt=# nothing, #=lim=# -1,
                                world, #=ambig=# false,
                                min_world, max_world, has_ambig)
     mthds === nothing && return _generated_ex(world, source, method_error)

@@ -85,7 +85,7 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
     typeof(Base.tanh) => (:tanh, 1, nothing),
     typeof(Base.ldexp) => (:ldexp, 2, nothing),
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
-    typeof(Base.fma_emulated) = (:fma, 3, nothing)
+    typeof(Base.fma_emulated) => (:fma, 3, nothing)
 )
 @inline function find_math_method(@nospecialize(func), sparam_vals)
     if func ∈ keys(known_ops)
