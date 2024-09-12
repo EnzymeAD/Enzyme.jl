@@ -295,7 +295,6 @@ function plaquette_sum(U)
 end
 
 
-@static if VERSION >= v"1.9"
 @testset "No caching byref julia" begin
     U = Complex{Float64}[3.0 + 4.0im]
     dU = Complex{Float64}[0.0]
@@ -304,8 +303,6 @@ end
 
     @test dU[1] ≈ 7 * ( 3.0 + 4.0im )
 end
-end
-
 
 struct Closure
     v::Vector{Float64}

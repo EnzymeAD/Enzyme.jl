@@ -1,13 +1,3 @@
-# HACK: work around Pkg.jl#2500
-if VERSION < v"1.8-"
-test_project = Base.active_project()
-preferences_file = joinpath(dirname(@__DIR__), "LocalPreferences.toml")
-test_preferences_file = joinpath(dirname(test_project), "LocalPreferences.toml")
-if isfile(preferences_file) && !isfile(test_preferences_file)
-    cp(preferences_file, test_preferences_file)
-end
-end
-
 # # work around https://github.com/JuliaLang/Pkg.jl/issues/1585
 # using Pkg
 # Pkg.develop(PackageSpec(; path=joinpath(dirname(@__DIR__), "lib", "EnzymeTestUtils")))
@@ -80,7 +70,8 @@ function test_matrix_to_number(f, x; rtol=1e-9, atol=1e-9, fdm=central_fdm(5, 1)
     @test isapproxfn((Enzyme.Forward, f), dx_fwd, dx_fd; rtol=rtol, atol=atol, kwargs...)
 end
 
-Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false)
+# Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
+# Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
 
 include("abi.jl")
 include("typetree.jl")
@@ -91,12 +82,9 @@ include("typetree.jl")
     include("kwrules.jl")
     include("kwrrules.jl")
     include("internal_rules.jl")
-    @static if VERSION ≥ v"1.9-"
-        # XXX invalidation does not work on Julia 1.8
-        include("ruleinvalidation.jl")
-    end
+    include("ruleinvalidation.jl")
 end
-@static if VERSION ≥ v"1.7-" || !Sys.iswindows()
+@static if !Sys.iswindows()
     include("blas.jl")
 end
 
@@ -394,17 +382,11 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
     test_scalar(Base.sinh, 1.0)
     test_scalar(Base.cosh, 1.0)
-    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.sinc, 2.2)
-    end
     test_scalar(Base.FastMath.sinh_fast, 1.0)
     test_scalar(Base.FastMath.cosh_fast, 1.0)
-    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.FastMath.exp_fast, 1.0)
-    end
-    if sizeof(Int) == Int64 || VERSION ≥ v"1.7-"
     test_scalar(Base.exp10, 1.0)
-    end
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
     test_scalar(x->rem(x, 1), 0.7)
@@ -454,11 +436,7 @@ end
         Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
     @test Tuple{Float64,Float64}  === TapeType
-    Ret = if VERSION < v"1.8-"
-        Active{Float64}
-    else
-        Active
-    end
+    Ret = Active
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         ReverseSplitWithPrimal,
         TapeType,
@@ -474,31 +452,28 @@ end
     @test all(dA .== def_dA)
     @test all(dA .== thunk_dA)
 
-    @static if VERSION < v"1.8-"
-    else
-        function kernel(len, A)
-            for i in 1:len
-                A[i] *= A[i]
-            end
+    function kernel(len, A)
+        for i in 1:len
+            A[i] *= A[i]
         end
-
-        A = Array{Float64}(undef, 64)
-        dA = Array{Float64}(undef, 64)
-
-        A .= (1:1:64)
-        dA .= 1
-
-        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
-            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
-            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
-            forward(Const(f), Const(ctx), args...)[1]
-            return nothing
-        end
-
-        ModifiedBetween = Val((false, false, true))
-
-        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
     end
+
+    A = Array{Float64}(undef, 64)
+    dA = Array{Float64}(undef, 64)
+
+    A .= (1:1:64)
+    dA .= 1
+
+    function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
+        TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+        forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
+        forward(Const(f), Const(ctx), args...)[1]
+        return nothing
+    end
+
+    ModifiedBetween = Val((false, false, true))
+
+    aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
 
 end
 
@@ -880,33 +855,30 @@ end
 
     @test autodiff(Forward, arsum, Duplicated(inp, dinp))[1] ≈ 2.0
 
-    # On Julia 1.6 the gradients are wrong (1.0 too large) and on 1.7 it errors
-    @static if VERSION ≥ v"1.8-"
-        function f1(m)
-            s = 0.0
-            for (i, col) in enumerate(eachcol(m))
-                s += i * sum(col)
-            end
-            return s
+    function f1(m)
+        s = 0.0
+        for (i, col) in enumerate(eachcol(m))
+            s += i * sum(col)
         end
-
-        m = Float64[1 2 3; 4 5 6; 7 8 9]
-        dm = zero(m)
-        autodiff(Reverse, f1, Active, Duplicated(m, dm))
-        @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
-
-        function f2(m)
-            s = 0.0
-            for (i, col) in enumerate(eachrow(m))
-                s += i * sum(col)
-            end
-            return s
-        end
-
-        dm = zero(m)
-        autodiff(Reverse, f2, Active, Duplicated(m, dm))
-        @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
+        return s
     end
+
+    m = Float64[1 2 3; 4 5 6; 7 8 9]
+    dm = zero(m)
+    autodiff(Reverse, f1, Active, Duplicated(m, dm))
+    @test dm == Float64[1 2 3; 1 2 3; 1 2 3]
+
+    function f2(m)
+        s = 0.0
+        for (i, col) in enumerate(eachrow(m))
+            s += i * sum(col)
+        end
+        return s
+    end
+
+    dm = zero(m)
+    autodiff(Reverse, f2, Active, Duplicated(m, dm))
+    @test dm == Float64[1 1 1; 2 2 2; 3 3 3]
 
     function my_conv_3(x, w)
         y = zeros(Float64, 2, 3, 4, 5)
@@ -2300,7 +2272,6 @@ function bc2_loss_function(x, scale, bias)
     return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
 end
 
-@static if VERSION ≥ v"1.8-"
 @testset "Broadcast noalias" begin
 
     x = ones(30)
@@ -2314,7 +2285,6 @@ end
     bi = rand(Float32, 6)
     Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
         Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
-end
 end
 
 function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
@@ -2870,13 +2840,11 @@ end
     @test y[1] == [0.0, 1.0, 0.0]
     @test y[2] == [0.0, 0.0, 1.0]
 
-@static if VERSION ≥ v"1.9-" 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Forward, prod, x)
     @test dx[1] ≈ 0
     @test dx[2] ≈ 30
     @test dx[3] ≈ 0
-end
 end
 
 
@@ -2887,7 +2855,6 @@ function sparse_eval(x::Vector{Float64})
     return A[1]
 end
 
-@static if VERSION ≥ v"1.7-" 
 @testset "Type Unstable SparseArrays" begin
     x = [3.1, 2.7, 8.2]
     dx = [0.0, 0.0, 0.0]
@@ -2896,7 +2863,6 @@ end
     
     @test x ≈ [3.1, 2.7, 8.2]
     @test dx ≈ [-1.0, 43.74, 0]
-end
 end
 
 @testset "Simple Jacobian" begin
@@ -3357,11 +3323,7 @@ end
     @test res[1] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 
-    @static if VERSION ≥ v"1.9-" && !(VERSION ≥ v"1.10-" )
-        @test_broken res[2] ≈ 1.0
-    else
-        @test res[2] ≈ 1.0
-    end
+    @test res[2] ≈ 1.0
 end
 
 @inline function uns_mymean(f, A, ::Type{T}, c) where T
@@ -3412,7 +3374,6 @@ end
     @test dx ≈ Float64[1.0]
 end
 
-@static if VERSION < v"1.8-" ||  VERSION >= v"1.9-"
 @inline extract_bc(bc, ::Val{:north}) = (bc.north)
 @inline extract_bc(bc, ::Val{:top}) = (bc.top)
 
@@ -3436,7 +3397,6 @@ end
                       Duplicated(bc, d_bc))
 
     Enzyme.API.looseTypeAnalysis!(false)
-end
 end
 
 
@@ -3539,11 +3499,9 @@ end
 
     @test res.x == 5.0
 
-    if VERSION > v"1.10-"
-        res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
+    res = autodiff(Reverse, g, Active, Active(Moo(3.0, "a")))[1][1]
 
-        @test res.x == 5.0
-    end
+    @test res.x == 5.0
 end
 
 @testset "Type preservation" begin
@@ -3800,15 +3758,11 @@ end
     @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
     @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
 
-    # On Julia 1.6 the gradients are wrong (0.7 not 1.2) and on 1.7 it errors
-    @static if VERSION ≥ v"1.8-"
-        f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
-        @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
-        @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
-    end
+    f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
+    @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
 end
 
-@static if VERSION >= v"1.7-"
 @testset "hvcat_fill" begin
     ar = Matrix{Float64}(undef, 2, 3)
     dar = [1.0 2.0 3.0; 4.0 5.0 6.0]
@@ -3824,26 +3778,19 @@ end
 end
 
 # TEST EXTENSIONS 
-@static if VERSION ≥ v"1.9-"
-    using SpecialFunctions
-    @testset "SpecialFunctions ext" begin
-        lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
-        test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
-        test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
-    end
-
-    using ChainRulesCore
-    @testset "ChainRulesCore ext" begin
-        include("ext/chainrulescore.jl")
-    end
-    include("ext/logexpfunctions.jl")
-
-    @testset "BFloat16s ext" begin
-        include("ext/bfloat16s.jl")
-    end
+using SpecialFunctions
+@testset "SpecialFunctions ext" begin
+    lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+    test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+    test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
 end
 
-
-
+using ChainRulesCore
+@testset "ChainRulesCore ext" begin
+    include("ext/chainrulescore.jl")
 end
+include("ext/logexpfunctions.jl")
 
+@testset "BFloat16s ext" begin
+    include("ext/bfloat16s.jl")
+end

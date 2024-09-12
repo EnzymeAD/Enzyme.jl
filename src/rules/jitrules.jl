@@ -1302,23 +1302,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
     pushfirst!(vals, etup)
 
-    @static if VERSION < v"1.7.0-" || true
-    else
-    mi = emit_methodinstance!(B, func, vals)
-    end
-
     pushfirst!(vals, unsafe_to_llvm(B, func))
 
-    @static if VERSION < v"1.7.0-" || true
-    else
-    pushfirst!(vals, mi)
-    end
-
-    @static if VERSION < v"1.7.0-" || true
     cal = emit_apply_generic!(B, vals)
-    else
-    cal = emit_invoke!(B, vals)
-    end
 
     debug_from_orig!(gutils, cal, orig)
     

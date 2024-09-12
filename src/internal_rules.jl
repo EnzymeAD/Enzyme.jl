@@ -107,9 +107,7 @@ function EnzymeRules.inactive(::typeof(Base.startswith), ::AbstractString, args.
     return nothing
 end
 
-if VERSION >= v"1.9"
-    Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = nothing
-end
+Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = nothing
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
@@ -379,15 +377,6 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
         nothing
     end
 
-@static if VERSION < v"1.8.0"
-    UT = Union{
-        LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
-        LinearAlgebra.LowerTriangular{eltype(AT), AT},
-        LinearAlgebra.UpperTriangular{eltype(AT), AT},
-        LinearAlgebra.LU{eltype(AT), AT},
-        LinearAlgebra.QRCompactWY{eltype(AT), AT}
-    }
-else
     UT = Union{
         LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
         LinearAlgebra.LowerTriangular{eltype(AT), AT},
@@ -395,7 +384,6 @@ else
         LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
         LinearAlgebra.QRPivoted{eltype(AT), AT, onedimensionalize(BT), Vector{Int}}
     }
-end
 
     cache = NamedTuple{(Symbol("1"),Symbol("2"), Symbol("3"), Symbol("4")), Tuple{
         eltype(RT),
@@ -532,7 +520,6 @@ _zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
 _zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
 _zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
 
-@static if VERSION >= v"1.7-"
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
 function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
     primal = if EnzymeRules.needs_primal(config)
@@ -580,7 +567,6 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
         end
     end
     return (nothing, nothing)
-end
 end
 
 function EnzymeRules.forward(
