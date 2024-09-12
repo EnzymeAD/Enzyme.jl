@@ -167,13 +167,8 @@ end
 
 
     # TODO actually do modifiedBetween
-@static if VERSION < v"1.8-"
-    e_tt = Tuple{}
-    modifiedBetween = (mode != API.DEM_ForwardMode, )
-else
     e_tt = Tuple{Const{Int}}
     modifiedBetween = (mode != API.DEM_ForwardMode, false)
-end
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
@@ -374,10 +369,7 @@ end
         push!(vals, tape)
     end
 
-    @static if VERSION < v"1.8-"
-    else
-        push!(vals, new_from_original(gutils, operands(orig)[end-1]))
-    end
+    push!(vals, new_from_original(gutils, operands(orig)[end-1]))
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
@@ -392,11 +384,7 @@ end
 
     _, sname, dfuncT, vals, thunkTy, _, _ = threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
-@static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, dfuncT}
-else
     tt = Tuple{thunkTy, dfuncT, Bool}
-end
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
@@ -431,17 +419,7 @@ end
 
     byRef, sname, dfuncT, vals, thunkTy, _, copies = threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
 
-@static if VERSION < v"1.8-"
-    if byRef
-        emit_error(B, orig, "Enzyme: active variable in Threads.@threads closure "*(string(eltype(eltype(dfuncT))))*" not supported")
-    end
-end
-
-@static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}}
-else
     tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, Bool}
-end
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
@@ -489,11 +467,7 @@ end
         Vector{TapeType}
     end
 
-@static if VERSION < v"1.8-"
-    tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, STT }
-else
     tt = Tuple{thunkTy, dfuncT, Val{any_jltypes(EnzymeRules.tape_type(thunkTy))}, Val{byRef}, STT, Bool}
-end
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
