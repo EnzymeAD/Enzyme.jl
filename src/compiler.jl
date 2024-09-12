@@ -31,27 +31,14 @@ function cpu_name()
 end
 
 function cpu_features()
-    if VERSION >= v"1.10.0-beta1"
-        return ccall(:jl_get_cpu_features, String, ())
-    end
-
-    @static if Sys.ARCH == :x86_64 ||
-               Sys.ARCH == :x86
-        return "+mmx,+sse,+sse2,+fxsr,+cx8" # mandated by Julia
-    else
-        return ""
-    end
+    return ccall(:jl_get_cpu_features, String, ())
 end
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
 
-if v"8" <= LLVM.version() < v"12"
-    include("compiler/orcv1.jl")
-else
-    include("compiler/orcv2.jl")
-end
+include("compiler/orcv2.jl")
 
 include("gradientutils.jl")
 
@@ -97,11 +84,9 @@ Dict{DataType, Tuple{Symbol, Int, Union{Nothing, Tuple{Symbol, DataType}}}}(
     typeof(Base.FastMath.cosh_fast) => (:cosh, 1, nothing),
     typeof(Base.tanh) => (:tanh, 1, nothing),
     typeof(Base.ldexp) => (:ldexp, 2, nothing),
-    typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing)
+    typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
+    typeof(Base.fma_emulated) => (:fma, 3, nothing)
 )
-@static if VERSION >= v"1.8.0"
-    known_ops[typeof(Base.fma_emulated)] = (:fma, 3, nothing)
-end
 @inline function find_math_method(@nospecialize(func), sparam_vals)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
@@ -425,39 +410,7 @@ end
 @inline is_arrayorvararg_ty(::Type{IdDict{K, V} where K}) where {V} = true
 
 @inline function datatype_fieldcount(t::Type{T}) where T
-    @static if VERSION < v"1.10.0"
-        NT = @static if VERSION < v"1.9.0"
-            Base.NamedTuple_typename
-        else
-            Base._NAMEDTUPLE_NAME
-        end
-        if t.name === NT
-            names, types = t.parameters[1], t.parameters[2]
-            if names isa Tuple
-                return length(names)
-            end
-            if types isa DataType && types <: Tuple
-                return datatype_fieldcount(types)
-            end
-            return nothing
-        else
-            @static if VERSION < v"1.7.0"
-                if t.abstract || (t.name === Tuple.name && Base.isvatuple(t))
-                    return nothing
-                end
-            else
-                if isabstracttype(t) || (t.name === Tuple.name && Base.isvatuple(t))
-                    return nothing
-                end
-            end
-        end
-        if isdefined(t, :types)
-            return length(t.types)
-        end
-        return length(t.name.names)
-    else
-        return Base.datatype_fieldcount(t)
-    end
+    return Base.datatype_fieldcount(t)
 end
 
 @inline function staticInTup(::Val{T}, tup::NTuple{N, Val}) where {T, N}
@@ -608,24 +561,20 @@ end
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
-    @static if VERSION < v"1.7.0"
-        nT = T
+    nT = if T <: Tuple && T != Tuple && !(T isa UnionAll)
+        Tuple{(ntuple(length(T.parameters)) do i
+            Base.@_inline_meta
+            sT = T.parameters[i]
+            if sT isa TypeVar
+                Any
+            elseif sT isa Core.TypeofVararg
+                Any
+            else
+                sT
+            end
+        end)...}
     else
-        nT = if T <: Tuple && T != Tuple && !(T isa UnionAll)
-            Tuple{(ntuple(length(T.parameters)) do i
-                Base.@_inline_meta
-                sT = T.parameters[i]
-                if sT isa TypeVar
-                    Any
-                elseif sT isa Core.TypeofVararg
-                    Any
-                else
-                    sT
-                end
-            end)...}
-        else
-            T
-        end
+        T
     end
 
     if staticInTup(Val(nT), seen)
@@ -740,13 +689,8 @@ declare_allocobj!(mod) = get_function!(mod, "julia.gc_alloc_obj") do
     T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
     T_size_t = convert(LLVM.LLVMType, Int)
 
-    @static if VERSION < v"1.8.0"
-        T_int8 = LLVM.Int8Type()
-        T_pint8 = LLVM.PointerType(T_int8)
-        LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
-    else
-        LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
-    end
+
+    LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
 end
 function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::Bool, name::String="")
     curent_bb = position(B)
@@ -760,21 +704,16 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::
     T_int8 = LLVM.Int8Type()
     T_pint8 = LLVM.PointerType(T_int8)
 
-    @static if VERSION < v"1.7.0"
-        ptls = reinsert_gcmarker!(fn, B)
-        ptls = bitcast!(B, ptls, T_pint8)
-    else
-        pgcstack = reinsert_gcmarker!(fn, B)
-        ct = inbounds_gep!(B,
-            T_pjlvalue,
-            bitcast!(B, pgcstack, T_ppjlvalue),
-            [LLVM.ConstantInt(current_task_offset())])
-        ptls_field = inbounds_gep!(B,
-            T_pjlvalue,
-            ct, [LLVM.ConstantInt(current_ptls_offset())])
-        T_ppint8 = LLVM.PointerType(T_pint8)
-        ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
-    end
+    pgcstack = reinsert_gcmarker!(fn, B)
+    ct = inbounds_gep!(B,
+        T_pjlvalue,
+        bitcast!(B, pgcstack, T_ppjlvalue),
+        [LLVM.ConstantInt(current_task_offset())])
+    ptls_field = inbounds_gep!(B,
+        T_pjlvalue,
+        ct, [LLVM.ConstantInt(current_ptls_offset())])
+    T_ppint8 = LLVM.PointerType(T_pint8)
+    ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
 
     if needs_workaround
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -791,11 +730,7 @@ function emit_allocobj!(B, tag::LLVM.Value, Size::LLVM.Value, needs_workaround::
 
     alloc_obj, alty = declare_allocobj!(mod)
 
-    @static if VERSION < v"1.8.0"
-        return call!(B, alty, alloc_obj, [ptls, Size, tag], name)
-    else
-        return call!(B, alty, alloc_obj, [ct, Size, tag], name)
-    end
+    return call!(B, alty, alloc_obj, [ct, Size, tag], name)
 end
 function emit_allocobj!(B, T::DataType, name::String="")
     curent_bb = position(B)
@@ -832,18 +767,10 @@ declare_writebarrier!(mod) = get_function!(mod, "julia.write_barrier") do
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     LLVM.FunctionType(LLVM.VoidType(), [T_prjlvalue]; vararg=true)
 end
-@static if VERSION < v"1.8.0"
-declare_apply_generic!(mod) = get_function!(mod, "jl_apply_generic") do
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type()])
-end
-else
 declare_apply_generic!(mod) = get_function!(mod, "ijl_apply_generic") do
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.PointerType(T_prjlvalue), LLVM.Int32Type()])
-end
 end
 declare_juliacall!(mod) = get_function!(mod, "julia.call") do
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -877,17 +804,10 @@ function emit_getfield!(B::LLVM.IRBuilder, val::LLVM.Value, fld::LLVM.Value)::LL
 
     args = [val, fld]
 
-    @static if VERSION < v"1.9.0-"
-        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
-        inv = bitcast!(B, inv, LLVM.PointerType(FT))
-        res = call!(B, FT, inv, args)
-        LLVM.callconv!(res, 37)
-    else
-        julia_call, FT = get_function!(mod, "julia.call",
-            LLVM.FunctionType(T_prjlvalue,
-                              [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
-        res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
-    end
+    julia_call, FT = get_function!(mod, "julia.call",
+        LLVM.FunctionType(T_prjlvalue,
+                          [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
+    res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
     return res
 end
 
@@ -930,11 +850,7 @@ function emit_box_int32!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     T_int32 = LLVM.Int32Type()
 
     FT = LLVM.FunctionType(T_prjlvalue, [T_int32])
-    @static if VERSION < v"1.8-"
-        box_int32, _ = get_function!(mod, "jl_box_int32", FT)
-    else
-        box_int32, _ = get_function!(mod, "ijl_box_int32", FT)
-    end
+    box_int32, _ = get_function!(mod, "ijl_box_int32", FT)
     call!(B, FT, box_int32, [val])
 end
 
@@ -948,11 +864,7 @@ function emit_box_int64!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
     T_int64 = LLVM.Int64Type()
 
     FT = LLVM.FunctionType(T_prjlvalue, [T_int64])
-    @static if VERSION < v"1.8-"
-        box_int64, _ = get_function!(mod, "jl_box_int64", FT)
-    else
-        box_int64, _ = get_function!(mod, "ijl_box_int64", FT)
-    end
+    box_int64, _ = get_function!(mod, "ijl_box_int64", FT)
     call!(B, FT, box_int64, [val])
 end
 
@@ -967,25 +879,13 @@ function emit_apply_generic!(B::LLVM.IRBuilder, args)::LLVM.Value
     T_int32 = LLVM.Int32Type()
 
     gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
-    @static if VERSION < v"1.8-"
-        inv, _ = get_function!(mod, "jl_apply_generic", gen_FT)
-    else
-        inv, _ = get_function!(mod, "ijl_apply_generic", gen_FT)
-    end
+    inv, _ = get_function!(mod, "ijl_apply_generic", gen_FT)
 
-    @static if VERSION < v"1.9.0-"
-        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
-        inv = bitcast!(B, inv, LLVM.PointerType(FT))
-        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-        res = call!(B, FT, inv, args)
-        LLVM.callconv!(res, 37)
-    else
-        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-        julia_call, FT = get_function!(mod, "julia.call",
-            LLVM.FunctionType(T_prjlvalue,
-                              [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
-        res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
-    end
+    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+    julia_call, FT = get_function!(mod, "julia.call",
+        LLVM.FunctionType(T_prjlvalue,
+                          [LLVM.PointerType(gen_FT), T_prjlvalue]; vararg=true))
+    res = call!(B, FT, julia_call, LLVM.Value[inv, args...])
     return res
 end
 
@@ -1001,25 +901,13 @@ function emit_invoke!(B::LLVM.IRBuilder, args)::LLVM.Value
 
     # {} addrspace(10)* ({} addrspace(10)*, {} addrspace(10)**, i32, {} addrspace(10)*)* @ijl_invoke
     gen_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32, T_prjlvalue])
-    @static if VERSION < v"1.8-"
-        inv = get_function!(mod, "jl_invoke", gen_FT)
-    else
-        inv = get_function!(mod, "ijl_invoke", gen_FT)
-    end
+    inv = get_function!(mod, "ijl_invoke", gen_FT)
 
-    @static if VERSION < v"1.9.0-"
-        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
-        inv = bitcast!(B, inv, LLVM.PointerType(FT))
-        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-        res = call!(B, FT, inv, args)
-        LLVM.callconv!(res, 38)
-    else
-        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-        julia_call, FT = get_function!(mod, "julia.call2",
-            LLVM.FunctionType(T_prjlvalue,
-                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
-        res = call!(B, FT, julia_call, [inv, args...])
-    end
+    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+    julia_call, FT = get_function!(mod, "julia.call2",
+        LLVM.FunctionType(T_prjlvalue,
+                          [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+    res = call!(B, FT, julia_call, [inv, args...])
     return res
 end
 
@@ -1104,7 +992,6 @@ function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
     print(io, msg, '\n')
 end
 
-@static if VERSION >= v"1.8.0"
 const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_val_true" => Val(true),
     "enz_val_false" => Val(false),
@@ -1119,9 +1006,6 @@ const JuliaEnzymeNameMap = Dict{String, Any}(
     "enz_no_shadow_exc" => EnzymeNoShadowError,
     "enz_no_derivative_exc" => EnzymeNoDerivativeError,
 )
-else
-const JuliaEnzymeNameMap = Dict{String, Any}()
-end
 
 const JuliaGlobalNameMap = Dict{String, Any}(
     "jl_type_type" => Type,
@@ -1204,17 +1088,11 @@ const JuliaGlobalNameMap = Dict{String, Any}(
     "jl_nothing" => nothing,
 
     "jl_anytuple_type" => Tuple,
+    "jl_vararg_type" => Core.TypeofVararg,
+    "jl_opaque_closure_type" => Core.OpaqueClosure,
+    "jl_array_uint64_type" => Array{UInt64, 1},
+    "jl_binding_type" => Core.Binding
 )
-@static if VERSION >= v"1.7.0"
-    JuliaGlobalNameMap["jl_vararg_type"] = Core.TypeofVararg
-    JuliaGlobalNameMap["jl_opaque_closure_type"] = Core.OpaqueClosure
-end
-@static if VERSION >= v"1.8.0"
-    JuliaGlobalNameMap["jl_array_uint64_type"] = Array{UInt64, 1}
-end
-@static if VERSION >= v"1.10.0"
-    JuliaGlobalNameMap["jl_binding_type"] = Core.Binding
-end
 
 include("absint.jl")
 
@@ -1248,19 +1126,11 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
     f_apply_type, _ = get_function!(mod, "jl_f_apply_type", generic_FT)
     Ty = unsafe_to_llvm(B, Ty)
 
-    @static if VERSION < v"1.9.0-"
-        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
-        f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
-        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-        tag = call!(B, FT, f_apply_type, LLVM.Value[LLVM.PointerNull(T_prjlvalue), Ty, args...])
-        LLVM.callconv!(tag, 37)
-    else
-        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-        julia_call, FT = get_function!(mod, "julia.call",
-            LLVM.FunctionType(T_prjlvalue,
-                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
-        tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
-    end
+    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+    julia_call, FT = get_function!(mod, "julia.call",
+        LLVM.FunctionType(T_prjlvalue,
+                          [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+    tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...])
     return tag
 end
 
@@ -1293,19 +1163,11 @@ function emit_tuple!(B, args)::LLVM.Value
     generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
     f_apply_type, _ = get_function!(mod, "jl_f_tuple", generic_FT)
 
-    @static if VERSION < v"1.9.0-"
-        FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue]; vararg=true)
-        f_apply_type = bitcast!(B, f_apply_type, LLVM.PointerType(FT))
-        # call cc37 nonnull {}* bitcast ({}* ({}*, {}**, i32)* @jl_f_apply_type to {}* ({}*, {}*, {}*, {}*)*)({}* null, {}* inttoptr (i64 140150176657296 to {}*), {}* %4, {}* inttoptr (i64 140149987564368 to {}*))
-        tag = call!(B, FT, f_apply_type, LLVM.Value[LLVM.PointerNull(T_prjlvalue), args...])
-        LLVM.callconv!(tag, 37)
-    else
-        # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-        julia_call, FT = get_function!(mod, "julia.call",
-            LLVM.FunctionType(T_prjlvalue,
-                              [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
-        tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...])
-    end
+    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
+    julia_call, FT = get_function!(mod, "julia.call",
+        LLVM.FunctionType(T_prjlvalue,
+                          [LLVM.PointerType(generic_FT), T_prjlvalue]; vararg=true))
+    tag = call!(B, FT, julia_call, LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...])
     return tag
 end
 
@@ -1361,24 +1223,15 @@ function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    @static if VERSION < v"1.8.0-"
-    worlds, FT = get_function!(mod, "jl_gf_invoke_lookup_worlds",
-        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, sizeT, psizeT, psizeT]))
-    else
     worlds, FT = get_function!(mod, "jl_gf_invoke_lookup_worlds",
         LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]))
-    end
     EB = LLVM.IRBuilder()
     position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
     minworld = alloca!(EB, sizeT)
     maxworld = alloca!(EB, sizeT)
     store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
     store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
-    @static if VERSION < v"1.8.0-"
-    methodmatch = call!(B, FT, worlds, LLVM.Value[tag, LLVM.ConstantInt(sizeT, world), minworld, maxworld])
-    else
     methodmatch = call!(B, FT, worlds, LLVM.Value[tag, unsafe_to_llvm(B, nothing), LLVM.ConstantInt(sizeT, world), minworld, maxworld])
-    end
     # emit_jl!(B, methodmatch)
     # emit_jl!(B, emit_jltypeof!(B, methodmatch))
     offset = 1
@@ -2849,38 +2702,10 @@ function from_tape_type(::Type{B}) where {B<:Tuple}
 end
 
 # See get_current_task_from_pgcstack (used from 1.7+)
-if VERSION >= v"1.9.1"
-    current_task_offset() = -(unsafe_load(cglobal(:jl_task_gcstack_offset, Cint)) ÷ sizeof(Ptr{Cvoid}))
-elseif VERSION >= v"1.9.0"
-    if Sys.WORD_SIZE == 64
-        current_task_offset() = -13
-    else
-        current_task_offset() = -18
-    end
-else
-    if Sys.WORD_SIZE == 64
-        current_task_offset() = -12 #1.8/1.7
-    else
-        current_task_offset() = -17 #1.8/1.7
-    end
-end
+current_task_offset() = -(unsafe_load(cglobal(:jl_task_gcstack_offset, Cint)) ÷ sizeof(Ptr{Cvoid}))
 
 # See get_current_ptls_from_task (used from 1.7+)
-if VERSION >= v"1.9.1"
-    current_ptls_offset() = unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
-elseif VERSION >= v"1.9.0"
-    if Sys.WORD_SIZE == 64
-        current_ptls_offset() = 15
-    else
-        current_ptls_offset() = 20
-    end
-else
-    if Sys.WORD_SIZE == 64
-        current_ptls_offset() = 14 # 1.8/1.7
-    else
-        current_ptls_offset() = 19
-    end
-end
+current_ptls_offset() = unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
 
 function store_nonjl_types!(B, startval, p)
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -3309,7 +3134,7 @@ function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
         # and also https://github.com/JuliaLang/julia/pull/48620
-        @static if VERSION >= v"1.10.0-DEV.569"
+        @static if VERSION >= v"1.10.5"
             needs_dynamic_size_workaround = false
         else
             needs_dynamic_size_workaround = !isa(Size, LLVM.ConstantInt) || convert(Int, Size) != 1
@@ -3555,9 +3380,7 @@ function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
     end
 end
 
-@static if VERSION < v"1.8"
 GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = enzyme_ci_cache(job)
-end
 
 GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
     Interpreter.EnzymeInterpreter(enzyme_ci_cache(job), GPUCompiler.method_table(job), job.world, job.config.params.mode)
@@ -4505,7 +4328,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
-	    emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
+            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
@@ -5382,6 +5205,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
                             llty = convert(LLVMType, jlrettype)
                             ld = load!(builder, llty, bitcast!(builder, sretPtr, LLVM.PointerType(llty, addrspace(value_type(sretPtr)))))
                             store!(builder, ld, bitcast!(builder, obj, LLVM.PointerType(llty, addrspace(value_type(obj)))))
+                            emit_writebarrier!(builder, get_julia_inner_types(builder, obj, ld))
                             # memcpy!(builder, bitcast!(builder, obj, LLVM.PointerType(T_int8, addrspace(value_type(obj)))), 0, bitcast!(builder, sretPtr, LLVM.PointerType(T_int8)), 0, LLVM.ConstantInt(T_int64, sizeof(jlrettype)))
                             obj
                         else
@@ -5600,14 +5424,12 @@ end
 using Random
 # returns arg, return
 function no_type_setting(@nospecialize(specTypes); world=nothing)
-    @static if VERSION >= v"1.7.0-"
-        # Even though the julia type here is ptr{int8}, the actual data can be something else
-        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
-            return (true, false)
-        end
-        if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_nosimd)
-            return (true, false)
-        end
+    # Even though the julia type here is ptr{int8}, the actual data can be something else
+    if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
+        return (true, false)
+    end
+    if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_nosimd)
+        return (true, false)
     end
     return (false, false)
 end
@@ -7213,11 +7035,6 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
-    #if VERSION >= v"1.9.0-DEV.115"
-    #    LLVM.dispose(ctx)
-    #else
-    #    # we cannot dispose of the global unique context
-    #end
     adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
 
     adjoint_ptr  = pointer(adjoint_addr)
@@ -7381,38 +7198,26 @@ end
 
 @inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten}
   ts_ctx = JuliaContext()
-  ctx = @static if VERSION >= v"1.9.0-DEV.115"
-    context(ts_ctx)
-  else
-    ts_ctx
-  end
+  ctx = context(ts_ctx)
   activate(ctx)
   try
     return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
   finally
     deactivate(ctx)
-    @static if VERSION >= v"1.9.0-DEV.115"
-      dispose(ts_ctx)
-     end
+    dispose(ts_ctx)
   end
 end
 
 @inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten}
   mi = fspec(eltype(FA), TT, World)
   ts_ctx = JuliaContext()
-  ctx = @static if VERSION >= v"1.9.0-DEV.115"
-    context(ts_ctx)
-  else
-    ts_ctx
-  end
+  ctx = context(ts_ctx)
   activate(ctx)
   res = try
     thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
   finally
     deactivate(ctx)
-    @static if VERSION >= v"1.9.0-DEV.115"
-      dispose(ts_ctx)
-    end
+    dispose(ts_ctx)
   end
   return quote
     Base.@_inline_meta

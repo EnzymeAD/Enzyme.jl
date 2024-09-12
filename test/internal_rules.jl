@@ -62,9 +62,7 @@ end
     end
 
     @test autodiff(Forward, f4, Duplicated(1.5, 1.0))[1] == 1.5
-    @static if VERSION < v"1.7-" || VERSION >= v"1.8-"
-        @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
-    end
+    @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
     @test autodiff(Reverse, f4, Active(1.5))[1][1] == 1.5
     @test autodiff(Reverse, f4, Active(4.0))[1][1] == 0.5
     @test autodiff(Reverse, f4, Active(6.0))[1][1] == 0.0
@@ -285,7 +283,6 @@ end
     end
 end
 
-@static if VERSION > v"1.8"
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
         α = one(Float64)
@@ -618,7 +615,6 @@ end
             @test dB1 ≈ dB2
         end
     end
-end
 end
 
 @testset "rand and randn rules" begin
