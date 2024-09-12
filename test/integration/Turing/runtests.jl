@@ -1,10 +1,11 @@
 module TuringIntegrationTests
 
-using Test: @test, @testset
-using Random: randn
+using Distributions: Distributions
+using DynamicPPL: DynamicPPL
 using Enzyme: Enzyme
-using Turing: Turing
 using FiniteDifferences: FiniteDifferences
+using Random: randn
+using Test: @test, @testset
 
 # TODO(mhauru) Could we at some point make do without this?
 Enzyme.API.runtimeActivity!(true)
@@ -14,12 +15,12 @@ Turn a Turing model, possibly with given example values, into a log density func
 random value that it can be evaluated at.
 """
 function build_turing_problem(model)
-    ctx = Turing.DefaultContext()
-    vi = Turing.VarInfo(model)
-    vi_linked = Turing.link(vi, model)
-    ldp = Turing.LogDensityFunction(vi_linked, model, ctx)
-    test_function = Base.Fix1(Turing.LogDensityProblems.logdensity, ldp)
-    d = Turing.LogDensityProblems.dimension(ldp)
+    ctx = DynamicPPL.DefaultContext()
+    vi = DynamicPPL.VarInfo(model)
+    vi_linked = DynamicPPL.link(vi, model)
+    ldp = DynamicPPL.LogDensityFunction(vi_linked, model, ctx)
+    test_function = Base.Fix1(DynamicPPL.LogDensityProblems.logdensity, ldp)
+    d = DynamicPPL.LogDensityProblems.dimension(ldp)
     return test_function, randn(d)
 end
 
@@ -43,20 +44,20 @@ function test_grad(f, x; rtol=1e-6, atol=1e-6)
 end
 
 # Turing models to test with. These come from Turing's test suite.
-models = collect(Turing.DynamicPPL.TestUtils.DEMO_MODELS)
+models = collect(DynamicPPL.TestUtils.DEMO_MODELS)
 
 # Add some other models that use features that have previously been problematic for Enzyme.
 
-Turing.@model function MvDirichletWithManualAccumulation(w, doc)
-    β ~ Turing.filldist(Turing.Dirichlet([1.0, 1.0]), 2)
+DynamicPPL.@model function MvDirichletWithManualAccumulation(w, doc)
+    β ~ DynamicPPL.filldist(Distributions.Dirichlet([1.0, 1.0]), 2)
     log_product = log.(β)
-    Turing.@addlogprob! sum(log_product[CartesianIndex.(w, doc)])
+    DynamicPPL.@addlogprob! sum(log_product[CartesianIndex.(w, doc)])
 end
 
 push!(models, MvDirichletWithManualAccumulation([1, 1, 1, 1], [1, 1, 2, 2]))
 
-Turing.@model function demo_lkjchol(d::Int=2)
-    x ~ Turing.LKJCholesky(d, 1.0)
+DynamicPPL.@model function demo_lkjchol(d::Int=2)
+    x ~ DynamicPPL.LKJCholesky(d, 1.0)
     return (x=x,)
 end
 
