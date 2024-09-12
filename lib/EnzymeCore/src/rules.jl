@@ -94,7 +94,7 @@ end
 @inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
 @inline tape_type(::AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = TapeType
 """
-    augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+    augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
 Must return an [`AugmentedReturn`](@ref) type.
 * The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
@@ -105,8 +105,8 @@ Must return an [`AugmentedReturn`](@ref) type.
 function augmented_primal end
 
 """
-    reverse(::Config, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
-    reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
+    reverse(::RevConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
+    reverse(::RevConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
 Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
 as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
@@ -138,7 +138,7 @@ function has_frule_from_sig(@nospecialize(TT);
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(forward, TT; world, method_table, caller)
 end
 
@@ -147,7 +147,7 @@ function has_rrule_from_sig(@nospecialize(TT);
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
