@@ -128,7 +128,6 @@ function simplify_kw(@nospecialize specTypes)
     end
 end
 
-# https://github.com/JuliaLang/julia/pull/46965
 import Core.Compiler: CallInfo
 struct NoInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
@@ -197,48 +196,3 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     return @invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
         src::Any, info::CallInfo, stmt_flag::UInt32)
 end
-
-else # @static if VERSION ≥ v"1.10.0-DEV.879"
-
-function enzyme_inlining_policy(interp::EnzymeInterpreter, mi::MethodInstance)
-    method_table = Core.Compiler.method_table(interp)
-    specTypes = simplify_kw(mi.specTypes)
-    if is_primitive_func(specTypes)
-        @safe_debug "Blocking inlining for primitive func" mi.specTypes
-        return false
-    elseif is_alwaysinline_func(specTypes)
-        @safe_debug "Forcing inlining for primitive func" mi.specTypes
-        return true
-    elseif EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
-        @safe_debug "Blocking inlining due to inactive rule" mi.specTypes
-        return false
-    elseif interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
-            @safe_debug "Blocking inlining due to frule" mi.specTypes
-            return false
-        end
-    elseif EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-        @safe_debug "Blocking inling due to rrule" mi.specTypes
-        return false
-    end
-    return nothing
-end
-
-@static if VERSION ≥ v"1.9.0-DEV.1535"
-
-using Core.Compiler: CallInfo
-function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
-    @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
-    ret = enzyme_inlining_policy(interp, mi)
-    if ret isa Bool
-        if ret
-            @assert src !== nothing
-            return src
-        else
-            return nothing
-        end
-    end
-    return Base.@invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
-        src::Any, info::CallInfo, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
-end
-
