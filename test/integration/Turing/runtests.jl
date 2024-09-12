@@ -46,6 +46,7 @@ end
 models = collect(Turing.DynamicPPL.TestUtils.DEMO_MODELS)
 
 # Add some other models that use features that have previously been problematic for Enzyme.
+
 Turing.@model function MvDirichletWithManualAccumulation(w, doc)
     β ~ Turing.filldist(Turing.Dirichlet([1.0, 1.0]), 2)
     log_product = log.(β)
@@ -54,8 +55,15 @@ end
 
 push!(models, MvDirichletWithManualAccumulation([1, 1, 1, 1], [1, 1, 2, 2]))
 
+Turing.@model function demo_lkjchol(d::Int=2)
+    x ~ Turing.LKJCholesky(d, 1.0)
+    return (x=x,)
+end
+
+push!(models, demo_lkjchol())
+
+# Test each model in turn, checking Enzyme's gradient against FiniteDifferences.
 @testset "Turing integration tests" begin
-    # Test each model in turn, checking Enzyme's gradient against FiniteDifferences.
     @testset "$(typeof(model.f))" for model in models
         f, x = build_turing_problem(model)
         test_grad(f, x)
