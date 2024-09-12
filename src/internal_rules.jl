@@ -609,7 +609,7 @@ end
 
 
 function EnzymeRules.augmented_primal(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T};
@@ -632,7 +632,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         tape,
@@ -702,7 +702,7 @@ function EnzymeRules.forward(config,
 end
 
 function EnzymeRules.augmented_primal(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T},
@@ -728,7 +728,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(partialsort!)},
         dret::Union{Active, Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}}},
         tape,

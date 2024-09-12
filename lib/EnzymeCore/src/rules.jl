@@ -1,5 +1,6 @@
 module EnzymeRules
 
+import EnzymeCore
 import EnzymeCore: Annotation, Const, Duplicated, Mode
 export RevConfig, RevConfigWidth
 export FwdConfig, FwdConfigWidth
