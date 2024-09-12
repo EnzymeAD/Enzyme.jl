@@ -196,3 +196,5 @@ function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
     return @invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
         src::Any, info::CallInfo, stmt_flag::UInt32)
 end
+
+end
