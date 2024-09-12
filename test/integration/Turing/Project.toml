@@ -1,0 +1,7 @@
+[deps]
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
+
+[compat]
+FiniteDifferences = "0.12.32"
+Turing = "0.34.1"
