@@ -90,8 +90,6 @@ jobs:
           Pkg.instantiate()
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-        env:
-          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
         continue-on-error: ${{ matrix.version == 'nightly' }}
