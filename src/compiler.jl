@@ -4928,7 +4928,7 @@ function get_return_info(jlrettype)::Tuple{Union{Nothing, Type}, Union{Nothing, 
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type, RetActivity, TT)
+function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function, actualRetType::Type, RetActivity, TT, run_enzyme)
     entry_ft = LLVM.function_type(entry_f)
 
     RT = LLVM.return_type(entry_ft)
@@ -4985,7 +4985,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             push!(wrapper_types, typ)
             push!(wrapper_attrs, LLVM.Attribute[])
         elseif arg.cc != GPUCompiler.BITS_REF
-            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated)
+            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated) && run_enzyme
                 push!(boxedArgs, arg.arg_i)
                 push!(raisedArgs, arg.arg_i)
                 push!(wrapper_types, LLVM.PointerType(typ, Derived))
@@ -4996,7 +4996,7 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
             end
         else
             # bits ref, and not boxed
-            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated)
+            if TT != nothing && (TT.parameters[arg.arg_i] <: MixedDuplicated || TT.parameters[arg.arg_i] <: BatchMixedDuplicated) && run_enzyme
                 push!(boxedArgs, arg.arg_i)
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
@@ -5931,7 +5931,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         sret = get_return_info(k.ci.rettype)[2] !== nothing
         if sret
           cur = llvmfn == primalf
-          llvmfn, _, boxedArgs, loweredArgs = lower_convention(mi.specTypes, mod, llvmfn, k.ci.rettype, Duplicated, nothing)
+          llvmfn, _, boxedArgs, loweredArgs = lower_convention(mi.specTypes, mod, llvmfn, k.ci.rettype, Duplicated, nothing, params.run_enzyme)
           if cur
               primalf = llvmfn
               lowerConvention = false
@@ -6002,7 +6002,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     primalf, returnRoots = primalf, false
 
     if lowerConvention 
-        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, job.config.params.rt, TT)
+        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(source_sig, mod, primalf, actualRetType, job.config.params.rt, TT, params.run_enzyme)
     end
     
     if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
