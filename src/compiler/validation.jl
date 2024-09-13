@@ -9,56 +9,19 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
-        @static if VERSION >= v"1.7"
-            function __init__()
-                @static if VERSION > v"1.8"
-                  global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
-                else
-                  global blas_handle = Libdl.dlopen(BLAS.libblas)
-                end
+        function __init__()
+            global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
+        end
+        function get_blas_symbols()
+            symbols = BLAS.get_config().exported_symbols
+            if BLAS.USE_BLAS64
+                return map(n->n*"64_", symbols)
             end
-            function get_blas_symbols()
-                symbols = BLAS.get_config().exported_symbols
-                if BLAS.USE_BLAS64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
+            return symbols
+        end
 
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
-        else
-            function __init__()
-                global blas_handle = Libdl.dlopen(BLAS.libblas)
-            end
-            function get_blas_symbols()
-                symbols = Set{String}()
-                path = Libdl.dlpath(BLAS.libblas)
-                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
-                for meta in readmeta(open(path, "r"))
-                    for s in Symbols(meta)
-                        name = symbol_name(s)
-                        if !Sys.iswindows() && BLAS.vendor() == :openblas64
-                            endswith(name, "64_") || continue
-                        else
-                            endswith(name, "_") || continue
-                        end
-                        if !in(name, ignoreSymbols)
-                            push!(symbols, name)
-                        end
-                    end
-                end
-                symbols = collect(symbols)
-                if Sys.iswindows() &&  BLAS.vendor() == :openblas64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
-
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
+        function lookup_blas_symbol(name)
+            Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
         end
     end
 
@@ -361,10 +324,8 @@ end
     return has_method(sig, mt.world, nothing)
 end
 
-@static if VERSION >= v"1.7"
 @inline function has_method(sig, world::UInt, mt::Core.Compiler.OverlayMethodTable)
     return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
-end
 end
 
 @inline function is_inactive(tys, world::UInt, mt)
@@ -739,11 +700,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
 
             if length(frames) >= 1
-                @static if VERSION >= v"1.4.0-DEV.123"
-                    fn, file, line, linfo, fromC, inlined = last(frames)
-                else
-                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
-                end
+                fn, file, line, linfo, fromC, inlined = last(frames)
 
                 # Remember pointer in our global map
                 fn = FFI.memoize!(ptr, string(fn))

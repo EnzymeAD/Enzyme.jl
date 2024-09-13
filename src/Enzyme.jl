@@ -249,11 +249,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
 
     rt = if A isa UnionAll
-        @static if VERSION >= v"1.8.0"
-            Compiler.primal_return_type(rmode, Val(codegen_world_age(FTy, tt)), FTy, tt)
-        else
-            Core.Compiler.return_type(f.val, tt)
-        end
+        Compiler.primal_return_type(rmode, Val(codegen_world_age(FTy, tt)), FTy, tt)
     else
         eltype(A)    
     end
@@ -339,7 +335,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function autodiff(mode::CMode, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, CMode<:Mode, Nargs}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = if mode isa ReverseMode && VERSION >= v"1.8.0"
+    rt    = if mode isa ReverseMode
         Compiler.primal_return_type(mode, Val(codegen_world_age(eltype(FA), tt)), eltype(FA), tt)
     else
         Core.Compiler.return_type(f.val, tt)
@@ -556,7 +552,7 @@ Like [`autodiff_deferred`](@ref) but will try to guess the activity of the retur
 
 @inline function autodiff_deferred(mode::M, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, M<:Mode, Nargs}
     tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = if mode isa ReverseMode && VERSION >= v"1.8.0"
+    rt    = if mode isa ReverseMode
         Compiler.primal_return_type(mode, Val(codegen_world_age(eltype(FA), tt)), eltype(FA), tt)
     else
         Core.Compiler.return_type(f.val, tt)
@@ -903,11 +899,7 @@ result, ∂v, ∂A
     end
     
     rt = if RT isa UnionAll
-        @static if VERSION < v"1.8-"
-            throw(MethodError(autodiff_deferred_thunk, (mode, tt, fa, a2, args...)))
-        else
-            RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
-        end
+        RT{Core.Compiler.return_type(Tuple{eltype(FA), map(eltype, args)...})}
     else
         @assert RT isa DataType
         RT
@@ -1243,13 +1235,9 @@ of shape `size(input)` of values of the output type.
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
+        st = Base.stack(cols)
 
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
+        st3 = if length(inshape) <= 1
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1279,13 +1267,9 @@ end
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
+        st = Base.stack(cols)
 
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
+        st3 = if length(inshape) <= 1
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1311,13 +1295,9 @@ end
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = @static if VERSION >= v"1.9"
-            Base.stack(cols)
-        else
-            reshape(cat(cols..., dims=length(outshape)), (outshape..., inshape...))
-        end
+        st = Base.stack(cols)
 
-        st3 = if length(inshape) <= 1 || VERSION < v"1.9"
+        st3 = if length(inshape) <= 1
             st
         else
             reshape(st, (outshape..., inshape...))
@@ -1416,13 +1396,9 @@ of shape `size(output)` of values of the input type.
     if x isa AbstractArray
         inshape = size(x)
 
-        st = @static if VERSION >= v"1.9"
-            Base.stack(rows)
-        else
-            reshape(cat(rows..., dims=length(inshape)), (inshape..., outshape...))
-        end
+        st = Base.stack(rows)
 
-        st2 = if length(outshape) == 1 || VERSION < v"1.9"
+        st2 = if length(outshape) == 1
             st
         else
             reshape(st, (inshape..., outshape...))
@@ -1469,13 +1445,9 @@ end
     outshape = tmp[1][2]
     if x isa AbstractArray
         inshape = size(x)
-        st = @static if VERSION >= v"1.9"
-            Base.stack(rows)
-        else
-            reshape(cat(rows..., dims=length(inshape)), (inshape..., outshape...))
-        end
+        st = Base.stack(rows)
 
-        st2 = if length(outshape) == 1 || VERSION < v"1.9"
+        st2 = if length(outshape) == 1
             st
         else
             reshape(st, (inshape..., outshape...))

@@ -199,11 +199,7 @@ else
     end
 end
 
-if VERSION >= v"1.7.0-DEV.204"
-    import Base: ismutabletype
-else
-    ismutabletype(T) = isa(T, DataType) && T.mutable
-end
+import Base: ismutabletype
 
 function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
@@ -214,10 +210,8 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         return TypeTree()
     end
 
-    @static if VERSION >= v"1.7.0"
-        if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
-            return TypeTree()
-        end
+    if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
+        return TypeTree()
     end
 
     if T <: AbstractFloat
