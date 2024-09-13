@@ -195,7 +195,7 @@ end
 
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
-                    test_forward(f_mut_fwd!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol; runtime_activity=true)
+                    test_forward(f_mut_fwd!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol, runtime_activity=true)
                 end skip = (VERSION < v"1.8" && T <: Complex)
             end
         end
