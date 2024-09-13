@@ -4,7 +4,7 @@ using Enzyme
 using Enzyme: EnzymeRules
 using Test
 
-import .EnzymeRules: forward, Annotation, has_frule_from_sig
+import .EnzymeRules: forward, Annotation, has_frule_from_sig, FwdConfig
 
 f(x) = x^2
 
