@@ -175,26 +175,35 @@ function Core.Compiler.abstract_call_gf_by_type(interp::EnzymeInterpreter, @nosp
     end
 end
 
-function Core.Compiler.inlining_policy(interp::EnzymeInterpreter,
-    @nospecialize(src), @nospecialize(info::CallInfo), stmt_flag::UInt32)
-    if info isa NoInlineCallInfo
-        if info.kind === :primitive
-            @safe_debug "Blocking inlining for primitive func" info.tt
-        elseif info.kind === :inactive
-            @safe_debug "Blocking inlining due to inactive rule" info.tt
-        elseif info.kind === :frule
-            @safe_debug "Blocking inlining due to frule" info.tt
-        else
-            @assert info.kind === :rrule
-            @safe_debug "Blocking inlining due to rrule" info.tt
-        end
-        return nothing
-    elseif info isa AlwaysInlineCallInfo
-        @safe_debug "Forcing inlining for primitive func" info.tt
-        return src
+let # overload `inlining_policy`
+    @static if VERSION ≥ v"1.11.0-DEV.879"
+        sigs_ex = :(interp::EnzymeInterpreter, @nospecialize(src), @nospecialize(info::Core.Compiler.CallInfo), stmt_flag::UInt32)
+        args_ex = :(interp::AbstractInterpreter, src::Any, info::Core.Compiler.CallInfo, stmt_flag::UInt32)
+    else
+        sigs_ex = :(interp::EnzymeInterpreter,
+            @nospecialize(src), @nospecialize(info::Core.Compiler.CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
+        args_ex = :(interp::AbstractInterpreter,
+            src::Any, info::Core.Compiler.CallInfo, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
     end
-    return @invoke Core.Compiler.inlining_policy(interp::AbstractInterpreter,
-        src::Any, info::CallInfo, stmt_flag::UInt32)
+    @eval function Core.Compiler.inlining_policy($(sigs_ex.args...))
+        if info isa NoInlineCallInfo
+            if info.kind === :primitive
+                @safe_debug "Blocking inlining for primitive func" info.tt
+            elseif info.kind === :inactive
+                @safe_debug "Blocking inlining due to inactive rule" info.tt
+            elseif info.kind === :frule
+                @safe_debug "Blocking inlining due to frule" info.tt
+            else
+                @assert info.kind === :rrule
+                @safe_debug "Blocking inlining due to rrule" info.tt
+            end
+            return nothing
+        elseif info isa AlwaysInlineCallInfo
+            @safe_debug "Forcing inlining for primitive func" info.tt
+            return src
+        end
+        return @invoke Core.Compiler.inlining_policy($(args_ex.args...))
+    end
 end
 
-end
+end # module Interpreter
