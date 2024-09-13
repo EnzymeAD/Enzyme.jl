@@ -82,7 +82,7 @@ end
 end
 
 g(x) = x ^ 2
-function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
+function forward(config, func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
