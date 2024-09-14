@@ -121,16 +121,6 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
 
-@inline width(::Duplicated) = 1
-@inline width(::BatchDuplicated{T, N}) where {T, N} = N
-@inline width(::DuplicatedNoNeed) = 1
-@inline width(::BatchDuplicatedNoNeed{T, N}) where {T, N} = N
-
-@inline width(::Type{Duplicated{T}}) where T = 1
-@inline width(::Type{BatchDuplicated{T, N}}) where {T, N} = N
-@inline width(::Type{DuplicatedNoNeed{T}}) where T = 1
-@inline width(::Type{BatchDuplicatedNoNeed{T, N}}) where {T, N} = N
-
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
 function EnzymeRules.forward(config, ::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
@@ -395,8 +385,8 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     )
 
     return EnzymeRules.AugmentedReturn{
-        EnzymeRules.needs_primal(config) ? eltype(RT) : Nothing,
-        EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing,
+        EnzymeRules.primal_type(config, RT),
+        EnzymeRules.shadow_type(config, RT),
         typeof(cache)
     }(retres, dres, cache)
 end
@@ -483,8 +473,13 @@ function EnzymeRules.augmented_primal(
     primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
     func.val(Y.val, A.val, B.val)
-    return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
-        primal, shadow, (cache_Y, cache_A, cache_B))
+    return EnzymeRules.AugmentedReturn{
+        EnzymeRules.primal_type(config, RT),
+        EnzymeRules.shadow_type(config, RT),
+        Tuple{typeof(cache_Y), typeof(cache_A), typeof(cache_B)}
+    }(
+        primal, shadow, (cache_Y, cache_A, cache_B)
+    )
 end
 
 function EnzymeRules.reverse(
@@ -763,7 +758,7 @@ function EnzymeRules.forward(config, func::Const{typeof(ldiv!)},
     if B isa Const
         return func.val(fact.val, B.val; kwargs...)
     else
-        N = width(B)
+        N = EnzymeRules.width(config)
         retval = B.val
 
         L = fact.val.L
@@ -820,7 +815,7 @@ function EnzymeRules.forward(config, func::Const{Colon},
     elseif start isa Duplicated || start isa DuplicatedNoNeed
         start.dval
     elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
-        ntuple(i -> start.dval[i], Val(width(RT)))
+        ntuple(i -> start.dval[i], Val(EnzymeRules.width(config)))
     else
         error("Annotation type $(typeof(start)) not supported for range start. Please open an issue")
     end
@@ -830,7 +825,7 @@ function EnzymeRules.forward(config, func::Const{Colon},
     elseif step isa Duplicated || step isa DuplicatedNoNeed
         step.dval
     elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
-        ntuple(i -> step.dval[i], Val(width(RT)))
+        ntuple(i -> step.dval[i], Val(EnzymeRules.width(config)))
     else
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
@@ -845,11 +840,11 @@ function EnzymeRules.forward(config, func::Const{Colon},
         BatchDuplicated(ret,
                         ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                                           step=dstep isa Number ? dstep : dstep[i],
-                                          length=length(ret)), Val(width(RT))))
+                                          length=length(ret)), Val(EnzymeRules.width(config))))
     elseif RT <: BatchDuplicatedNoNeed
         ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                           step=dstep isa Number ? dstep : dstep[i],
-                          length=length(ret)), Val(width(RT)))
+                          length=length(ret)), Val(EnzymeRules.width(config)))
     else
         error("This should not be possible. Please report.")
     end
@@ -920,13 +915,13 @@ function EnzymeRules.forward(config,
     elseif RT <: Duplicated
         return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
     elseif RT <: BatchDuplicatedNoNeed
-        ntuple(Val(width(RT))) do i
+        ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
             Ty.val(; kwargs...)
         end
     else
         @assert RT <: BatchDuplicated
-        tup = ntuple(Val(width(RT))) do i
+        tup = ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
             Ty.val(; kwargs...)
         end

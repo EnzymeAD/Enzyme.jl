@@ -29,7 +29,7 @@ Configuration type to dispatch on in custom forward rules (see [`forward`](@ref)
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `RuntimeActivity`: whether runtime activity is enabled.
 
-Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, and `runtime_activity`.
+Getters for the type parameters are provided by `width` and `runtime_activity`.
 """
 struct FwdConfig{Width, RuntimeActivity} end
 const FwdConfigWidth{Width} = FwdConfig{Width}
@@ -58,6 +58,20 @@ const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 @inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
 @inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+
+"""
+    primal_type(::RevConfig, ::Type{<:Annotation{RT}})
+
+Compute the exepcted primal return type given a reverse mode config and return activity
+"""
+@inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+
+"""
+    shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
+
+Compute the exepcted shadow return type given a reverse mode config and return activity
+"""
+@inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 
 """
     AugmentedReturn(primal, shadow, tape)
