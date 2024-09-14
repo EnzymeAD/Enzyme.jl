@@ -1,12 +1,9 @@
 using Enzyme, Test
-using SparseArrays
+using LinearAlgebra, Statistics, SparseArrays
 
 @isdefined(UTILS) || include("utils.jl")
 
 
-#WARN: why am I getting
-# AssertionError: Base.allocatedinline(actualRetType) returns false: actualRetType = Any, rettype = Active{Any}
-# I guess I broke this by moving it somehow?
 @testset "Hessian" begin
     function origf(x::Array{Float64}, y::Array{Float64})
         y[1] = x[1] * x[1] + x[2] * x[1]
@@ -56,7 +53,6 @@ using SparseArrays
     function f_hvp!(hv, x, v, tmp)
         dx = make_zero(x)
         btmp = make_zero(tmp)
-        #WARN: fails here, no idea why
         autodiff(
             Forward,
             f_gradient_deferred!,
@@ -487,6 +483,11 @@ end
     @test res[2][4] ≈ 4.0
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
+end
+
+function absset(out, x)
+    @inbounds out[1] = (x,)
+    return nothing
 end
 
 @testset "Abstract Array element type" begin
