@@ -1,8 +1,7 @@
-using Enzyme
+using Enzyme, Test
 using LLVM
-using Test
 
-import Enzyme: typetree, TypeTree, API, make_zero
+using Enzyme: typetree, TypeTree, API, make_zero
 
 const ctx = LLVM.Context()
 const dl = string(LLVM.DataLayout(LLVM.JITTargetMachine()))

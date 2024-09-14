@@ -184,3 +184,91 @@ end
     @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
 end
 
+@testset "Batch Forward" begin
+    square(x)=x*x
+    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
+    @test length(bres) == 1
+    @test length(bres[1]) == 3
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+
+    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
+    @test bres[1][1] ≈  6.0 + 14.0im
+    @test bres[1][2] ≈ 12.0 + 28.0im
+    @test bres[1][3] ≈ 18.0 + 42.0im
+
+    squareidx(x)=x[1]*x[1]
+    inp = Float32[3.0]
+
+    # Shadow offset is not the same as primal so following doesn't work
+    # d_inp = Float32[1.0, 2.0, 3.0]
+    # autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
+
+    d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
+    bres = autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
+    @test bres[1][1] ≈  6.0
+    @test bres[1][2] ≈ 12.0
+    @test bres[1][3] ≈ 18.0
+end
+
+@testset "Batch Reverse" begin
+    function refbatchbwd(out, x)
+        v = x[]
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    dxs = (Ref(0.0), Ref(0.0), Ref(0.0))
+    out = Float64[0,0,0]
+    x = Ref(2.0)
+
+    autodiff(Reverse, refbatchbwd, BatchDuplicated(out, Enzyme.onehot(out)), BatchDuplicated(x, dxs))
+    @test dxs[1][] ≈  1.0
+    @test dxs[2][] ≈  4.0
+    @test dxs[3][] ≈ 12.0
+
+    function batchbwd(out, v)
+        out[1] = v
+        out[2] = v*v
+        out[3] = v*v*v
+        nothing
+    end
+
+    bres = Enzyme.autodiff(Reverse, batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))[1]
+    @test length(bres) == 2
+    @test length(bres[2]) == 3
+    @test bres[2][1] ≈  1.0
+    @test bres[2][2] ≈  4.0
+    @test bres[2][3] ≈ 12.0
+
+    times2(x) = x * 2
+    xact = BatchDuplicated([1.0, 2.0, 3.0, 4.0, 5.0], (zeros(5), zeros(5)))
+    forward, pullback = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(times2)}, BatchDuplicated, typeof(xact))
+
+    tape, primal, shadow = forward(Const(times2), xact)
+    dy1 = [0.07, 0.011, 0.013, 0.017, 0.019]
+    dy2 = [0.23, 0.029, 0.031, 0.037, 0.041]
+    copyto!(shadow[1], dy1)
+    copyto!(shadow[2], dy2)
+    r = pullback(Const(times2), xact, tape)
+    @test xact.dval[1] ≈ dy1 * 2
+    @test xact.dval[2] ≈ dy2 * 2
+end
+
+@testset "Uncached batch sizes" begin
+    genericsin(x) = Base.invokelatest(sin, x)
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))[1]
+    for (i, v) in enumerate(res)
+        @test v ≈ i * -0.4161468365471424
+    end
+    @assert length(res) == 10
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{40,Float64}((Float64(i) for i in 1:40))))[1]
+    for (i, v) in enumerate(res)
+        @test v ≈ i * -0.4161468365471424
+    end
+    @assert length(res) == 40
+end
+

@@ -1,7 +1,13 @@
 #====================================================================================================
     utils.jl
+
+Contains various utilities that are used throughout tests.
+Should be included with
+@isdefined(UTILS) || include("utils.jl")
 ====================================================================================================#
-using Enzyme
+const UTILS = true  # for checking whether to include
+
+using Enzyme, Test
 
 # symbol is \simeq
 # this is basically a more flexible version of ≈

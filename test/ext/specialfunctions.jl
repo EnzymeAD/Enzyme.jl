@@ -1,3 +1,4 @@
+using Enzyme, Test
 using SpecialFunctions
 
 # From https://github.com/JuliaDiff/ChainRules.jl/blob/02e7857e34b5c01067a288262f69cfcb9fce069b/test/rulesets/packages/SpecialFunctions.jl#L1

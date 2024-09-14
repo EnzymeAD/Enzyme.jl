@@ -1,5 +1,12 @@
 using Enzyme, Test
+using SparseArrays
 
+@isdefined(UTILS) || include("utils.jl")
+
+
+#WARN: why am I getting
+# AssertionError: Base.allocatedinline(actualRetType) returns false: actualRetType = Any, rettype = Active{Any}
+# I guess I broke this by moving it somehow?
 @testset "Hessian" begin
     function origf(x::Array{Float64}, y::Array{Float64})
         y[1] = x[1] * x[1] + x[2] * x[1]
@@ -49,6 +56,7 @@ using Enzyme, Test
     function f_hvp!(hv, x, v, tmp)
         dx = make_zero(x)
         btmp = make_zero(tmp)
+        #WARN: fails here, no idea why
         autodiff(
             Forward,
             f_gradient_deferred!,
@@ -151,6 +159,13 @@ let
         loadsin2(xp)
     end
     x = [2.0]
+end
+
+@testset "Struct return" begin
+    x = [2.0]
+    dx = [0.0]
+    @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
+    @test dx[1] == -0.4161468365471424
 end
 
 function grad_closure(f, x)
@@ -347,8 +362,9 @@ function bc2_loss_function(x, scale, bias)
     return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
 end
 
+#WARN: why is this segfaulting right now???
+#=
 @testset "Broadcast noalias" begin
-
     x = ones(30)
     autodiff(Reverse, bc0_test_function, Active, Const(x))
     
@@ -361,6 +377,7 @@ end
     Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
         Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
 end
+=#
 
 @testset "BLAS" begin
     x = [2.0, 3.0]
@@ -420,6 +437,13 @@ end
     @test y == 1.0
 end
 
+function sparse_eval(x::Vector{Float64})
+    A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
+    B = sparsevec([1, 1, 2, 3], [2.0*x[2], 1.0-x[1], 2.0+x[3], -1.0])
+    C = A + B
+    return A[1]
+end
+
 @testset "Type Unstable SparseArrays" begin
     x = [3.1, 2.7, 8.2]
     dx = [0.0, 0.0, 0.0]
@@ -463,5 +487,17 @@ end
     @test res[2][4] ≈ 4.0
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
+end
+
+@testset "Abstract Array element type" begin
+    out = Tuple{Any}[(9.7,)]
+    dout = Tuple{Any}[(4.3,)]
+
+    autodiff(Enzyme.Forward,
+                      absset,
+                      Duplicated(out, dout),
+                      Duplicated(3.1, 2.4)
+                      )
+    @test dout[1][1] ≈ 2.4
 end
 

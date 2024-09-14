@@ -1,4 +1,5 @@
 using Enzyme, Test
+using Statistics
 
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2

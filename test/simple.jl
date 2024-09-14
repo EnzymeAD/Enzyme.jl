@@ -1,4 +1,8 @@
 using Enzyme, Test
+using FiniteDifferences
+
+@isdefined(UTILS) || include("utils.jl")
+
 
 @testset "Simple tests" begin
     make3() = (1.0, 2.0, 3.0)

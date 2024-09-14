@@ -1,4 +1,6 @@
 using Enzyme, Test
+using Enzyme.API
+using Enzyme.Compiler
 
 
 f0(x) = 1.0 + x
@@ -21,29 +23,30 @@ mutable struct MInts{A, B}
 end
 
 @testset "Internal tests" begin
-    @assert Enzyme.Compiler.active_reg_inner(Ints{<:Any, Integer}, (), nothing) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(Ints{<:Any, Float64}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Ints{Integer, <:Any}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Ints{Integer, <:Integer}, (), nothing) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(Ints{Integer, <:AbstractFloat}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Ints{Integer, Float64}, (), nothing) == Enzyme.Compiler.ActiveState
-    @assert Enzyme.Compiler.active_reg_inner(MInts{Integer, Float64}, (), nothing) == Enzyme.Compiler.DupState
+    #TODO: why are these assert and not test?
+    @assert Compiler.active_reg_inner(Ints{<:Any, Integer}, (), nothing) == Compiler.AnyState
+    @assert Compiler.active_reg_inner(Ints{<:Any, Float64}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Ints{Integer, <:Any}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Ints{Integer, <:Integer}, (), nothing) == Compiler.AnyState
+    @assert Compiler.active_reg_inner(Ints{Integer, <:AbstractFloat}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Ints{Integer, Float64}, (), nothing) == Compiler.ActiveState
+    @assert Compiler.active_reg_inner(MInts{Integer, Float64}, (), nothing) == Compiler.DupState
 
-    @assert Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int})
-    @assert !Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
-    @assert !Enzyme.Compiler.active_reg(Base.RefValue{Float32})
-    @assert Enzyme.Compiler.active_reg_inner(Ptr, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Base.RefValue{Float32}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Colon, (), nothing) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(Symbol, (), nothing) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(String, (), nothing) == Enzyme.Compiler.AnyState
-    @assert Enzyme.Compiler.active_reg_inner(Tuple{Any,Int64}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Tuple{S,Int64} where S, (), Base.get_world_counter()) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Enzyme.Compiler.DupState
-    @assert Enzyme.Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Enzyme.Compiler.ActiveState
-    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing) == Enzyme.Compiler.DupState
-    @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
-    @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
+    @assert Compiler.active_reg(Tuple{Float32,Float32,Int})
+    @assert !Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}})
+    @assert !Compiler.active_reg(Base.RefValue{Float32})
+    @assert Compiler.active_reg_inner(Ptr, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Base.RefValue{Float32}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Colon, (), nothing) == Compiler.AnyState
+    @assert Compiler.active_reg_inner(Symbol, (), nothing) == Compiler.AnyState
+    @assert Compiler.active_reg_inner(String, (), nothing) == Compiler.AnyState
+    @assert Compiler.active_reg_inner(Tuple{Any,Int64}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Tuple{S,Int64} where S, (), Base.get_world_counter()) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing) == Compiler.DupState
+    @assert Compiler.active_reg_inner(Union{Float64,Nothing}, (), nothing, #=justActive=#Val(false), #=unionSret=#Val(true)) == Compiler.ActiveState
+    @test Compiler.active_reg_inner(Tuple, (), nothing) == Enzyme.Compiler.DupState
+    @test Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Compiler.MixedState
+    @test Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Compiler.MixedState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
@@ -57,7 +60,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -68,7 +71,7 @@ end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false))
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -77,7 +80,7 @@ end
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI, Val(false))
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -124,15 +127,15 @@ end
 end
 
 @testset "Reflection" begin
-    Enzyme.Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
+    Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
         x ^ 2
     end
     sprint() do io
-        Enzyme.Compiler.enzyme_code_native(io, f0, Active, Tuple{Active{Float64}})
+        Compiler.enzyme_code_native(io, f0, Active, Tuple{Active{Float64}})
     end
 
     sprint() do io
-        Enzyme.Compiler.enzyme_code_llvm(io, f0, Active, Tuple{Active{Float64}})
+        Compiler.enzyme_code_llvm(io, f0, Active, Tuple{Active{Float64}})
     end
 end
 
@@ -142,36 +145,36 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
 @testset "Recursion optimization" begin
     # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+       Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
     
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+       Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
     
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+       Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
     
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+       Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     if count("call fastcc void @diffejulia__mapreduce", fn) != 1
         println(sprint() do io
-           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
+           Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
        end)
         println(sprint() do io
-           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
+           Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
        end)
         println(fn)
     end
@@ -183,6 +186,6 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
 
     x = ones(100)
     dx = zeros(100)
-    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
+    autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
 end
 

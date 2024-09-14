@@ -509,8 +509,6 @@ function byrefs(x, v)
 end
 
 @testset "Batched byref struct" begin
-
     Enzyme.autodiff(Forward, byrefs, BatchDuplicated([1.0], ([1.0], [1.0])), BatchDuplicated([1.0], ([1.0], [1.0]) ) )
 end
 
-include("usermixed.jl")
