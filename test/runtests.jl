@@ -343,7 +343,7 @@ make3() = (1.0, 2.0, 3.0)
     f2(x) = x*x
     @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0
     @test autodiff(Forward, f1, DuplicatedNoNeed, Duplicated(1.0, 1.0))[1] ≈ 1.0
-    @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
+    @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
     tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
@@ -1421,8 +1421,8 @@ end
 
 @testset "RuntimeActivity generic call" begin
     res = autodiff(set_runtime_activity(Forward), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
-    @test 3.14 ≈ res[1]
-    @test 0.0 ≈ res[2]
+    @test 3.14 ≈ res[2]
+    @test 0.0 ≈ res[1]
 end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
@@ -1741,9 +1741,9 @@ end
 
     res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
 
-    @test 2.0 ≈ res[1][1]
     @test 2.0 ≈ res[2][1]
-    @test 20.0 ≈ res[2][2]
+    @test 2.0 ≈ res[1][1]
+    @test 20.0 ≈ res[1][2]
 
     res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicatedNoNeed, BatchDuplicated(x, (dx, dx2)))
     @test 2.0 ≈ res[1][1]
@@ -3560,10 +3560,10 @@ end
 	end
 
     res = autodiff(set_runtime_activity(Forward), Const(f2), Duplicated, Duplicated(0.2, 1.0))
-    @test res[1] ≈ 0.2
+    @test res[2] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 
-    @test res[2] ≈ 1.0
+    @test res[1] ≈ 1.0
 end
 
 @inline function uns_mymean(f, A, ::Type{T}, c) where T

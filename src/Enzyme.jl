@@ -370,7 +370,7 @@ res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
@@ -426,7 +426,7 @@ f(x) = x*x
     end
 
     thunk = Enzyme.Compiler.thunk(opt_mi, FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+                                     ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     thunk(f, args...)
 end
 

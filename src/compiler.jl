@@ -637,7 +637,7 @@ end
         return Const{T}
     end
     if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
+        return Duplicated{T}
     else
         if ActReg == ActiveState
             return Active{T}
@@ -6906,7 +6906,7 @@ end
             push!(sret_types, TapeType)
         end
 
-        if returnPrimal
+        if returnPrimal && !(CC <: ForwardModeThunk) 
             push!(sret_types, jlRT)
         end
         if is_forward
@@ -6928,6 +6928,10 @@ end
                 @show rettype, CC
                 @assert false
             end
+        end
+
+        if returnPrimal && (CC <: ForwardModeThunk) 
+            push!(sret_types, jlRT)
         end
 
         # calls fptr

@@ -373,7 +373,7 @@ end
     args, activity, overwritten, actives, kwtup, _ = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
 
-    C = EnzymeRules.FwdConfig{Bool(needsPrimal), Bool(needsShadowJL), Int(width), get_runtime_activity(gutils)}
+    C = EnzymeRules.FwdConfig{Bool(needsPrimal), Bool(needsShadow), Int(width), get_runtime_activity(gutils)}
 
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
