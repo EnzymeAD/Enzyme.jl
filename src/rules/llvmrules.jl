@@ -1563,7 +1563,7 @@ end
         @fwdfunc(finalizer_fwd),
     )
     register_handler!(
-        ("deferred_codegen",)
+        ("deferred_codegen",),
         @augfunc(deferred_augfwd),
         @revfunc(deferred_rev),
         @fwdfunc(deferred_fwd),
