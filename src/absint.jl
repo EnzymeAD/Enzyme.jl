@@ -261,8 +261,11 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-        	legal, RT = abs_typeof(operands(arg)[1], partial)
+            legal, RT = abs_typeof(operands(arg)[1], partial)
             if legal
+                if RT <: LinearAlgebra.Transpose
+                  RT = RT.parameters[2]
+                end
                 @assert RT <: Array
             end
             return (legal, RT)
