@@ -573,11 +573,11 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         return xs
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         return xs.dval
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return xs.val
     else
         return nothing
@@ -595,11 +595,11 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         return xs
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         return xs.dval
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return xs.val
     else
         return nothing
@@ -657,15 +657,15 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
 
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if kv isa Integer
             return Duplicated(xs.val[kv], xs.dval[kv])
         else
             return Duplicated(view(xs.val, kv), view(xs.dval, kv))
         end
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
     else
         return nothing
@@ -687,19 +687,19 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         xs.dval[i] .= xs.dval[i][inds]
     end
 
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if kv isa Integer
             return BatchDuplicated(xs.val[kv], ntuple(i -> xs.dval[i][kv], N))
         else
             return BatchDuplicated(view(xs.val, kv), ntuple(i -> view(xs.dval[i], kv), N))
         end
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         if kv isa Integer
             return ntuple(i -> xs.dval[i][kv], N)
         else
             return ntuple(i -> view(xs.dval[i], kv), N)
         end
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
     else
         return nothing
@@ -767,7 +767,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(l
                              kwargs...)
     if B isa Const
         retval = func.val(fact.val, B.val; kwargs...)
-        if needs_primal(config)
+        if EnzymeRules.needs_primal(config)
             retval
         else
             return nothing
@@ -803,19 +803,19 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(l
         end
 
 
-        if needs_primal(config) && needs_shadow(config)
+        if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
             if EnzymeRules.width(config) == 1
                 return Duplicated(retval, dretvals[1])
             else
                 return BatchDuplicated(retval, dretvals)
             end
-        elseif needs_shadow(config)
+        elseif EnzymeRules.needs_shadow(config)
             if EnzymeRules.width(config) == 1
                 return dretvals[1]
             else
                 return dretvals
             end
-        elseif needs_primal(config)
+        elseif EnzymeRules.needs_primal(config)
             return retval
         else
             return nothing
@@ -852,7 +852,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{Colon},
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
 
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
         else
@@ -861,7 +861,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{Colon},
                                           step=dstep isa Number ? dstep : dstep[i],
                                           length=length(ret)), Val(EnzymeRules.width(config))))
         end
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return range(dstart; step=dstep, length=length(ret))
         else
@@ -869,7 +869,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{Colon},
                           step=dstep isa Number ? dstep : dstep[i],
                           length=length(ret)), Val(EnzymeRules.width(config)))
         end
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return ret
     else
         return nothing
@@ -935,7 +935,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         kwargs...
     )
 
-    if needs_primal(config) && needs_shadow(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
         else
@@ -945,7 +945,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
             end
             return RT(Ty.val(; kwargs...), tup)
         end
-    elseif needs_shadow(config)
+    elseif EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return Ty.val(; kwargs...)
         else
@@ -954,7 +954,7 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
                     Ty.val(; kwargs...)
                 end
         end
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return Ty.val(; kwargs...)
     else
         return nothing
