@@ -1032,15 +1032,23 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 (a = 3.0, b = [2.0], c = "str")
 ```
 """
-@inline function gradient(rm::ReverseMode, f::F, x::X) where {F, X}
+@inline function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {F, X, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
-        autodiff(rm, f, Active, MixedDuplicated(x, dx))
-        return only(dx)
+        res = autodiff(rm, f, Active, MixedDuplicated(x, dx))
+        if ReturnPrimal
+            (res[2], only(dx))
+        else
+            only(dx)
+        end
     else
         dx = make_zero(x)
-        autodiff(rm, f, Active, Duplicated(x, dx))
-        return dx
+        res = autodiff(rm, f, Active, Duplicated(x, dx))
+        if ReturnPrimal
+            (res[2], dx)
+        else
+            dx
+        end
     end
 end
 
@@ -1049,15 +1057,23 @@ end
 
 Like [`gradient`](@ref), except it using deferred mode.
 """
-@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
+@inline function gradient_deferred(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {F, X, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
         autodiff_deferred(rm, f, Active, MixedDuplicated(x, dx))
-        return only(dx)
+        if ReturnPrimal
+            return (res[2], only(dx))
+        else
+            return only(dx)
+        end
     else
         dx = make_zero(x)
         autodiff_deferred(rm, f, Active, Duplicated(x, dx))
-        return dx
+        if ReturnPrimal
+            (res[2], dx)
+        else
+            dx
+        end
     end
 end
 
@@ -1083,10 +1099,14 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  2.0
 ```
 """
-@inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+@inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    dx
+    res = autodiff(rm, f, Active, Duplicated(x, dx))
+    return if ReturnPrimal
+        (res[2], dx)
+    else
+        dx
+    end
 end
 
 
@@ -1095,10 +1115,14 @@ end
 
 Like [`gradient!`](@ref), except it using deferred mode.
 """
-@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+@inline function gradient_deferred!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
-    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
-    dx
+    autodiff_deferred(rm, f, Active, Duplicated(x, dx))
+    return if ReturnPrimal
+        (res[2], dx)
+    else
+        dx
+    end
 end
 
 """
