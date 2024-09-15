@@ -399,7 +399,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 
         width = get_width(gutils)
 
-        sret = generic_setup(orig, runtime_tuple_augfwd, width == 1 ? Any : AnyArray(Int(width)), gutils, #=start=#offset+1, B, false; endcast = false)
+        sret = generic_setup(orig, runtime_tuple_augfwd, width == 1 ? Any : AnyArray(Int(width)), gutils, #=start=#offset+1, B, false; endcast = false, runtime_activity=false)
         
         if width == 1
             shadow = sret
@@ -465,7 +465,7 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
         else
             tape
         end
-        generic_setup(orig, runtime_tuple_rev, Nothing, gutils, #=start=#offset+1, B, true; tape=tape2)
+        generic_setup(orig, runtime_tuple_rev, Nothing, gutils, #=start=#offset+1, B, true; tape=tape2, runtime_activity=false)
     end
     return nothing
 end

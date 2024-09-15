@@ -1187,7 +1187,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_iterate_rev(N, Width))
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true, firstconst_after_tape=true)
+function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true, firstconst_after_tape=true, runtime_activity=true)
     width = get_width(gutils)
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1295,7 +1295,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
-    pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
+    if runtime_activity
+        pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
+    end
     etup0 = emit_tuple!(B, ActivityList)
     etup =  emit_apply_type!(B, Base.Val, [etup0])
     if isa(etup, LLVM.Instruction)
