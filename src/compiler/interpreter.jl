@@ -73,6 +73,20 @@ else
     Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
 end
 
+const CC = Core.Compiler
+@static if HAS_INTEGRATED_CACHE
+    function CC.CodeInstance(interp::EnzymeInterpreter, result::CC.InferenceResult,
+                      valid_worlds::CC.WorldRange)
+        ci = @invoke CC.CodeInstance(interp::CC.AbstractInterpreter, result::CC.InferenceResult,
+                      valid_worlds::CC.WorldRange)
+
+        # FIXME: Enzyme embeds global pointers and other fun things directly
+        #        So forbid the caching of the results.
+        ci.relocatability = 0x0
+        return ci
+    end
+end
+
 # No need to do any locking since we're not putting our results into the runtime cache
 Core.Compiler.lock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
 Core.Compiler.unlock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
