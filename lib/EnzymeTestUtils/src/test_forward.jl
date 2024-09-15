@@ -61,6 +61,7 @@ function test_forward(
     rtol::Real=1e-9,
     atol::Real=1e-9,
     testset_name=nothing,
+    runtime_activity::Bool=false
 )
     call_with_copy(f, xs...) = deepcopy(f)(deepcopy(xs)...; deepcopy(fkwargs)...)
     call_with_kwargs(f, xs...) = f(xs...; fkwargs...)
@@ -78,7 +79,7 @@ function test_forward(
         # call finitedifferences, avoid mutating original arguments
         dy_fdm = _fd_forward(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
-        y_and_dy_ad = autodiff(Forward, call_with_kwargs, ret_activity, activities...)
+        y_and_dy_ad = autodiff(set_runtime_activity(Forward, runtime_activity), call_with_kwargs, ret_activity, activities...)
         if ret_activity <: Union{Duplicated,BatchDuplicated}
             @test_msg(
                 "For return type $ret_activity the return value and derivative must be returned",

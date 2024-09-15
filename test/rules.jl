@@ -4,7 +4,7 @@ using Enzyme
 using Enzyme: EnzymeRules
 using Test
 
-import .EnzymeRules: forward, Annotation, has_frule_from_sig
+import .EnzymeRules: forward, Annotation, has_frule_from_sig, FwdConfig
 
 f(x) = x^2
 
@@ -13,23 +13,23 @@ function f_ip(x)
     return nothing
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, ::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return 10+2*x.val*x.dval
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
+function forward(config, ::Const{typeof(f)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
     return NTuple{N, T}(1000+2*x.val*dv for dv in x.dval)
 end
 
-function forward(func::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
+function forward(config, func::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
     return Duplicated(func.val(x.val), 100+2*x.val*x.dval)
 end
 
-function forward(func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
+function forward(config, func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
     return BatchDuplicated(func.val(x.val), NTuple{N, T}(10000+2*x.val*dv for dv in x.dval))
 end
 
-function forward(::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function forward(config, ::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     ld = x.val[1]
     x.val[1] *= ld
     x.dval[1] *= 2 * ld + 10
@@ -38,7 +38,7 @@ end
 
 function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
     TT = Base.unwrap_unionall(TT)
-    TT = Tuple{<:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
+    TT = Tuple{<:FwdConfig, <:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
     EnzymeRules.isapplicable(forward, TT; world)
 end
 
@@ -82,7 +82,7 @@ end
 end
 
 g(x) = x ^ 2
-function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
+function forward(config, func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
@@ -107,11 +107,11 @@ function h2(x)
     y * y
 end
 
-function forward(func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
     return Duplicated(Ref(x.val*x.val), Ref(10*2*x.val*x.dval))
 end
 
-function forward(func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return Ref(1000*2*x.val*x.dval)
 end
 
@@ -123,7 +123,7 @@ function h3(x)
     alloc_sq2(x)[]
 end
 
-function forward(func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return Duplicated(Ref(0.0), Ref(1000*2*x.val*x.dval))
 end
 
@@ -136,7 +136,7 @@ end
 
 foo(x) = 2x;
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config, 
     func::Const{typeof(foo)},
     RT::Type{<:Union{Duplicated,BatchDuplicated}},
     x::Union{Duplicated,BatchDuplicated},

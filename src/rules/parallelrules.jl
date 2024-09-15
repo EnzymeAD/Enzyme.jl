@@ -1,9 +1,9 @@
 
-function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}) where {FT1, FT2, World, width}
+function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, runtimeActivity::Val{RuntimeActivity}, ::Val{width}) where {FT1, FT2, World, width, RuntimeActivity}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     opt_mi = world
-    forward = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+    forward = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ForwardMode), Val(width), Val((false,)), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
         res = forward(ft)
@@ -13,12 +13,12 @@ function runtime_newtask_fwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ss
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
-function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, ::Val{width}, ::Val{ModifiedBetween}) where {FT1, FT2, World, width, ModifiedBetween}
+function runtime_newtask_augfwd(world::Val{World}, fn::FT1, dfn::FT2, post::Any, ssize::Int, runtimeActivity::Val{RuntimeActivity}, ::Val{width}, ::Val{ModifiedBetween}) where {FT1, FT2, World, width, ModifiedBetween, RuntimeActivity}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     opt_mi = world
-    forward, adjoint = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+    forward, adjoint = thunk(opt_mi, (ghos ? Const : Duplicated){FT}, Const, Tuple{}, Val(API.DEM_ReverseModePrimal), Val(width), Val(ModifiedBetween), #=returnPrimal=#Val(true), #=shadowinit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
 
@@ -189,7 +189,7 @@ end
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ForwardMode, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false, get_runtime_activity(gutils))
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             cmod, fwdmodenm, _, _ = _thunk(ejob, #=postopt=#false)
@@ -220,7 +220,7 @@ end
         if augfwdnm === nothing || adjointnm === nothing
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
-            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false)
+            eparams = Compiler.EnzymeCompilerParams(Tuple{(dupClosure ? Duplicated : Const){funcT}, e_tt.parameters...}, API.DEM_ReverseModePrimal, width, Const{Nothing}, #=runEnzyme=#true, #=abiwrap=#true, modifiedBetween, #=returnPrimal=#false, #=shadowInit=#false, UnknownTapeType, FFIABI, #=ErrIfFuncWritten=#false, get_runtime_activity(gutils))
             ejob    = Compiler.CompilerJob(mi2, CompilerConfig(etarget, eparams; kernel=false), world)
 
             cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, #=postopt=#false)
@@ -505,6 +505,7 @@ end
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
+                       unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
                        unsafe_to_llvm(B, Val(width)),
                       ]
 
@@ -555,7 +556,7 @@ end
                        invert_pointer(gutils, ops[1], B),
                        new_from_original(gutils, ops[2]),
                        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, new_from_original(gutils, ops[3])),
-                       unsafe_to_llvm(B, Val(width)),
+                       unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),                       unsafe_to_llvm(B, Val(width)),
                        unsafe_to_llvm(B, Val(ModifiedBetween)),
                       ]
 

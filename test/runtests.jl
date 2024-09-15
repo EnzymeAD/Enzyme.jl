@@ -141,10 +141,10 @@ end
     @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     world = codegen_world_age(typeof(f0), Tuple{Float64})
-    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
-    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
-    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
-    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
+    thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
+    thunk_c = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
+    thunk_d = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active{Float64}, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     @test thunk_a.adjoint !== thunk_b.adjoint
     @test thunk_c.adjoint === thunk_a.adjoint
     @test thunk_c.adjoint === thunk_d.adjoint
@@ -153,7 +153,7 @@ end
     @test thunk_a(Const(f0), Active(2.0), 2.0) == ((2.0,),)
     @test thunk_b(Const(f0), Const(2.0)) === ((nothing,),)
 
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
 
     @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
@@ -164,7 +164,7 @@ end
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
 
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     res = forward(Const(mul2), d)
     @test typeof(res[1]) == Tuple{Float64, Float64}
     pullback(Const(mul2), d, 1.0, res[1])
@@ -173,7 +173,7 @@ end
 
     d = Duplicated([3.0, 5.0], [0.0, 0.0])
     world = codegen_world_age(typeof(vrec), Tuple{Int, Vector{Float64}})
-    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI, Val(false))
+    forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(vrec)}, Active, Tuple{Const{Int}, Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false, true)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     res = forward(Const(vrec), Const(Int(1)), d)
     pullback(Const(vrec), Const(1), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
@@ -1225,8 +1225,7 @@ end
     # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
-    Enzyme.API.runtimeActivity!(true)
-    Enzyme.autodiff(Enzyme.Reverse, Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
+    Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 1.
 
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
@@ -1244,8 +1243,7 @@ end
     weights = [0.2, 0.8]
     dweights = [0.0, 0.0]
 
-    Enzyme.autodiff(Enzyme.Reverse, invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
-    Enzyme.API.runtimeActivity!(false)
+    Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
     @test dweights[1] ≈ 20.
     @test dweights[2] ≈ 20.
 end
@@ -1388,9 +1386,7 @@ end
 
 @testset "AbstractType calling convention" begin
     # TODO get rid of runtime activity
-    Enzyme.API.runtimeActivity!(true)
-    @test 1.0 ≈ Enzyme.autodiff(Reverse, dxdt_pred, Active(1.0))[1][1]
-    Enzyme.API.runtimeActivity!(false)
+    @test 1.0 ≈ Enzyme.autodiff(set_runtime_activity(Reverse), dxdt_pred, Active(1.0))[1][1]
 end
 
 function fillsum(x)
@@ -1424,11 +1420,9 @@ function rtg_f(V,@nospecialize(cv))
 end
 
 @testset "RuntimeActivity generic call" begin
-    Enzyme.API.runtimeActivity!(true)
-    res = autodiff(Forward, rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    res = autodiff(set_runtime_activity(Forward), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
     @test 3.14 ≈ res[1]
     @test 0.0 ≈ res[2]
-    Enzyme.API.runtimeActivity!(false)
 end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
@@ -2523,14 +2517,11 @@ end
 
 
 @testset "Getfield with reference" begin
-    Enzyme.API.runtimeActivity!(true)
-
     d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
     p = (a = 1.0, b = [0.5, 0.5])
     dp = Enzyme.make_zero(p)
     GFlogpdf(d, p)
-    autodiff(Reverse, GFlogpdf, Active, Const(d), Duplicated(p, dp))
-    Enzyme.API.runtimeActivity!(false)
+    autodiff(set_runtime_activity(Reverse), GFlogpdf, Active, Const(d), Duplicated(p, dp))
 end
 
 @testset "BLAS" begin
@@ -2630,6 +2621,7 @@ end
 @testset "Union i8" begin
     args = (
         Val{(false, false, false)},
+        Val(false),
         Val(1),
         Val((true, true, true)),
         Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
@@ -2647,6 +2639,7 @@ end
     
     args2 = (
         Val{(false, false, false)},
+        Val(false),
         Val(1),
         Val((true, true, true)),
         Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
@@ -2664,13 +2657,13 @@ end
 end
 
 @testset "Batched inactive" begin
-    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(2), Val((true, true, true)),
+    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(false), Val(2), Val((true, true, true)),
                                                     Val(Enzyme.Compiler.AnyArray(2+Int(2))),
                                 ==, nothing, nothing,
                                 :foo, nothing, nothing,
                                 :bar, nothing, nothing)
 
-    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(2), Val((true, true, true)), augres[end],
+    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(false), Val(2), Val((true, true, true)), augres[end],
                                 ==, nothing, nothing,
                                 :foo, nothing, nothing,
                                 :bar, nothing, nothing)
@@ -3566,9 +3559,7 @@ end
 		fn(0.0)
 	end
 
-    Enzyme.API.runtimeActivity!(true)
-    res = autodiff(Forward, Const(f2), Duplicated, Duplicated(0.2, 1.0))
-    Enzyme.API.runtimeActivity!(false)
+    res = autodiff(set_runtime_activity(Forward), Const(f2), Duplicated, Duplicated(0.2, 1.0))
     @test res[1] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 

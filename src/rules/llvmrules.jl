@@ -335,7 +335,7 @@ end
             GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
         end
-        if API.runtimeActivity()
+        if get_runtime_activity(gutils)
             prev = new_from_original(gutils, orig)
             shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, new_from_original(gutils, origops[1])), shadowres, prev)
             API.moveBefore(prev, shadowres, B)
@@ -358,7 +358,7 @@ end
                 GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
                 LLVM.memset!(B, get_array_data(B, callv), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 prev = new_from_original(gutils, orig)
                 callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, new_from_original(gutils, origops[1])), callv, prev)
                 if idx == 1
@@ -1094,7 +1094,7 @@ end
             else
                 extract_value!(B, shadowin, idx-1)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 emit_error(B, orig, "Enzyme: Not yet implemented runtime activity for reverse of jl_array_del_end")
             end
             args = LLVM.Value[anti, offset]
