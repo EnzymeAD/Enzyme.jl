@@ -1,4 +1,5 @@
 # Abstractly interpret julia from LLVM
+using LinearAlgebra
 
 # Return (bool if could interpret, julia object interpreted to)
 function absint(arg::LLVM.Value, partial::Bool=false)
