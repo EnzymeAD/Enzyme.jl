@@ -1122,11 +1122,11 @@ grad = gradient(Forward, f, [2.0, 3.0])
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
+@inline function gradient(fm::ForwardMode, f, x; shadow=onehot(x))
     if length(shadow) == 0
         return ()
     end
-    res = values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+    res = values(only(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
     if x isa AbstractFloat
         res[1]
     else
@@ -1170,12 +1170,12 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function gradient(fm::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     tmp = ntuple(length(shadow)) do i
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+        values(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     res = tupleconcat(tmp...)
     if x isa AbstractFloat
@@ -1185,9 +1185,9 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
     end
 end
 
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
+@inline function gradient(fm::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
     res = ntuple(length(shadow)) do i
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+        autodiff(fm, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
     if x isa AbstractFloat
         res[1]
@@ -1224,11 +1224,11 @@ whose shape is `(size(output)..., size(input)...)`
 For functions who return other types, this function will retun an array or tuple
 of shape `size(input)` of values of the output type. 
 """
-@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
+@inline function jacobian(fm::ForwardMode, f, x; shadow=onehot(x))
     cols = if length(shadow) == 0
         ()
     else
-        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+        values(only(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
     end
     if x isa AbstractFloat
         cols[1]
@@ -1253,13 +1253,13 @@ of shape `size(input)` of values of the output type.
     end
 end
 
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function jacobian(fm::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     tmp = ntuple(length(shadow)) do i
         Base.@_inline_meta
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+        values(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
     end
     cols = tupleconcat(tmp...)
     if x isa AbstractFloat
@@ -1285,10 +1285,10 @@ end
     end
 end
 
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
+@inline function jacobian(fm::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
     cols = ntuple(length(shadow)) do i
         Base.@_inline_meta
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
+        autodiff(fm, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
     end
     if x isa AbstractFloat
         cols[1]
@@ -1342,7 +1342,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -1361,7 +1361,7 @@ of shape `size(output)` of values of the input type.
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -1369,7 +1369,7 @@ of shape `size(output)` of values of the input type.
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     end
 
     tmp = ntuple(num) do i
@@ -1418,7 +1418,7 @@ of shape `size(output)` of values of the input type.
     end
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
@@ -1431,7 +1431,7 @@ end
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     tmp = ntuple(n_outs) do i
         Base.@_inline_meta
         z = make_zero(x)
@@ -1467,12 +1467,12 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
     res = f(x)
     jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
+        jacobian(ReverseMode{false,RuntimeActivity,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
     elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RABI, ErrIfFuncWritten}(), f, x)
+        gradient(ReverseMode{false,RuntimeActivity,RABI, ErrIfFuncWritten}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
     end
