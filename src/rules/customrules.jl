@@ -1145,7 +1145,7 @@ end
     fop = called_operand(orig)::LLVM.Function
     for (i, v) in enumerate(operands(orig)[1:end-1])
       if v == val
-         if !any(a->kind(a) == kind(StringAttribute("enzymejl_returnRoots")), parameter_attributes(fop, i))
+         if !any(a->kind(a) == kind(StringAttribute("enzymejl_returnRoots")), collect(parameter_attributes(fop, i)))
             non_rooting_use = true
 	    break
 	 end
