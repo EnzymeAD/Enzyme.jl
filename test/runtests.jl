@@ -2612,6 +2612,7 @@ end
 @testset "Union i8" begin
     args = (
         Val{(false, false, false)},
+        Val(false),
         Val(1),
         Val((true, true, true)),
         Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
@@ -2629,6 +2630,7 @@ end
     
     args2 = (
         Val{(false, false, false)},
+        Val(false),
         Val(1),
         Val((true, true, true)),
         Base.Val(NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Any, Any}}),
