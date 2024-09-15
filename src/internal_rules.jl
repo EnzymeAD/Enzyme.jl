@@ -573,12 +573,14 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
-    if RT <: Const
-        return xs.val
-    elseif RT <: DuplicatedNoNeed
-        return xs.dval
-    else
+    if needs_primal(config) && needs_shadow(config)
         return xs
+    elseif needs_shadow(config)
+        return xs.dval
+    elseif needs_primal(config)
+        return xs.val
+    else
+        return nothing
     end
 end
 
@@ -593,12 +595,14 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
-    if RT <: Const
-        return xs.val
-    elseif RT <: BatchDuplicatedNoNeed
-        return xs.dval
-    else
+    if needs_primal(config) && needs_shadow(config)
         return xs
+    elseif needs_shadow(config)
+        return xs.dval
+    elseif needs_primal(config)
+        return xs.val
+    else
+        return nothing
     end
 end
 
@@ -652,16 +656,19 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     partialsortperm!(inds, xs.val, kv; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
-    if RT <: Const
-        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
-    elseif RT <: DuplicatedNoNeed
-        return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
-    else
+
+    if needs_primal(config) && needs_shadow(config)
         if kv isa Integer
             return Duplicated(xs.val[kv], xs.dval[kv])
         else
             return Duplicated(view(xs.val, kv), view(xs.dval, kv))
         end
+    elseif needs_shadow(config)
+        return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
+    elseif needs_primal(config)
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    else
+        return nothing
     end
 end
 
@@ -679,20 +686,23 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
     for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
-    if RT <: Const
-        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
-    elseif RT <: BatchDuplicatedNoNeed
-        if kv isa Integer
-            return ntuple(i -> xs.dval[i][kv], N)
-        else
-            return ntuple(i -> view(xs.dval[i], kv), N)
-        end
-    else
+
+    if needs_primal(config) && needs_shadow(config)
         if kv isa Integer
             return BatchDuplicated(xs.val[kv], ntuple(i -> xs.dval[i][kv], N))
         else
             return BatchDuplicated(view(xs.val, kv), ntuple(i -> view(xs.dval[i], kv), N))
         end
+    elseif needs_shadow(config)
+        if kv isa Integer
+            return ntuple(i -> xs.dval[i][kv], N)
+        else
+            return ntuple(i -> view(xs.dval[i], kv), N)
+        end
+    elseif needs_primal(config)
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    else
+        return nothing
     end
 end
 
@@ -756,7 +766,12 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(l
                              B::Annotation{<:AbstractVecOrMat};
                              kwargs...)
     if B isa Const
-        return func.val(fact.val, B.val; kwargs...)
+        retval = func.val(fact.val, B.val; kwargs...)
+        if needs_primal(config)
+            retval
+        else
+            return nothing
+        end
     else
         N = EnzymeRules.width(config)
         retval = B.val
@@ -787,16 +802,23 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(l
             return dB
         end
 
-        if RT <: Const
+
+        if needs_primal(config) && needs_shadow(config)
+            if EnzymeRules.width(config) == 1
+                return Duplicated(retval, dretvals[1])
+            else
+                return BatchDuplicated(retval, dretvals)
+            end
+        elseif needs_shadow(config)
+            if EnzymeRules.width(config) == 1
+                return dretvals[1]
+            else
+                return dretvals
+            end
+        elseif needs_primal(config)
             return retval
-        elseif RT <: DuplicatedNoNeed
-            return dretvals[1]
-        elseif RT <: Duplicated
-            return Duplicated(retval, dretvals[1])
-        elseif RT <: BatchDuplicatedNoNeed
-            return dretvals
         else
-            return BatchDuplicated(retval, dretvals)
+            return nothing
         end
     end
 end
@@ -830,23 +852,27 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{Colon},
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
 
-    if RT <: Duplicated
-        Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
-    elseif RT <: Const
-        ret
-    elseif RT <: DuplicatedNoNeed
-        range(dstart; step=dstep, length=length(ret))
-    elseif RT <: BatchDuplicated
-        BatchDuplicated(ret,
+    if needs_primal(config) && needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
+        else
+            return BatchDuplicated(ret,
                         ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                                           step=dstep isa Number ? dstep : dstep[i],
                                           length=length(ret)), Val(EnzymeRules.width(config))))
-    elseif RT <: BatchDuplicatedNoNeed
-        ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
+        end
+    elseif needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return range(dstart; step=dstep, length=length(ret))
+        else
+            return ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                           step=dstep isa Number ? dstep : dstep[i],
                           length=length(ret)), Val(EnzymeRules.width(config)))
+        end
+    elseif needs_primal(config)
+        return ret
     else
-        error("This should not be possible. Please report.")
+        return nothing
     end
 end
 
@@ -908,24 +934,30 @@ function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
         kwargs...
     )
-    if RT <: Const
-        return Ty.val(; kwargs...)
-    elseif RT <: DuplicatedNoNeed
-        return Ty.val(; kwargs...)
-    elseif RT <: Duplicated
-        return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
-    elseif RT <: BatchDuplicatedNoNeed
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            Ty.val(; kwargs...)
+
+    if needs_primal(config) && needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
+        else
+            tup = ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                Ty.val(; kwargs...)
+            end
+            return RT(Ty.val(; kwargs...), tup)
         end
+    elseif needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Ty.val(; kwargs...)
+        else
+            return ntuple(Val(EnzymeRules.width(config))) do i
+                    Base.@_inline_meta
+                    Ty.val(; kwargs...)
+                end
+        end
+    elseif needs_primal(config)
+        return Ty.val(; kwargs...)
     else
-        @assert RT <: BatchDuplicated
-        tup = ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            Ty.val(; kwargs...)
-        end
-        RT(Ty.val(; kwargs...), tup)
+        return nothing
     end
 end
 
