@@ -1141,6 +1141,22 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return (false, true)
     end
+    non_rooting_use = false
+    fop = called_operand(orig)::LLVM.Function
+    for (i, v) in enumerate(operands(orig)[1:end-1])
+      if v == val
+         if !any(a->kind(a) == kind(StringAttribute("enzymejl_returnRoots")), collect(parameter_attributes(fop, i)))
+            non_rooting_use = true
+	    break
+	 end
+      end
+    end
+    
+    # If the operand is just rooting, we don't need it and should override defaults
+    if !non_rooting_use
+      return (false, false)
+    end
+    
     # don't use default and always require the arg
     return (true, false)
 end
