@@ -1342,7 +1342,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -1418,7 +1418,7 @@ of shape `size(output)` of values of the input type.
     end
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
@@ -1467,12 +1467,12 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
     res = f(x)
     jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RuntimeActivity,RABI, ErrIfFuncWritten}(), f, x, Val(length(jac)))
+        jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(length(jac)))
     elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RuntimeActivity,RABI, ErrIfFuncWritten}(), f, x)
+        gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
     end

@@ -3544,6 +3544,12 @@ function annotate!(mod, mode)
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
+    for fname in ("julia.typeof",)
+        if haskey(fns, fname)
+            fn = fns[fname]
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+        end
+    end
 
     for fname in ("jl_excstack_state","ijl_excstack_state", "ijl_field_index", "jl_field_index")
         if haskey(fns, fname)
