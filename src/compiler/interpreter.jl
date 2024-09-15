@@ -41,7 +41,7 @@ function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, 
     @assert world <= Base.get_world_counter()
 
     parms = @static if VERSION < v"1.12"
-        InferenceParams(unoptimize_throw_blocks=false),
+        InferenceParams(unoptimize_throw_blocks=false)
     else
         InferenceParams()
     end
