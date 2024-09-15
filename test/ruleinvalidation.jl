@@ -29,7 +29,7 @@ forward(config, func::Const{typeof(issue696)}, ::Type{<:Duplicated}, x::Duplicat
 @test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 22.0
 
 # check that `Base.delete_method` works as expected
-for m in methods(forward, Tuple{Const{typeof(issue696)},Vararg{Any}})
+for m in methods(forward, Tuple{Any,Const{typeof(issue696)},Vararg{Any}})
     Base.delete_method(m)
 end
 @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
