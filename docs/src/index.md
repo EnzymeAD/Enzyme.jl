@@ -135,12 +135,12 @@ julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx
 (400.0, (var"1" = -800.0, var"2" = 400.0))
 ```
 
-## Convenience functions
+## Gradient Convenience functions
 
 !!! note
     While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
 
-Key convenience functions for common derivative computations are [`gradient`](@ref) (and its inplace variant [`gradient!`](@ref)) and [`jacobian`](@ref).
+Key convenience functions for common derivative computations are [`gradient`](@ref) (and its inplace variant [`gradient!`](@ref)).
 Like [`autodiff`](@ref), the mode (forward or reverse) is determined by the first argument.
 
 The functions [`gradient`](@ref) and [`gradient!`](@ref) compute the gradient of function with vector input and scalar return.
@@ -174,20 +174,23 @@ julia> # in forward mode, we can also optionally pass a chunk size
 (-400.0, 200.0)
 ```
 
+## Jacobian Convenience functions
+
 The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
+Like [`autodiff`](@ref) and [`gradient`](@ref), the mode (forward or reverse) is determined by the first argument.
 
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
 julia> output_size = Val(2) # here we have to provide the output size of `foo` since it cannot be statically inferred
        jacobian(Reverse, foo, [1.0, 2.0], output_size) 
-2×2 Matrix{Float64}:
+2×2 transpose(::Matrix{Float64}) with eltype Float64:
  -400.0  200.0
     2.0    1.0
 
 julia> chunk_size = Val(2) # By specifying the optional chunk size argument, we can use vector inverse mode to propogate derivatives of multiple outputs at once.
        jacobian(Reverse, foo, [1.0, 2.0], output_size, chunk_size)
-2×2 Matrix{Float64}:
+2×2 transpose(::Matrix{Float64}) with eltype Float64:
  -400.0  200.0
     2.0    1.0
 
@@ -201,4 +204,57 @@ julia> # Again, the optinal chunk size argument allows us to use vector forward 
 2×2 Matrix{Float64}:
  -400.0  200.0
     2.0    1.0
+```
+
+## Hessian Vector Product Convenience functions
+
+Enzyme provides convenience functions for second-order derivative computations, like [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
+
+Unlike [`autodiff`](@ref) and [`gradient`](@ref), a mode is not specified. Here, Enzyme will choose to perform forward over reverse mode (generally the fastest for this type of operation).
+
+```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+julia> f(x) = sin(x[1] * x[2]);
+
+julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
+```
+
+Enzyme also provides an in-place variant which will store the hessian vector product in a pre-allocated array (this will, however, still allocate another array for storing an intermediate gradient).
+
+```jldoctest hvp2; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+julia> f(x) = sin(x[1] * x[2])
+f (generic function with 1 method)
+
+julia> res = Vector{Float64}(undef, 2);
+
+julia> hvp!(res, f, [2.0, 3.0], [5.0, 2.7]);
+
+julia> res
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
+```
+
+Finally. Enzyme provides a second in-place variant which simultaneously computes both the hessian vector product, and the gradient. This function uses no additional allocation, and is much more efficient than separately computing the hvp and the gradient.
+
+```jldoctest hvp3; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+julia> f(x) = sin(x[1] * x[2]);
+
+julia> res = Vector{Float64}(undef, 2);
+
+julia> grad = Vector{Float64}(undef, 2);
+
+julia> hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+
+julia> res
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
+
+julia> grad
+2-element Vector{Float64}:
+ 2.880510859951098
+ 1.920340573300732
 ```

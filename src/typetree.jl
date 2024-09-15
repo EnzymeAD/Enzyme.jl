@@ -77,7 +77,7 @@ Construct a Enzyme typetree from a Julia type.
     When using a memoized lookup by providing `seen` across multiple calls to typtree
     the user must call `copy` on the returned value before mutating it.
 """
-function typetree(@nospecialize(T), ctx, dl, seen=TypeTreeTable())
+function typetree(@nospecialize(T::Type), ctx, dl, seen=TypeTreeTable())
     if haskey(seen, T)
         tree = seen[T]
         if tree === nothing
@@ -111,8 +111,13 @@ function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Double, -1, ctx)
 end
 
-function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:AbstractFloat}
-    GPUCompiler.@safe_warn "Unknown floating point type" T
+@static if VERSION >= v"1.11-"
+function typetree_inner(::Type{Core.BFloat16}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_BFloat16, -1, ctx)
+end
+end
+
+function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 
@@ -152,37 +157,51 @@ function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
     return tt
 end
 
-function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
-    offset = 0
+@static if VERSION < v"1.11-"
+    function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
+        offset = 0
 
-    tt = copy(typetree(T, ctx, dl, seen))
-    if !allocatedinline(T)
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T) && Base.isconcretetype(T)
+            merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, 0)
+        only!(tt, offset)
+
+        offset += sizeof(Ptr{Cvoid})
+
+        sizeofstruct = offset + 2 + 2 + 4 + 2 * sizeof(Csize_t)
+        if true # STORE_ARRAY_LEN
+            sizeofstruct += sizeof(Csize_t)
+        end
+
+        for i in offset:(sizeofstruct-1)
+            merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+        end
+        return tt
     end
-    merge!(tt, TypeTree(API.DT_Pointer, ctx))
-    only!(tt, offset)
-
-    offset += sizeof(Ptr{Cvoid})
-
-    sizeofstruct = offset + 2 + 2 + 4 + 2 * sizeof(Csize_t)
-    if true # STORE_ARRAY_LEN
-        sizeofstruct += sizeof(Csize_t)
-    end
-
-    for i in offset:(sizeofstruct-1)
-        merge!(tt, TypeTree(API.DT_Integer, i, ctx))
-    end
-    return tt
-end
-
-if VERSION >= v"1.7.0-DEV.204"
-    import Base: ismutabletype
 else
-    ismutabletype(T) = isa(T, DataType) && T.mutable
+    function typetree_inner(::Type{<:GenericMemory{kind, T}}, ctx, dl, seen::TypeTreeTable) where {kind, T}
+        offset = 0
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T) && Base.isconcretetype(T)
+            merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
+        merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, sizeof(Csize_t))
+
+        for i in 0:(sizeof(Csize_t)-1)
+            merge!(tt, TypeTree(API.DT_Integer, i, ctx))
+        end
+        return tt
+    end
 end
 
-function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
+import Base: ismutabletype
+
+function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
         return TypeTree()
     end
@@ -191,10 +210,12 @@ function typetree_inner(@nospecialize(T), ctx, dl, seen::TypeTreeTable)
         return TypeTree()
     end
 
-    @static if VERSION >= v"1.7.0"
-        if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
-            return TypeTree()
-        end
+    if is_concrete_tuple(T) && any(T2 isa Core.TypeofVararg for T2 in T.parameters)
+        return TypeTree()
+    end
+
+    if T <: AbstractFloat
+        throw(AssertionError("Unknown floating point type $T"))
     end
 
     try

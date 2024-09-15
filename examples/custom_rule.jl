@@ -134,7 +134,7 @@ function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNee
     if !(x isa Const) && !(y isa Const)
         y.dval .= 2 .* x.val .* x.dval
     elseif !(y isa Const) 
-        y.dval .= 0
+        make_zero!(y.dval)
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
     if RT <: Const
@@ -211,7 +211,7 @@ function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, t
     x.dval .+= 2 .* xval .* dret.val 
     ## also accumulate any derivative in y's shadow into x's shadow. 
     x.dval .+= 2 .* xval .* y.dval
-    y.dval .= 0
+    make_zero!(y.dval)
     return (nothing, nothing)
 end
 
@@ -251,8 +251,8 @@ end
 
 x  = [3.0, 1.0]
 y  = [0.0, 0.0]
-dx .= 0
-dy .= 0
+make_zero!(dx)
+make_zero!(dy)
 
 autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
 @show dx # derivative of h w.r.t. x

@@ -21,11 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.6'
-          - '1.7'
-          - '1.8'
-          - '1.9'
           - '1.10'
+          - ~1.11.0-0
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -44,47 +41,17 @@ jobs:
           - os: ubuntu-20.04
             arch: x86
             libEnzyme: packaged
-            version: '1.6'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.7'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.8'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.9'
-            assertions: false
-          - os: ubuntu-20.04
-            arch: x86
-            libEnzyme: packaged
             version: '1.10'
             assertions: false
           - os: ubuntu-20.04
             arch: x64
             libEnzyme: packaged
-            version: '1.7'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.8'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
-            version: '1.9'
-            assertions: true
-          - os: ubuntu-20.04
-            arch: x64
-            libEnzyme: packaged
             version: '1.10'
+            assertions: true
+          - os: ubuntu-20.04
+            arch: x64
+            libEnzyme: packaged
+            version: '1.11'
             assertions: true
     steps:
       - uses: actions/checkout@v2
@@ -119,7 +86,8 @@ jobs:
         shell: julia --color=yes --project=. {0}
         run: |
           using Pkg
-          Pkg.develop(path="lib/EnzymeCore")
+          Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
+          Pkg.instantiate()
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
@@ -166,10 +134,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.7'
-          - '1.8'
-          - '1.9'
           - '1.10'
+          - ~1.11.0-0
           - 'nightly'
         os:
           - ubuntu-latest
@@ -218,6 +184,32 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
+  integration:
+    name: Integration Tests - ${{ matrix.test }}
+    runs-on: ${{ matrix.os }}
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+        os:
+          - ubuntu-latest
+        test:
+          - DynamicExpressions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v1
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: "Run tests"
+        run: |
+            julia --color=yes --project=test/integration -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}.jl
+        shell: bash
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -226,6 +218,7 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
+      - uses: julia-actions/cache@v1
       - run: |
           julia --project=docs -e '
             using Pkg

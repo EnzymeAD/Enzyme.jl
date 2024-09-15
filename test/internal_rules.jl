@@ -62,9 +62,7 @@ end
     end
 
     @test autodiff(Forward, f4, Duplicated(1.5, 1.0))[1] == 1.5
-    @static if VERSION < v"1.7-" || VERSION >= v"1.8-"
-        @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
-    end
+    @test autodiff(Forward, f4, BatchDuplicated(1.5, (1.0, 2.0)))[1] == (var"1"=1.5, var"2"=3.0)
     @test autodiff(Reverse, f4, Active(1.5))[1][1] == 1.5
     @test autodiff(Reverse, f4, Active(4.0))[1][1] == 0.5
     @test autodiff(Reverse, f4, Active(6.0))[1][1] == 0.0
@@ -133,9 +131,158 @@ end
 
     y = A \ b
     @test dA ≈ (-z * transpose(y))
+
+    # Ensure multi dim doesn't crash
+    function test2!(A)
+        A .= A \ [1.0 0;0.0 1.0]
+        return nothing
+    end
+
+    A = rand(2,2)
+    dA = [1.0 0.0; 0.0 0.0]
+
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        test2!,
+        Enzyme.Duplicated(A,dA),
+    )
 end
 
-@static if VERSION > v"1.8"
+function tr_solv(A, B, uplo, trans, diag, idx)
+  B = copy(B)
+  LAPACK.trtrs!(uplo, trans, diag, A, B)
+  return @inbounds B[idx]
+end
+
+
+@testset "Reverse triangular solve" begin
+	A = [0.7550523937508613 0.7979976952197996 0.29318222271218364; 0.4416768066117529 0.4335305304334933 0.8895389673238051; 0.07752980210005678 0.05978245503334367 0.4504482683752542]
+	B = [0.10527381151977078 0.5450388247476627 0.3179106723232359 0.43919576779182357 0.20974326586875847; 0.7551160501548224 0.049772782182839426 0.09284926395551141 0.07862188927391855 0.17346407477062986; 0.6258040138863172 0.5928022963567454 0.24251650865340169 0.6626410383247967 0.32752198021506784]
+    for idx in 1:15
+    for uplo in ('L', 'U')
+    for diag in ('N', 'U')
+    for trans in ('N', 'T')
+        dA = zero(A)
+        dB = zero(B)	
+        Enzyme.autodiff(Reverse, tr_solv, Duplicated(A, dA), Duplicated(B, dB), Const(uplo),Const(trans), Const(diag), Const(idx))
+        fA = FiniteDifferences.grad(central_fdm(5, 1), A->tr_solv(A, B, uplo, trans, diag, idx), A)[1]
+        fB = FiniteDifferences.grad(central_fdm(5, 1), B->tr_solv(A, B, uplo, trans, diag, idx), B)[1]
+
+		if max(abs.(dA)...) >= 1e-10 || max(abs.(fA)...) >= 1e-10
+			@test dA ≈ fA
+		end
+		if max(abs.(dB)...) >= 1e-10 || max(abs.(fB)...) >= 1e-10
+			@test dB ≈ fB
+		end
+    end
+    end
+    end
+    end
+end
+
+function chol_lower0(x)
+  c = copy(x)
+  C, info = LinearAlgebra.LAPACK.potrf!('L', c)
+  return c[2,1]
+end
+
+function chol_upper0(x)
+  c = copy(x)
+  C, info = LinearAlgebra.LAPACK.potrf!('U', c)
+  return c[1,2]
+end
+
+@testset "Cholesky PotRF" begin
+    x = reshape([1.0, -0.10541615131279458, 0.6219810761363638, 0.293343219811946, -0.10541615131279458, 1.0, -0.05258941747718969, 0.34629296878264443, 0.6219810761363638, -0.05258941747718969, 1.0, 0.4692436399208845, 0.293343219811946, 0.34629296878264443, 0.4692436399208845, 1.0], 4, 4)
+     dL = zero(x)
+     dL[2, 1] = 1.0
+ 
+     @test Enzyme.gradient(Reverse, chol_lower0, x) ≈  [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0] 
+     
+     @test reshape(collect(Enzyme.gradient(Forward, chol_lower0, x)), 4, 4) ≈  [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0] 
+
+     @test FiniteDifferences.grad(central_fdm(5, 1), chol_lower0, x)[1] ≈ [0.05270807565639164 0.0 0.0 0.0; 1.0000000000000024 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     
+     @test reshape(collect(Enzyme.gradient(Forward, chol_upper0, x)), 4, 4) ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     @test Enzyme.gradient(Reverse, chol_upper0, x) ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+     @test FiniteDifferences.grad(central_fdm(5, 1), chol_upper0, x)[1] ≈ [0.05270807565639728 0.9999999999999999 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0]
+end
+
+
+function tchol_lower(x, row, col)
+    c = copy(x)
+    C, info = LinearAlgebra.LAPACK.potrf!('L', c)
+    return c[row, col]
+end
+function tchol_upper(x, row, col)
+    c = copy(x)
+    C, info = LinearAlgebra.LAPACK.potrf!('U', c)
+    return c[row, col]
+end
+
+@testset "Cholesky PotRF 3x3" begin
+
+    x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
+    for i in 1:size(x, 1)
+        for j in 1:size(x, 2)
+             reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_lower(x, i, j), x)
+             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_lower(x, i, j), x)), size(x))
+             finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_lower(x, i, j), x)[1]
+             @test reverse_grad  ≈ finite_diff 
+             @test forward_grad  ≈ finite_diff 
+             
+             reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_upper(x, i, j), x)
+             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_upper(x, i, j), x)), size(x))
+             finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_upper(x, i, j), x)[1]
+             @test reverse_grad  ≈ finite_diff 
+             @test forward_grad  ≈ finite_diff
+        end
+    end
+end
+
+function tcholsolv_lower(A, B, i)
+    c = copy(B)
+    C, info = LinearAlgebra.LAPACK.potrs!('L', A, c)
+    return c[i]
+end
+function tcholsolv_upper(A, B, i)
+    c = copy(B)
+    C, info = LinearAlgebra.LAPACK.potrs!('U', A, c)
+    return c[i]
+end
+
+
+@testset "Cholesky PotRS 3x5" begin
+
+    x = [1.0 0.13147601759884564 0.5282944836504488; 0.13147601759884564 1.0 0.18506733179093515; 0.5282944836504488 0.18506733179093515 1.0]
+    for i in 1:15
+         B = [3.1 2.7 5.9 2.4 1.6; 7.9 8.2 1.3 9.4 5.5; 4.7 2.9 9.8 7.1 4.3]
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_lower(x, B, i)), B)
+         # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_lower(x, B, i), B)), size(B))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_lower(x, B, i), B)[1]
+         @test reverse_grad  ≈ finite_diff 
+         # @test forward_grad  ≈ finite_diff 
+         
+         reverse_grad  = Enzyme.gradient(Reverse, Const(B -> tcholsolv_upper(x, B, i)), B)
+         # forward_grad  = reshape(collect(Enzyme.gradient(Forward, B -> tcholsolv_upper(x, B, i), B)), size(B))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), B -> tcholsolv_upper(x, B, i), B)[1]
+         @test reverse_grad  ≈ finite_diff 
+         # @test forward_grad  ≈ finite_diff
+
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_lower(x, B, i)), x)
+         #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_lower(x, B, i), x)), size(x))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_lower(x, B, i), x)[1]
+         @test reverse_grad  ≈ finite_diff 
+         #@test forward_grad  ≈ finite_diff 
+         # 
+         reverse_grad  = Enzyme.gradient(Reverse, Const(x -> tcholsolv_upper(x, B, i)), x)
+         #forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tcholsolv_upper(x, B, i), x)), size(x))
+         finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tcholsolv_upper(x, B, i), x)[1]
+         @test reverse_grad  ≈ finite_diff 
+         #@test forward_grad  ≈ finite_diff
+    end
+end
+
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
         α = one(Float64)
@@ -396,23 +543,39 @@ end
         @test isapprox(fwdJ, revJ)
 
         function h(A, b)
-            C = cholesky(A)
+            A = copy(A)
+            LinearAlgebra.LAPACK.potrf!('U', A)
             b2 = copy(b)
-            ldiv!(C, b2)
+            LinearAlgebra.LAPACK.potrs!('U', A, b2)
             @inbounds b2[1]
         end
 
         A = [1.3 0.5; 0.5 1.5]
         b = [1., 2.]
-        V = [1.0 0.0; 0.0 0.0]
         dA = zero(A)
         Enzyme.autodiff(Reverse, h, Active, Duplicated(A, dA), Const(b))
+        # dA_fwd  = Enzyme.gradient(Forward, A->h(A, b), A)
+        dA_fd  = FiniteDifferences.grad(central_fdm(5, 1), A->h(A, b), A)[1]
 
-        dA_sym = - (transpose(A) \ [1.0, 0.0]) * transpose(A \ b)
-        @test isapprox(dA, dA_sym)
+        @test isapprox(dA, dA_fd)
     end
 end
 
+function chol_upper(x)
+	x = reshape(x, 4, 4)
+	x = parent(cholesky(Hermitian(x)).U)
+	x = convert(typeof(x), UpperTriangular(x))
+	return x[1,2]
+end
+
+@testset "Cholesky upper triangular v1" begin
+	x = [1.0, -0.10541615131279458, 0.6219810761363638, 0.293343219811946, -0.10541615131279458, 1.0, -0.05258941747718969, 0.34629296878264443, 0.6219810761363638, -0.05258941747718969, 1.0, 0.4692436399208845, 0.293343219811946, 0.34629296878264443, 0.4692436399208845, 1.0]
+
+    @test collect(Enzyme.gradient(Forward, chol_upper, x)) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    @test Enzyme.gradient(Reverse, chol_upper, x) ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+end
+ 
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))
@@ -423,15 +586,12 @@ end
         A = T(M)
         @testset "test through constructor" begin
             _A = T(A)
-            function f!(Y, A, B, ::T) where T
-                ldiv!(Y, T(A), B)
-                return nothing
-            end
+            f!(Y, A, B, ::T) where {T} = ldiv!(Y, T(A), B)
             for TY in (Const, Duplicated, BatchDuplicated),
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
-                test_reverse(f!, Const, (Y, TY), (M, TM), (B, TB), (_A, Const))
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
             end
         end
         @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
@@ -456,7 +616,6 @@ end
         end
     end
 end
-end
 
 @testset "rand and randn rules" begin
     # Distributed as x + unit normal + uniform
@@ -469,6 +628,53 @@ end
 
     # Outer rand should be differentiated through, and inner rand and randn should be ignored.
     @test autodiff(Enzyme.Reverse, x -> rand(MyDistribution(x)), Active, Active(1.0)) == ((1.0,),)
+end
+
+@testset "Ranges" begin
+    function f1(x)
+        x = 25.0x
+        ts = Array(0.0:x:3.0)
+        return sum(ts)
+    end
+    function f2(x)
+        x = 25.0x
+        ts = Array(0.0:0.25:3.0)
+        return sum(ts) + x
+    end
+    function f3(x)
+        x = 25.0x
+        ts = Array(x:0.25:3.0)
+        return sum(ts)
+    end
+    function f4(x)
+        x = 25.0x
+        ts = Array(0.0:0.25:x)
+        return sum(ts)
+    end
+    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
+    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (75.0,)
+    @test Enzyme.autodiff(Forward, f4, Duplicated(0.12, 1.0)) == (0,)
+
+    @test Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f2, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=25.0, var"2"=50.0),)
+    @test Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0))) ==
+          ((var"1"=75.0, var"2"=150.0),)
+    @test Enzyme.autodiff(Forward, f4, BatchDuplicated(0.12, (1.0, 2.0))) ==
+          ((var"1"=0.0, var"2"=0.0),)
+
+    @test Enzyme.autodiff(Reverse, f1,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f2,  Active, Active(0.1)) == ((25.0,),)
+    @test Enzyme.autodiff(Reverse, f3,  Active, Active(0.1)) == ((75.0,),)
+    @test Enzyme.autodiff(Reverse, f4,  Active, Active(0.12)) == ((0.0,),)
+    
+    # Batch active rule isnt setup
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f1(x); nothing end,  Active(1.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f2(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f3(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((75.0,150.0)),)
+    # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f4(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((0.0,0.0)),)
 end
 
 end # InternalRules
