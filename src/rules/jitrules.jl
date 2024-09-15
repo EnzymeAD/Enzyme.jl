@@ -191,6 +191,21 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     else
         :(return ReturnType((res[1], res[2]...)))
     end
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
+
     return quote
         args = ($(wrapped...),)
 
@@ -218,9 +233,9 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
         opt_mi = Val(world)
-        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(($(ModifiedBetween...),)), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
+        forward = thunk(opt_mi, dupClosure ? $dupty : Const{FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(($(ModifiedBetween...),)), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
-        res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
+        res = forward(dupClosure ? $dup : Const(f), args...)
 
         if length(res) == 0
             return ReturnType(($(nnothing...),))
@@ -304,6 +319,21 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
     else
         :(return ReturnType((origRet, shadow_return..., tape)))
     end
+    
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
 
     return quote
         $(active_refs...)
@@ -331,11 +361,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         world = codegen_world_age(FT, tt)
 
         opt_mi = Val(world)
-        forward, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
+        forward, adjoint = thunk(opt_mi, dupClosure0 ? $dupty : Const{FT},
                                  annotationA, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
-        internal_tape, origRet, initShadow = forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)
+        internal_tape, origRet, initShadow = forward(dupClosure0 ? $dup : Const(f), args...)
         annotation = annotationA
 
         resT = typeof(origRet)
@@ -435,6 +465,21 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         @inbounds Types[i] = Symbol("type_$i")
     end
 
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
+
     quote
         $(active_refs...)
         args = ($(wrapped...),)
@@ -460,14 +505,14 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         world = codegen_world_age(FT, tt)
 
         opt_mi = Val(world)
-        _, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
+        _, adjoint = thunk(opt_mi, dupClosure0 ? $dupty : Const{FT},
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
         tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
-            adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
+            adjoint(dupClosure0 ? $dup : Const(f), args..., $shadowret, tape.internal_tape)[1]
         else
-            adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
+            adjoint(dupClosure0 ? $dup : Const(f), args..., tape.internal_tape)[1]
         end
 
         $(outs...)
