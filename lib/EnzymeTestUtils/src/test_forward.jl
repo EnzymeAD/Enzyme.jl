@@ -79,15 +79,17 @@ function test_forward(
         # call finitedifferences, avoid mutating original arguments
         dy_fdm = _fd_forward(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
-        mode = if ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
+        mode = if ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed, Const}
             Forward
         else
             ForwardWithPrimal
         end
         mode = set_runtime_activity(mode, runtime_activity)
 
-        ret_activity2 = if ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
+        ret_activity2 = if ret_activity <: DuplicatedNoNeed
             Duplicated
+        elseif ret_activity <: BatchDuplicatedNoNeed
+            BatchDuplicated
         else
             ret_activity
         end
