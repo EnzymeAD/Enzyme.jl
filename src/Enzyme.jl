@@ -1467,7 +1467,7 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, Holomorphic}
     res = f(x)
     jac = if res isa AbstractArray
         jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(length(jac)))
