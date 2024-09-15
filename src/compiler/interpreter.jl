@@ -40,6 +40,12 @@ end
 function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
     @assert world <= Base.get_world_counter()
 
+    parms = @static if VERSION < v"1.12"
+        InferenceParams(unoptimize_throw_blocks=false),
+    else
+        InferenceParams()
+    end
+
     return EnzymeInterpreter(
         cache_or_token,
         mt,
@@ -51,7 +57,7 @@ function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, 
         world,
 
         # parameters for inference and optimization
-        InferenceParams(unoptimize_throw_blocks=false),
+	parms,
         OptimizationParams(),
         mode
     )
