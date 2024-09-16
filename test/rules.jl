@@ -61,11 +61,11 @@ end
     @test autodiff(Forward, f, Duplicated(2.0, 1.0))[1] ≈ 14.0
     @test autodiff(Forward, x->f(x)^2, Duplicated(2.0, 1.0))[1] ≈ 832.0
 
-    res = autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 3.0)))[1] 
+    res = autodiff(Forward, f, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0)))[1] 
     @test res[1] ≈ 1004.0
     @test res[2] ≈ 1012.0
 
-    res = Enzyme.autodiff(Forward, x->f(x)^2, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 3.0)))[1]
+    res = Enzyme.autodiff(Forward, x->f(x)^2, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0)))[1]
 
     @test res[1] ≈ 80032.0
     @test res[2] ≈ 80096.0
@@ -129,7 +129,7 @@ end
 
 @testset "Shadow" begin
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
-    @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, h, Duplicated(3.0, 1.0))  == (60.0, 9.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
     @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
@@ -149,10 +149,10 @@ function EnzymeRules.forward(config,
 end
 
 @testset "Batch complex" begin
-     res = autodiff(Forward, foo, BatchDuplicated, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))  # errors, see below
-     @test res[1] ≈ 0.2 + 0.0im
-     @test res[2][1] ≈ 0.4 + 0.0im
-     @test res[2][2] ≈ 0.6 + 0.0im
+     res = autodiff(ForwardWithPrimal, foo, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))
+     @test res[2] ≈ 0.2 + 0.0im
+     @test res[1][1] ≈ 0.4 + 0.0im
+     @test res[1][2] ≈ 0.6 + 0.0im
 end
 
 end # module ForwardRules

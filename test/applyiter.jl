@@ -267,7 +267,7 @@ end
     @test dres[3] ≈ 100.02
     @test dres[4] ≈ 304.1
 
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(x, dx))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, metaconcat, Duplicated, Duplicated(x, dx))
     @test length(res) == 4
     @test res[1] ≈ 2.0
     @test res[2] ≈ 3.0
@@ -290,7 +290,7 @@ end
     @test dres[3] == "c"
     @test dres[4] == "d"
 
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, Duplicated(a, da))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, metaconcat, Duplicated, Duplicated(a, da))
     @test length(res) == 4
     @test res[1] == "a"
     @test res[2] == "b"
@@ -313,7 +313,7 @@ end
     @test dres[4] == "c"
     @test dres[5] == "d"
 
-    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Duplicated(a, da))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, midconcat, Duplicated, Duplicated(1.0, 7.0), Duplicated(a, da))
     @test length(res) == 5
     @test res[1] ≈ 1.0
     @test res[2] == "a"
@@ -337,7 +337,7 @@ end
     @test dres[4] == "c"
     @test dres[5] == "d"
 
-    res, dres = Enzyme.autodiff(Forward, midconcat, Duplicated, Duplicated(1.0, 7.0), Const(a))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, midconcat, Duplicated, Duplicated(1.0, 7.0), Const(a))
     @test length(res) == 5
     @test res[1] ≈ 1.0
     @test res[2] == "a"
@@ -365,7 +365,7 @@ end
     @test dres[7] ≈ -9100.02
     @test dres[8] ≈ -9304.1
 
-    res, dres = Enzyme.autodiff(Forward, metaconcat2, Duplicated, Duplicated(x, dx), Duplicated(y, dy))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, metaconcat2, Duplicated, Duplicated(x, dx), Duplicated(y, dy))
     @test length(res) == 8
     @test res[1] ≈ 2.0
     @test res[2] ≈ 3.0
@@ -403,7 +403,7 @@ end
     @test dres[11] ≈ -9100.02
     @test dres[12] ≈ -9304.1
 
-    res, dres = Enzyme.autodiff(Forward, metaconcat3, Duplicated, Duplicated(x, dx), Const(a), Duplicated(y, dy))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, metaconcat3, Duplicated, Duplicated(x, dx), Const(a), Duplicated(y, dy))
     @test length(res) == 12
     @test res[1] ≈ 2.0
     @test res[2] ≈ 3.0
@@ -449,7 +449,7 @@ end
     @test dres[2][3] ≈ -9100.02
     @test dres[2][4] ≈ -9304.1
 
-    res, dres = Enzyme.autodiff(Forward, metaconcat, Duplicated, BatchDuplicated(x, (dx, dy)))
+    dres, res = Enzyme.autodiff(ForwardWithPrimal, metaconcat, Duplicated, BatchDuplicated(x, (dx, dy)))
     @test length(res) == 4
     @test res[1] ≈ 2.0
     @test res[2] ≈ 3.0

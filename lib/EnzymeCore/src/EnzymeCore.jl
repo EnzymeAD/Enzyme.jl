@@ -1,8 +1,8 @@
 module EnzymeCore
 
-export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
+export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
@@ -267,22 +267,23 @@ const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, 0, true,Defau
 @inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, ErrIfFuncWritten} = ReverseModeSplit{ReturnPrimal,ReturnShadow,false,Width,ModifiedBetween,ABI, ErrIfFuncWritten}()
 
 """
-    struct Forward{ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity}
+    struct Forward{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity}
 
 Forward mode differentiation
 """
-struct ForwardMode{ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity}
+struct ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity}
 end
-const Forward = ForwardMode{DefaultABI, false, false}()
+const Forward = ForwardMode{false, DefaultABI, false, false}()
+const ForwardWithPrimal = ForwardMode{true, DefaultABI, false, false}()
 
-@inline set_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten,RuntimeActivity}) where {ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ABI,true,RuntimeActivity}()
-@inline clear_err_if_func_written(::ForwardMode{ABI,ErrIfFuncWritten,RuntimeActivity}) where {ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ABI,false,RuntimeActivity}()
+@inline set_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,true,RuntimeActivity}()
+@inline clear_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,false,RuntimeActivity}()
 
-@inline set_abi(::ForwardMode{OldABI,ErrIfFuncWritten,RuntimeActivity}, ::Type{NewABI}) where {OldABI,ErrIfFuncWritten,RuntimeActivity,NewABI<:ABI} = ForwardMode{NewABI,ErrIfFuncWritten,RuntimeActivity}()
+@inline set_abi(::ForwardMode{ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity}, ::Type{NewABI}) where {ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,NewABI<:ABI} = ForwardMode{ReturnPrimal,NewABI,ErrIfFuncWritten,RuntimeActivity}()
 
-@inline set_runtime_activity(::ForwardMode{ABI,ErrIfFuncWritten,RuntimeActivity}) where {ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ABI,ErrIfFuncWritten,true}()
-@inline set_runtime_activity(::ForwardMode{ABI,ErrIfFuncWritten,RuntimeActivity}, rt::Bool) where {ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ABI,ErrIfFuncWritten,rt}()
-@inline clear_runtime_activity(::ForwardMode{ABI,ErrIfFuncWritten,RuntimeActivity}) where {ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ABI,ErrIfFuncWritten,false}()
+@inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,true}()
+@inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}, rt::Bool) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,rt}()
+@inline clear_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,false}()
 
 function autodiff end
 function autodiff_deferred end

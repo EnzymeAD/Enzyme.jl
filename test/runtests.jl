@@ -342,8 +342,8 @@ make3() = (1.0, 2.0, 3.0)
     f1(x) = 1.0 + x
     f2(x) = x*x
     @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0
-    @test autodiff(Forward, f1, DuplicatedNoNeed, Duplicated(1.0, 1.0))[1] ≈ 1.0
-    @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[2] ≈ 1.0
+    @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
+    @test autodiff(ForwardWithPrimal, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
     @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
     tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
@@ -1331,8 +1331,8 @@ end
         (sin(x)::Float64 + x)::Float64
     end
     @test 0.5838531634528576 ≈ Enzyme.autodiff(Reverse, boxfloat, Active, Active(2.0))[1][1]
-    @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, DuplicatedNoNeed, Duplicated(2.0, 1.0))[1]
-    res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 2.0)))[1]
+    @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, Duplicated, Duplicated(2.0, 1.0))[1]
+    res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicated, BatchDuplicated(2.0, (1.0, 2.0)))[1]
     @test 0.5838531634528576 ≈ res[1]
     @test 1.1677063269057153 ≈ res[2]
 end
@@ -1428,9 +1428,9 @@ function rtg_f(V,@nospecialize(cv))
 end
 
 @testset "RuntimeActivity generic call" begin
-    res = autodiff(set_runtime_activity(Forward), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
-    @test 3.14 ≈ res[1]
-    @test 0.0 ≈ res[2]
+    res = autodiff(set_runtime_activity(ForwardWithPrimal), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    @test 3.14 ≈ res[2]
+    @test 0.0 ≈ res[1]
 end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
@@ -1460,9 +1460,9 @@ end
 @testset "Attributor issues" begin
 
     cor = fquantile(2.0)
-    res = autodiff(Forward, fquantile, Duplicated,Duplicated(2.0, 1.0))
-    @test cor ≈ res[1]
-    @test 0.7 ≈ res[2]
+    res = autodiff(ForwardWithPrimal, fquantile, Duplicated,Duplicated(2.0, 1.0))
+    @test cor ≈ res[2]
+    @test 0.7 ≈ res[1]
 
 end
 
@@ -1747,13 +1747,13 @@ end
     dx = [1.0, 1.0, 1.0]
     dx2 = [10.0, 20.0, 30.0]
 
-    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
+    res = Enzyme.autodiff(ForwardWithPrimal, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
 
     @test 2.0 ≈ res[1][1]
+    @test 20.0 ≈ res[1][2]
     @test 2.0 ≈ res[2][1]
-    @test 20.0 ≈ res[2][2]
 
-    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicatedNoNeed, BatchDuplicated(x, (dx, dx2)))
+    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
     @test 2.0 ≈ res[1][1]
     @test 20.0 ≈ res[1][2]
 
@@ -2720,14 +2720,14 @@ end
 
 @testset "Batch Forward" begin
     square(x)=x*x
-    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
+    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
     @test length(bres) == 1
     @test length(bres[1]) == 3
     @test bres[1][1] ≈  6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
 
-    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
+    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
     @test bres[1][1] ≈  6.0 + 14.0im
     @test bres[1][2] ≈ 12.0 + 28.0im
     @test bres[1][3] ≈ 18.0 + 42.0im
@@ -2737,10 +2737,10 @@ end
 
     # Shadow offset is not the same as primal so following doesn't work
     # d_inp = Float32[1.0, 2.0, 3.0]
-    # autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
+    # autodiff(Forward, squareidx, BatchDuplicated, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
 
     d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
-    bres = autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
+    bres = autodiff(Forward, squareidx, BatchDuplicated, BatchDuplicated(inp, d_inp))
     @test bres[1][1] ≈  6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
@@ -3567,11 +3567,11 @@ end
 		fn(0.0)
 	end
 
-    res = autodiff(set_runtime_activity(Forward), Const(f2), Duplicated, Duplicated(0.2, 1.0))
-    @test res[1] ≈ 0.2
+    res = autodiff(set_runtime_activity(ForwardWithPrimal), Const(f2), Duplicated, Duplicated(0.2, 1.0))
+    @test res[2] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 
-    @test res[2] ≈ 1.0
+    @test res[1] ≈ 1.0
 end
 
 @inline function uns_mymean(f, A, ::Type{T}, c) where T

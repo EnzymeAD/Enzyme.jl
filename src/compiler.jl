@@ -637,7 +637,7 @@ end
         return Const{T}
     end
     if Mode == API.DEM_ForwardMode
-        return DuplicatedNoNeed{T}
+        return Duplicated{T}
     else
         if ActReg == ActiveState
             return Active{T}
@@ -4216,15 +4216,15 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
         end
     end
     if Mode == API.DEM_ForwardMode
-        if returnPrimal
-            push!(sret_types, literal_rt)
-        end
         if !(rettype <: Const)
             if width == 1
                 push!(sret_types, literal_rt)
             else
                 push!(sret_types, AnonymousStruct(NTuple{width, literal_rt}))
             end
+        end
+        if returnPrimal
+            push!(sret_types, literal_rt)
         end
     end
 
@@ -4562,7 +4562,7 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 val
             else
                 @assert count_llvm_Sret > 1
-                extract_value!(builder, val, returnNum)
+                extract_value!(builder, val, 1-returnNum)
             end)
             ptr = inbounds_gep!(builder, jltype, sret, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), returnNum)])
             ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
@@ -6906,7 +6906,7 @@ end
             push!(sret_types, TapeType)
         end
 
-        if returnPrimal
+        if returnPrimal && !(CC <: ForwardModeThunk) 
             push!(sret_types, jlRT)
         end
         if is_forward
@@ -6928,6 +6928,10 @@ end
                 @show rettype, CC
                 @assert false
             end
+        end
+
+        if returnPrimal && (CC <: ForwardModeThunk) 
+            push!(sret_types, jlRT)
         end
 
         # calls fptr

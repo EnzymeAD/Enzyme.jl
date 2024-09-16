@@ -187,9 +187,9 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     end
 
     retres = if Width == 1
-        :(return ReturnType((res[1], res[2])))
+        :(return ReturnType((res[2], res[1])))
     else
-        :(return ReturnType((res[1], res[2]...)))
+        :(return ReturnType((res[2], res[1]...)))
     end
     dup = if Width == 1
         :(Duplicated(f, df))
@@ -764,9 +764,9 @@ function fwddiff_with_return(runtimeActivity::Val{RuntimeActivity}, ::Val{width}
         ReturnType(allFirst(Val(width+1), res))
     else
         if width == 1
-            ReturnType((res[1], res[2]))
+            ReturnType((res[2], res[1]))
         else
-            ReturnType((res[1], res[2]...))
+            ReturnType((res[2], res[1]...))
         end
     end
 end
