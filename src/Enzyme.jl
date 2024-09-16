@@ -1049,7 +1049,6 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 ```
 
 ```jldoctest gradient
-f(x) = x[1]*x[2]
 
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
