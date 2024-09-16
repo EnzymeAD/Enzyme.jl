@@ -3559,7 +3559,7 @@ end
 		fn(0.0)
 	end
 
-    res = autodiff(set_runtime_activity(Forward), Const(f2), Duplicated, Duplicated(0.2, 1.0))
+    res = autodiff(set_runtime_activity(ForwardWithPrimal), Const(f2), Duplicated, Duplicated(0.2, 1.0))
     @test res[2] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
     # but since the return is abstractfloat doing the 
