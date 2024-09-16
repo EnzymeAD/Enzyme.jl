@@ -1364,7 +1364,7 @@ of shape `size(input)` of values of the output type.
         end
 
         st3
-    elseif x isa AbstractArray
+    elseif args[1] isa AbstractArray
         inshape = size(args[1])
         reshape(collect(cols), inshape)
     else
