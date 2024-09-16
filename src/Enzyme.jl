@@ -1349,7 +1349,7 @@ of shape `size(input)` of values of the output type.
     else
         gradtup
     end
-    res = if x isa AbstractFloat
+    res = if args[1] isa AbstractFloat
         cols[1]
     elseif length(cols) > 0 && cols[1] isa AbstractArray
         inshape = size(x)
