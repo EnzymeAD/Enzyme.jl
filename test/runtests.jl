@@ -486,6 +486,14 @@ end
 
 end
 
+@testset "Deferred upgrade" begin
+    function gradsin(x)
+        return gradient(Reverse, sin, x)
+    end
+    res = Enzyme.gradient(Reverse, gradsin, 3.1) 
+    @test res ≈ -sin(3.1)
+end
+
 @testset "Simple Complex tests" begin
     mul2(z) = 2 * z
     square(z) = z * z

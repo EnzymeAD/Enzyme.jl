@@ -1085,31 +1085,6 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 end
 
 """
-    gradient_deferred(::ReverseMode, f, x)
-
-Like [`gradient`](@ref), except it using deferred mode.
-"""
-@inline function gradient_deferred(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {F, X, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
-    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-        dx = Ref(make_zero(x))
-        autodiff_deferred(rm, f, Active, MixedDuplicated(x, dx))
-        if ReturnPrimal
-            return (only(dx), res[2])
-        else
-            return only(dx)
-        end
-    else
-        dx = make_zero(x)
-        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
-        if ReturnPrimal
-            (dx, res[2])
-        else
-            dx
-        end
-    end
-end
-
-"""
     gradient!(::ReverseMode, dx, f, x)
 
 Compute the gradient of an array-input function `f` using reverse mode,
@@ -1142,22 +1117,6 @@ gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 @inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
-    return if ReturnPrimal
-        (dx, res[2])
-    else
-        dx
-    end
-end
-
-
-"""
-    gradient_deferred!(::ReverseMode, f, x)
-
-Like [`gradient!`](@ref), except it using deferred mode.
-"""
-@inline function gradient_deferred!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
-    make_zero!(dx)
-    autodiff_deferred(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
         (dx, res[2])
     else
@@ -1605,7 +1564,7 @@ res
 """
 @inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
@@ -1640,7 +1599,7 @@ grad
 ```
 """
 @inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
