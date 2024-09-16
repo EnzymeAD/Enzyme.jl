@@ -2,8 +2,8 @@ module Enzyme
 
 import EnzymeCore
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
-export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+import EnzymeCore: Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 
 import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi, set_runtime_activity, clear_runtime_activity
 export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi, set_runtime_activity, clear_runtime_activity
@@ -358,38 +358,33 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 
 `Activity` is the Activity of the return value, it may be:
 * `Const` if the return is not to be differentiated with respect to
-* `Duplicated`, if the return is being differentiated with respect to and
-  both the original value and the derivative return are desired
-* `DuplicatedNoNeed`, if the return is being differentiated with respect to
-  and only the derivative return is desired.
+* `Duplicated`, if the return is being differentiated with respect to
 * `BatchDuplicated`, like `Duplicated`, but computing multiple derivatives
   at once. All batch sizes must be the same for all arguments.
-* `BatchDuplicatedNoNeed`, like `DuplicatedNoNeed`, but computing multiple
-  derivatives at one. All batch sizes must be the same for all arguments.
 
 Example returning both original return and derivative:
 
 ```jldoctest
 f(x) = x*x
-res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
+res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
 
 ```jldoctest
 f(x) = x*x
-∂f_∂x = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
+∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
 (6.28,)
 ```
 """
-@inline function autodiff(::ForwardMode{RABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
+@inline function autodiff(::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {ReturnPrimal, RABI <: ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -401,7 +396,9 @@ f(x) = x*x
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
+    end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
             BatchDuplicated{T, width} where T
@@ -429,7 +426,7 @@ f(x) = x*x
     end
 
     thunk = Enzyme.Compiler.thunk(opt_mi, FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+                                     ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     thunk(f, args...)
 end
 
@@ -480,7 +477,7 @@ end
 Same as `autodiff(::ForwardMode, f, Activity, args)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode{ABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, Nargs, ABI, ErrIfFuncWritten, RuntimeActivity}
+@inline function autodiff_deferred(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {ReturnPrimal, FA<:Annotation, A<:Annotation, Nargs, ABI, ErrIfFuncWritten, RuntimeActivity}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -488,6 +485,9 @@ code, as well as high-order differentiation.
     width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
     end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
@@ -524,7 +524,6 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = RT <: Duplicated || RT <: BatchDuplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
     adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), UnknownTapeType, Val(ErrIfFuncWritten), Val(RuntimeActivity))
@@ -673,7 +672,7 @@ ftype when called with args of type `argtypes`.
 The forward function will return the primal (if requested) and the shadow
 (or nothing if not a `Duplicated` variant).
 
-Example returning both original return and derivative:
+Example returning both the return derivative and original return:
 
 ```jldoctest
 a = 4.2
@@ -681,12 +680,12 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
+forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
@@ -697,7 +696,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated{Float64})
+forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
@@ -705,7 +704,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 (6.28,)
 ```
 """
-@inline function autodiff_thunk(::ForwardMode{RABI, ErrIfFuncWritten, RuntimeActivity}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
+@inline function autodiff_thunk(::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {ReturnPrimal, FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     width = same_or_one(1, A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
@@ -713,7 +712,10 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
+    end
+
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(eltype, args)...}
@@ -724,7 +726,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     else
         Val(codegen_world_age(eltype(FA), tt))
     end
-    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+    results = Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 end
 
 @inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, Width,ModifiedBetweenT, RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
@@ -1047,6 +1049,14 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 ```
 
 ```jldoctest gradient
+
+grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
+
+# output
+([3.0, 2.0], 6.0)
+```
+
+```jldoctest gradient
 grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 
 # output
@@ -1059,7 +1069,7 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
         dx = Ref(make_zero(x))
         res = autodiff(rm, f, Active, MixedDuplicated(x, dx))
         if ReturnPrimal
-            (res[2], only(dx))
+            (only(dx), res[2])
         else
             only(dx)
         end
@@ -1067,7 +1077,7 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
         dx = make_zero(x)
         res = autodiff(rm, f, Active, Duplicated(x, dx))
         if ReturnPrimal
-            (res[2], dx)
+            (dx, res[2])
         else
             dx
         end
@@ -1084,7 +1094,7 @@ Like [`gradient`](@ref), except it using deferred mode.
         dx = Ref(make_zero(x))
         autodiff_deferred(rm, f, Active, MixedDuplicated(x, dx))
         if ReturnPrimal
-            return (res[2], only(dx))
+            return (only(dx), res[2])
         else
             return only(dx)
         end
@@ -1092,7 +1102,7 @@ Like [`gradient`](@ref), except it using deferred mode.
         dx = make_zero(x)
         autodiff_deferred(rm, f, Active, Duplicated(x, dx))
         if ReturnPrimal
-            (res[2], dx)
+            (dx, res[2])
         else
             dx
         end
@@ -1108,7 +1118,7 @@ Both `x` and `dx` must be `Array`s of the same type.
 
 Example:
 
-```jldoctest
+```jldoctest gradip
 f(x) = x[1]*x[2]
 
 dx = [0.0, 0.0]
@@ -1120,12 +1130,20 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  3.0
  2.0
 ```
+
+```jldoctest gradip
+dx = [0.0, 0.0]
+gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
+
+# output
+([3.0, 2.0], 6.0)
+```
 """
 @inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
-        (res[2], dx)
+        (dx, res[2])
     else
         dx
     end
@@ -1141,7 +1159,7 @@ Like [`gradient!`](@ref), except it using deferred mode.
     make_zero!(dx)
     autodiff_deferred(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
-        (res[2], dx)
+        (dx, res[2])
     else
         dx
     end
@@ -1158,7 +1176,7 @@ within this call.
 
 Example:
 
-```jldoctest
+```jldoctest gradfwd
 f(x) = x[1]*x[2]
 
 grad = gradient(Forward, f, [2.0, 3.0])
@@ -1167,16 +1185,34 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 (3.0, 2.0)
 ```
+
+```jldoctest gradfwd
+gradient(ForwardWithPrimal, f, [2.0, 3.0])
+
+# output
+((3.0, 2.0), 6.0)
+```
 """
-@inline function gradient(fm::ForwardMode, f, x; shadow=onehot(x))
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; shadow=onehot(x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if length(shadow) == 0
-        return ()
+        if ReturnPrimal
+            ((), f(x.val))
+        else
+            return ()
+        end
     end
-    res = values(only(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
-    if x isa AbstractFloat
+    resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow))
+
+    res = values(resp[1])
+    dres = if x isa AbstractFloat
         res[1]
     else
         res
+    end
+    if ReturnPrimal
+        (dres, resp[2])
+    else
+        dres
     end
 end
 
@@ -1216,29 +1252,64 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(fm::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    tmp = ntuple(length(shadow)) do i
-        values(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    res = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        res[1]
+    if ReturnPrimal
+        rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[1]))[1]
+        dres1 = if chunk == 1
+            (rp[1],)
+        else
+            values(rp[1])
+        end
+        gres = if x isa AbstractFloat
+            dres1
+        else
+            fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
+            tmp = ntuple(length(shadow)-1) do i
+                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadow[i+1]))[1])
+            end
+            tupleconcat(dres1, tmp...)
+        end
+        (gres, rp[2])
     else
-        res
+        tmp = ntuple(length(shadow)) do i
+            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[i]))[1])
+        end
+        res = tupleconcat(tmp...)
+        if x isa AbstractFloat
+            res[1]
+        else
+            res
+        end
     end
 end
 
-@inline function gradient(fm::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
-    res = ntuple(length(shadow)) do i
-        autodiff(fm, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        res[1]
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+    if ReturnPrimal
+        rp = autodiff(fm, f, Duplicated, Duplicated(x, shadow[1]))
+        dres1 = rp[1]
+        fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
+
+        res = ntuple(length(shadow)-1) do i
+            autodiff(fm2, f, Duplicated, Duplicated(x, shadow[i+1]))[1]
+        end
+        gres = if x isa AbstractFloat
+            dres1
+        else
+            (dres1, res...)
+        end
+        (gres, rp[2])
     else
-        res
+        res = ntuple(length(shadow)) do i
+            autodiff(fm, f, Duplicated, Duplicated(x, shadow[i]))[1]
+        end
+        if x isa AbstractFloat
+            res[1]
+        else
+            res
+        end
     end
 end
 
@@ -1270,14 +1341,16 @@ whose shape is `(size(output)..., size(input)...)`
 For functions who return other types, this function will retun an array or tuple
 of shape `size(input)` of values of the output type. 
 """
-@inline function jacobian(fm::ForwardMode, f, x; shadow=onehot(x))
-    cols = if length(shadow) == 0
-        ()
+@inline function jacobian(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, args...; kwargs...) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+    gradtup = gradient(fm, args...; kwargs...)
+    cols = if ReturnPrimal
+        gradtup[1]
     else
-        values(only(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+        gradtup
     end
-    if x isa AbstractFloat
-        cols[1]
+    x = args[2]
+    res = if x isa AbstractFloat
+        cols
     elseif length(cols) > 0 && cols[1] isa AbstractArray
         inshape = size(x)
         outshape = size(cols[1])
@@ -1297,65 +1370,10 @@ of shape `size(input)` of values of the output type.
     else
         cols
     end
-end
-
-@inline function jacobian(fm::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-    tmp = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        values(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    cols = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = Base.stack(cols)
-
-        st3 = if length(inshape) <= 1
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
+    if ReturnPrimal
+        (res, gradtup[2])
     else
-        cols
-    end
-end
-
-@inline function jacobian(fm::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
-    cols = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        autodiff(fm, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = Base.stack(cols)
-
-        st3 = if length(inshape) <= 1
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
+        res
     end
 end
 

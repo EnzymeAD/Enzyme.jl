@@ -22,24 +22,29 @@ The third argument is the return type annotation, and all other arguments are th
 function forward end
 
 """
-    FwdConfig{Width, RuntimeActivity}
-    FwdConfigWidth{Width} = FwdConfig{Width}
+    FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity}
+    FwdConfigWidth{Width} = FwdConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `RuntimeActivity`: whether runtime activity is enabled.
 
-Getters for the type parameters are provided by `width` and `runtime_activity`.
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` and `runtime_activity`.
 """
-struct FwdConfig{Width, RuntimeActivity} end
-const FwdConfigWidth{Width} = FwdConfig{Width}
-@inline width(::FwdConfig{Width}) where Width = Width
-@inline runtime_activity(::FwdConfig{<:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity} end
+const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
+
+@inline needs_primal(::FwdConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+
+@inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
+@inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 
 
 """
     RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity}
-    RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
+    RevConfigWidth{Width} = RevConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 

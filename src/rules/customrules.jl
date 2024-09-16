@@ -352,7 +352,6 @@ end
     end
 
     width = get_width(gutils)
-    C = EnzymeRules.FwdConfig{Int(width), get_runtime_activity(gutils)}
 
     if shadowR != C_NULL
         unsafe_store!(shadowR,UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref)
@@ -373,6 +372,8 @@ end
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup, _ = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
+
+    C = EnzymeRules.FwdConfig{Bool(needsPrimal), Bool(needsShadow), Int(width), get_runtime_activity(gutils)}
 
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -494,8 +495,7 @@ end
     normalV = C_NULL
 
     if RT <: Const
-        # TODO introduce const-no-need
-        if needsPrimal || true
+        if needsPrimal
             if RealRt != fwd_RT
                 emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return false
