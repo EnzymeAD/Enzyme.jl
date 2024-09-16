@@ -1453,8 +1453,8 @@ end
 
     cor = fquantile(2.0)
     res = autodiff(Forward, fquantile, Duplicated,Duplicated(2.0, 1.0))
-    @test cor ≈ res[1]
-    @test 0.7 ≈ res[2]
+    @test cor ≈ res[2]
+    @test 0.7 ≈ res[1]
 
 end
 
