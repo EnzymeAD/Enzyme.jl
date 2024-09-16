@@ -1054,7 +1054,7 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 
 # output
 
-(a = 3.0, b = [2.0], c = "str")
+((a = 3.0, b = [2.0], c = "str"),)
 ```
 
 ```jldoctest gradient
