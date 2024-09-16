@@ -150,7 +150,7 @@ end
 end
 
 function to_fullmd(@nospecialize(T::Type))
-    mds = Metadata[]
+    mds = LLVM.Metadata[]
     for (sT, sO) in get_offsets(T)
         if sT == API.DT_Pointer
             push!(mds, MDString("Pointer"))
