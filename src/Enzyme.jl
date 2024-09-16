@@ -1269,14 +1269,14 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
         else
             fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
             tmp = ntuple(length(shadow)-1) do i
-                values(autodiff(fm2, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i+1]))[1])
+                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadow[i+1]))[1])
             end
             tupleconcat(dres1, tmp...)
         end
         (gres, rp[2])
     else
         tmp = ntuple(length(shadow)) do i
-            values(autodiff(fm, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
+            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[i]))[1])
         end
         res = tupleconcat(tmp...)
         if x isa AbstractFloat
