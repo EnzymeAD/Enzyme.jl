@@ -2712,14 +2712,14 @@ end
 
 @testset "Batch Forward" begin
     square(x)=x*x
-    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
+    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
     @test length(bres) == 1
     @test length(bres[1]) == 3
     @test bres[1][1] ≈  6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
 
-    bres = autodiff(Forward, square, BatchDuplicatedNoNeed, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
+    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
     @test bres[1][1] ≈  6.0 + 14.0im
     @test bres[1][2] ≈ 12.0 + 28.0im
     @test bres[1][3] ≈ 18.0 + 42.0im
@@ -2729,10 +2729,10 @@ end
 
     # Shadow offset is not the same as primal so following doesn't work
     # d_inp = Float32[1.0, 2.0, 3.0]
-    # autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
+    # autodiff(Forward, squareidx, BatchDuplicated, BatchDuplicated(view(inp, 1:1), (view(d_inp, 1:1), view(d_inp, 2:2), view(d_inp, 3:3))))
 
     d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
-    bres = autodiff(Forward, squareidx, BatchDuplicatedNoNeed, BatchDuplicated(inp, d_inp))
+    bres = autodiff(Forward, squareidx, BatchDuplicated, BatchDuplicated(inp, d_inp))
     @test bres[1][1] ≈  6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
