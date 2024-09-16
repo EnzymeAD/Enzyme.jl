@@ -373,6 +373,8 @@ end
     args, activity, overwritten, actives, kwtup, _ = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
 
+    C = EnzymeRules.FwdConfig{Bool(needsPrimal), Bool(needsShadow), Int(width), get_runtime_activity(gutils)}
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = get_mode(gutils)
@@ -384,10 +386,12 @@ end
         @assert kwtup !== nothing
         insert!(tt, 1, kwtup)
         insert!(tt, 2, Core.typeof(EnzymeRules.forward))
-        insert!(tt, 4, Type{RT})
+        insert!(tt, 3, C)
+        insert!(tt, 5, Type{RT})
     else
         @assert kwtup === nothing
-        insert!(tt, 2, Type{RT})
+        insert!(tt, 1, C)
+        insert!(tt, 3, Type{RT})
     end
     TT = Tuple{tt...}
 
@@ -491,8 +495,7 @@ end
     normalV = C_NULL
 
     if RT <: Const
-        # TODO introduce const-no-need
-        if needsPrimal || true
+        if needsPrimal
             if RealRt != fwd_RT
                 emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return false
@@ -595,7 +598,7 @@ end
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
+    C = EnzymeRules.RevConfig{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten, get_runtime_activity(gutils)}
     
     mode = get_mode(gutils)
 
@@ -673,7 +676,7 @@ end
         needsShadow
     end
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
+    C = EnzymeRules.RevConfig{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten, get_runtime_activity(gutils)}
 
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -1141,6 +1144,22 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return (false, true)
     end
+    non_rooting_use = false
+    fop = called_operand(orig)::LLVM.Function
+    for (i, v) in enumerate(operands(orig)[1:end-1])
+      if v == val
+         if !any(a->kind(a) == kind(StringAttribute("enzymejl_returnRoots")), collect(parameter_attributes(fop, i)))
+            non_rooting_use = true
+	    break
+	 end
+      end
+    end
+    
+    # If the operand is just rooting, we don't need it and should override defaults
+    if !non_rooting_use
+      return (false, false)
+    end
+    
     # don't use default and always require the arg
     return (true, false)
 end

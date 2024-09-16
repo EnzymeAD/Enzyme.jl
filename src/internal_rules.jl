@@ -121,23 +121,13 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
 
-@inline width(::Duplicated) = 1
-@inline width(::BatchDuplicated{T, N}) where {T, N} = N
-@inline width(::DuplicatedNoNeed) = 1
-@inline width(::BatchDuplicatedNoNeed{T, N}) where {T, N} = N
-
-@inline width(::Type{Duplicated{T}}) where T = 1
-@inline width(::Type{BatchDuplicated{T, N}}) where {T, N} = N
-@inline width(::Type{DuplicatedNoNeed{T}}) where T = 1
-@inline width(::Type{BatchDuplicatedNoNeed{T, N}}) where {T, N} = N
-
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
-function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, ::Const{typeof(Base.deepcopy)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return deepcopy(x.dval)
 end
 
-function EnzymeRules.forward(::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, ::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
     ntuple(Val(N)) do _
         deepcopy(x.dval)
     end
@@ -164,19 +154,19 @@ end
     return seen[shadow]
 end
 
-function EnzymeRules.forward(func::Const{typeof(Base.deepcopy)}, ::Type{<:Duplicated}, x::Duplicated)
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(Base.deepcopy)}, ::Type{<:Duplicated}, x::Duplicated)
     primal = func.val(x.val)
     return Duplicated(primal, deepcopy_rtact(primal, x.val, IdDict(), x.dval))
 end
 
-function EnzymeRules.forward(func::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(Base.deepcopy)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
     primal = func.val(x.val)
     return BatchDuplicated(primal, ntuple(Val(N)) do i
         deepcopy_rtact(primal, x.val, IdDict(), x.dval[i])
     end)
 end
 
-function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.deepcopy)}, ::Type{RT}, x::Annotation{Ty}) where {RT, Ty}
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(Base.deepcopy)}, ::Type{RT}, x::Annotation{Ty}) where {RT, Ty}
     primal = if EnzymeRules.needs_primal(config)
         func.val(x.val)
     else
@@ -244,7 +234,7 @@ end
     return seen[into]
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(Base.deepcopy)}, ::Type{RT}, shadow, x::Annotation{Ty}) where {RT, Ty}
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(Base.deepcopy)}, ::Type{RT}, shadow, x::Annotation{Ty}) where {RT, Ty}
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             accumulate_into(x.dval, IdDict(), shadow)
@@ -266,9 +256,9 @@ end
     unsafe_store!(tapes, thunk(f, Const(idx), fargs...)[1], idx)
 end
 
-function EnzymeRules.augmented_primal(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.runtime_activity(config), EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk = autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     TapeType = EnzymeRules.tape_type(fwd_thunk)
@@ -291,9 +281,9 @@ end
     thunk(f, Const(idx), fargs..., unsafe_load(tapes, idx))
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(Enzyme.pmap)}, ::Type{Const{Nothing}}, tapes, body::BodyTy, count, args::Vararg{Annotation, N}) where {BodyTy, N}
 
-    config2 = ReverseModeSplit{false, false, EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
+    config2 = ReverseModeSplit{false, false, EnzymeRules.runtime_activity(config), EnzymeRules.width(config), EnzymeRules.overwritten(config)[2:end],InlineABI, false}()
     fwd_thunk, rev_thunk =  autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
     Enzyme.pmap(pmap_rev, count.val, tapes, rev_thunk, body, args...)
@@ -338,7 +328,7 @@ end
 # y=inv(A) B
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
-function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}, A::Annotation{AT}, b::Annotation{BT}) where {RT, AT <: Array, BT <: Array}
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(\)}, ::Type{RT}, A::Annotation{AT}, b::Annotation{BT}) where {RT, AT <: Array, BT <: Array}
 
     cache_A = if EnzymeRules.overwritten(config)[2]
         copy(A.val)
@@ -395,13 +385,13 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(\)}, ::Type{RT}
     )
 
     return EnzymeRules.AugmentedReturn{
-        EnzymeRules.needs_primal(config) ? eltype(RT) : Nothing,
-        EnzymeRules.needs_shadow(config) ? (EnzymeRules.width(config) == 1 ? eltype(RT) : NTuple{EnzymeRules.width(config), eltype(RT)}) : Nothing,
+        EnzymeRules.primal_type(config, RT),
+        EnzymeRules.shadow_type(config, RT),
         typeof(cache)
     }(retres, dres, cache)
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(\)}, ::Type{RT}, cache, A::Annotation{<:Array}, b::Annotation{<:Array}) where RT
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(\)}, ::Type{RT}, cache, A::Annotation{<:Array}, b::Annotation{<:Array}) where RT
 
     y, dys, cache_A, cache_b = cache
 
@@ -469,7 +459,7 @@ const EnzymeTriangulars = Union{
 }
 
 function EnzymeRules.augmented_primal(
-    config,
+    config::EnzymeRules.RevConfig,
     func::Const{typeof(ldiv!)},
     ::Type{RT},
     Y::Annotation{YT},
@@ -483,12 +473,17 @@ function EnzymeRules.augmented_primal(
     primal = EnzymeRules.needs_primal(config) ? Y.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? Y.dval : nothing
     func.val(Y.val, A.val, B.val)
-    return EnzymeRules.AugmentedReturn{typeof(primal), typeof(shadow), Any}(
-        primal, shadow, (cache_Y, cache_A, cache_B))
+    return EnzymeRules.AugmentedReturn{
+        EnzymeRules.primal_type(config, RT),
+        EnzymeRules.shadow_type(config, RT),
+        Tuple{typeof(cache_Y), typeof(cache_A), typeof(cache_B)}
+    }(
+        primal, shadow, (cache_Y, cache_A, cache_B)
+    )
 end
 
 function EnzymeRules.reverse(
-    config,
+    config::EnzymeRules.RevConfig,
     func::Const{typeof(ldiv!)},
     ::Type{RT},
     cache,
@@ -521,7 +516,7 @@ _zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
 _zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
 
 # Force a rule around hvcat_fill as it is type unstable if the tuple is not of the same type (e.g., int, float, int, float)
-function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
     primal = if EnzymeRules.needs_primal(config)
         out.val
     else
@@ -536,7 +531,7 @@ function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.hvcat_fill
     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
-function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, _, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(Base.hvcat_fill!)}, ::Type{RT}, _, out::Annotation{AT}, inp::Annotation{BT}) where {RT, AT <: Array, BT <: Tuple}
     nr, nc = size(out.val,1), size(out.val,2)
     for b in 1:EnzymeRules.width(config)
         da = if EnzymeRules.width(config) == 1
@@ -569,7 +564,7 @@ function EnzymeRules.reverse(config, func::Const{typeof(Base.hvcat_fill!)}, ::Ty
     return (nothing, nothing)
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T};
@@ -578,16 +573,18 @@ function EnzymeRules.forward(
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
-    if RT <: Const
-        return xs.val
-    elseif RT <: DuplicatedNoNeed
-        return xs.dval
-    else
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         return xs
+    elseif EnzymeRules.needs_shadow(config)
+        return xs.dval
+    elseif EnzymeRules.needs_primal(config)
+        return xs.val
+    else
+        return nothing
     end
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
         xs::BatchDuplicated{T, N};
@@ -598,18 +595,20 @@ function EnzymeRules.forward(
     for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
-    if RT <: Const
-        return xs.val
-    elseif RT <: BatchDuplicatedNoNeed
-        return xs.dval
-    else
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         return xs
+    elseif EnzymeRules.needs_shadow(config)
+        return xs.dval
+    elseif EnzymeRules.needs_primal(config)
+        return xs.val
+    else
+        return nothing
     end
 end
 
 
 function EnzymeRules.augmented_primal(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T};
@@ -632,7 +631,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(sort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         tape,
@@ -645,7 +644,7 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T},
@@ -657,20 +656,23 @@ function EnzymeRules.forward(
     partialsortperm!(inds, xs.val, kv; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
-    if RT <: Const
-        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
-    elseif RT <: DuplicatedNoNeed
-        return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
-    else
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if kv isa Integer
             return Duplicated(xs.val[kv], xs.dval[kv])
         else
             return Duplicated(view(xs.val, kv), view(xs.dval, kv))
         end
+    elseif EnzymeRules.needs_shadow(config)
+        return kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
+    elseif EnzymeRules.needs_primal(config)
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    else
+        return nothing
     end
 end
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig,
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
         xs::BatchDuplicated{T, N},
@@ -684,25 +686,28 @@ function EnzymeRules.forward(
     for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
-    if RT <: Const
-        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
-    elseif RT <: BatchDuplicatedNoNeed
-        if kv isa Integer
-            return ntuple(i -> xs.dval[i][kv], N)
-        else
-            return ntuple(i -> view(xs.dval[i], kv), N)
-        end
-    else
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if kv isa Integer
             return BatchDuplicated(xs.val[kv], ntuple(i -> xs.dval[i][kv], N))
         else
             return BatchDuplicated(view(xs.val, kv), ntuple(i -> view(xs.dval[i], kv), N))
         end
+    elseif EnzymeRules.needs_shadow(config)
+        if kv isa Integer
+            return ntuple(i -> xs.dval[i][kv], N)
+        else
+            return ntuple(i -> view(xs.dval[i], kv), N)
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return kv isa Integer ? xs.val[kv] : view(xs.val, kv)
+    else
+        return nothing
     end
 end
 
 function EnzymeRules.augmented_primal(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(partialsort!)},
         RT::Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}},
         xs::Duplicated{T},
@@ -728,7 +733,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-        config::EnzymeRules.ConfigWidth{1},
+        config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(partialsort!)},
         dret::Union{Active, Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}}},
         tape,
@@ -755,15 +760,20 @@ end
 # ->
 # B(out) = inv(A) B(in)
 # dB(out) = inv(A) [ dB(in) - dA B(out) ]
-function EnzymeRules.forward(func::Const{typeof(ldiv!)},
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{typeof(ldiv!)},
                              RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
                              fact::Annotation{<:Cholesky},
                              B::Annotation{<:AbstractVecOrMat};
                              kwargs...)
     if B isa Const
-        return func.val(fact.val, B.val; kwargs...)
+        retval = func.val(fact.val, B.val; kwargs...)
+        if EnzymeRules.needs_primal(config)
+            retval
+        else
+            return nothing
+        end
     else
-        N = width(B)
+        N = EnzymeRules.width(config)
         retval = B.val
 
         L = fact.val.L
@@ -792,16 +802,23 @@ function EnzymeRules.forward(func::Const{typeof(ldiv!)},
             return dB
         end
 
-        if RT <: Const
+
+        if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+            if EnzymeRules.width(config) == 1
+                return Duplicated(retval, dretvals[1])
+            else
+                return BatchDuplicated(retval, dretvals)
+            end
+        elseif EnzymeRules.needs_shadow(config)
+            if EnzymeRules.width(config) == 1
+                return dretvals[1]
+            else
+                return dretvals
+            end
+        elseif EnzymeRules.needs_primal(config)
             return retval
-        elseif RT <: DuplicatedNoNeed
-            return dretvals[1]
-        elseif RT <: Duplicated
-            return Duplicated(retval, dretvals[1])
-        elseif RT <: BatchDuplicatedNoNeed
-            return dretvals
         else
-            return BatchDuplicated(retval, dretvals)
+            return nothing
         end
     end
 end
@@ -810,7 +827,7 @@ end
 # Float64 ranges in Julia use bitwise `&` with higher precision
 # to correct for numerical error, thus we put rules over the
 # operations as this is not directly differentiable
-function EnzymeRules.forward(func::Const{Colon},
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::Const{Colon},
                              RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated,
                                               BatchDuplicated,BatchDuplicatedNoNeed}},
                              start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
@@ -820,7 +837,7 @@ function EnzymeRules.forward(func::Const{Colon},
     elseif start isa Duplicated || start isa DuplicatedNoNeed
         start.dval
     elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
-        ntuple(i -> start.dval[i], Val(width(RT)))
+        ntuple(i -> start.dval[i], Val(EnzymeRules.width(config)))
     else
         error("Annotation type $(typeof(start)) not supported for range start. Please open an issue")
     end
@@ -830,34 +847,38 @@ function EnzymeRules.forward(func::Const{Colon},
     elseif step isa Duplicated || step isa DuplicatedNoNeed
         step.dval
     elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
-        ntuple(i -> step.dval[i], Val(width(RT)))
+        ntuple(i -> step.dval[i], Val(EnzymeRules.width(config)))
     else
         error("Annotation type $(typeof(start)) not supported for range step. Please open an issue")
     end
 
-    if RT <: Duplicated
-        Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
-    elseif RT <: Const
-        ret
-    elseif RT <: DuplicatedNoNeed
-        range(dstart; step=dstep, length=length(ret))
-    elseif RT <: BatchDuplicated
-        BatchDuplicated(ret,
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(ret, range(dstart; step=dstep, length=length(ret)))
+        else
+            return BatchDuplicated(ret,
                         ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                                           step=dstep isa Number ? dstep : dstep[i],
-                                          length=length(ret)), Val(width(RT))))
-    elseif RT <: BatchDuplicatedNoNeed
-        ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
+                                          length=length(ret)), Val(EnzymeRules.width(config))))
+        end
+    elseif EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return range(dstart; step=dstep, length=length(ret))
+        else
+            return ntuple(i -> range(dstart isa Number ? dstart : dstart[i];
                           step=dstep isa Number ? dstep : dstep[i],
-                          length=length(ret)), Val(width(RT)))
+                          length=length(ret)), Val(EnzymeRules.width(config)))
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return ret
     else
-        error("This should not be possible. Please report.")
+        return nothing
     end
 end
 
 
 
-function EnzymeRules.augmented_primal(config, func::Const{Colon}, ::Type{<:Active},
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{Colon}, ::Type{<:Active},
                           start::Annotation{<:AbstractFloat}, step::Annotation{<:AbstractFloat}, stop::Annotation{<:AbstractFloat})
 
     if EnzymeRules.needs_primal(config)
@@ -868,7 +889,7 @@ function EnzymeRules.augmented_primal(config, func::Const{Colon}, ::Type{<:Activ
     return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
 end
 
-function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{Colon}, dret, tape::Nothing,
                  start::Annotation{T1}, step::Annotation{T2}, stop::Annotation{T3}) where {T1<:AbstractFloat, T2<:AbstractFloat, T3<:AbstractFloat}
 
     dstart = if start isa Const
@@ -908,34 +929,40 @@ function EnzymeRules.reverse(config, func::Const{Colon}, dret, tape::Nothing,
 end
 
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, 
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
         kwargs...
     )
-    if RT <: Const
-        return Ty.val(; kwargs...)
-    elseif RT <: DuplicatedNoNeed
-        return Ty.val(; kwargs...)
-    elseif RT <: Duplicated
-        return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
-    elseif RT <: BatchDuplicatedNoNeed
-        ntuple(Val(width(RT))) do i
-            Base.@_inline_meta
-            Ty.val(; kwargs...)
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return RT(Ty.val(; kwargs...), Ty.val(; kwargs...))
+        else
+            tup = ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                Ty.val(; kwargs...)
+            end
+            return RT(Ty.val(; kwargs...), tup)
         end
+    elseif EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Ty.val(; kwargs...)
+        else
+            return ntuple(Val(EnzymeRules.width(config))) do i
+                    Base.@_inline_meta
+                    Ty.val(; kwargs...)
+                end
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return Ty.val(; kwargs...)
     else
-        @assert RT <: BatchDuplicated
-        tup = ntuple(Val(width(RT))) do i
-            Base.@_inline_meta
-            Ty.val(; kwargs...)
-        end
-        RT(Ty.val(; kwargs...), tup)
+        return nothing
     end
 end
 
 function EnzymeRules.augmented_primal(
-        config,
+        config::EnzymeRules.RevConfig,
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         kwargs...
@@ -961,11 +988,75 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-        config,
+        config::EnzymeRules.RevConfig,
         Ty::Const{Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         tape,
         kwargs...,
     )
     return ()
+end
+
+function EnzymeRules.forward(config::EnzymeRules.FwdConfig, 
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
+    Ty.val(rng.val, dst.val, smpl.val)
+
+    if !(dst isa Const)
+        if EnzymeRules.width(config) == 1
+            fill!(dst.dval, 0)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                fill!(dst.dval[i], 0)
+                nothing
+            end
+        end
+    end
+    
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        dst
+    elseif EnzymeRules.needs_shadow(config)
+        dst.dval
+    elseif EnzymeRules.needs_primal(config)
+        dst.val
+    else
+        nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, 
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
+    Ty.val(rng.val, dst.val, smpl.val)
+    if RT <: Duplicated || RT <: DuplicatedNoNeed
+        fill!(dst.dval, 0)
+        dst.dval
+    elseif RT <: BatchDuplicated || RT <: BatchDuplicatedNoNeed
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            fill!(dst.dval[i], 0)
+            nothing
+        end
+    end
+    return EnzymeRules.AugmentedReturn(EnzymeRules.needs_primal(config) ? dst.val : nothing, EnzymeRules.needs_shadow(config) ? dst.dval : nothing, nothing)
+end
+
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig, 
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        tape,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
+    return (nothing, nothing, nothing)
 end

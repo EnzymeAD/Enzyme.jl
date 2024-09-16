@@ -2,11 +2,11 @@ module Enzyme
 
 import EnzymeCore
 
-import EnzymeCore: Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
-export Forward, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+import EnzymeCore: Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal, ReverseSplitModified, ReverseSplitWidth, ReverseMode, ForwardMode, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 
-import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi
-export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi
+import EnzymeCore: Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, ABI, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi, set_runtime_activity, clear_runtime_activity
+export Annotation, Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, DefaultABI, FFIABI, InlineABI, NonGenABI, set_err_if_func_written, clear_err_if_func_written, set_abi, set_runtime_activity, clear_runtime_activity
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
@@ -229,7 +229,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     [`Active`](@ref) will automatically convert plain integers to floating
     point values, but cannot do so for integer values in tuples and structs.
 """
-@inline function autodiff(rmode::ReverseMode{ReturnPrimal, RABI,Holomorphic, ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RABI<:ABI,Holomorphic, Nargs, ErrIfFuncWritten}
+@inline function autodiff(rmode::ReverseMode{ReturnPrimal, RuntimeActivity,RABI,Holomorphic, ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, RuntimeActivity, RABI<:ABI,Holomorphic, Nargs, ErrIfFuncWritten}
     tt′   = vaTypeof(args...)
     width = same_or_one(1, args...)
     if width == 0
@@ -256,7 +256,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     if A <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
-            forward, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI, Val(ErrIfFuncWritten))
+            forward, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, Duplicated{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(true), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
             res = forward(f, args...)
             tape = res[1]
             if ReturnPrimal
@@ -286,7 +286,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             args = seed_complex_args(seen, seen2, args...)
             tt′   = vaTypeof(args...)
 
-            thunk = Enzyme.Compiler.thunk(opt_mi, typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+            thunk = Enzyme.Compiler.thunk(opt_mi, typeof(f), A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 
             results = thunk(f, args..., (rt(0), rt(1), rt(im)))
 
@@ -308,7 +308,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         throw(ErrorException("Reverse-mode Active Complex return is ambiguous and requires more information to specify the desired result. See https://enzyme.mit.edu/julia/stable/faq/#Complex-numbers for more details."))
     end
 
-    thunk = Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    thunk = Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt))
@@ -358,38 +358,33 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 
 `Activity` is the Activity of the return value, it may be:
 * `Const` if the return is not to be differentiated with respect to
-* `Duplicated`, if the return is being differentiated with respect to and
-  both the original value and the derivative return are desired
-* `DuplicatedNoNeed`, if the return is being differentiated with respect to
-  and only the derivative return is desired.
+* `Duplicated`, if the return is being differentiated with respect to
 * `BatchDuplicated`, like `Duplicated`, but computing multiple derivatives
   at once. All batch sizes must be the same for all arguments.
-* `BatchDuplicatedNoNeed`, like `DuplicatedNoNeed`, but computing multiple
-  derivatives at one. All batch sizes must be the same for all arguments.
 
 Example returning both original return and derivative:
 
 ```jldoctest
 f(x) = x*x
-res, ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
+res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
 
 ```jldoctest
 f(x) = x*x
-∂f_∂x = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(3.14, 1.0))
+∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
 
 (6.28,)
 ```
 """
-@inline function autodiff(::ForwardMode{RABI, ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {RABI <: ABI, Nargs, ErrIfFuncWritten}
+@inline function autodiff(::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation} where {ReturnPrimal, RABI <: ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -401,7 +396,9 @@ f(x) = x*x
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
+    end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
             BatchDuplicated{T, width} where T
@@ -429,7 +426,7 @@ f(x) = x*x
     end
 
     thunk = Enzyme.Compiler.thunk(opt_mi, FA, RT, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+                                     ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     thunk(f, args...)
 end
 
@@ -439,7 +436,7 @@ end
 Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ReverseMode{ReturnPrimal, ABI,Holomorphic,ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, Nargs, ABI,Holomorphic,ErrIfFuncWritten}
+@inline function autodiff_deferred(::ReverseMode{ReturnPrimal, RuntimeActivity, ABI,Holomorphic,ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal, Nargs, ABI,Holomorphic,ErrIfFuncWritten, RuntimeActivity}
     tt′   = vaTypeof(args...)
     width = same_or_one(1, args...)
     if width == 0
@@ -463,7 +460,7 @@ code, as well as high-order differentiation.
 
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), UnknownTapeType, Val(ErrIfFuncWritten))
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ReverseModeCombined), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), UnknownTapeType, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 
     thunk = Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     if rt <: Active
@@ -480,7 +477,7 @@ end
 Same as `autodiff(::ForwardMode, f, Activity, args)` but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
-@inline function autodiff_deferred(::ForwardMode{ABI, ErrIfFuncWritten}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, A<:Annotation, Nargs, ABI, ErrIfFuncWritten}
+@inline function autodiff_deferred(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity}, f::FA, ::Type{A}, args::Vararg{Annotation, Nargs}) where {ReturnPrimal, FA<:Annotation, A<:Annotation, Nargs, ABI, ErrIfFuncWritten, RuntimeActivity}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -488,6 +485,9 @@ code, as well as high-order differentiation.
     width = same_or_one(1, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
+    end
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
     end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
@@ -524,10 +524,9 @@ code, as well as high-order differentiation.
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
 
-    ReturnPrimal = RT <: Duplicated || RT <: BatchDuplicated
     ModifiedBetween = Val(falses_from_args(Nargs+1))
     
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), UnknownTapeType, Val(ErrIfFuncWritten))
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(tt′), Val(rt), Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), UnknownTapeType, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
     thunk(f, args...)
 end
@@ -608,7 +607,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_thunk(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI, Nargs, ErrIfFuncWritten}
+@inline function autodiff_thunk(rs::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, Width,ModifiedBetweenT,RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT,RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -636,7 +635,29 @@ result, ∂v, ∂A
     else
         Val(codegen_world_age(eltype(FA), tt))
     end
-    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+end
+
+"""
+    autodiff(::Function, ::Mode, args...)
+
+Specialization of [`autodiff`](@ref) to handle do argument closures.
+
+```jldoctest
+
+autodiff(Reverse, Active(3.1)) do x
+  return x*x
+end
+
+# output
+((6.2,),)
+```
+"""
+@inline function autodiff(f::Function, m::MMode, ::Type{A}, args::Vararg{Annotation, Nargs}) where {A<:Annotation, Nargs, MMode<:Mode}
+  autodiff(m, f, A, args...)
+end
+@inline function autodiff(f::Function, m::MMode, args::Vararg{Annotation, Nargs}) where {Nargs, MMode<:Mode}
+  autodiff(m, f, args...)
 end
 
 """
@@ -651,7 +672,7 @@ ftype when called with args of type `argtypes`.
 The forward function will return the primal (if requested) and the shadow
 (or nothing if not a `Duplicated` variant).
 
-Example returning both original return and derivative:
+Example returning both the return derivative and original return:
 
 ```jldoctest
 a = 4.2
@@ -659,12 +680,12 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
+forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
@@ -675,7 +696,7 @@ b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
 f(x) = x*x
-forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated{Float64})
+forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
@@ -683,7 +704,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
 (6.28,)
 ```
 """
-@inline function autodiff_thunk(::ForwardMode{RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs, ErrIfFuncWritten}
+@inline function autodiff_thunk(::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {ReturnPrimal, FA<:Annotation, A<:Annotation, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     width = same_or_one(1, A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
@@ -691,7 +712,10 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
-    ReturnPrimal = Val(A <: Duplicated || A <: BatchDuplicated)
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(ErrorException("Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)"))
+    end
+
     ModifiedBetween = Val(falses_from_args(Nargs+1))
 
     tt    = Tuple{map(eltype, args)...}
@@ -702,10 +726,10 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, DuplicatedNoNeed, Duplicated
     else
         Val(codegen_world_age(eltype(FA), tt))
     end
-    Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    results = Enzyme.Compiler.thunk(opt_mi, FA, A, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 end
 
-@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, ErrIfFuncWritten}
+@inline function tape_type(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, Width,ModifiedBetweenT, RABI, ErrIfFuncWritten}, ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -731,7 +755,7 @@ end
     else
         Val(codegen_world_age(eltype(FA), primal_tt))
     end
-    nondef = Enzyme.Compiler.thunk(opt_mi, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    nondef = Enzyme.Compiler.thunk(opt_mi, FA, A, TT, #=Split=# Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, #=ReturnPrimal=#Val(ReturnPrimal), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     if nondef[1] isa Enzyme.Compiler.PrimalErrorThunk
         return Nothing
     else
@@ -747,9 +771,9 @@ const tape_cache_lock = ReentrantLock()
 import .Compiler: fspec, remove_innerty, UnknownTapeType
 
 @inline function tape_type(
-    parent_job::Union{GPUCompiler.CompilerJob,Nothing}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI},
+    parent_job::Union{GPUCompiler.CompilerJob,Nothing}, ::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, Width,ModifiedBetweenT, RABI},
     ::Type{FA}, ::Type{A}, args::Vararg{Type{<:Annotation}, Nargs}
-) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs}
+) where {FA<:Annotation, A<:Annotation, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, RuntimeActivity}
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -779,7 +803,8 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA, TT.parameters...}, API.DEM_ReverseModeGradient, width,
         Compiler.remove_innerty(A), true, #=abiwrap=#false, ModifiedBetweenT,
-        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI, #=errifwritte=#false
+        ReturnPrimal, #=ShadowInit=#false, Compiler.UnknownTapeType, RABI, #=errifwritte=#false,
+        RuntimeActivity
     )
     job    = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel=false))
 
@@ -849,7 +874,7 @@ result, ∂v, ∂A
 (7.26, 2.2, [3.3])
 ```
 """
-@inline function autodiff_deferred_thunk(mode::ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI, ErrIfFuncWritten}, tt::Type{TapeType}, fa::Type{FA}, a2::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, ErrIfFuncWritten}
+@inline function autodiff_deferred_thunk(mode::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, Width,ModifiedBetweenT, RABI, ErrIfFuncWritten}, tt::Type{TapeType}, fa::Type{FA}, a2::Type{A2}, args::Vararg{Type{<:Annotation}, Nargs}) where {FA<:Annotation, A2<:Annotation, TapeType, ReturnPrimal,ReturnShadow,Width,ModifiedBetweenT, RABI<:ABI, Nargs, ErrIfFuncWritten, RuntimeActivity}
     @assert RABI == FFIABI
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -873,8 +898,8 @@ result, ∂v, ∂A
     primal_tt = Tuple{map(eltype, args)...}
     world = codegen_world_age(eltype(FA), primal_tt)
 
-    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType, Val(ErrIfFuncWritten))
-    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType, Val(ErrIfFuncWritten))
+    primal_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModePrimal), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+    adjoint_ptr = Compiler.deferred_codegen(Val(world), FA, Val(TT), Val(Compiler.remove_innerty(A2)), Val(API.DEM_ReverseModeGradient), Val(width), ModifiedBetween, Val(ReturnPrimal), #=ShadowInit=#Val(false), TapeType, Val(ErrIfFuncWritten), Val(RuntimeActivity))
 
     RT = if A2 <: Duplicated && width != 1
         if A2 isa UnionAll
@@ -1024,6 +1049,14 @@ grad = gradient(Reverse, f, [2.0, 3.0])
 ```
 
 ```jldoctest gradient
+
+grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
+
+# output
+([3.0, 2.0], 6.0)
+```
+
+```jldoctest gradient
 grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 
 # output
@@ -1031,32 +1064,23 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 (a = 3.0, b = [2.0], c = "str")
 ```
 """
-@inline function gradient(rm::ReverseMode, f::F, x::X) where {F, X}
+@inline function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {F, X, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
         dx = Ref(make_zero(x))
-        autodiff(rm, f, Active, MixedDuplicated(x, dx))
-        return only(dx)
+        res = autodiff(rm, f, Active, MixedDuplicated(x, dx))
+        if ReturnPrimal
+            (only(dx), res[2])
+        else
+            only(dx)
+        end
     else
         dx = make_zero(x)
-        autodiff(rm, f, Active, Duplicated(x, dx))
-        return dx
-    end
-end
-
-"""
-    gradient_deferred(::ReverseMode, f, x)
-
-Like [`gradient`](@ref), except it using deferred mode.
-"""
-@inline function gradient_deferred(rm::ReverseMode, f::F, x::X) where {F, X}
-    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-        dx = Ref(make_zero(x))
-        autodiff_deferred(rm, f, Active, MixedDuplicated(x, dx))
-        return only(dx)
-    else
-        dx = make_zero(x)
-        autodiff_deferred(rm, f, Active, Duplicated(x, dx))
-        return dx
+        res = autodiff(rm, f, Active, Duplicated(x, dx))
+        if ReturnPrimal
+            (dx, res[2])
+        else
+            dx
+        end
     end
 end
 
@@ -1069,7 +1093,7 @@ Both `x` and `dx` must be `Array`s of the same type.
 
 Example:
 
-```jldoctest
+```jldoctest gradip
 f(x) = x[1]*x[2]
 
 dx = [0.0, 0.0]
@@ -1081,23 +1105,23 @@ gradient!(Reverse, dx, f, [2.0, 3.0])
  3.0
  2.0
 ```
+
+```jldoctest gradip
+dx = [0.0, 0.0]
+gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
+
+# output
+([3.0, 2.0], 6.0)
+```
 """
-@inline function gradient!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
+@inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
-    autodiff(Reverse, f, Active, Duplicated(x, dx))
-    dx
-end
-
-
-"""
-    gradient_deferred!(::ReverseMode, f, x)
-
-Like [`gradient!`](@ref), except it using deferred mode.
-"""
-@inline function gradient_deferred!(::ReverseMode, dx::X, f::F, x::X) where {X<:Array, F}
-    make_zero!(dx)
-    autodiff_deferred(Reverse, f, Active, Duplicated(x, dx))
-    dx
+    res = autodiff(rm, f, Active, Duplicated(x, dx))
+    return if ReturnPrimal
+        (dx, res[2])
+    else
+        dx
+    end
 end
 
 """
@@ -1111,7 +1135,7 @@ within this call.
 
 Example:
 
-```jldoctest
+```jldoctest gradfwd
 f(x) = x[1]*x[2]
 
 grad = gradient(Forward, f, [2.0, 3.0])
@@ -1120,16 +1144,34 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 (3.0, 2.0)
 ```
+
+```jldoctest gradfwd
+gradient(ForwardWithPrimal, f, [2.0, 3.0])
+
+# output
+((3.0, 2.0), 6.0)
+```
 """
-@inline function gradient(::ForwardMode, f, x; shadow=onehot(x))
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; shadow=onehot(x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if length(shadow) == 0
-        return ()
+        if ReturnPrimal
+            ((), f(x.val))
+        else
+            return ()
+        end
     end
-    res = values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
-    if x isa AbstractFloat
+    resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow))
+
+    res = values(resp[1])
+    dres = if x isa AbstractFloat
         res[1]
     else
         res
+    end
+    if ReturnPrimal
+        (dres, resp[2])
+    else
+        dres
     end
 end
 
@@ -1169,29 +1211,64 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 (3.0, 2.0)
 ```
 """
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    tmp = ntuple(length(shadow)) do i
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    res = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        res[1]
+    if ReturnPrimal
+        rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[1]))[1]
+        dres1 = if chunk == 1
+            (rp[1],)
+        else
+            values(rp[1])
+        end
+        gres = if x isa AbstractFloat
+            dres1
+        else
+            fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
+            tmp = ntuple(length(shadow)-1) do i
+                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadow[i+1]))[1])
+            end
+            tupleconcat(dres1, tmp...)
+        end
+        (gres, rp[2])
     else
-        res
+        tmp = ntuple(length(shadow)) do i
+            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[i]))[1])
+        end
+        res = tupleconcat(tmp...)
+        if x isa AbstractFloat
+            res[1]
+        else
+            res
+        end
     end
 end
 
-@inline function gradient(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X}
-    res = ntuple(length(shadow)) do i
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        res[1]
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+    if ReturnPrimal
+        rp = autodiff(fm, f, Duplicated, Duplicated(x, shadow[1]))
+        dres1 = rp[1]
+        fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
+
+        res = ntuple(length(shadow)-1) do i
+            autodiff(fm2, f, Duplicated, Duplicated(x, shadow[i+1]))[1]
+        end
+        gres = if x isa AbstractFloat
+            dres1
+        else
+            (dres1, res...)
+        end
+        (gres, rp[2])
     else
-        res
+        res = ntuple(length(shadow)) do i
+            autodiff(fm, f, Duplicated, Duplicated(x, shadow[i]))[1]
+        end
+        if x isa AbstractFloat
+            res[1]
+        else
+            res
+        end
     end
 end
 
@@ -1223,14 +1300,16 @@ whose shape is `(size(output)..., size(input)...)`
 For functions who return other types, this function will retun an array or tuple
 of shape `size(input)` of values of the output type. 
 """
-@inline function jacobian(::ForwardMode, f, x; shadow=onehot(x))
-    cols = if length(shadow) == 0
-        ()
+@inline function jacobian(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, args...; kwargs...) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+    gradtup = gradient(fm, args...; kwargs...)
+    cols = if ReturnPrimal
+        gradtup[1]
     else
-        values(only(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow))))
+        gradtup
     end
-    if x isa AbstractFloat
-        cols[1]
+    x = args[2]
+    res = if x isa AbstractFloat
+        cols
     elseif length(cols) > 0 && cols[1] isa AbstractArray
         inshape = size(x)
         outshape = size(cols[1])
@@ -1250,65 +1329,10 @@ of shape `size(input)` of values of the output type.
     else
         cols
     end
-end
-
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk}
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
-    tmp = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        values(autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(x, shadow[i]))[1])
-    end
-    cols = tupleconcat(tmp...)
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = Base.stack(cols)
-
-        st3 = if length(inshape) <= 1
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
+    if ReturnPrimal
+        (res, gradtup[2])
     else
-        cols
-    end
-end
-
-@inline function jacobian(::ForwardMode, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F,X}
-    cols = ntuple(length(shadow)) do i
-        Base.@_inline_meta
-        autodiff(Forward, f, DuplicatedNoNeed, Duplicated(x, shadow[i]))[1]
-    end
-    if x isa AbstractFloat
-        cols[1]
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
-        outshape = size(cols[1])
-        # st : outshape x total inputs
-        st = Base.stack(cols)
-
-        st3 = if length(inshape) <= 1
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
-    elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
-    else
-        cols
+        res
     end
 end
 
@@ -1341,7 +1365,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -1360,7 +1384,7 @@ of shape `size(output)` of values of the input type.
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     
     if num * chunk == n_out_val
         last_size = chunk
@@ -1368,7 +1392,7 @@ of shape `size(output)` of values of the input type.
     else
         last_size = n_out_val - (num-1)*chunk
         tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     end
 
     tmp = ntuple(num) do i
@@ -1417,7 +1441,7 @@ of shape `size(output)` of values of the input type.
     end
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
@@ -1430,7 +1454,7 @@ end
     else
         Val(codegen_world_age(Core.Typeof(f), tt))
     end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten))
+    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
     tmp = ntuple(n_outs) do i
         Base.@_inline_meta
         z = make_zero(x)
@@ -1466,12 +1490,12 @@ end
     end
 end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, Holomorphic, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, Holomorphic}
     res = f(x)
     jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(length(res)))
+        jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(length(res)))
     elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
+        gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
     else
         throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
     end
@@ -1540,7 +1564,7 @@ res
 """
 @inline function hvp!(res::X, f::F, x::X, v::X) where {F, X}
     grad = make_zero(x)
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient!, Const(Reverse), DuplicatedNoNeed(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 
@@ -1575,7 +1599,7 @@ grad
 ```
 """
 @inline function hvp_and_gradient!(res::X, grad::X, f::F, x::X, v::X) where {F, X}
-    Enzyme.autodiff(Forward, gradient_deferred!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
+    Enzyme.autodiff(Forward, gradient!, Const(Reverse),  Duplicated(grad, res), Const(f), Duplicated(x, v))
     return nothing
 end
 

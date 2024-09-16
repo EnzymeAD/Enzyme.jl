@@ -24,9 +24,13 @@ function ChainRulesCore.rrule(::typeof(MockModule.mock_function), x)
     return y, ȳ -> 2 * ȳ
 end
 
-fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
-fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[2]
+fdiff(f, x::Number) = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(x, one(x)))[1]
+fdiff(f, x::MockModule.MockType) = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[1]
 
+fdiff2(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[1]
+fdiff2(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[1]
+
+<<<<<<< HEAD
 @testset "ChainRulesCore ext" begin
     @testset "import_frule" begin
         f1(x) = 2*x
@@ -151,6 +155,72 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
             # test_reverse(Base.sort, BatchDuplicated, (x, Const))
             # test_reverse(Base.sort, BatchDuplicatedNoNeed, (x, Const))
         end
+=======
+@testset "import_frule" begin
+    f1(x) = 2*x
+    ChainRulesCore.@scalar_rule f1(x)  (5*one(x),)
+    Enzyme.@import_frule typeof(f1) Any
+    @test fdiff(f1, 1f0) === 5f0
+    @test fdiff(f1, 1.0) === 5.0
+    @test fdiff2(f1, 1f0) === 5f0
+    @test fdiff2(f1, 1.0) === 5.0
+
+    # specific signature    
+    f2(x) = 2*x
+    ChainRulesCore.@scalar_rule f2(x)  (5*one(x),)
+    Enzyme.@import_frule typeof(f2) Float32
+    @test fdiff(f2, 1f0) === 5f0
+    @test fdiff(f2, 1.0) === 2.0
+    @test fdiff2(f2, 1f0) === 5f0
+    @test fdiff2(f2, 1.0) === 2.0
+
+    # two arguments
+    f3(x, y) = 2*x + y
+    ChainRulesCore.@scalar_rule f3(x, y)  (5*one(x), y)
+    Enzyme.@import_frule typeof(f3) Any Any    
+    @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
+    @test fdiff(y -> f3(1.0, y), 2.) === 2.0
+    @test fdiff2(x -> f3(x, 1.0), 2.) === 5.0
+    @test fdiff2(y -> f3(1.0, y), 2.) === 2.0
+
+    # external module (checks correct type escaping, PR #1446)
+    Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
+    @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
+
+    @testset "batch duplicated" begin 
+        x = [1.0, 2.0, 0.0]        
+        Enzyme.@import_frule typeof(Base.sort) Any
+
+        test_forward(Base.sort, Duplicated, (x, Duplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Duplicated, (x, DuplicatedNoNeed))
+        test_forward(Base.sort, DuplicatedNoNeed, (x, Duplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, DuplicatedNoNeed, (x, DuplicatedNoNeed))
+        test_forward(Base.sort, Const, (x, Duplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Const, (x, DuplicatedNoNeed))
+
+        test_forward(Base.sort, Const, (x, Const))
+
+        # ChainRules does not support this case (returning notangent)
+        # test_forward(Base.sort, Duplicated, (x, Const))
+        # test_forward(Base.sort, DuplicatedNoNeed, (x, Const))
+
+        test_forward(Base.sort, BatchDuplicated, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, BatchDuplicated, (x, BatchDuplicatedNoNeed))
+        test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicatedNoNeed))
+        test_forward(Base.sort, Const, (x, BatchDuplicated))
+        # Unsupported by EnzymeTestUtils
+        # test_forward(Base.sort, Const, (x, BatchDuplicatedNoNeed))        
+        
+        # ChainRules does not support this case (returning notangent)
+        # test_forward(Base.sort, BatchDuplicated, (x, Const))
+        # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, Const))
+>>>>>>> bd5dcd10c703c43d5fbabb1e851b849089244dfd
     end
 end
 

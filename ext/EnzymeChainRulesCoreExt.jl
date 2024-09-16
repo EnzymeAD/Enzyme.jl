@@ -54,7 +54,7 @@ function Enzyme._import_frule(fn, tys...)
     end
 
     quote
-        function EnzymeRules.forward(fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.forward(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
             batchsize = same_or_one(1, $(vals...))
             if batchsize == 1
                 dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval

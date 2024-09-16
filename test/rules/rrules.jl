@@ -15,7 +15,7 @@ end
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -23,7 +23,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -31,13 +31,13 @@ function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape,
     end
 end
 
-function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function augmented_primal(::RevConfig{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     v = x.val[1]
     x.val[1] *= v
     return AugmentedReturn(nothing, nothing, v)
 end
 
-function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
+function reverse(::RevConfig{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
     return (nothing,)
 end
@@ -107,7 +107,7 @@ end
 end
 
 q(x) = x^2
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(q)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(q)}, ::Type{<:Active}, x::Active)
     tape = (Ref(2.0), Ref(3.4))
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, tape)
@@ -116,7 +116,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(q)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(q)}, dret::Active, tape, x::Active)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(q)}, dret::Active, tape, x::Active)
     @test tape[1][] == 2.0
     @test tape[2][] == 3.4
     if needs_primal(config)
@@ -133,7 +133,7 @@ end
 foo(x::Complex) = 2x
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(foo)},
     ::Type{<:Active},
     x
@@ -154,7 +154,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(foo)},
     dret,
     tape,
@@ -177,7 +177,7 @@ function _dot(X::StridedArray{T}, Y::StridedArray{T}) where {T<:Union{Real,Compl
 end
 
 function augmented_primal(
-    config::ConfigWidth{1},
+    config::RevConfigWidth{1},
     func::Const{typeof(_dot)},
     ::Type{<:Union{Const,Active}},
     X::Duplicated{<:StridedArray{T}},
@@ -191,7 +191,7 @@ function augmented_primal(
 end
 
 function reverse(
-    ::ConfigWidth{1},
+    ::RevConfigWidth{1},
     ::Const{typeof(_dot)},
     dret::Union{Active,Type{<:Const}},
     tape,
@@ -235,7 +235,7 @@ function cprimal(x0, y0)
     return @inbounds x[1]
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
     y::Duplicated, x::Duplicated)
     cmyfunc!(y.val, x.val)
     tape = (copy(x.val), 3)
@@ -243,7 +243,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof
 end
 
 const seen = Set()
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
     y::Duplicated,  x::Duplicated)
     xval = tape[1] 
     p = pointer(xval)
@@ -265,7 +265,7 @@ function remultr(arg)
     arg * arg
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
     ::Type{<:Active}, args::Vararg{Active,N}) where {N}
     primal = if EnzymeRules.needs_primal(config)
         func.val(args[1].val)
@@ -275,7 +275,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof
     return AugmentedReturn(primal, nothing, nothing)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
 
     dargs = ntuple(Val(N)) do i
@@ -315,7 +315,7 @@ function (cl::Closure)(x)
 end
 
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Closure},
     ::Type{<:Active}, args::Vararg{Active,N}) where {N}
     vec = copy(func.val.v)
     pval = func.val(args[1].val)
@@ -327,7 +327,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closur
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{Closure},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
     dargs = ntuple(Val(N)) do i
         7 * args[1].val * dret.val + tape[1] * 1000
@@ -377,7 +377,7 @@ end
 
 unstabletape(x) = x^2
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(unstabletape)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(unstabletape)}, ::Type{<:Active}, x::Active)
     tape = if x.val < 3
         400
     else
@@ -390,7 +390,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(unstabletap
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where T
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where T
     return (T(tape)::T,)
 end
 

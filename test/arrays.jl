@@ -359,7 +359,6 @@ function bc2_loss_function(x, scale, bias)
 end
 
 #WARN: why is this segfaulting right now???
-#=
 @testset "Broadcast noalias" begin
     x = ones(30)
     autodiff(Reverse, bc0_test_function, Active, Const(x))
@@ -373,7 +372,6 @@ end
     Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
         Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
 end
-=#
 
 @testset "BLAS" begin
     x = [2.0, 3.0]

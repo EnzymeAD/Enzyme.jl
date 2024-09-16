@@ -335,7 +335,7 @@ end
             GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             LLVM.memset!(B, get_array_data(B, shadowres), LLVM.ConstantInt(i8, 0, false), length, algn)
         end
-        if API.runtimeActivity()
+        if get_runtime_activity(gutils)
             prev = new_from_original(gutils, orig)
             shadowres = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, shadowin, new_from_original(gutils, origops[1])), shadowres, prev)
             API.moveBefore(prev, shadowres, B)
@@ -358,7 +358,7 @@ end
                 GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
                 LLVM.memset!(B, get_array_data(B, callv), LLVM.ConstantInt(i8, 0, false), length, algn)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 prev = new_from_original(gutils, orig)
                 callv = LLVM.select!(B, LLVM.icmp!(B, LLVM.API.LLVMIntNE, ev, new_from_original(gutils, origops[1])), callv, prev)
                 if idx == 1
@@ -1094,7 +1094,7 @@ end
             else
                 extract_value!(B, shadowin, idx-1)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 emit_error(B, orig, "Enzyme: Not yet implemented runtime activity for reverse of jl_array_del_end")
             end
             args = LLVM.Value[anti, offset]
@@ -1329,6 +1329,46 @@ end
 end
 
 
+@register_fwd function deferred_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    err = emit_error(B, orig, "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    return false
+end
+
+@register_aug function deferred_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    err = emit_error(B, orig, "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
+    normal = (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        unsafe_store!(shadowR, normal.ref)
+    end
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
+    return false
+end
+
+@register_rev function deferred_rev(B, orig, gutils, tape)
+    return nothing
+end
+
+
 function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler=nothing)
     for variant in variants
         if augfwd_handler !== nothing && rev_handler !== nothing
@@ -1521,6 +1561,12 @@ end
         @augfunc(finalizer_augfwd),
         @revfunc(finalizer_rev),
         @fwdfunc(finalizer_fwd),
+    )
+    register_handler!(
+        ("deferred_codegen",),
+        @augfunc(deferred_augfwd),
+        @revfunc(deferred_rev),
+        @fwdfunc(deferred_fwd),
     )
     register_handler!(
         ("jl_array_grow_end","ijl_array_grow_end"),

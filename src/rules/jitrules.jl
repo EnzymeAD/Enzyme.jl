@@ -187,10 +187,25 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     end
 
     retres = if Width == 1
-        :(return ReturnType((res[1], res[2])))
+        :(return ReturnType((res[2], res[1])))
     else
-        :(return ReturnType((res[1], res[2]...)))
+        :(return ReturnType((res[2], res[1]...)))
     end
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
+
     return quote
         args = ($(wrapped...),)
 
@@ -218,9 +233,9 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
         world = codegen_world_age(FT, tt)
         opt_mi = Val(world)
-        forward = thunk(opt_mi, (dupClosure ? Duplicated : Const){FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(($(ModifiedBetween...),)), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+        forward = thunk(opt_mi, dupClosure ? $dupty : Const{FT}, annotation, tt′, Val(API.DEM_ForwardMode), width, #=ModifiedBetween=#Val(($(ModifiedBetween...),)), #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
-        res = forward(dupClosure ? Duplicated(f, df) : Const(f), args...)
+        res = forward(dupClosure ? $dup : Const(f), args...)
 
         if length(res) == 0
             return ReturnType(($(nnothing...),))
@@ -238,13 +253,13 @@ function func_runtime_generic_fwd(N, Width)
     body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 
     quote
-        function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+@generated function runtime_generic_fwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, RuntimeActivity, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _, _, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -304,6 +319,21 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
     else
         :(return ReturnType((origRet, shadow_return..., tape)))
     end
+    
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
 
     return quote
         $(active_refs...)
@@ -331,11 +361,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         world = codegen_world_age(FT, tt)
 
         opt_mi = Val(world)
-        forward, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
+        forward, adjoint = thunk(opt_mi, dupClosure0 ? $dupty : Const{FT},
                                  annotationA, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
-        internal_tape, origRet, initShadow = forward(dupClosure0 ? Duplicated(f, df) : Const(f), args...)
+        internal_tape, origRet, initShadow = forward(dupClosure0 ? $dup : Const(f), args...)
         annotation = annotationA
 
         resT = typeof(origRet)
@@ -358,13 +388,13 @@ function func_runtime_generic_augfwd(N, Width)
     body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
 
     quote
-        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, RuntimeActivity, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...)::ReturnType where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...)::ReturnType where {ActivityTup, MB, RuntimeActivity, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
@@ -435,6 +465,21 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         @inbounds Types[i] = Symbol("type_$i")
     end
 
+    dup = if Width == 1
+        :(Duplicated(f, df))
+    else
+        fargs = [:df]
+        for i in 2:Width
+            push!(fargs, Symbol("df_$i"))
+        end
+        :(BatchDuplicated(f, ($(fargs...),)))
+    end
+    dupty = if Width == 1
+        :(Duplicated{FT})
+    else
+        :(BatchDuplicated{FT, $Width})
+    end
+
     quote
         $(active_refs...)
         args = ($(wrapped...),)
@@ -460,14 +505,14 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         world = codegen_world_age(FT, tt)
 
         opt_mi = Val(world)
-        _, adjoint = thunk(opt_mi, dupClosure0 ? Duplicated{FT} : Const{FT},
+        _, adjoint = thunk(opt_mi, dupClosure0 ? $dupty : Const{FT},
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
 
         tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
-            adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., $shadowret, tape.internal_tape)[1]
+            adjoint(dupClosure0 ? $dup : Const(f), args..., $shadowret, tape.internal_tape)[1]
         else
-            adjoint(dupClosure0 ? Duplicated(f, df) : Const(f), args..., tape.internal_tape)[1]
+            adjoint(dupClosure0 ? $dup : Const(f), args..., tape.internal_tape)[1]
         end
 
         $(outs...)
@@ -480,13 +525,13 @@ function func_runtime_generic_rev(N, Width)
     body = body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
 
     quote
-        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_generic_rev(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_generic_rev(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, RuntimeActivity, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs = setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
@@ -676,7 +721,7 @@ end
 end
 
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
-function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, args::Vararg{Annotation, Nargs})::ReturnType where {width, dupClosure0, ReturnType, FT, tt′, DF, Nargs}
+function fwddiff_with_return(runtimeActivity::Val{RuntimeActivity}, ::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, args::Vararg{Annotation, Nargs})::ReturnType where {RuntimeActivity, width, dupClosure0, ReturnType, FT, tt′, DF, Nargs}
     ReturnPrimal = Val(true)
     ModifiedBetween = Val(Enzyme.falses_from_args(Nargs+1))
 
@@ -714,14 +759,14 @@ function fwddiff_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType
     end
     opt_mi = Val(world)
     res = thunk(opt_mi, FA, annotation, tt′, #=Mode=# Val(API.DEM_ForwardMode), Val(width),
-                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))(fa, args...)
+                                     ModifiedBetween, ReturnPrimal, #=ShadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)(fa, args...)
     return if annotation <: Const
         ReturnType(allFirst(Val(width+1), res))
     else
         if width == 1
-            ReturnType((res[1], res[2]))
+            ReturnType((res[2], res[1]))
         else
-            ReturnType((res[1], res[2]...))
+            ReturnType((res[2], res[1]...))
         end
     end
 end
@@ -736,7 +781,7 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
-        fwddiff_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, FT, tt′, f, df, args...)::ReturnType
+        fwddiff_with_return(runtimeActivity, Val($Width), Val(ActivityTup[1]), ReturnType, FT, tt′, f, df, args...)::ReturnType
     end
 end
 
@@ -745,13 +790,13 @@ function func_runtime_iterate_fwd(N, Width)
     body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 
     quote
-        function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, ReturnType, F, DF, $(typeargs...)}
+        function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, Width, ReturnType, F, DF}
+@generated function runtime_iterate_fwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, RuntimeActivity, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _, _, active_refs = setup_macro_wraps(true, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
@@ -822,7 +867,7 @@ end
 end
 
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
-function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}, ::Val{ModifiedBetween0}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, args::Vararg{Annotation, Nargs})::ReturnType where {width, dupClosure0, ReturnType, ModifiedBetween0, FT, tt′, DF, Nargs}
+function augfwd_with_return(runtimeActivity::Val{RuntimeActivity}, ::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}, ::Val{ModifiedBetween0}, ::Type{FT}, ::Type{tt′}, f::FT, df::DF, args::Vararg{Annotation, Nargs})::ReturnType where {RuntimeActivity, width, dupClosure0, ReturnType, ModifiedBetween0, FT, tt′, DF, Nargs}
     ReturnPrimal = Val(true)
     ModifiedBetween = Val(ModifiedBetween0)
 
@@ -869,7 +914,7 @@ function augfwd_with_return(::Val{width}, ::Val{dupClosure0}, ::Type{ReturnType}
         opt_mi = Val(world)
         forward, adjoint = thunk(opt_mi, FA,
                                  annotation, tt′, Val(API.DEM_ReverseModePrimal), Val(width),
-                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+                                 ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
         forward(fa, args...)
     else
         nothing, primal_tuple(args...), annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
@@ -933,7 +978,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
-        tmpvals = augfwd_with_return(Val($Width), Val(ActivityTup[1]), ReturnType, Val(concat($(modbetween...))), FT, tt′, f, df, args...)::ReturnType
+        tmpvals = augfwd_with_return(runtimeActivity, Val($Width), Val(ActivityTup[1]), ReturnType, Val(concat($(modbetween...))), FT, tt′, f, df, args...)::ReturnType
         ReturnType(($(results...), (tmpvals[$(Width+2)], refs)))
     end
 end
@@ -943,13 +988,13 @@ function func_runtime_iterate_augfwd(N, Width)
     body = body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
 
     quote
-        function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, ReturnType, F, DF, $(typeargs...)}
+        function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, MB, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, ReturnType, F, DF}
+@generated function runtime_iterate_augfwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, allargs...) where {ActivityTup, RuntimeActivity, MB, Width, ReturnType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     _, _, primtypes, _, _, wrapped, _ , modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true)
     return body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
@@ -970,7 +1015,7 @@ function add_into_vec!(val::T, expr, vec, idx_in_vec) where T
 end
 
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
-@generated function rev_with_return(::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween0}, ::Val{lengths}, ::Type{FT}, ::Type{ttp}, f::FT, df::DF, tape, shadowargs, args::Vararg{Annotation, Nargs})::Nothing where {width, dupClosure0, ModifiedBetween0, lengths, FT, ttp, DF, Nargs}
+@generated function rev_with_return(runtimeActivity::Val{RuntimeActivity}, ::Val{width}, ::Val{dupClosure0}, ::Val{ModifiedBetween0}, ::Val{lengths}, ::Type{FT}, ::Type{ttp}, f::FT, df::DF, tape, shadowargs, args::Vararg{Annotation, Nargs})::Nothing where {RuntimeActivity, width, dupClosure0, ModifiedBetween0, lengths, FT, ttp, DF, Nargs}
 
     nontupexprs = Vector{Expr}(undef, Nargs)
     for i in 1:Nargs
@@ -1092,7 +1137,7 @@ end
             opt_mi = Val(world)
             forward, adjoint = thunk(opt_mi, FA,
                                      annotation, $ttp, Val(API.DEM_ReverseModePrimal), Val($width),
-                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false))
+                                     ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
             
             tup = if tape.shadow_return !== nothing
                 $shadadj
@@ -1155,7 +1200,7 @@ function body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, shado
         args = ($(wrappedexexpand...),)
         tt′    = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
-        rev_with_return(Val($Width), Val(ActivityTup[1]), Val(concat($(modbetween...))), Val(concat($(lengths...))), FT, tt′, f, df, tape0, ($(shadowsplat...),), args...)
+        rev_with_return(runtimeActivity, Val($Width), Val(ActivityTup[1]), Val(concat($(modbetween...))), Val(concat($(lengths...))), FT, tt′, f, df, tape0, ($(shadowsplat...),), args...)
         return nothing
     end
 end
@@ -1165,13 +1210,13 @@ function func_runtime_iterate_rev(N, Width)
     body = body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
 
     quote
-        function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, MB, TapeType, F, DF, $(typeargs...)}
+        function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
 end
 
-@generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, MB, Width, TapeType, F, DF}
+@generated function runtime_iterate_rev(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, allargs...) where {ActivityTup, RuntimeActivity, MB, Width, TapeType, F, DF}
     N = div(length(allargs)+2, Width+1)-1
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs = setup_macro_wraps(false, N, Width, :allargs, #=iterate=#true; reverse=true)
     return body_runtime_iterate_rev(N, Width, modbetween, wrapped, primargs, batchshadowargs, active_refs)
@@ -1187,7 +1232,7 @@ for (N, Width) in Iterators.product(0:30, 1:10)
     eval(func_runtime_iterate_rev(N, Width))
 end
 
-function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true, firstconst_after_tape=true)
+function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,  lookup; sret=nothing, tape=nothing, firstconst=false, endcast=true, firstconst_after_tape=true, runtime_activity=true)
     width = get_width(gutils)
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1234,7 +1279,7 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
             if lookup
                 inverted = lookup_value(gutils, inverted, B)
             end
-            if API.runtimeActivity()
+            if get_runtime_activity(gutils)
                 inv_0 = if width == 1
                     inverted
                 else
@@ -1295,6 +1340,9 @@ function generic_setup(orig, func, ReturnType, gutils, start, B::LLVM.IRBuilder,
     end
 
     pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
+    if runtime_activity
+        pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
+    end
     etup0 = emit_tuple!(B, ActivityList)
     etup =  emit_apply_type!(B, Base.Val, [etup0])
     if isa(etup, LLVM.Instruction)

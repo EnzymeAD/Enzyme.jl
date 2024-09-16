@@ -57,7 +57,7 @@ using .EnzymeRules
 
 # In this section, we write a simple forward rule to start out:
 
-function forward(func::Const{typeof(f)}, ::Type{<:Duplicated}, y::Duplicated, x::Duplicated)
+function forward(config::FwdConfig, func::Const{typeof(f)}, ::Type{<:Duplicated}, y::Duplicated, x::Duplicated)
     println("Using custom rule!")
     ret = func.val(y.val, x.val)
     y.dval .= 2 .* x.val .* x.dval
@@ -65,6 +65,7 @@ function forward(func::Const{typeof(f)}, ::Type{<:Duplicated}, y::Duplicated, x:
 end
 
 # In the signature of our rule, we have made use of `Enzyme`'s activity annotations. Let's break down each one:
+# - the [`FwdConfig`](@ref) configuration passes certain compile-time information about differentiation procedure (the width, and if we're using runtime activity),
 # - the [`Const`](@ref) annotation on `f` indicates that we accept a function `f` that does not have a derivative component,
 #   which makes sense since `f` is not a closure with data that could be differentiated. 
 # - the [`Duplicated`](@ref) annotation given in the second argument annotates the return value of `f`. This means that
@@ -96,7 +97,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # To squeeze out the last drop of performance, the below rule avoids computing the output of the original function and 
 # just computes its derivative.
 
-function forward(func::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, y::Duplicated, x::Duplicated)
+function forward(config, func::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, y::Duplicated, x::Duplicated)
     println("Using custom rule with DuplicatedNoNeed output.")
     y.val .= x.val.^2 
     y.dval .= 2 .* x.val .* x.dval
@@ -127,7 +128,7 @@ dy = [0.0, 0.0]
 
 Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any}))) # delete our old rules
 
-function forward(func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, 
+function forward(config, func::Const{typeof(f)}, RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}}, 
                  y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
     println("Using our general custom rule!")
     y.val .= x.val.^2 
@@ -167,7 +168,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # Let's look at how to write a simple reverse-mode rule! 
 # First, we write a method for [`EnzymeRules.augmented_primal`](@ref):
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
                           y::Duplicated, x::Duplicated)
     println("In custom augmented primal rule.")
     ## Compute primal
@@ -202,7 +203,7 @@ end
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
 
-function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
+function reverse(config::RevConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
                  y::Duplicated, x::Duplicated)
     println("In custom reverse rule.")
     ## retrieve x value, either from original x or from tape if x may have been overwritten.
