@@ -1351,7 +1351,7 @@ of shape `size(input)` of values of the output type.
     end
     x = args[2]
     res = if x isa AbstractFloat
-        cols[1]
+        cols
     elseif length(cols) > 0 && cols[1] isa AbstractArray
         inshape = size(x)
         outshape = size(cols[1])
