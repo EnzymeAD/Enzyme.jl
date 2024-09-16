@@ -106,12 +106,12 @@ const TypeTreeEmptyPointers = (
 function get_offsets(@nospecialize(T::Type))
     for sT in (Integer, TypeTreePrimitives...)
         if T <: sT
-            return ((typetree_primitive(T), 0))
+            return ((typetree_primitive(T), 0),)
         end
     end
     for sT in (DataType, AbstractString, TypeTreeEmptyPointers...)
         if T <: sT
-            return ((API.DT_Pointer, 0))
+            return ((API.DT_Pointer, 0),)
         end
     end
 
@@ -122,7 +122,7 @@ else
 end
     for sT in TypeTreeEmptyPointers
         if T <: sT
-            return ((API.DT_Pointer, 0))
+            return ((API.DT_Pointer, 0),)
         end
     end
 
