@@ -672,7 +672,7 @@ ftype when called with args of type `argtypes`.
 The forward function will return the primal (if requested) and the shadow
 (or nothing if not a `Duplicated` variant).
 
-Example returning both original return and derivative:
+Example returning both the return derivative and original return:
 
 ```jldoctest
 a = 4.2
@@ -685,7 +685,7 @@ res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
 
-(9.8596, 6.28)
+(6.28, 9.8596)
 ```
 
 Example returning just the derivative:
