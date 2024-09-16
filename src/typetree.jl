@@ -98,11 +98,9 @@ end
 
 const TypeTreeEmptyPointers = (
     BigFloat,
-    DataType,
     Any,
     Symbol,
     Union{},
-    AbstractString
 )
 
 function get_offsets(@nospecialize(T::Type))
@@ -111,7 +109,7 @@ function get_offsets(@nospecialize(T::Type))
             return ((typetree_primitive(T), 0))
         end
     end
-    for sT in (DataType..., TypeTreeEmptyPointers)
+    for sT in (DataType, AbstractString, TypeTreeEmptyPointers...)
         if T <: sT
             return ((API.DT_Pointer, 0))
         end
@@ -219,6 +217,9 @@ for sT in TypeTreePrimitives
 end
 
 function typetree_inner(::Type{<:DataType}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree()
+end
+function typetree_inner(::Type{<:AbstractString}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
 for sT in TypeTreeEmptyPointers
