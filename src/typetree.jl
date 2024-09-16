@@ -169,7 +169,7 @@ function to_fullmd(@nospecialize(T::Type))
         end
         push!(mds, LLVM.Metadata(LLVM.ConstantInt(sO)))
     end
-    return MDNode(mds)
+    return LLVM.MDNode(mds)
 end
 
 function to_md(tt::TypeTree, ctx)
