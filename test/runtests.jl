@@ -1745,7 +1745,7 @@ end
     @test 20.0 ≈ res[1][2]
     @test 2.0 ≈ res[2][1]
 
-    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicatedNoNeed, BatchDuplicated(x, (dx, dx2)))
+    res = Enzyme.autodiff(Forward, fwdlatestfoo, BatchDuplicated, BatchDuplicated(x, (dx, dx2)))
     @test 2.0 ≈ res[1][1]
     @test 20.0 ≈ res[1][2]
 
