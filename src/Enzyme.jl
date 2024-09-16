@@ -1349,10 +1349,11 @@ of shape `size(input)` of values of the output type.
     else
         gradtup
     end
-    res = if args[1] isa AbstractFloat
+    x = args[2]
+    res = if x isa AbstractFloat
         cols[1]
     elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(args[1])
+        inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
         st = Base.stack(cols)
@@ -1364,8 +1365,8 @@ of shape `size(input)` of values of the output type.
         end
 
         st3
-    elseif args[1] isa AbstractArray
-        inshape = size(args[1])
+    elseif x isa AbstractArray
+        inshape = size(x)
         reshape(collect(cols), inshape)
     else
         cols
