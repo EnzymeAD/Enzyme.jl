@@ -640,6 +640,28 @@ result, ∂v, ∂A
 end
 
 """
+    autodiff(::Function, ::Mode, args...)
+
+Specialization of [`autodiff`](@ref) to handle do argument closures.
+
+```jldoctest
+
+autodiff(Reverse, Active(3.1)) do x
+  return x*x
+end
+
+# output
+((6.2,),)
+```
+"""
+@inline function autodiff(f::Function, m::MMode, ::Type{A}, args::Vararg{Annotation, Nargs}) where {A<:Annotation, Nargs, MMode<:Mode}
+  autodiff(m, f, A, args...)
+end
+@inline function autodiff(f::Function, m::MMode, args::Vararg{Annotation, Nargs}) where {Nargs, MMode<:Mode}
+  autodiff(m, f, args...)
+end
+
+"""
     autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
 
 Provide the thunk forward mode function for annotated function type
