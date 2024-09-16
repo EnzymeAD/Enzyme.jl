@@ -1452,7 +1452,7 @@ end
 @testset "Attributor issues" begin
 
     cor = fquantile(2.0)
-    res = autodiff(Forward, fquantile, Duplicated,Duplicated(2.0, 1.0))
+    res = autodiff(ForwardWithPrimal, fquantile, Duplicated,Duplicated(2.0, 1.0))
     @test cor ≈ res[2]
     @test 0.7 ≈ res[1]
 
