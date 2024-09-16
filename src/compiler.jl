@@ -5,7 +5,7 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
                BatchDuplicatedNoNeed,
                BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
-               API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md,
+               API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md, to_fullmd,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
@@ -6123,7 +6123,26 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             if length(blocks(fn)) != 0
                 continue
             end
+            
+            intr = LLVM.API.LLVMGetIntrinsicID(fn)
+
+            if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id || intr == LLVM.Intrinsic("llvm.memset").id
+                legal, jTy = abs_typeof(operands(inst)[1])
+                sz = if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id
+                    operands(inst)[3]
+                else
+                    operands(inst)[3]
+                end
+                if legal && Base.isconcretetype(jTy)
+                    if !(jTy isa UnionAll || jTy isa Union || jTy == Union{} || jTy === Tuple  || (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)))
+                        if isa(sz, LLVM.ConstantInt) && sizeof(jTy) == convert(Int, sz)
+                            metadata(sretPtr)["enzyme_truetype"] = to_fullmd(jTy, ctx, dl)
+                        end
+                    end
+                end
+            end
         end
+
         ty = value_type(inst)
         if ty == LLVM.VoidType()
             continue

@@ -59,6 +59,124 @@ function merge!(dst::TypeTree, src::TypeTree; consume=true)
     return nothing
 end
 
+@inline function typetree_primitive(t)
+    return nothing
+end
+@inline function typetree_primitive(::Type{T}) where {T<:Integer}
+    return API.DT_Integer
+end
+@inline function typetree_primitive(::Type{Char})
+    return API.DT_Integer
+end
+@inline function typetree_primitive(::Type{Float16})
+    return API.DT_Half
+end
+@inline function typetree_primitive(::Type{Float32})
+    return API.DT_Float
+end
+@inline function typetree_primitive(::Type{Float64})
+    return API.DT_Double
+end
+
+
+@static if VERSION >= v"1.11-"
+const TypeTreePrimitives = (
+    Char,
+    Float16,
+    Float32,
+    Float64,
+    Core.BFloat16
+)
+else
+const TypeTreePrimitives = (
+    Char,
+    Float16,
+    Float32,
+    Float64
+)
+end
+
+const TypeTreeEmptyPointers = (
+    BigFloat,
+    DataType,
+    Any,
+    Symbol,
+    Union{},
+    AbstractString
+)
+
+function get_offsets(@nospecialize(T::Type))
+    for sT in (Integer, TypeTreePrimitives...)
+        if T <: sT
+            return ((typetree_primitive(T), 0))
+        end
+    end
+    for sT in (DataType..., TypeTreeEmptyPointers)
+        if T <: sT
+            return ((API.DT_Pointer, 0))
+        end
+    end
+
+@static if VERSION < v"1.11-"
+    TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array)
+else
+    TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array, GenericMemory)
+end
+    for sT in TypeTreeEmptyPointers
+        if T <: sT
+            return ((API.DT_Pointer, 0))
+        end
+    end
+
+    @assert !(T <: AbstractFloat)
+
+    if fieldcount(T) == 0
+        return ()
+    end
+
+    results = Tuple{API.CConcreteType, Int}[]
+    for f in 1:fieldcount(T)
+        offset = fieldoffset(T, f)
+        subT = fieldtype(T, f)
+
+        if !allocatedinline(subT) || subT isa UnionAll || subT isa Union || subT == Union{}
+            push!(results, (API.DT_Pointer, offset))
+            continue
+        end
+        
+        for (sT, sO) in get_offsets(subT)
+            push!(results, (sT, sO+offset))
+        end
+    end
+    return results
+end
+
+const ctype_to_string = Dict{API.CConcreteType, String}(
+
+)
+function to_fullmd(@nospecialize(T::Type))
+    mds = Metadata[]
+    for (sT, sO) in get_offsets(T)
+        if sT == API.DT_Pointer
+            push!(mds, MDString("Pointer"))
+        elseif sT == API.DT_Integer
+            push!(mds, MDString("Integer"))
+        elseif sT == API.DT_Half
+            push!(mds, MDString("Float@half"))
+        elseif sT == API.DT_Float
+            push!(mds, MDString("Float@float"))
+        elseif sT == API.DT_BFloat16
+            push!(mds, MDString("Float@bfloat16"))
+        elseif sT == API.DT_Double
+            push!(mds, MDString("Float@double"))
+        else
+            @assert false
+        end
+        push!(mds, Metadata(LLVM.ConstantInt(sO)))
+    end
+    return MDNode(mds)
+end
+
 function to_md(tt::TypeTree, ctx)
     return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme),
                                                     LLVM.API.LLVMValueRef,
@@ -91,47 +209,24 @@ function typetree(@nospecialize(T::Type), ctx, dl, seen=TypeTreeTable())
     return tree::TypeTree
 end
 
-function typetree_inner(::Type{T}, ctx, dl, seen::TypeTreeTable) where {T<:Integer}
+function typetree_inner(::Type{<:Integer}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Integer, -1, ctx)
 end
-
-function typetree_inner(::Type{Char}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree(API.DT_Integer, -1, ctx)
-end
-
-function typetree_inner(::Type{Float16}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree(API.DT_Half, -1, ctx)
-end
-
-function typetree_inner(::Type{Float32}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree(API.DT_Float, -1, ctx)
-end
-
-function typetree_inner(::Type{Float64}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree(API.DT_Double, -1, ctx)
-end
-
-@static if VERSION >= v"1.11-"
-function typetree_inner(::Type{Core.BFloat16}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree(API.DT_BFloat16, -1, ctx)
-end
-end
-
-function typetree_inner(::Type{BigFloat}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
+for sT in TypeTreePrimitives
+    @eval function typetree_inner(::Type{$sT}, ctx, dl, seen::TypeTreeTable)
+            return TypeTree($(typetree_primitive(sT)), -1, ctx)
+    end
 end
 
 function typetree_inner(::Type{<:DataType}, ctx, dl, seen::TypeTreeTable)
     return TypeTree()
 end
-
-function typetree_inner(::Type{Any}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
+for sT in TypeTreeEmptyPointers
+    @eval function typetree_inner(::Type{$sT}, ctx, dl, seen::TypeTreeTable)
+            return TypeTree()
+    end
 end
 
-function typetree_inner(::Type{Symbol}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
-end
 
 function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
@@ -139,14 +234,6 @@ function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
-end
-
-function typetree_inner(::Type{Union{}}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
-end
-
-function typetree_inner(::Type{<:AbstractString}, ctx, dl, seen::TypeTreeTable)
-    return TypeTree()
 end
 
 function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
