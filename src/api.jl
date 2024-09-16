@@ -156,30 +156,30 @@ end
 #  \p AtomicAdd is whether to perform all adjoint updates to memory in an atomic way
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreatePrimalAndGradient(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, dretUsed, mode, width, additionalArg, 
+                                       returnValue, dretUsed, mode, runtimeActivity, width, additionalArg, 
                                        forceAnonymousTape, typeInfo,
                                        uncacheable_args, augmented, atomicAdd)
     freeMemory = true
     ccall((:EnzymeCreatePrimalAndGradient, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, Cuint, UInt8, LLVMTypeRef, UInt8, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, UInt8, CDerivativeMode, UInt8, Cuint, UInt8, LLVMTypeRef, UInt8, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr, UInt8),
         logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        dretUsed, mode, width, freeMemory, additionalArg, forceAnonymousTape, typeInfo, uncacheable_args, length(uncacheable_args),
+        dretUsed, mode, runtimeActivity, width, freeMemory, additionalArg, forceAnonymousTape, typeInfo, uncacheable_args, length(uncacheable_args),
         augmented, atomicAdd)
 end
 
 function EnzymeCreateForwardDiff(logic, todiff, retType, constant_args, TA, 
-                                       returnValue, mode, width, additionalArg, typeInfo,
+                                       returnValue, mode, runtimeActivity, width, additionalArg, typeInfo,
                                        uncacheable_args)
     freeMemory = true
     aug = C_NULL
     ccall((:EnzymeCreateForwardDiff, libEnzyme), LLVMValueRef, 
         (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t,
-         EnzymeTypeAnalysisRef, UInt8, CDerivativeMode, UInt8, Cuint, LLVMTypeRef, CFnTypeInfo,
+         EnzymeTypeAnalysisRef, UInt8, CDerivativeMode, UInt8, UInt8, Cuint, LLVMTypeRef, CFnTypeInfo,
          Ptr{UInt8}, Csize_t, EnzymeAugmentedReturnPtr),
         logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA, returnValue,
-        mode, freeMemory, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args), aug)
+        mode, freeMemory, runtimeActivity, width, additionalArg, typeInfo, uncacheable_args, length(uncacheable_args), aug)
 end
 
 # Create an augmented forward pass.
@@ -195,14 +195,14 @@ end
 #  \p PostOpt is whether to perform basic optimization of the function after synthesis
 function EnzymeCreateAugmentedPrimal(logic, todiff, retType, constant_args, TA,  returnUsed,
                                      shadowReturnUsed,
-                                     typeInfo, uncacheable_args, forceAnonymousTape, width, atomicAdd)
+                                     typeInfo, uncacheable_args, forceAnonymousTape, runtimeActivity, width, atomicAdd)
     ccall((:EnzymeCreateAugmentedPrimal, libEnzyme), EnzymeAugmentedReturnPtr, 
         (EnzymeLogicRef, LLVMValueRef, LLVM.API.LLVMBuilderRef, LLVMValueRef, CDIFFE_TYPE, Ptr{CDIFFE_TYPE}, Csize_t, 
          EnzymeTypeAnalysisRef, UInt8, UInt8, 
-         CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, Cuint, UInt8),
+         CFnTypeInfo, Ptr{UInt8}, Csize_t, UInt8, UInt8, Cuint, UInt8),
         logic, C_NULL, C_NULL, todiff, retType, constant_args, length(constant_args), TA,  returnUsed,
         shadowReturnUsed,
-        typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, width, atomicAdd)
+        typeInfo, uncacheable_args, length(uncacheable_args), forceAnonymousTape, runtimeActivity, width, atomicAdd)
 end
 
 # typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
@@ -252,6 +252,7 @@ EnzymeGradientUtilsErase(gutils, a) = ccall((:EnzymeGradientUtilsErase, libEnzym
 EnzymeGradientUtilsEraseWithPlaceholder(gutils, a, orig, erase) = ccall((:EnzymeGradientUtilsEraseWithPlaceholder, libEnzyme), Cvoid, (EnzymeGradientUtilsRef,LLVMValueRef, LLVMValueRef, UInt8), gutils, a, orig, erase)
 EnzymeGradientUtilsGetMode(gutils) = ccall((:EnzymeGradientUtilsGetMode, libEnzyme), CDerivativeMode, (EnzymeGradientUtilsRef,), gutils)
 EnzymeGradientUtilsGetWidth(gutils) = ccall((:EnzymeGradientUtilsGetWidth, libEnzyme), UInt64, (EnzymeGradientUtilsRef,), gutils)
+EnzymeGradientUtilsGetRuntimeActivity(gutils) = ccall((:EnzymeGradientUtilsGetRuntimeActivity, libEnzyme), UInt8, (EnzymeGradientUtilsRef,), gutils) != 0
 EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall((:EnzymeGradientUtilsNewFromOriginal, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef), gutils, val)
 EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, val, orig) = ccall((:EnzymeGradientUtilsSetDebugLocFromOriginal, libEnzyme), Cvoid, (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef), gutils, val, orig)
 EnzymeGradientUtilsLookup(gutils, val, B) = ccall((:EnzymeGradientUtilsLookup, libEnzyme), LLVMValueRef, (EnzymeGradientUtilsRef, LLVMValueRef, LLVM.API.LLVMBuilderRef), gutils, val, B)
@@ -554,51 +555,6 @@ derivative since it is unused, even if it has an otherwise infinite or nan deriv
 function strong_zero!(val)
     ptr = cglobal((:EnzymeStrongZero, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
-end
-
-"""
-    runtimeActivity!(val::Bool)
-
-Enzyme runs an activity analysis which deduces which values, instructions, etc
-are necessary to be differentiated and therefore involved in the differentiation
-procedure. This runs at compile time. However, there may be implementation flaws
-in this analysis that means that Enzyme cannot deduce that an inactive (const)
-value is actually const. Alternatively, there may be some data which is conditionally
-active, depending on which runtime branch is taken. In these cases Enzyme conservatively
-presumes the value is active.
-
-However, in certain cases, an insufficiently aggressive activity analysis may result
-in derivative errors -- for example by mistakenly using the primal (const) argument
-and mistaking it for the duplicated shadow. As a result this may result in incorrect
-results, or accidental updates to the primal.
-
-This flag enables runntime activity which tells all load/stores to check at runtime
-whether the value they are updating is indeed active (in addition to the compile-time
-activity analysis). This will remedy these such errors, but at a performance penalty
-of performing such checks.
-
-It is on the Enzyme roadmap to add a PotentiallyDuplicated style activity, in addition
-to the current Const and Duplicated styles that will disable the need for this,
-which does  not require the check when a value is guaranteed active, but still supports
-runtime-based activity information.
-
-This function takes an argument to set the runtime activity value, true means it is on,
-and false means off. By default it is off.
-"""
-function runtimeActivity!(val::Bool)
-    ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
-    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
-end
-
-"""
-    runtimeActivity()
-
-Gets the current value of the runtime activity. See [`runtimeActivity!`](@ref) for
-more information.
-"""
-function runtimeActivity()
-    ptr = cglobal((:EnzymeRuntimeActivityCheck, libEnzyme))
-    return EnzymeGetCLBool(ptr) != 0
 end
 
 """

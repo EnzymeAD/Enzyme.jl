@@ -5,7 +5,7 @@ import Enzyme: Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated,
                BatchDuplicatedNoNeed,
                BatchDuplicatedFunc,
                Annotation, guess_activity, eltype,
-               API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md,
+               API, TypeTree, typetree, TypeTreeTable, only!, shift!, data0!, merge!, to_md, to_fullmd,
                TypeAnalysis, FnTypeInfo, Logic, allocatedinline, ismutabletype
 using Enzyme
 
@@ -954,11 +954,11 @@ end
 function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     println(io, "Constant memory is stored (or returned) to a differentiable variable.")
     println(io, "As a result, Enzyme cannot provably ensure correctness and throws this error.")
-    println(io, "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Activity-of-temporary-storage).")
+    println(io, "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Runtime-Activity).")
     println(io, "If Enzyme should be able to prove this use non-differentable, open an issue!");
     println(io, "To work around this issue, either:");
     println(io, " a) rewrite this variable to not be conditionally active (fastest, but requires a code change), or")
-    println(io, " b) set Enzyme.API.runtimeActivity!(true) immediately after loading Enzyme (which maintains correctness, but may slightly reduce performance).")
+    println(io, " b) set the Enzyme mode to turn on runtime activity (e.g. autodiff(set_runtime_activity(Reverse), ...) ). This will maintain correctness, but may slightly reduce performance.")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
@@ -3324,6 +3324,9 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     ABI::Type{<:ABI}
     # Whether to error if the function is written to
     err_if_func_written::Bool
+
+    # Whether runtime activity is enabled
+    runtimeActivity::Bool
 end
 
 struct UnknownTapeType end
@@ -3843,6 +3846,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     rt = job.config.params.rt
+    runtimeActivity = job.config.params.runtimeActivity
     @assert eltype(rt) != Union{}
 
     shadow_init = job.config.params.shadowInit
@@ -3960,7 +3964,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic, primalf, retType, args_activity, TA, #=returnUsed=# returnUsed,
             #=shadowReturnUsed=#shadowReturnUsed,
-            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, width, #=atomicAdd=# parallel)
+            typeInfo, uncacheable_args, #=forceAnonymousTape=# false, runtimeActivity, width, #=atomicAdd=# parallel)
 
         # 2. get new_primalf and tape
         augmented_primalf = LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
@@ -3988,7 +3992,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
 
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, width,
+            #=returnValue=#false, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeGradient, runtimeActivity, width,
             #=additionalArg=#tape, #=forceAnonymousTape=#false, typeInfo,
             uncacheable_args, augmented, #=atomicAdd=# parallel))
         if wrap
@@ -3999,7 +4003,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         returnUsed &= returnPrimal
         adjointf = LLVM.Function(API.EnzymeCreatePrimalAndGradient(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#returnUsed, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, width,
+            #=returnValue=#returnUsed, #=dretUsed=#false, #=mode=#API.DEM_ReverseModeCombined, runtimeActivity, width,
             #=additionalArg=#C_NULL, #=forceAnonymousTape=#false, typeInfo,
             uncacheable_args, #=augmented=#C_NULL, #=atomicAdd=# parallel))
         augmented_primalf = nothing
@@ -4011,7 +4015,7 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
         returnUsed &= returnPrimal
         adjointf = LLVM.Function(API.EnzymeCreateForwardDiff(
             logic, primalf, retType, args_activity, TA,
-            #=returnValue=#returnUsed, #=mode=#API.DEM_ForwardMode, width,
+            #=returnValue=#returnUsed, #=mode=#API.DEM_ForwardMode, runtimeActivity, width,
             #=additionalArg=#C_NULL, typeInfo,
             uncacheable_args))
         augmented_primalf = nothing
@@ -5495,7 +5499,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
     ForwardModeTypes = ("s", "d", "c", "z")
     ReverseModeTypes = ("s", "d")
     # Tablegen BLAS does not support forward mode yet
-    if !(mode == API.DEM_ForwardMode && Enzyme.API.runtimeActivity())
+    if !(mode == API.DEM_ForwardMode && params.runtimeActivity)
         for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
             for func in (mode == API.DEM_ForwardMode ? ForwardModeDerivatives : ReverseModeDerivatives)
                 for prefix in ("", "cblas_")
@@ -6119,7 +6123,26 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             if length(blocks(fn)) != 0
                 continue
             end
+            
+            intr = LLVM.API.LLVMGetIntrinsicID(fn)
+
+            if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id || intr == LLVM.Intrinsic("llvm.memset").id
+                legal, jTy = abs_typeof(operands(inst)[1])
+                sz = if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id
+                    operands(inst)[3]
+                else
+                    operands(inst)[3]
+                end
+                if legal && Base.isconcretetype(jTy)
+                    if !(jTy isa UnionAll || jTy isa Union || jTy == Union{} || jTy === Tuple  || (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)))
+                        if isa(sz, LLVM.ConstantInt) && sizeof(jTy) == convert(Int, sz)
+                            metadata(inst)["enzyme_truetype"] = to_fullmd(jTy)
+                        end
+                    end
+                end
+            end
         end
+
         ty = value_type(inst)
         if ty == LLVM.VoidType()
             continue
@@ -7124,9 +7147,9 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
-@inline function thunkbase(ctx, mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten}   
+@inline function thunkbase(ctx, mi::Core.MethodInstance, ::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}, ::Val{RuntimeActivity}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten, RuntimeActivity}   
     target = Compiler.EnzymeTarget()
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten, RuntimeActivity)
     tmp_job    = if World isa Nothing
 		Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
 	else
@@ -7165,7 +7188,7 @@ end
         A2
     end
    
-    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten)
+    params = Compiler.EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, run_enzyme, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit, UnknownTapeType, ABI, ErrIfFuncWritten, RuntimeActivity)
     job    = if World isa Nothing
     	Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false))
     else
@@ -7202,25 +7225,25 @@ end
     end
 end
 
-@inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten}
+@inline function thunk(mi::Core.MethodInstance, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}, ::Val{RuntimeActivity}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten, RuntimeActivity}
   ts_ctx = JuliaContext()
   ctx = context(ts_ctx)
   activate(ctx)
   try
-    return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
+    return thunkbase(ctx, mi, Val(#=World=#nothing), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
   finally
     deactivate(ctx)
     dispose(ts_ctx)
   end
 end
 
-@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten}
+@inline @generated function thunk(::Val{World}, ::Type{FA}, ::Type{A}, tt::Type{TT},::Val{Mode}, ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal}, ::Val{ShadowInit}, ::Type{ABI}, ::Val{ErrIfFuncWritten}, ::Val{RuntimeActivity}) where {FA<:Annotation, A<:Annotation, TT, Mode, ModifiedBetween, width, ReturnPrimal, ShadowInit, World, ABI, ErrIfFuncWritten, RuntimeActivity}
   mi = fspec(eltype(FA), TT, World)
   ts_ctx = JuliaContext()
   ctx = context(ts_ctx)
   activate(ctx)
   res = try
-    thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten))
+    thunkbase(ctx, mi, Val(World), FA, A, TT, Val(Mode), Val(width), Val(ModifiedBetween), Val(ReturnPrimal), Val(ShadowInit), ABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
   finally
     deactivate(ctx)
     dispose(ts_ctx)
@@ -7234,14 +7257,14 @@ end
 import GPUCompiler: deferred_codegen_jobs
 
 @generated function deferred_codegen(::Val{World}, ::Type{FA}, ::Val{TT}, ::Val{A},::Val{Mode},
-        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit},::Type{ExpectedTapeType}, ::Val{ErrIfFuncWritten}) where {World, FA<:Annotation,TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, ErrIfFuncWritten}
+        ::Val{width}, ::Val{ModifiedBetween}, ::Val{ReturnPrimal},::Val{ShadowInit},::Type{ExpectedTapeType}, ::Val{ErrIfFuncWritten}, ::Val{RuntimeActivity}) where {World, FA<:Annotation,TT, A, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, ErrIfFuncWritten, RuntimeActivity}
     JuliaContext() do ctx
         Base.@_inline_meta
         mi = fspec(eltype(FA), TT, World)
         target = EnzymeTarget()
 
         rt2 = if A isa UnionAll 
-            params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten)
+            params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, remove_innerty(A), true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten, RuntimeActivity)
             tmp_job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
             
             interp = GPUCompiler.get_interpreter(tmp_job)
@@ -7265,7 +7288,7 @@ import GPUCompiler: deferred_codegen_jobs
             A
         end
         
-        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten)
+        params = EnzymeCompilerParams(Tuple{FA, TT.parameters...}, Mode, width, rt2, true, #=abiwrap=#true, ModifiedBetween, ReturnPrimal, ShadowInit,ExpectedTapeType, FFIABI, ErrIfFuncWritten, RuntimeActivity)
         job    = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel=false), World)
 
         addr = get_trampoline(job)
