@@ -6136,7 +6136,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 if legal && Base.isconcretetype(jTy)
                     if !(jTy isa UnionAll || jTy isa Union || jTy == Union{} || jTy === Tuple  || (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)))
                         if isa(sz, LLVM.ConstantInt) && sizeof(jTy) == convert(Int, sz)
-                            metadata(sretPtr)["enzyme_truetype"] = to_fullmd(jTy)
+                            metadata(inst)["enzyme_truetype"] = to_fullmd(jTy)
                         end
                     end
                 end
