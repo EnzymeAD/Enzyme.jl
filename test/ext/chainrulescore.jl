@@ -24,8 +24,11 @@ function ChainRulesCore.rrule(::typeof(MockModule.mock_function), x)
     return y, ȳ -> 2 * ȳ
 end
 
-fdiff(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[2]
-fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[2]
+fdiff(f, x::Number) = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(x, one(x)))[1]
+fdiff(f, x::MockModule.MockType) = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[1]
+
+fdiff2(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[1]
+fdiff2(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[1]
 
 @testset "import_frule" begin
     f1(x) = 2*x
@@ -33,6 +36,8 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
     Enzyme.@import_frule typeof(f1) Any
     @test fdiff(f1, 1f0) === 5f0
     @test fdiff(f1, 1.0) === 5.0
+    @test fdiff2(f1, 1f0) === 5f0
+    @test fdiff2(f1, 1.0) === 5.0
 
     # specific signature    
     f2(x) = 2*x
@@ -40,6 +45,8 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
     Enzyme.@import_frule typeof(f2) Float32
     @test fdiff(f2, 1f0) === 5f0
     @test fdiff(f2, 1.0) === 2.0
+    @test fdiff2(f2, 1f0) === 5f0
+    @test fdiff2(f2, 1.0) === 2.0
 
     # two arguments
     f3(x, y) = 2*x + y
@@ -47,6 +54,8 @@ fdiff(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x
     Enzyme.@import_frule typeof(f3) Any Any    
     @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
     @test fdiff(y -> f3(1.0, y), 2.) === 2.0
+    @test fdiff2(x -> f3(x, 1.0), 2.) === 5.0
+    @test fdiff2(y -> f3(1.0, y), 2.) === 2.0
 
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
