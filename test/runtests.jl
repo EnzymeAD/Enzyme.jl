@@ -1323,8 +1323,8 @@ end
         (sin(x)::Float64 + x)::Float64
     end
     @test 0.5838531634528576 ≈ Enzyme.autodiff(Reverse, boxfloat, Active, Active(2.0))[1][1]
-    @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, DuplicatedNoNeed, Duplicated(2.0, 1.0))[1]
-    res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 2.0)))[1]
+    @test 0.5838531634528576 ≈ Enzyme.autodiff(Forward, boxfloat, Duplicated, Duplicated(2.0, 1.0))[1]
+    res = Enzyme.autodiff(Forward, boxfloat, BatchDuplicated, BatchDuplicated(2.0, (1.0, 2.0)))[1]
     @test 0.5838531634528576 ≈ res[1]
     @test 1.1677063269057153 ≈ res[2]
 end
@@ -1420,7 +1420,7 @@ function rtg_f(V,@nospecialize(cv))
 end
 
 @testset "RuntimeActivity generic call" begin
-    res = autodiff(set_runtime_activity(Forward), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
+    res = autodiff(set_runtime_activity(ForwardWithPrimal), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
     @test 3.14 ≈ res[2]
     @test 0.0 ≈ res[1]
 end
