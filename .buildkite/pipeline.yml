@@ -18,7 +18,7 @@ steps:
           import Pkg
           pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="CUDA"))
-          Pkg.develop(pkgs)
+          Pkg.develop(pkgs)' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/cuda.jl
@@ -44,7 +44,7 @@ steps:
           import Pkg
           pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="AMDGPU"))
-          Pkg.develop(pkgs)
+          Pkg.develop(pkgs)' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/amdgpu.jl
@@ -71,7 +71,7 @@ steps:
           import Pkg
           pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="Metal"))
-          Pkg.develop(pkgs)
+          Pkg.develop(pkgs)' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/metal.jl
