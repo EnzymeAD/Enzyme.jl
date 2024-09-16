@@ -1024,12 +1024,16 @@ end
 end
 
 """
-    gradient(::ReverseMode, f, x)
+    gradient(::ReverseMode, f, args...)
 
 Compute the gradient of a real-valued function `f` using reverse mode.
-This will allocate and return new array `make_zero(x)` with the gradient result.
+For each differentiable argument, this function will allocate and return new derivative object, returning
+a tuple of derivatives for each argument. If an argument is not differentiable, the element of the returned
+tuple with be nothing.
 
-Besides arrays, for struct `x` it returns another instance of the same type,
+In reverse mode (here), the derivatives will be the same type as the original argument.
+
+This is a structure gradient. For a struct `x` it returns another instance of the same type,
 whose fields contain the components of the gradient.
 In the result, `grad.a` contains `∂f/∂x.a` for any differential `x.a`,
 while `grad.c == x.c` for other types.
@@ -1042,18 +1046,7 @@ f(x) = x[1]*x[2]
 grad = gradient(Reverse, f, [2.0, 3.0])
 
 # output
-
-2-element Vector{Float64}:
- 3.0
- 2.0
-```
-
-```jldoctest gradient
-
-grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
-
-# output
-([3.0, 2.0], 6.0)
+([3.0, 2.0],)
 ```
 
 ```jldoctest gradient
@@ -1063,23 +1056,119 @@ grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 
 (a = 3.0, b = [2.0], c = "str")
 ```
+
+```jldoctest gradient
+mul(x, y) = x[1]*y[1]
+
+grad = gradient(Reverse, mul, [2.0], [3.0])
+
+# output
+([3.0], [2.0],)
+```
+
+```jldoctest gradient
+
+grad = gradient(Reverse, mul, [2.0], Const([3.0]))
+
+# output
+([3.0], nothing,)
+```
+
+If passing a mode that returns the primal (e.g. ReverseWithPrimal), the return type will instead be
+a tuple where the first element contains the derivatives, and the second element contains the result of the original computation.
+
+```jldoctest gradient
+
+grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
+
+# output
+(([3.0, 2.0],), 6.0)
+```
+```jldoctest gradient
+
+grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
+
+# output
+(([3.0], [2.0],), 6.0)
+```
+
+```jldoctest gradient
+grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
+
+# output
+(([3.0], nothing), 6.0)
+```
+
 """
-@inline function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::X) where {F, X, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
-    if Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-        dx = Ref(make_zero(x))
-        res = autodiff(rm, f, Active, MixedDuplicated(x, dx))
-        if ReturnPrimal
-            (only(dx), res[2])
-        else
-            only(dx)
+@inline f 
+@generated function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::ty_0, args::Vararg{<:Any, N}) where {F, ty_0, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten, N}
+    
+
+    toemit= Expr[:(act_0 = !(x isa Enzyme.Const) && Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true) == Compiler.ActiveState))]
+    rargs = Union{Symbol,Expr}[:x]
+    acts = Symbol[Symbol("act_0")]
+
+    for i in 1:N
+        argidx = quote "arg[$i]" end
+        push!(rargs, argidx)
+        sym = Symbol("act_$i")
+        push!(acts, sym)
+        push!(toemit, quote
+            $sym = !($argidx isa Enzyme.Const) && Compiler.active_reg_inner(Core.Typeof($argidx), #=seen=#(), #=world=#nothing, #=justActive=#Val(true) == Compiler.ActiveState)
+        end)
+    end
+
+    idx = 0
+    shadows = Symbol[]
+    enz_args = Expr[]
+    resargs = Expr[]
+    for (arg, act) in zip(rargs, acts)
+
+        shad = Symbol("shad_$idx")
+        push!(shadows, shad)
+        push!(toemit, quote
+            $shad = if $arg isa Enzyme.Const
+                nothing
+            elseif $act
+                Ref(make_zero($argidx))
+            else
+                make_zero($argidx)
+            end
+            $sym = Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true))
+        end)
+        push!(enz_args, quote
+            if $arg isa Enzyme.Const
+                $arg
+            elseif $act
+                MixedDuplicated($arg, $shad)
+            else
+                Duplicated($arg, $shad)
+            end
+        end)
+        push!(resargs, quote
+            if $arg isa Enzyme.Const
+                nothing
+            elseif $act
+                $shad[]
+            else
+                $shad
+            end
+        end)
+
+    end
+    push!(toemit, quote
+        res = autodiff(rm, f, Active, $(enz_args...))
+    end)
+
+    if ReturnPrimal
+        return quote
+            Base.@_inline_meta
+            (($(resargs...),), res[2])
         end
     else
-        dx = make_zero(x)
-        res = autodiff(rm, f, Active, Duplicated(x, dx))
-        if ReturnPrimal
-            (dx, res[2])
-        else
-            dx
+        return quote
+            Base.@_inline_meta
+            ($(resargs...),)
         end
     end
 end
@@ -1100,10 +1189,7 @@ dx = [0.0, 0.0]
 gradient!(Reverse, dx, f, [2.0, 3.0])
 
 # output
-
-2-element Vector{Float64}:
- 3.0
- 2.0
+([3.0, 2.0],)
 ```
 
 ```jldoctest gradip
@@ -1111,21 +1197,25 @@ dx = [0.0, 0.0]
 gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 
 # output
-([3.0, 2.0], 6.0)
+(([3.0, 2.0],), 6.0)
 ```
 """
 @inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
-        (dx, res[2])
+        ((dx,), res[2])
     else
-        dx
+        (dx,)
     end
 end
 
+function to_array(shadtup, primal)
+
+end
+
 """
-    gradient(::ForwardMode, f, x; shadow=onehot(x))
+    gradient(::ForwardMode, f, x; shadows=onehot(x))
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -1142,36 +1232,36 @@ grad = gradient(Forward, f, [2.0, 3.0])
 
 # output
 
-(3.0, 2.0)
+((3.0, 2.0),)
 ```
 
 ```jldoctest gradfwd
 gradient(ForwardWithPrimal, f, [2.0, 3.0])
 
 # output
-((3.0, 2.0), 6.0)
+(((3.0, 2.0),), 6.0)
 ```
 """
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; shadow=onehot(x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; shadows=(onehot(x),)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if length(shadow) == 0
         if ReturnPrimal
-            ((), f(x.val))
+            ((x,), f(x.val))
         else
-            return ()
+            return (x,)
         end
     end
-    resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow))
+    resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1]))
 
     res = values(resp[1])
     dres = if x isa AbstractFloat
         res[1]
     else
-        res
+        to_array(res, x)
     end
     if ReturnPrimal
-        (dres, resp[2])
+        ((dres,), resp[2])
     else
-        dres
+        to_array(dres, x)
     end
 end
 
@@ -1208,15 +1298,15 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
 
 # output
 
-(3.0, 2.0)
+((3.0, 2.0),)
 ```
 """
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{chunk}; shadow=chunkedonehot(x, Val(chunk))) where {F, X, chunk, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X; chunksize::Val{chunk}, shadows=(chunkedonehot(x, Val(chunk)),)) where {F, X, chunk, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if chunk == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
     if ReturnPrimal
-        rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[1]))[1]
+        rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][1]))[1]
         dres1 = if chunk == 1
             (rp[1],)
         else
@@ -1227,48 +1317,48 @@ grad = gradient(Forward, f, [2.0, 3.0], Val(2))
         else
             fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
             tmp = ntuple(length(shadow)-1) do i
-                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadow[i+1]))[1])
+                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i+1]))[1])
             end
-            tupleconcat(dres1, tmp...)
+            to_array(tupleconcat(dres1, tmp...), x)
         end
-        (gres, rp[2])
+        ((gres,), rp[2])
     else
         tmp = ntuple(length(shadow)) do i
-            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadow[i]))[1])
+            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i]))[1])
         end
         res = tupleconcat(tmp...)
-        if x isa AbstractFloat
+        (if x isa AbstractFloat
             res[1]
         else
-            res
-        end
+            to_array(res, x)
+        end,)
     end
 end
 
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X, ::Val{1}; shadow=onehot(x)) where {F, X, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X; chunksize::Val{1}, shadows=(onehot(x),)) where {F, X, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
     if ReturnPrimal
-        rp = autodiff(fm, f, Duplicated, Duplicated(x, shadow[1]))
+        rp = autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][1]))
         dres1 = rp[1]
         fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
 
         res = ntuple(length(shadow)-1) do i
-            autodiff(fm2, f, Duplicated, Duplicated(x, shadow[i+1]))[1]
+            autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
         end
         gres = if x isa AbstractFloat
             dres1
         else
-            (dres1, res...)
+            to_array((dres1, res...), x)
         end
-        (gres, rp[2])
+        ((gres,), rp[2])
     else
         res = ntuple(length(shadow)) do i
-            autodiff(fm, f, Duplicated, Duplicated(x, shadow[i]))[1]
+            autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][i]))[1]
         end
-        if x isa AbstractFloat
+        (if x isa AbstractFloat
             res[1]
         else
-            res
-        end
+            to_array(res, x)
+        end,)
     end
 end
 
@@ -1300,14 +1390,13 @@ whose shape is `(size(output)..., size(input)...)`
 For functions who return other types, this function will retun an array or tuple
 of shape `size(input)` of values of the output type. 
 """
-@inline function jacobian(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, args...; kwargs...) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
-    gradtup = gradient(fm, args...; kwargs...)
+@inline function jacobian(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, x; kwargs...) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
+    gradtup = gradient(fm, x; kwargs...)
     cols = if ReturnPrimal
-        gradtup[1]
+        gradtup[1][1]
     else
-        gradtup
+        gradtup[1]
     end
-    x = args[2]
     res = if x isa AbstractFloat
         cols
     elseif length(cols) > 0 && cols[1] isa AbstractArray
@@ -1330,9 +1419,9 @@ of shape `size(input)` of values of the output type.
         cols
     end
     if ReturnPrimal
-        (res, gradtup[2])
+        ((res,), gradtup[2])
     else
-        res
+        (res,)
     end
 end
 
@@ -1365,7 +1454,12 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{chunk}) where {F, X, chunk, n_out_val, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F; x::X; n_outs::Val{n_out_tup}, chunksize::Val{chunk}) where {F, X, chunk, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
+    n_out_val = if size(n_out_tup) == 0
+        0
+    else
+        product(n_out_tup)
+    end
     num = ((n_out_val + chunk - 1) ÷ chunk)
     
     if chunk == 0
@@ -1417,7 +1511,7 @@ of shape `size(output)` of values of the input type.
     end
     rows = tupleconcat(map(first, tmp)...)
     outshape = tmp[1][2]
-    if x isa AbstractArray
+    (if x isa AbstractArray
         inshape = size(x)
 
         st = Base.stack(rows)
@@ -1438,10 +1532,15 @@ of shape `size(output)` of values of the input type.
         st3
     else
         reshape(collect(rows), outshape)
-    end
+    end,)
 end
 
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X, n_outs::Val{n_out_val}, ::Val{1} = Val(1)) where {F, X, n_out_val,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
+@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::Val{n_out_tup}, chunksize::Val{1} = Val(1)) where {F, X, n_out_tup,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
+    n_out_val = if size(n_out_tup) == 0
+        0
+    else
+        product(n_out_tup)
+    end
     XT = Core.Typeof(x) 
     MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
     tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
@@ -1467,7 +1566,7 @@ end
     end
     rows = map(first, tmp)
     outshape = tmp[1][2]
-    if x isa AbstractArray
+    (if x isa AbstractArray
         inshape = size(x)
         st = Base.stack(rows)
 
@@ -1487,13 +1586,13 @@ end
         st3
     else
         reshape(collect(rows), outshape)
-    end
+    end,)
 end
 
 @inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, Holomorphic}
     res = f(x)
     jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(length(res)))
+        jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(size(res)))
     elseif res isa AbstractFloat
         gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
     else
