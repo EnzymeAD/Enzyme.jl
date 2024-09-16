@@ -187,9 +187,9 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     end
 
     retres = if Width == 1
-        :(return ReturnType((res[1], res[2])))
+        :(return ReturnType((res[2], res[1])))
     else
-        :(return ReturnType((res[1], res[2]...)))
+        :(return ReturnType((res[2], res[1]...)))
     end
     dup = if Width == 1
         :(Duplicated(f, df))
