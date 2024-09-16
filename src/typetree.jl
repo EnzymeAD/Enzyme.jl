@@ -149,9 +149,6 @@ end
     return results
 end
 
-const ctype_to_string = Dict{API.CConcreteType, String}(
-
-)
 function to_fullmd(@nospecialize(T::Type))
     mds = Metadata[]
     for (sT, sO) in get_offsets(T)
@@ -170,7 +167,7 @@ function to_fullmd(@nospecialize(T::Type))
         else
             @assert false
         end
-        push!(mds, Metadata(LLVM.ConstantInt(sO)))
+        push!(mds, LLVM.Metadata(LLVM.ConstantInt(sO)))
     end
     return MDNode(mds)
 end
