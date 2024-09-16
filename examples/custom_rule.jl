@@ -168,7 +168,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # Let's look at how to write a simple reverse-mode rule! 
 # First, we write a method for [`EnzymeRules.augmented_primal`](@ref):
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active},
                           y::Duplicated, x::Duplicated)
     println("In custom augmented primal rule.")
     ## Compute primal
@@ -203,7 +203,7 @@ end
 
 # Now, we write a method for [`EnzymeRules.reverse`](@ref):
 
-function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
+function reverse(config::RevConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
                  y::Duplicated, x::Duplicated)
     println("In custom reverse rule.")
     ## retrieve x value, either from original x or from tape if x may have been overwritten.
