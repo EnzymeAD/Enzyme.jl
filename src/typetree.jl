@@ -153,17 +153,17 @@ function to_fullmd(@nospecialize(T::Type))
     mds = LLVM.Metadata[]
     for (sT, sO) in get_offsets(T)
         if sT == API.DT_Pointer
-            push!(mds, MDString("Pointer"))
+            push!(mds, LLVM.MDString("Pointer"))
         elseif sT == API.DT_Integer
-            push!(mds, MDString("Integer"))
+            push!(mds, LLVM.MDString("Integer"))
         elseif sT == API.DT_Half
-            push!(mds, MDString("Float@half"))
+            push!(mds, LLVM.MDString("Float@half"))
         elseif sT == API.DT_Float
-            push!(mds, MDString("Float@float"))
+            push!(mds, LLVM.MDString("Float@float"))
         elseif sT == API.DT_BFloat16
-            push!(mds, MDString("Float@bfloat16"))
+            push!(mds, LLVM.MDString("Float@bfloat16"))
         elseif sT == API.DT_Double
-            push!(mds, MDString("Float@double"))
+            push!(mds, LLVM.MDString("Float@double"))
         else
             @assert false
         end
