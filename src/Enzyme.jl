@@ -1352,7 +1352,7 @@ of shape `size(input)` of values of the output type.
     res = if args[1] isa AbstractFloat
         cols[1]
     elseif length(cols) > 0 && cols[1] isa AbstractArray
-        inshape = size(x)
+        inshape = size(args[1])
         outshape = size(cols[1])
         # st : outshape x total inputs
         st = Base.stack(cols)
@@ -1365,7 +1365,7 @@ of shape `size(input)` of values of the output type.
 
         st3
     elseif x isa AbstractArray
-        inshape = size(x)
+        inshape = size(args[1])
         reshape(collect(cols), inshape)
     else
         cols
