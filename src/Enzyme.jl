@@ -1100,7 +1100,6 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 ```
 
 """
-@inline f 
 @generated function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::ty_0, args::Vararg{<:Any, N}) where {F, ty_0, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten, N}
     
 
@@ -1210,61 +1209,6 @@ gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
     end
 end
 
-function to_array(shadtup, primal)
-
-end
-
-"""
-    gradient(::ForwardMode, f, x; shadows=onehot(x))
-
-Compute the gradient of an array-input function `f` using forward mode. The
-optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
-which are used to forward-propagate into the return. For performance reasons,
-this should be computed once, outside the call to `gradient`, rather than
-within this call.
-
-Example:
-
-```jldoctest gradfwd
-f(x) = x[1]*x[2]
-
-grad = gradient(Forward, f, [2.0, 3.0])
-
-# output
-
-((3.0, 2.0),)
-```
-
-```jldoctest gradfwd
-gradient(ForwardWithPrimal, f, [2.0, 3.0])
-
-# output
-(((3.0, 2.0),), 6.0)
-```
-"""
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; shadows=(onehot(x),)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
-    if length(shadow) == 0
-        if ReturnPrimal
-            ((x,), f(x.val))
-        else
-            return (x,)
-        end
-    end
-    resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1]))
-
-    res = values(resp[1])
-    dres = if x isa AbstractFloat
-        res[1]
-    else
-        to_array(res, x)
-    end
-    if ReturnPrimal
-        ((dres,), resp[2])
-    else
-        to_array(dres, x)
-    end
-end
-
 @inline function chunkedonehot(x, ::Val{chunk}) where chunk
     sz = length(x)
     num = ((sz + chunk - 1) ÷ chunk)
@@ -1282,83 +1226,147 @@ end
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
-"""
-    gradient(::ForwardMode, f, x::Union{Array,NTuple}, ::Val{chunk}; shadow=onehot(x))
+function create_shadows(::Nothing, x)
+    return (onehot(x),)
+end
 
-Compute the gradient of an array-input function `f` using vector forward mode.
-Like [`gradient`](@ref), except it uses a chunk size of `chunk` to compute
-`chunk` derivatives in a single call.
+function create_shadows(::Val{1}, x)
+    return (onehot(x),)
+end
+
+function create_shadows(::Val{chunk}, x) where chunk
+    return (chunkedonehot(x, Val(chunk)),)
+end
+
+
+# TODO turn tuple'd results into an array type of type primal, if known
+function to_array(shadtup, primal)
+   return shadtup
+end
+
+"""
+    gradient(::ForwardMode, f, x; shadows=onehot(x), chunksize=nothing)
+
+Compute the gradient of an array-input function `f` using forward mode. The
+optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
+which are used to forward-propagate into the return. For performance reasons,
+this should be computed once, outside the call to `gradient`, rather than
+within this call.
 
 Example:
 
-```jldoctest
+```jldoctest gradfwd
 f(x) = x[1]*x[2]
 
-grad = gradient(Forward, f, [2.0, 3.0], Val(2))
+gradient(Forward, f, [2.0, 3.0])
 
 # output
 
 ((3.0, 2.0),)
 ```
+
+```jldoctest gradfwd
+gradient(ForwardWithPrimal, f, [2.0, 3.0])
+
+# output
+(((3.0, 2.0),), 6.0)
+```
+
+```jldoctest gradfwd
+gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
+
+# output
+
+((3.0, 2.0),)
+```
+
+```jldoctest gradfwd
+gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
+
+# output
+(((3.0, 2.0),), 6.0)
+```
 """
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X; chunksize::Val{chunk}, shadows=(chunkedonehot(x, Val(chunk)),)) where {F, X, chunk, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
-    if chunk == 0
+@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; chunk::CS=nothing, shadows=create_shadows(chunk, x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity, CS}
+    if length(shadows[1]) == 0
+        if ReturnPrimal
+            ((x,), f(x.val))
+        else
+            return (x,)
+        end
+    end
+    if chunk == Val(0)
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    if ReturnPrimal
-        rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][1]))[1]
-        dres1 = if chunk == 1
-            (rp[1],)
+
+    if chunk == nothing
+        resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1]))
+
+        res = values(resp[1])
+        dres = if x isa AbstractFloat
+            res[1]
         else
-            values(rp[1])
+            to_array(res, x)
         end
-        gres = if x isa AbstractFloat
-            dres1
+        if ReturnPrimal
+            ((dres,), resp[2])
         else
+            to_array(dres, x)
+        end
+    elseif chunk == Val(1)
+        if ReturnPrimal
+            rp = autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][1]))
+            dres1 = rp[1]
             fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
-            tmp = ntuple(length(shadow)-1) do i
-                values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i+1]))[1])
+
+            res = ntuple(length(shadow)-1) do i
+                autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
             end
-            to_array(tupleconcat(dres1, tmp...), x)
+            gres = if x isa AbstractFloat
+                dres1
+            else
+                to_array((dres1, res...), x)
+            end
+            ((gres,), rp[2])
+        else
+            res = ntuple(length(shadow)) do i
+                autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][i]))[1]
+            end
+            (if x isa AbstractFloat
+                res[1]
+            else
+                to_array(res, x)
+            end,)
         end
-        ((gres,), rp[2])
     else
-        tmp = ntuple(length(shadow)) do i
-            values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i]))[1])
-        end
-        res = tupleconcat(tmp...)
-        (if x isa AbstractFloat
-            res[1]
+        if ReturnPrimal
+            rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][1]))[1]
+            dres1 = if chunk == 1
+                (rp[1],)
+            else
+                values(rp[1])
+            end
+            gres = if x isa AbstractFloat
+                dres1
+            else
+                fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
+                tmp = ntuple(length(shadow)-1) do i
+                    values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i+1]))[1])
+                end
+                to_array(tupleconcat(dres1, tmp...), x)
+            end
+            ((gres,), rp[2])
         else
-            to_array(res, x)
-        end,)
-    end
-end
-
-@inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f::F, x::X; chunksize::Val{1}, shadows=(onehot(x),)) where {F, X, ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
-    if ReturnPrimal
-        rp = autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][1]))
-        dres1 = rp[1]
-        fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
-
-        res = ntuple(length(shadow)-1) do i
-            autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
+            tmp = ntuple(length(shadow)) do i
+                values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i]))[1])
+            end
+            res = tupleconcat(tmp...)
+            (if x isa AbstractFloat
+                res[1]
+            else
+                to_array(res, x)
+            end,)
         end
-        gres = if x isa AbstractFloat
-            dres1
-        else
-            to_array((dres1, res...), x)
-        end
-        ((gres,), rp[2])
-    else
-        res = ntuple(length(shadow)) do i
-            autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][i]))[1]
-        end
-        (if x isa AbstractFloat
-            res[1]
-        else
-            to_array(res, x)
-        end,)
     end
 end
 
