@@ -752,7 +752,7 @@ end
 @testset "Nested AD" begin
     tonest(x,y) = (x + y)^2
 
-    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+    @test autodiff(Forward, (x,y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Hessian" begin
