@@ -1236,15 +1236,15 @@ function create_shadows(::Val{chunk}, x) where chunk
     return (chunkedonehot(x, Val(chunk)),)
 end
 
-struct TupleArray{T, Shape, Length, N} <: AbstractArray{ElType,N}
+struct TupleArray{T, Shape, Length, N} <: AbstractArray{T,N}
     data::NTuple{Length, T}
 end
 TupleArray(data::NTuple{Length, T}, Shape) where {Length, T} = TupleArray{T, Shape, Length, length(Shape)}
 
 @inline Base.eltype(::TupleArray{T}) where T = T
-@inline Base.eltype(::Type{<:TupleArray{T}} where T = T
+@inline Base.eltype(::Type{<:TupleArray{T}}) where T = T
 @inline Base.size(::TupleArray{<:Any, Shape}) where Shape = Shape
-@inline Base.ndims(::TupleArray{<:Any, <:Any, <L, N}) where N = N
+@inline Base.ndims(::TupleArray{<:Any, <:Any, <:Any, N}) where N = N
 
 function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Shape, Length, N}) where {T, Shape, Length, N}
     vals = Array{T, N}(undef, Shape...)
@@ -1321,10 +1321,12 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 (((3.0, 2.0),), 6.0)
 ```
 
-For functions which return an AbstractArray, this function will return an array
-whose shape is `(size(output)..., size(input)...)`
+For functions which return an AbstractArray or scalar, this function will return an AbstracttArray
+whose shape is `(size(output)..., size(input)...)`. No guarantees are presently made
+about the type of the AbstractArray returned by this function (which may or may not be the same
+as the input AbstractArray if provided).
 
-For functions who return other types, this function will retun an array or tuple
+For functions who return other types, this function will retun an AbstractArray
 of shape `size(input)` of values of the output type. 
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
@@ -1458,7 +1460,7 @@ end
     jacobian(::ReverseMode, f, x; ::Val{num_outs}, ::Val{chunk}=Val(1))
     jacobian(::ReverseMode, f, x)
 
-Compute the jacobian of an array-output function `f` using (potentially vector)
+Compute the jacobian of a array-output function `f` using (potentially vector)
 reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
 denotes the number of outputs `f` will return in an array.
 
@@ -1476,11 +1478,12 @@ grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], Val(2))
  0.0  1.0  1.0
 ```
 
-For functions which return an AbstractArray, this function will return an array
-whose shape is `(size(output)..., size(input)...)`
+This function will return an AbstractArray whose shape is `(size(output)..., size(input)...)`.
+No guarantees are presently made about the type of the AbstractArray returned by this function
+(which may or may not be the same as the input AbstractArray if provided).
 
-For functions who return other types, this function will retun an array or tuple
-of shape `size(output)` of values of the input type. 
+In the future, when this function is extended to handle non-array return types, 
+this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
 ```
 """
 @inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
