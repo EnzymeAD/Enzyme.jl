@@ -1160,11 +1160,13 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
     if ReturnPrimal
         return quote
             Base.@_inline_meta
+            $(toemit...)
             (($(resargs...),), res[2])
         end
     else
         return quote
             Base.@_inline_meta
+            $(toemit...)
             ($(resargs...),)
         end
     end
@@ -1262,11 +1264,6 @@ function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {T,N}
     end
     start += 1
     return a.data[i]
-end
-
-# Can be specialized
-function to_array(shadtup, primal)
-    return TupleArray(shadtup, size(primal))
 end
 
 @inline function tupstack(x, inshape, outshape)
@@ -1428,17 +1425,16 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
         gradtup[1]
     end
     res = if x isa AbstractFloat
-        to_array(cols, x)
-    elseif length(cols) > 0 && cols[1] isa AbstractArray
+        cols
+    elseif length(cols) > 0 && cols[1] isa AbstractArray && x isa AbstractArray
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
         tupstack(cols, outshape, inshape)
     elseif x isa AbstractArray
-        inshape = size(x)
-        reshape(collect(cols), inshape)
+        TupleArray(cols, size(x))
     else
-        to_array(cols, x)
+        cols
     end
     if ReturnPrimal
         ((res,), gradtup[2])
