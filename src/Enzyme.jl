@@ -1453,7 +1453,7 @@ Equivalent to gradient(::ForwardMode, args...; kwargs...)
 end
 
 """
-    jacobian(::ReverseMode, f, x; ::Val{num_outs}, ::Val{chunk}=Val(1))
+    jacobian(::ReverseMode, f, x; n_outs=nothing, chunk=nothing)
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector)
@@ -1482,7 +1482,7 @@ In the future, when this function is extended to handle non-array return types,
 this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunk::CT=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
 
     if n_outs == nothing
         res = if f isa Const
@@ -1510,7 +1510,6 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             product(Compiler.element(n_outs))
         end
         
-        chunk = Compiler.element(chunksize)
         if chunk == Val(0)
             throw(ErrorException("Cannot differentiate with a batch size of 0"))
         end
@@ -1551,23 +1550,24 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             outshape = tmp[1][2]
             rows, outshape
         else
-            tt′   = MD ? Tuple{BatchMixedDuplicated{XT, chunk}} : Tuple{BatchDuplicated{XT, chunk}}
-            primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+            chunksize = Compiler.element(chunk)
+            tt′   = MD ? Tuple{BatchMixedDuplicated{XT, chunksize}} : Tuple{BatchDuplicated{XT, chunksize}}
+            primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#chunk, ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
         
-            num = ((n_out_val + chunk - 1) ÷ chunk)
+            num = ((n_out_val + chunksize - 1) ÷ chunksize)
             
-            if num * chunk == n_out_val
-                last_size = chunk
+            if num * chunksize == n_out_val
+                last_size = chunksize
                 primal2, adjoint2 = primal, adjoint
             else
-                last_size = n_out_val - (num-1)*chunk
+                last_size = n_out_val - (num-1)*chunksize
                 tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
                 primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
             end
 
             tmp = ntuple(num) do i
                 Base.@_inline_meta
-                dx = ntuple(Val(i == num ? last_size : chunk)) do idx
+                dx = ntuple(Val(i == num ? last_size : chunksize)) do idx
                     Base.@_inline_meta
                     z = make_zero(x)
                     MD ? Ref(z) : z
@@ -1577,10 +1577,10 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                 j = 0
                 for shadow in res[3]
                     j += 1
-                    @inbounds shadow[(i-1)*chunk+j] += Compiler.default_adjoint(eltype(typeof(shadow)))
+                    @inbounds shadow[(i-1)*chunksize+j] += Compiler.default_adjoint(eltype(typeof(shadow)))
                 end
                 (i == num ? adjoint2 : adjoint)(Const(f), MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx), tape)
-                return MD ? (ntuple(Val(i == num ? last_size : chunk)) do idx
+                return MD ? (ntuple(Val(i == num ? last_size : chunksize)) do idx
                     Base.@_inline_meta
                     dx[idx][]
                 end) : dx, (i == 1 ? size(res[3][1]) : nothing)
