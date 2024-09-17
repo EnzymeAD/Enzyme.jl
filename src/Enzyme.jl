@@ -1108,7 +1108,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
     acts = Symbol[Symbol("act_0")]
 
     for i in 1:N
-        argidx = quote "arg[$i]" end
+        argidx = quote arg[$i] end
         push!(rargs, argidx)
         sym = Symbol("act_$i")
         push!(acts, sym)
