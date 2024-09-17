@@ -1082,21 +1082,21 @@ a tuple where the first element contains the derivatives, and the second element
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
 # output
-(derivs=([3.0, 2.0],), val=6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 ```jldoctest gradient
 
 grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
 
 # output
-(derivs=([3.0], [2.0]), val=6.0)
+(derivs = ([3.0], [2.0]), val = 6.0)
 ```
 
 ```jldoctest gradient
 grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
 # output
-(derivs=([3.0], nothing), val=6.0)
+(derivs = ([3.0], nothing), val = 6.0)
 ```
 
 """
@@ -1196,7 +1196,7 @@ dx = [0.0, 0.0]
 gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 
 # output
-(derivs=([3.0, 2.0],), val=6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 """
 @inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
@@ -1300,7 +1300,7 @@ gradient(Forward, f, [2.0, 3.0])
 gradient(ForwardWithPrimal, f, [2.0, 3.0])
 
 # output
-(derivs=([3.0, 2.0],), val=6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 
 ```jldoctest gradfwd
@@ -1315,7 +1315,7 @@ gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
 gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 
 # output
-(derivs=([3.0, 2.0],), val=6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 
 For functions which return an AbstractArray or scalar, this function will return an AbstracttArray
