@@ -3267,7 +3267,7 @@ end
                   4.0   0.0;
                   12.0  0.0]
 
-    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], n_outs=Val((2,)))[1]
+    jac = Enzyme.jacobian(Forward, inout, [2.0, 3.0], chunk=Val(2))[1]
     @test size(jac) == (3, 2)
     @test jac ≈ [ 0.0   1.0;
                   4.0   0.0;
