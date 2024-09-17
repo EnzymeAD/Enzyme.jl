@@ -1416,7 +1416,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
         end
     end
 
-    cols0 = if ReturnPrimal
+    cols = if ReturnPrimal
         gradtup[1][1]
     else
         gradtup[1]
