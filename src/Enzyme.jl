@@ -1504,7 +1504,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         end
 
         return if ReturnPrimal
-            (res, jac)
+            (jac, res)
         else
             jac
         end
