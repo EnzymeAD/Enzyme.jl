@@ -1462,7 +1462,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunksize::CT=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
 
     if n_outs == nothing
         res = if f isa Const
@@ -1484,10 +1484,10 @@ of shape `size(output)` of values of the input type.
             jac
         end
     else
-        n_out_val = if size(Compiler.element(n_out_tup)) == 0
+        n_out_val = if size(Compiler.element(n_outs)) == 0
             0
         else
-            product(Compiler.element(n_out_tup))
+            product(Compiler.element(n_outs))
         end
         
         chunk = Compiler.element(chunksize)
@@ -1517,7 +1517,7 @@ of shape `size(output)` of values of the input type.
         if chunk == Val(1) || chunk == nothing
             tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
             primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
-            tmp = ntuple(n_outs) do i
+            tmp = ntuple(n_out_val) do i
                 Base.@_inline_meta
                 z = make_zero(x)
                 dx = MD ? Ref(z) : z
