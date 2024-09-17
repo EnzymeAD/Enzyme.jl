@@ -1241,7 +1241,7 @@ end
 struct TupleArray{T, Shape, Length, N} <: AbstractArray{T,N}
     data::NTuple{Length, T}
 end
-TupleArray(data::NTuple{Length, T}, Shape) where {Length, T} = TupleArray{T, Shape, Length, length(Shape)}
+TupleArray(data::NTuple{Length, T}, Shape) where {Length, T} = TupleArray{T, Shape, Length, length(Shape)}(data)
 
 @inline Base.eltype(::TupleArray{T}) where T = T
 @inline Base.eltype(::Type{<:TupleArray{T}}) where T = T
