@@ -1462,7 +1462,7 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunksize::CT=nothing) where {ReturnPrimal, F, X, chunk, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunksize::CT=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
 
     if n_outs == nothing
         res = if f isa Const
