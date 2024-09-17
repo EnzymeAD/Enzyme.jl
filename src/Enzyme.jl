@@ -1370,7 +1370,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
                 autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
             end
             gres = if x isa AbstractFloat
-                dres1
+                dres1[1]
             else
                 (dres1, res...)
             end
@@ -1387,14 +1387,10 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
         end
     else
         if ReturnPrimal
-            rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][1]))[1]
-            dres1 = if chunk == 1
-                (rp[1],)
-            else
-                values(rp[1])
-            end
+            rp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][1]))
+            dres1 = values(rp[1])
             gres = if x isa AbstractFloat
-                dres1
+                dres1[1]
             else
                 fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
                 tmp = ntuple(length(shadows[1])-1) do i
@@ -1454,15 +1450,27 @@ end
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector)
-reverse mode. The `chunk` argument denotes the chunk size to use and `num_outs`
-denotes the number of outputs `f` will return in an array.
+reverse mode. The `chunk` argument denotes the chunk size to use and `n_outs`
+denotes the shape of the array returned by `f`.
 
 Example:
 
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
 
-grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], Val(2))
+grad = jacobian(Reverse, f, [2.0, 3.0, 4.0])
+
+# output
+
+2×3 transpose(::Matrix{Float64}) with eltype Float64:
+ 3.0  2.0  0.0
+ 0.0  1.0  1.0
+```
+
+```jldoctest
+f(x) = [ x[1] * x[2], x[2] + x[3] ]
+
+grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
 
 # output
 
@@ -1479,7 +1487,7 @@ In the future, when this function is extended to handle non-array return types,
 this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunk::CT=nothing) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunk::CT=nothing) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT, Holomorphic}
 
     if n_outs == nothing
         res = if f isa Const
@@ -1501,10 +1509,11 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             jac
         end
     else
-        n_out_val = if size(Compiler.element(n_outs)) == 0
+	@assert !Holomorphic
+        n_out_val = if length(Compiler.element(n_outs)) == 0
             0
         else
-            product(Compiler.element(n_outs))
+            prod(Compiler.element(n_outs))
         end
         
         if chunk == Val(0)
