@@ -1407,7 +1407,7 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
             end
             ((gres,), rp[2])
         else
-            tmp = ntuple(length(shadow)) do i
+            tmp = ntuple(length(shadows)) do i
                 values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i]))[1])
             end
             res = tupleconcat(tmp...)
