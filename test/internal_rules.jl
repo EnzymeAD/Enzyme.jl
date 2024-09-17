@@ -226,13 +226,13 @@ end
     for i in 1:size(x, 1)
         for j in 1:size(x, 2)
              reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_lower(x, i, j), x)
-             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_lower(x, i, j), x)), size(x))
+             forward_grad  = Enzyme.gradient(Forward, x -> tchol_lower(x, i, j), x)
              finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_lower(x, i, j), x)[1]
              @test reverse_grad  ≈ finite_diff 
              @test forward_grad  ≈ finite_diff 
              
              reverse_grad  = Enzyme.gradient(Reverse, x -> tchol_upper(x, i, j), x)
-             forward_grad  = reshape(collect(Enzyme.gradient(Forward, x -> tchol_upper(x, i, j), x)), size(x))
+             forward_grad  = Enzyme.gradient(Forward, x -> tchol_upper(x, i, j), x)
              finite_diff = FiniteDifferences.grad(central_fdm(5, 1), x -> tchol_upper(x, i, j), x)[1]
              @test reverse_grad  ≈ finite_diff 
              @test forward_grad  ≈ finite_diff
