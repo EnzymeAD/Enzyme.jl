@@ -1063,7 +1063,7 @@ mul(x, y) = x[1]*y[1]
 grad = gradient(Reverse, mul, [2.0], [3.0])
 
 # output
-([3.0], [2.0],)
+([3.0], [2.0])
 ```
 
 ```jldoctest gradient
@@ -1071,7 +1071,7 @@ grad = gradient(Reverse, mul, [2.0], [3.0])
 grad = gradient(Reverse, mul, [2.0], Const([3.0]))
 
 # output
-([3.0], nothing,)
+([3.0], nothing)
 ```
 
 If passing a mode that returns the primal (e.g. ReverseWithPrimal), the return type will instead be
@@ -1082,14 +1082,14 @@ a tuple where the first element contains the derivatives, and the second element
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
 # output
-(([3.0, 2.0],), 6.0)
+(([3.0, 2.0]), 6.0)
 ```
 ```jldoctest gradient
 
 grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
 
 # output
-(([3.0], [2.0],), 6.0)
+(([3.0], [2.0]), 6.0)
 ```
 
 ```jldoctest gradient
