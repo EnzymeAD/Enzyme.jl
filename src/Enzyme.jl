@@ -1276,7 +1276,7 @@ end
 end
 
 """
-    gradient(::ForwardMode, f, x; shadows=onehot(x), chunksize=nothing)
+    gradient(::ForwardMode, f, x; shadows=onehot(x), chunk=nothing)
 
 Compute the gradient of an array-input function `f` using forward mode. The
 optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
@@ -1458,7 +1458,7 @@ Example:
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
 
-grad = jacobian(Reverse, f, [2.0, 3.0, 4.0])
+jacobian(Reverse, f, [2.0, 3.0, 4.0])
 
 # output
 
@@ -1496,7 +1496,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             f(x)
         end
         jac = if res isa AbstractArray
-            jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x; n_outs=Val(size(res)), chunksize)
+            jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x; n_outs=Val(size(res)), chunk)
         elseif res isa AbstractFloat
             gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
         else
@@ -1595,7 +1595,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             outshape = tmp[1][2]
             rows, outshape
         end
-        (if x isa AbstractArray
+        res = if x isa AbstractArray
             inshape = size(x)
             st2 = tupstack(rows, inshape, outshape)
 
@@ -1609,7 +1609,17 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             st3
         else
             reshape(collect(rows), outshape)
-        end,)
+        end
+        if ReturnPrimal
+          # TODO optimize away redundant fwd pass
+	  (res, if f isa Enzyme.Const
+		f.val(x)
+	   else
+		f(x)
+	   end)
+        else
+          (res,)
+        end
     end
 end
 
