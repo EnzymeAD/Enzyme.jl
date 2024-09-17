@@ -1108,7 +1108,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
     acts = Symbol[Symbol("act_0")]
 
     for i in 1:N
-        argidx = quote arg[$i] end
+        argidx = quote args[$i] end
         push!(rargs, argidx)
         sym = Symbol("act_$i")
         push!(acts, sym)
@@ -1122,7 +1122,6 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
     enz_args = Expr[]
     resargs = Expr[]
     for (arg, act) in zip(rargs, acts)
-
         shad = Symbol("shad_$idx")
         push!(shadows, shad)
         push!(toemit, quote
@@ -1152,6 +1151,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
                 $shad
             end
         end)
+        idx+=1
     end
     push!(toemit, quote
         res = autodiff(rm, f, Active, $(enz_args...))
@@ -1293,14 +1293,14 @@ gradient(Forward, f, [2.0, 3.0])
 
 # output
 
-((3.0, 2.0),)
+([3.0, 2.0],)
 ```
 
 ```jldoctest gradfwd
 gradient(ForwardWithPrimal, f, [2.0, 3.0])
 
 # output
-(((3.0, 2.0),), 6.0)
+(([3.0, 2.0],), 6.0)
 ```
 
 ```jldoctest gradfwd
@@ -1308,14 +1308,14 @@ gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
 
 # output
 
-((3.0, 2.0),)
+([3.0, 2.0],)
 ```
 
 ```jldoctest gradfwd
 gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 
 # output
-(((3.0, 2.0),), 6.0)
+(([3.0, 2.0],), 6.0)
 ```
 
 For functions which return an AbstractArray or scalar, this function will return an AbstracttArray
