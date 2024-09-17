@@ -1434,7 +1434,7 @@ of shape `size(input)` of values of the output type.
 end
 
 """
-    jacobian(::ReverseMode, f, x, ::Val{num_outs}, ::Val{chunk}=Val(1))
+    jacobian(::ReverseMode, f, x; ::Val{num_outs}, ::Val{chunk}=Val(1))
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of an array-output function `f` using (potentially vector)
@@ -1462,155 +1462,134 @@ For functions who return other types, this function will retun an array or tuple
 of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F; x::X; n_outs::Val{n_out_tup}, chunksize::Val{chunk}) where {F, X, chunk, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity}
-    n_out_val = if size(n_out_tup) == 0
-        0
-    else
-        product(n_out_tup)
-    end
-    num = ((n_out_val + chunk - 1) ÷ chunk)
-    
-    if chunk == 0
-        throw(ErrorException("Cannot differentiate with a batch size of 0"))
-    end
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunksize::CT=nothing) where {ReturnPrimal, F, X, chunk, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
 
-    XT = Core.Typeof(x) 
-    MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-    tt′   = MD ? Tuple{BatchMixedDuplicated{XT, chunk}} : Tuple{BatchDuplicated{XT, chunk}}
-    tt    = Tuple{XT}
-    rt = Core.Compiler.return_type(f, tt)
-    ModifiedBetween = Val((false, false))
-    FA = Const{Core.Typeof(f)}
-    opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
-    else
-        Val(codegen_world_age(Core.Typeof(f), tt))
-    end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
-    
-    if num * chunk == n_out_val
-        last_size = chunk
-        primal2, adjoint2 = primal, adjoint
-    else
-        last_size = n_out_val - (num-1)*chunk
-        tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
-        primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
-    end
-
-    tmp = ntuple(num) do i
-        Base.@_inline_meta
-        dx = ntuple(Val(i == num ? last_size : chunk)) do idx
-            Base.@_inline_meta
-            z = make_zero(x)
-            MD ? Ref(z) : z
-        end
-        res = (i == num ? primal2 : primal)(Const(f), MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx))
-        tape = res[1]
-        j = 0
-        for shadow in res[3]
-            j += 1
-            @inbounds shadow[(i-1)*chunk+j] += Compiler.default_adjoint(eltype(typeof(shadow)))
-        end
-        (i == num ? adjoint2 : adjoint)(Const(f), MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx), tape)
-        return MD ? (ntuple(Val(i == num ? last_size : chunk)) do idx
-            Base.@_inline_meta
-            dx[idx][]
-        end) : dx, (i == 1 ? size(res[3][1]) : nothing)
-    end
-    rows = tupleconcat(map(first, tmp)...)
-    outshape = tmp[1][2]
-    (if x isa AbstractArray
-        inshape = size(x)
-
-        st = Base.stack(rows)
-
-        st2 = if length(outshape) == 1
-            st
+    if n_outs == nothing
+        res = if f isa Const
+            f.val(x)
         else
-            reshape(st, (inshape..., outshape...))
+            f(x)
         end
-
-        st3 = if length(outshape) == 1 && length(inshape) == 1
-            transpose(st2)
+        jac = if res isa AbstractArray
+            jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x; n_outs=Val(size(res)), chunksize)
+        elseif res isa AbstractFloat
+            gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
         else
-            transp = ( ((length(inshape)+1):(length(inshape)+length(outshape)))... , (1:length(inshape))...  )
-            PermutedDimsArray(st2, transp)
+            throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
         end
 
-        st3
-    else
-        reshape(collect(rows), outshape)
-    end,)
-end
-
-@inline function jacobian(::ReverseMode{#=ReturnPrimal=#false,RuntimeActivity,RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::Val{n_out_tup}, chunksize::Val{1} = Val(1)) where {F, X, n_out_tup,RuntimeActivity,RABI<:ABI, ErrIfFuncWritten}
-    n_out_val = if size(n_out_tup) == 0
-        0
-    else
-        product(n_out_tup)
-    end
-    XT = Core.Typeof(x) 
-    MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
-    tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
-    tt    = Tuple{XT}
-    rt = Core.Compiler.return_type(f, tt)
-    ModifiedBetween = Val((false, false))
-    FA = Const{Core.Typeof(f)}
-    opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
-    else
-        Val(codegen_world_age(Core.Typeof(f), tt))
-    end
-    primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
-    tmp = ntuple(n_outs) do i
-        Base.@_inline_meta
-        z = make_zero(x)
-        dx = MD ? Ref(z) : z
-        res = primal(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx))
-        tape = res[1]
-        @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
-        adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
-        return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
-    end
-    rows = map(first, tmp)
-    outshape = tmp[1][2]
-    (if x isa AbstractArray
-        inshape = size(x)
-        st = Base.stack(rows)
-
-        st2 = if length(outshape) == 1
-            st
+        return if ReturnPrimal
+            (res, jac)
         else
-            reshape(st, (inshape..., outshape...))
+            jac
         end
-
-        st3 = if length(outshape) == 1 && length(inshape) == 1
-            transpose(st2)
+    else
+        n_out_val = if size(Compiler.element(n_out_tup)) == 0
+            0
         else
-            transp = ( ((length(inshape)+1):(length(inshape)+length(outshape)))... , (1:length(inshape))...  )
-            PermutedDimsArray(st2, transp)
+            product(Compiler.element(n_out_tup))
+        end
+        
+        chunk = Compiler.element(chunksize)
+        if chunk == Val(0)
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+            
+        XT = Core.Typeof(x) 
+        MD = Compiler.active_reg_inner(XT, #=seen=#(), #=world=#nothing, #=justActive=#Val(true)) == Compiler.ActiveState
+        tt    = Tuple{XT}
+        rt = if f isa Const
+            Core.Compiler.return_type(f.val, tt)
+        else
+            Core.Compiler.return_type(f, tt)
+        end
+        
+        ModifiedBetween = Val((false, false))
+        FRT = Core.Typeof(f)
+        FA = Const{FRT}
+            
+        opt_mi = if RABI <: NonGenABI
+            Compiler.fspec(FRT, tt′)
+        else
+            Val(codegen_world_age(FRT, tt))
         end
 
-        st3
-    else
-        reshape(collect(rows), outshape)
-    end,)
-end
+        if chunk == Val(1) || chunk == nothing
+            tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
+            primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+            tmp = ntuple(n_outs) do i
+                Base.@_inline_meta
+                z = make_zero(x)
+                dx = MD ? Ref(z) : z
+                res = primal(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx))
+                tape = res[1]
+                @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
+                adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
+                return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
+            end
+            rows = map(first, tmp)
+            outshape = tmp[1][2]
+            rows, outshape
+        else
+            tt′   = MD ? Tuple{BatchMixedDuplicated{XT, chunk}} : Tuple{BatchDuplicated{XT, chunk}}
+            primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(chunk), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+        
+            num = ((n_out_val + chunk - 1) ÷ chunk)
+            
+            if num * chunk == n_out_val
+                last_size = chunk
+                primal2, adjoint2 = primal, adjoint
+            else
+                last_size = n_out_val - (num-1)*chunk
+                tt′ = Tuple{BatchDuplicated{Core.Typeof(x), last_size}}
+                primal2, adjoint2 = Enzyme.Compiler.thunk(opt_mi, FA, BatchDuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(last_size), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
+            end
 
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, Holomorphic, ErrIfFuncWritten}, f::F, x::X) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, Holomorphic}
-    res = f(x)
-    jac = if res isa AbstractArray
-        jacobian(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x, Val(size(res)))
-    elseif res isa AbstractFloat
-        gradient(ReverseMode{false,RuntimeActivity,RABI, Holomorphic, ErrIfFuncWritten}(), f, x)
-    else
-        throw(AssertionError("Unsupported return type of function for reverse-mode jacobian, $(Core.Typeof(res))"))
-    end
+            tmp = ntuple(num) do i
+                Base.@_inline_meta
+                dx = ntuple(Val(i == num ? last_size : chunk)) do idx
+                    Base.@_inline_meta
+                    z = make_zero(x)
+                    MD ? Ref(z) : z
+                end
+                res = (i == num ? primal2 : primal)(Const(f), MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx))
+                tape = res[1]
+                j = 0
+                for shadow in res[3]
+                    j += 1
+                    @inbounds shadow[(i-1)*chunk+j] += Compiler.default_adjoint(eltype(typeof(shadow)))
+                end
+                (i == num ? adjoint2 : adjoint)(Const(f), MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx), tape)
+                return MD ? (ntuple(Val(i == num ? last_size : chunk)) do idx
+                    Base.@_inline_meta
+                    dx[idx][]
+                end) : dx, (i == 1 ? size(res[3][1]) : nothing)
+            end
+            rows = tupleconcat(map(first, tmp)...)
+            outshape = tmp[1][2]
+            rows, outshape
+        end
+        (if x isa AbstractArray
+            inshape = size(x)
+            st = Base.stack(rows)
 
-    if ReturnPrimal
-        (res, jac)
-    else
-        jac
+            st2 = if length(outshape) == 1
+                st
+            else
+                reshape(st, (inshape..., outshape...))
+            end
+
+            st3 = if length(outshape) == 1 && length(inshape) == 1
+                transpose(st2)
+            else
+                transp = ( ((length(inshape)+1):(length(inshape)+length(outshape)))... , (1:length(inshape))...  )
+                PermutedDimsArray(st2, transp)
+            end
+
+            st3
+        else
+            reshape(collect(rows), outshape)
+        end,)
     end
 end
 
