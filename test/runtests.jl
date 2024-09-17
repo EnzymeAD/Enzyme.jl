@@ -436,7 +436,7 @@ end
     def_A, thunk_A = copy(A), copy(A)
     primal = Enzyme.autodiff(ReverseWithPrimal, dot, Active, Duplicated(A, dA))[2]
     @test primal == 34.0
-    primal = Enzyme.autodiff_deferred(ReverseWithPrimal, dot, Active, Duplicated(def_A, def_dA))[2]
+    primal = Enzyme.autodiff_deferred(ReverseWithPrimal, Const(dot), Active, Duplicated(def_A, def_dA))[2]
     @test primal == 34.0
 
     dup = Duplicated(thunk_A, thunk_dA)
@@ -752,7 +752,7 @@ end
 @testset "Nested AD" begin
     tonest(x,y) = (x + y)^2
 
-    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, tonest, Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+    @test autodiff(Forward, (x,y) -> autodiff_deferred(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Hessian" begin
@@ -762,7 +762,7 @@ end
     end
 
     function grad(x, dx, y, dy)
-      Enzyme.autodiff_deferred(Reverse, origf, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+      Enzyme.autodiff_deferred(Reverse, Const(origf), Duplicated(x, dx), DuplicatedNoNeed(y, dy))
       nothing
     end
 
@@ -797,7 +797,7 @@ end
 
     function f_gradient_deferred!(dx, x, tmp)
         dtmp = make_zero(tmp)
-        autodiff_deferred(Reverse, f_ip, Active, Duplicated(x, dx), Duplicated(tmp, dtmp))
+        autodiff_deferred(Reverse, Const(f_ip), Active, Duplicated(x, dx), Duplicated(tmp, dtmp))
         return nothing
     end
 
@@ -828,7 +828,7 @@ end
 
     function nested_df!(dx, x)
         make_zero!(dx)
-        autodiff_deferred(Reverse, nested_f, Active, Duplicated(x, dx))
+        autodiff_deferred(Reverse, Const(nested_f), Active, Duplicated(x, dx))
         return nothing
     end
 
@@ -1869,7 +1869,7 @@ end
 
 @testset "Mismatched return" begin
     @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
-    @test_throws ErrorException autodiff_deferred(Reverse, _->missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, Const(_->missing), Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
@@ -3351,7 +3351,7 @@ end
     dry = zeros(2)
 
     function foo(y, dy, x, dx)
-        autodiff_deferred(Reverse, speelpenning, Const, Duplicated(y, dy), Duplicated(x, dx))
+        autodiff_deferred(Reverse, Const(speelpenning), Const, Duplicated(y, dy), Duplicated(x, dx))
         return nothing
     end
 

@@ -11,7 +11,7 @@ function mul_kernel(A)
 end
 
 function grad_mul_kernel(A, dA)
-    autodiff_deferred(Reverse, mul_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, Const(mul_kernel), Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -34,7 +34,7 @@ function exp_kernel(A)
 end
 
 function grad_exp_kernel(A, dA)
-    autodiff_deferred(Reverse, exp_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, Const(exp_kernel), Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -57,7 +57,7 @@ function cos_kernel(A)
 end
 
 function grad_cos_kernel(A, dA)
-    autodiff_deferred(Reverse, cos_kernel, Const, Duplicated(A, dA))
+    autodiff_deferred(Reverse, Const(cos_kernel), Const, Duplicated(A, dA))
     return nothing
 end
 
@@ -76,7 +76,7 @@ function val_kernel!(_, ::Val{N}) where N
 end
 
 function dval_kernel!(du, ::Val{N}) where {N}
-    autodiff_deferred(Reverse, val_kernel!, Const, du, Const(Val(N)))
+    autodiff_deferred(Reverse, Const(val_kernel!), Const, du, Const(Val(N)))
     return nothing
 end
 
@@ -123,7 +123,7 @@ function ddense!(
 
   autodiff_deferred(
     Reverse,
-    dense!,
+    Const(dense!),
     Const,
     dfeats_out, dfeats_in, dW, db,
     Const(Val(nfeat_out)), Const(Val(nfeat_in)), Const(Val(ndof))
