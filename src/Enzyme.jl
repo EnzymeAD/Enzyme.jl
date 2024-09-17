@@ -1129,11 +1129,10 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             $shad = if $arg isa Enzyme.Const
                 nothing
             elseif $act
-                Ref(make_zero($argidx))
+                Ref(make_zero($arg))
             else
-                make_zero($argidx)
+                make_zero($arg)
             end
-            $sym = Compiler.active_reg_inner(X, #=seen=#(), #=world=#nothing, #=justActive=#Val(true))
         end)
         push!(enz_args, quote
             if $arg isa Enzyme.Const
@@ -1153,7 +1152,6 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
                 $shad
             end
         end)
-
     end
     push!(toemit, quote
         res = autodiff(rm, f, Active, $(enz_args...))
@@ -1238,11 +1236,39 @@ function create_shadows(::Val{chunk}, x) where chunk
     return (chunkedonehot(x, Val(chunk)),)
 end
 
-
-# TODO turn tuple'd results into an array type of type primal, if known
-function to_array(shadtup, primal)
-   return shadtup
+struct TupleArray{T, Shape, Length, N} <: AbstractArray{ElType,N}
+    data::NTuple{Length, T}
 end
+TupleArray(data::NTuple{Length, T}, Shape) where {Length, T} = TupleArray{T, Shape, Length, length(Shape)}
+
+@inline Base.eltype(::TupleArray{T}) where T = T
+@inline Base.eltype(::Type{<:TupleArray{T}} where T = T
+@inline Base.size(::TupleArray{<:Any, Shape}) where Shape = Shape
+@inline Base.ndims(::TupleArray{<:Any, <:Any, <L, N}) where N = N
+
+function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Shape, Length, N}) where {T, Shape, Length, N}
+    vals = Array{T, N}(undef, Shape...)
+    for i in 1:Length
+        @inbounds val[i] = X.data[i]
+    end
+    return vals
+end
+
+function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {T,N}
+    start = 0
+    for i in 1:N
+        start *= size(a, N - i + 1)
+        start += (args[N - i + 1] - 1)
+    end
+    start += 1
+    return a.data[i]
+end
+
+# Can be specialized
+function to_array(shadtup, primal)
+    return TupleArray(shadtup, size(primal))
+end
+
 @inline function tupstack(x, inshape, outshape)
     st = Base.stack(x)
     if length(outshape) == 1
@@ -1294,6 +1320,23 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 # output
 (((3.0, 2.0),), 6.0)
 ```
+
+For functions which return an AbstractArray, this function will return an array
+whose shape is `(size(output)..., size(input)...)`
+
+For functions who return other types, this function will retun an array or tuple
+of shape `size(input)` of values of the output type. 
+```jldoctest
+f(x) = [ x[1] * x[2], x[2] + x[3] ]
+
+grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
+
+# output
+
+2×3 Matrix{Float64}:
+ 3.0  2.0  0.0
+ 0.0  1.0  1.0
+```
 """
 @inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; chunk::CS=nothing, shadows=create_shadows(chunk, x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity, CS}
     if length(shadows[1]) == 0
@@ -1307,19 +1350,19 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
 
-    if chunk == nothing
+    gradtup = if chunk == nothing
         resp = autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1]))
 
         res = values(resp[1])
         dres = if x isa AbstractFloat
             res[1]
         else
-            to_array(res, x)
+            res
         end
         if ReturnPrimal
             ((dres,), resp[2])
         else
-            to_array(dres, x)
+            dres
         end
     elseif chunk == Val(1)
         if ReturnPrimal
@@ -1333,7 +1376,7 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
             gres = if x isa AbstractFloat
                 dres1
             else
-                to_array((dres1, res...), x)
+                (dres1, res...)
             end
             ((gres,), rp[2])
         else
@@ -1343,7 +1386,7 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
             (if x isa AbstractFloat
                 res[1]
             else
-                to_array(res, x)
+                res
             end,)
         end
     else
@@ -1361,7 +1404,7 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
                 tmp = ntuple(length(shadow)-1) do i
                     values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i+1]))[1])
                 end
-                to_array(tupleconcat(dres1, tmp...), x)
+                tupleconcat(dres1, tmp...)
             end
             ((gres,), rp[2])
         else
@@ -1372,49 +1415,18 @@ gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
             (if x isa AbstractFloat
                 res[1]
             else
-                to_array(res, x)
+                res
             end,)
         end
     end
-end
-
-"""
-    jacobian(::ForwardMode, f, x; shadow=onehot(x))
-    jacobian(::ForwardMode, f, x, ::Val{chunk}; shadow=onehot(x))
-
-Compute the jacobian of an array or scalar-input function `f` using (potentially vector)
-forward mode. All relevant arguments of the forward-mode [`gradient`](@ref) function
-apply here.
-
-Example:
-
-```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
-
-grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
-
-# output
-
-2×3 Matrix{Float64}:
- 3.0  2.0  0.0
- 0.0  1.0  1.0
-```
-
-For functions which return an AbstractArray, this function will return an array
-whose shape is `(size(output)..., size(input)...)`
-
-For functions who return other types, this function will retun an array or tuple
-of shape `size(input)` of values of the output type. 
-"""
-@inline function jacobian(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, x; kwargs...) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}
-    gradtup = gradient(fm, x; kwargs...)
+    
     cols = if ReturnPrimal
         gradtup[1][1]
     else
         gradtup[1]
     end
     res = if x isa AbstractFloat
-        cols
+        to_array(cols, x)
     elseif length(cols) > 0 && cols[1] isa AbstractArray
         inshape = size(x)
         outshape = size(cols[1])
@@ -1424,13 +1436,22 @@ of shape `size(input)` of values of the output type.
         inshape = size(x)
         reshape(collect(cols), inshape)
     else
-        cols
+        to_array(cols, x)
     end
     if ReturnPrimal
         ((res,), gradtup[2])
     else
         (res,)
     end
+end
+
+"""
+    jacobian(::ForwardMode, args...; kwargs...)
+
+Equivalent to gradient(::ForwardMode, args...; kwargs...)
+"""
+@inline function jacobian(fm::ForwardMode, args...; kwargs...)
+    gradient(fm, args...; kwargs...)
 end
 
 """
