@@ -3173,14 +3173,14 @@ end
     @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
 
 
-    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, n_outs=Val((4.)), chunk=Val(1))[1]
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, n_outs=Val((4,)), chunk=Val(1))[1]
 
     @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
     @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
     @test jac[3, :, :] ≈ [200.0 600.0 1000.0; 400.0 800.0 1200.0]
     @test jac[4, :, :] ≈ [2000.0 6000.0 10000.0; 4000.0 8000.0 12000.0]
 
-    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, n_outs=Val((4.)), chunk=Val(2))[1]
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillabs2, x, n_outs=Val((4,)), chunk=Val(2))[1]
 
     @test jac[1, :, :] ≈ [2.0 6.0 10.0; 4.0 8.0 12.0]
     @test jac[2, :, :] ≈ [20.0 60.0 100.0; 40.0 80.0 120.0]
@@ -3191,14 +3191,14 @@ end
 
     x2 = InpStruct(1.0, 2.0, 3.0)
 
-    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, n_outs=Val((4.)), chunk=Val(1))[1]
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, n_outs=Val((4,)), chunk=Val(1))[1]
 
     @test jac[1] == InpStruct(2.0, 4.0, 6.0)
     @test jac[2] == InpStruct(20.0, 40.0, 60.0)
     @test jac[3] == InpStruct(200.0, 400.0, 600.0)
     @test jac[4] == InpStruct(2000.0, 4000.0, 6000.0)
 
-    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, n_outs=Val((4.)), chunk=Val(2))[1]
+    jac = Enzyme.jacobian(Enzyme.Reverse, fillinpabs2, x2, n_outs=Val((4,)), chunk=Val(2))[1]
 
     @test jac[1] == InpStruct(2.0, 4.0, 6.0)
     @test jac[2] == InpStruct(20.0, 40.0, 60.0)
