@@ -177,7 +177,7 @@ julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
 ([-400.0, 200.0],)
 
 julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
-(derivs=[-400.0, 200.0], val=100.0)
+(derivs = [-400.0, 200.0], val = 100.0)
 
 julia> # in forward mode, we can also optionally pass a chunk size
        # to specify the number of derivatives computed simulateneously
@@ -203,7 +203,7 @@ julia> jacobian(Reverse, foo, [1.0, 2.0])
 ([-400.0  200.0; 2.0    1.0],)
 
 julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0]) 
-(derivs=([-400.0  200.0; 2.0    1.0],), val=[100.0, 2.0])
+(derivs = ([-400.0  200.0; 2.0    1.0],), val = [100.0, 2.0])
 
 julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2)) 
 ([-400.0  200.0; 2.0    1.0],)
