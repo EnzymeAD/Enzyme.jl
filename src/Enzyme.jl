@@ -1300,7 +1300,7 @@ gradient(Forward, f, [2.0, 3.0])
 gradient(ForwardWithPrimal, f, [2.0, 3.0])
 
 # output
-(; derivs=([3.0, 2.0],), val=6.0)
+(derivs=([3.0, 2.0],), val=6.0)
 ```
 
 ```jldoctest gradfwd
@@ -1315,7 +1315,7 @@ gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
 gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 
 # output
-(; derivs=([3.0, 2.0],), val=6.0)
+(derivs=([3.0, 2.0],), val=6.0)
 ```
 
 For functions which return an AbstractArray or scalar, this function will return an AbstracttArray
