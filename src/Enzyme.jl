@@ -1419,15 +1419,7 @@ of shape `size(input)` of values of the output type.
         inshape = size(x)
         outshape = size(cols[1])
         # st : outshape x total inputs
-        st = Base.stack(cols)
-
-        st3 = if length(inshape) <= 1
-            st
-        else
-            reshape(st, (outshape..., inshape...))
-        end
-
-        st3
+        tupstack(cols, outshape, inshape)
     elseif x isa AbstractArray
         inshape = size(x)
         reshape(collect(cols), inshape)
