@@ -1243,6 +1243,14 @@ end
 function to_array(shadtup, primal)
    return shadtup
 end
+@inline function tupstack(x, inshape, outshape)
+    st = Base.stack(x)
+    if length(outshape) == 1
+        st
+    else
+        reshape(st, (inshape..., outshape...))
+    end
+end
 
 """
     gradient(::ForwardMode, f, x; shadows=onehot(x), chunksize=nothing)
@@ -1571,13 +1579,7 @@ of shape `size(output)` of values of the input type.
         end
         (if x isa AbstractArray
             inshape = size(x)
-            st = Base.stack(rows)
-
-            st2 = if length(outshape) == 1
-                st
-            else
-                reshape(st, (inshape..., outshape...))
-            end
+            st2 = tupstack(rows, inshape, outshape)
 
             st3 = if length(outshape) == 1 && length(inshape) == 1
                 transpose(st2)
