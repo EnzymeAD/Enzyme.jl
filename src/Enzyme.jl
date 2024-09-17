@@ -1101,7 +1101,10 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
 """
 @generated function gradient(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, f::F, x::ty_0, args::Vararg{<:Any, N}) where {F, ty_0, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten, N}
-    toemit= Expr[:(act_0 = !(x isa Enzyme.Const) && Compiler.active_reg_inner(Core.Typeof(x), #=seen=#(), #=world=#nothing, #=justActive=#Val(true) == Compiler.ActiveState))]
+    VT = Val(true)
+    toemit= Expr[quote
+        act_0 = !(x isa Enzyme.Const) && Compiler.active_reg_inner(Core.Typeof(x), #=seen=#(), #=world=#nothing, #=justActive=#$VT == Compiler.ActiveState)
+    end]
     rargs = Union{Symbol,Expr}[:x]
     acts = Symbol[Symbol("act_0")]
 
@@ -1111,7 +1114,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
         sym = Symbol("act_$i")
         push!(acts, sym)
         push!(toemit, quote
-            $sym = !($argidx isa Enzyme.Const) && Compiler.active_reg_inner(Core.Typeof($argidx), #=seen=#(), #=world=#nothing, #=justActive=#Val(true) == Compiler.ActiveState)
+            $sym = !($argidx isa Enzyme.Const) && Compiler.active_reg_inner(Core.Typeof($argidx), #=seen=#(), #=world=#nothing, #=justActive=#$VT == Compiler.ActiveState)
         end)
     end
 
