@@ -1082,7 +1082,7 @@ a tuple where the first element contains the derivatives, and the second element
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
 # output
-(([3.0, 2.0]), 6.0)
+(([3.0, 2.0],), 6.0)
 ```
 ```jldoctest gradient
 
