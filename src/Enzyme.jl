@@ -1418,11 +1418,11 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
             end,)
         end
     end
-    
+   
     cols = if ReturnPrimal
-        gradtup[1][1]
-    else
         gradtup[1]
+    else
+        gradtup
     end
     res = if x isa AbstractFloat
         cols
