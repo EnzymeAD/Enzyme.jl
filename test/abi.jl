@@ -25,7 +25,7 @@ using Test
     res = autodiff_deferred(Enzyme.set_abi(Reverse, NonGenABI), Const(f), Const, Const(nothing))
     @test res === ((nothing,),)
     
-    @test () === autodiff_deferred(Forward, Const(f), Const(nothing))
+    @test () === autodiff_deferred(Forward, Const(f), Const, Const(nothing))
     @test () === autodiff_deferred(Enzyme.set_abi(Forward, NonGenABI), Const(f), Const, Const(nothing))
 
     # ConstType -> Type{Int}
