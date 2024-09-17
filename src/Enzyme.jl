@@ -1461,10 +1461,7 @@ f(x) = [ x[1] * x[2], x[2] + x[3] ]
 jacobian(Reverse, f, [2.0, 3.0, 4.0])
 
 # output
-
-2×3 transpose(::Matrix{Float64}) with eltype Float64:
- 3.0  2.0  0.0
- 0.0  1.0  1.0
+([3.0 2.0 0.0; 0.0 1.0 1.0],)
 ```
 
 ```jldoctest
@@ -1473,10 +1470,7 @@ f(x) = [ x[1] * x[2], x[2] + x[3] ]
 grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
 
 # output
-
-2×3 transpose(::Matrix{Float64}) with eltype Float64:
- 3.0  2.0  0.0
- 0.0  1.0  1.0
+([3.0 2.0 0.0; 0.0 1.0 1.0],)
 ```
 
 This function will return an AbstractArray whose shape is `(size(output)..., size(input)...)`.
