@@ -1358,7 +1358,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
         if ReturnPrimal
             ((dres,), resp[2])
         else
-            dres
+            (dres,)
         end
     elseif chunk == Val(1)
         if ReturnPrimal
@@ -1366,7 +1366,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
             dres1 = rp[1]
             fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
 
-            res = ntuple(length(shadows)-1) do i
+            res = ntuple(length(shadows[1])-1) do i
                 autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
             end
             gres = if x isa AbstractFloat
@@ -1376,7 +1376,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
             end
             ((gres,), rp[2])
         else
-            res = ntuple(length(shadows)) do i
+            res = ntuple(length(shadows[1])) do i
                 autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][i]))[1]
             end
             (if x isa AbstractFloat
@@ -1397,14 +1397,14 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
                 dres1
             else
                 fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
-                tmp = ntuple(length(shadow)-1) do i
+                tmp = ntuple(length(shadows[1])-1) do i
                     values(autodiff(fm2, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i+1]))[1])
                 end
                 tupleconcat(dres1, tmp...)
             end
             ((gres,), rp[2])
         else
-            tmp = ntuple(length(shadows)) do i
+            tmp = ntuple(length(shadows[1])) do i
                 values(autodiff(fm, f, BatchDuplicated, BatchDuplicated(x, shadows[1][i]))[1])
             end
             res = tupleconcat(tmp...)
@@ -1415,16 +1415,11 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
             end,)
         end
     end
-   
+
     cols0 = if ReturnPrimal
+        gradtup[1][1]
+    else
         gradtup[1]
-    else
-        gradtup
-    end
-    cols = if chunk == nothing
-        cols0
-    else
-        cols0[1]
     end
     res = if x isa AbstractFloat
         cols
