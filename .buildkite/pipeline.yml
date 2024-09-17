@@ -16,7 +16,7 @@ steps:
       echo "--- Setup Julia packages"
       julia --color=yes -e '
           using Pkg
-          pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
+          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="CUDA"))
           Pkg.develop(pkgs)' || exit 3
 
@@ -42,7 +42,7 @@ steps:
       echo "--- Setup Julia packages"
       julia --color=yes -e '
           using Pkg
-          pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
+          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="AMDGPU"))
           Pkg.develop(pkgs)' || exit 3
 
@@ -69,7 +69,7 @@ steps:
       echo "--- Setup Julia packages"
       julia --color=yes -e '
           using Pkg
-          pkgs = [PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")]
+          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           push!(pkgs, PackageSpec(; name="Metal"))
           Pkg.develop(pkgs)' || exit 3
 
