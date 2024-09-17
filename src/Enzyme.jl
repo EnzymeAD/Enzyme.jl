@@ -1256,7 +1256,7 @@ function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Shape, Length, N}) w
     return vals
 end
 
-function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {T,N}
+function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
     start = 0
     for i in 1:N
         start *= size(a, N - i + 1)
@@ -1482,7 +1482,7 @@ In the future, when this function is extended to handle non-array return types,
 this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
 ```
 """
-@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunk::CT=nothing) where {ReturnPrimal, F, X, n_out_tup, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
+@inline function jacobian(::ReverseMode{ReturnPrimal,RuntimeActivity, RABI, #=Holomorphic=#false, ErrIfFuncWritten}, f::F, x::X; n_outs::OutType=nothing, chunk::CT=nothing) where {ReturnPrimal, F, X, RABI<:ABI, ErrIfFuncWritten, RuntimeActivity, OutType, CT}
 
     if n_outs == nothing
         res = if f isa Const
