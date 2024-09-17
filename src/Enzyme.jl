@@ -1263,7 +1263,7 @@ function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
         start += (args[N - i + 1] - 1)
     end
     start += 1
-    return a.data[i]
+    return a.data[start]
 end
 
 @inline function tupstack(x, inshape, outshape)
