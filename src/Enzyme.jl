@@ -1536,7 +1536,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         if chunk == Val(1) || chunk == nothing
             tt′   = MD ? Tuple{MixedDuplicated{XT}} : Tuple{Duplicated{XT}}
             primal, adjoint = Enzyme.Compiler.thunk(opt_mi, FA, DuplicatedNoNeed{rt}, tt′, #=Split=# Val(API.DEM_ReverseModeGradient), #=width=#Val(1), ModifiedBetween, #=ReturnPrimal=#Val(false), #=ShadowInit=#Val(false), RABI, Val(ErrIfFuncWritten), Val(RuntimeActivity))
-            tmp = ntuple(n_out_val) do i
+            tmp = ntuple(Val(n_out_val)) do i
                 Base.@_inline_meta
                 z = make_zero(x)
                 dx = MD ? Ref(z) : z
