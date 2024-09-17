@@ -3135,17 +3135,17 @@ end
     @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0)[1] ≈ [1.0, 2.0]
     @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0])[1] ≈ [4.0, 6.0]
 
-    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(1))[1] ≈ 2.0
-    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(1))[1] ≈ [1.0, 2.0]
-    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(1))[1] ≈ [4.0, 6.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, chunk=Val(1))[1] ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, chunk=Val(1))[1] ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], chunk=Val(1))[1] ≈ [4.0, 6.0]
 
-    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, Val(2))[1] ≈ 2.0
-    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, Val(2))[1] ≈ [1.0, 2.0]
-    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], Val(2))[1] ≈ [4.0, 6.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->2*x, 3.0, chunk=Val(2))[1] ≈ 2.0
+    @test Enzyme.jacobian(Enzyme.Forward, x->[x, 2*x], 3.0, chunk=Val(2))[1] ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Forward, x->sum(abs2, x), [2.0, 3.0], chunk=Val(2))[1] ≈ [4.0, 6.0]
 
-    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2))[1] ≈ [1.0, 2.0]
-    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(1))[1] ≈ [1.0, 2.0]
-    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, Val(2), Val(2))[1] ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, n_outs=Val((2,)))[1] ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, n_outs=Val((2,)), chunk=Val(1))[1] ≈ [1.0, 2.0]
+    @test Enzyme.jacobian(Enzyme.Reverse, x->[x, 2*x], 3.0, n_outs=Val((2,)), chunk=Val(2))[1] ≈ [1.0, 2.0]
 
     x = float.(reshape(1:6, 2, 3))
 
