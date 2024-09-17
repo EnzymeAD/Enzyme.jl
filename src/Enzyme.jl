@@ -1328,13 +1328,10 @@ of shape `size(input)` of values of the output type.
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
 
-grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
+grad = gradient(Forward, f, [2.0, 3.0, 4.0])
 
 # output
-
-2×3 Matrix{Float64}:
- 3.0  2.0  0.0
- 0.0  1.0  1.0
+([3.0 2.0 0.0; 0.0 1.0 1.0],)
 ```
 """
 @inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; chunk::CS=nothing, shadows=create_shadows(chunk, x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity, CS}
@@ -1369,7 +1366,7 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
             dres1 = rp[1]
             fm2 = ForwardMode{#=ReturnPrimal=#false, ABI, ErrIfFuncWritten,RuntimeActivity}()
 
-            res = ntuple(length(shadow)-1) do i
+            res = ntuple(length(shadows)-1) do i
                 autodiff(fm2, f, Duplicated, Duplicated(x, shadows[1][i+1]))[1]
             end
             gres = if x isa AbstractFloat
@@ -1379,7 +1376,7 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
             end
             ((gres,), rp[2])
         else
-            res = ntuple(length(shadow)) do i
+            res = ntuple(length(shadows)) do i
                 autodiff(fm, f, Duplicated, Duplicated(x, shadows[1][i]))[1]
             end
             (if x isa AbstractFloat
@@ -1419,10 +1416,15 @@ grad = jacobian(Forward, f, [2.0, 3.0, 4.0])
         end
     end
    
-    cols = if ReturnPrimal
+    cols0 = if ReturnPrimal
         gradtup[1]
     else
         gradtup
+    end
+    cols = if chunk == nothing
+        cols0
+    else
+        cols0[1]
     end
     res = if x isa AbstractFloat
         cols
