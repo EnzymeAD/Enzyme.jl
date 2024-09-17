@@ -1082,21 +1082,21 @@ a tuple where the first element contains the derivatives, and the second element
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
 # output
-(; derivs=([3.0, 2.0],), val=6.0)
+(derivs=([3.0, 2.0],), val=6.0)
 ```
 ```jldoctest gradient
 
 grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
 
 # output
-(; derivs=([3.0], [2.0]), val=6.0)
+(derivs=([3.0], [2.0]), val=6.0)
 ```
 
 ```jldoctest gradient
 grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
 # output
-(; derivs=([3.0], nothing), val=6.0)
+(derivs=([3.0], nothing), val=6.0)
 ```
 
 """
