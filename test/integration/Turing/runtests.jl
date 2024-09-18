@@ -4,6 +4,7 @@ using Distributions: Distributions
 using DynamicPPL: DynamicPPL
 using Enzyme: Enzyme
 using FiniteDifferences: FiniteDifferences
+using LinearAlgebra: LinearAlgebra
 using Random: randn
 using Test: @test, @testset
 
@@ -62,6 +63,30 @@ DynamicPPL.@model function demo_lkjchol(d::Int=2)
 end
 
 push!(models, demo_lkjchol())
+
+DynamicPPL.@model function hmcmatrixsup()
+    return v ~ Distributions.Wishart(7, [1 0.5; 0.5 1])
+end
+
+push!(models, hmcmatrixsup())
+
+DynamicPPL.@model function mvnormal_with_transpose(x=transpose([1.5 2.0;]))
+    m ~ Distributions.MvNormal(LinearAlgebra.Diagonal([1.0, 1.0]))
+    x .~ Distributions.MvNormal(m, LinearAlgebra.Diagonal([1.0, 1.0]))
+    return nothing
+end
+
+push!(models, mvnormal_with_transpose())
+
+DynamicPPL.@model function mvnorm_with_argtype(::Type{TV}=Matrix{Float64}) where {TV}
+    P0 = vcat([0.1 0.0], [0.0 0.1])
+    x = TV(undef, 2, 2)
+    fill!(x, zero(eltype(x)))
+    x[:, 2] ~ Distributions.MvNormal(x[:, 1], P0)
+    return nothing
+end
+
+push!(models, mvnorm_with_argtype())
 
 # Test each model in turn, checking Enzyme's gradient against FiniteDifferences.
 @testset "Turing integration tests" begin
