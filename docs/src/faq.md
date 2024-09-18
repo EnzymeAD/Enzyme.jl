@@ -627,7 +627,7 @@ Presently Enzyme only considers floats as base types. As a result, Enzyme does n
 
 ```jldoctest types
 f_int(x) = x * x
-Enzyme.autodiff(Forward, f_int, DuplicatedNoNeed, Duplicated(3, 1))
+Enzyme.autodiff(Forward, f_int, Duplicated, Duplicated(3, 1))
 
 # output
 

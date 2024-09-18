@@ -35,7 +35,19 @@ Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, 
 struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity} end
 const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
 
+"""
+    needs_primal(::FwdConfig)
+    needs_primal(::RevConfig)
+
+Whether a custom rule should return the original result of the function.
+"""
 @inline needs_primal(::FwdConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+"""
+    needs_shadow(::FwdConfig)
+    needs_shadow(::RevConfig)
+
+Whether a custom rule should return the shadow (derivative) of the function result.
+"""
 @inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
 
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width

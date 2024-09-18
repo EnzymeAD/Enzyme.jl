@@ -65,7 +65,7 @@ function forward(config::FwdConfig, func::Const{typeof(f)}, ::Type{<:Duplicated}
 end
 
 # In the signature of our rule, we have made use of `Enzyme`'s activity annotations. Let's break down each one:
-# - the [`FwdConfig`](@ref) configuration passes certain compile-time information about differentiation procedure (the width, and if we're using runtime activity),
+# - the [`EnzymeRules.FwdConfig`](@ref) configuration passes certain compile-time information about differentiation procedure (the width, and if we're using runtime activity),
 # - the [`Const`](@ref) annotation on `f` indicates that we accept a function `f` that does not have a derivative component,
 #   which makes sense since `f` is not a closure with data that could be differentiated. 
 # - the [`Duplicated`](@ref) annotation given in the second argument annotates the return value of `f`. This means that
@@ -123,8 +123,9 @@ dy = [0.0, 0.0]
 #     If a custom rule is specified for the correct function/argument types, but not the correct activity annotation, 
 #     a runtime error will be thrown alerting the user to the missing activity rule rather than silently ignoring the rule."
 
-# Finally, it may be that either `x`, `y`, or the return value are marked as [`Const`](@ref). We can in fact handle this case, 
-# along with the previous two cases, all together in a single rule:
+# Finally, it may be that either `x`, `y`, or the return value are marked as [`Const`](@ref), in which case we can simply return the original result. However, Enzyme also may determine the return is not differentiable and also not needed for other computations, in which case we should simply return nothing.
+#
+# We can in fact handle this case, along with the previous two cases, all together in a single rule by leveraging utility functions [`EnzymeRules.needs_primal`](@ref) and [`EnzymeRules.needs_shadow`](@ref), which return true if the original return or the derivative is needed to be returned, respectively:
 
 Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any}))) # delete our old rules
 
@@ -138,12 +139,14 @@ function forward(config, func::Const{typeof(f)}, RT::Type{<:Union{Const, Duplica
         make_zero!(y.dval)
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
-    if RT <: Const
+    if needs_primal(config) && needs_shadow(config)
+        return Duplicated(sum(y.val), dret)
+    elseif needs_primal(config)
         return sum(y.val)
-    elseif RT <: DuplicatedNoNeed
+    elseif needs_shadow(config)
         return dret 
     else
-        return Duplicated(sum(y.val), dret)
+        return nothing
     end
 end
 
@@ -189,7 +192,7 @@ function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)}, ::T
 end
 
 # Let's unpack our signature for `augmented_primal` :
-# * We accepted a [`EnzymeRules.Config`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
+# * We accepted a [`EnzymeRules.RevConfig`](@ref) object with a specified width of 1, which means that our rule does not support batched reverse mode.
 # * We annotated `f` with [`Const`](@ref) as usual.
 # * We dispatched on an [`Active`](@ref) annotation for the return value. This is a special annotation for scalar values, such as our return value,
 #   that indicates that that we care about the value's derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.
@@ -197,7 +200,7 @@ end
 
 # Now, let's unpack the body of our `augmented_primal` rule:
 # * We checked if the `config` requires the primal. If not, we need not compute the return value, but we make sure to mutate `y` in all cases.
-# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.Config`](@ref). 
+# * We checked if `x` could possibly be overwritten using the `Overwritten` attribute of [`EnzymeRules.RevConfig`](@ref). 
 #   If so, we save the elements of `x` on the `tape` of the returned [`EnzymeRules.AugmentedReturn`](@ref) object.
 # * We return a shadow of `nothing` since the return value is [`Active`](@ref) and hence does not need a shadow.
 

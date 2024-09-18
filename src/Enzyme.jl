@@ -532,39 +532,6 @@ code, as well as high-order differentiation.
 end
 
 """
-    autodiff_deferred(mode::Mode, f, ::Type{A}, args)
-
-Like [`autodiff_deferred`](@ref) but will try to extend f to an annotation, if needed.
-"""
-@inline function autodiff_deferred(mode::CMode, f::F, args::Vararg{Annotation, Nargs}) where {F, CMode<:Mode, Nargs}
-    autodiff_deferred(EnzymeCore.set_err_if_func_written(mode), Const(f), args...)
-end
-@inline function autodiff_deferred(mode::CMode, f::F, ::Type{RT}, args::Vararg{Annotation, Nargs}) where {F, RT<:Annotation, CMode<:Mode, Nargs}
-    autodiff_deferred(EnzymeCore.set_err_if_func_written(mode), Const(f), RT, args...)
-end
-
-"""
-    autodiff_deferred(mode, f, args...)
-
-Like [`autodiff_deferred`](@ref) but will try to guess the activity of the return value.
-"""
-
-@inline function autodiff_deferred(mode::M, f::FA, args::Vararg{Annotation, Nargs}) where {FA<:Annotation, M<:Mode, Nargs}
-    tt    = Tuple{map(T->eltype(Core.Typeof(T)), args)...}
-    rt    = if mode isa ReverseMode
-        Compiler.primal_return_type(mode, Val(codegen_world_age(eltype(FA), tt)), eltype(FA), tt)
-    else
-        Core.Compiler.return_type(f.val, tt)
-    end
-
-    if rt === Union{}
-        error("return type is Union{}, giving up.")
-    end
-    rt    = guess_activity(rt, mode)
-    autodiff_deferred(mode, f, rt, args...)
-end
-
-"""
     autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation, Nargs})
 
 Provide the split forward and reverse pass functions for annotated function type
