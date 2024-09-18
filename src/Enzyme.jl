@@ -1744,4 +1744,11 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+"""
+   within_autodiff()
+
+Returns true if within autodiff, otherwise false.
+"""
+within_autodiff() = false
+
 end # module

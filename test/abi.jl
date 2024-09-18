@@ -460,6 +460,11 @@ abssum(x) = sum(abs2, x);
 
 mulsin(x) = sin(x[1] * x[2])
 
+@testset "within_autodiff" begin
+    @test Enzyme.within_autodiff()
+    @test Enzyme.autodiff(ForwardWithPrimal, Enzyme.within_autodiff)[1]
+end
+
 @testset "Type inference" begin
     x = ones(10)
     @inferred autodiff(Enzyme.Reverse, abssum, Duplicated(x,x))
