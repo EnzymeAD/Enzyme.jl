@@ -6,6 +6,7 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
+export within_autodiff
 
 function batch_size end
 
@@ -337,5 +338,12 @@ include("rules.jl")
 if !isdefined(Base, :get_extension)
     include("../ext/AdaptExt.jl")
 end
+
+"""
+   within_autodiff()
+
+Returns true if within autodiff, otherwise false.
+"""
+function within_autodiff end
 
 end # module EnzymeCore
