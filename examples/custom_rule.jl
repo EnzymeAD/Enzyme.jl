@@ -123,8 +123,9 @@ dy = [0.0, 0.0]
 #     If a custom rule is specified for the correct function/argument types, but not the correct activity annotation, 
 #     a runtime error will be thrown alerting the user to the missing activity rule rather than silently ignoring the rule."
 
-# Finally, it may be that either `x`, `y`, or the return value are marked as [`Const`](@ref). We can in fact handle this case, 
-# along with the previous two cases, all together in a single rule:
+# Finally, it may be that either `x`, `y`, or the return value are marked as [`Const`](@ref), in which case we can simply return the original result. However, Enzyme also may determine the return is not differentiable and also not needed for other computations, in which case we should simply return nothing.
+#
+# We can in fact handle this case, along with the previous two cases, all together in a single rule by leveraging utility functions [`needs_primal`](@ref) and [`need_shadow](@ref), which return true if the original return or the derivative is needed to be returned, respectively:
 
 Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any}))) # delete our old rules
 
@@ -138,12 +139,14 @@ function forward(config, func::Const{typeof(f)}, RT::Type{<:Union{Const, Duplica
         make_zero!(y.dval)
     end
     dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
-    if RT <: Const
+    if needs_primal(config) && needs_shadow(config)
+        return Duplicated(sum(y.val), dret)
+    elseif needs_primal(config)
         return sum(y.val)
-    elseif RT <: DuplicatedNoNeed
+    elseif needs_shadow(config)
         return dret 
     else
-        return Duplicated(sum(y.val), dret)
+        return nothing
     end
 end
 
