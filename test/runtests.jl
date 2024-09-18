@@ -762,7 +762,7 @@ end
     end
 
     function grad(x, dx, y, dy)
-      Enzyme.autodiff_deferred(Reverse, Const(origf), Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+      Enzyme.autodiff(Reverse, Const(origf), Duplicated(x, dx), DuplicatedNoNeed(y, dy))
       nothing
     end
 
