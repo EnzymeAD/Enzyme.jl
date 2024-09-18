@@ -1082,21 +1082,21 @@ a tuple where the first element contains the derivatives, and the second element
 grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 
 # output
-(([3.0, 2.0],), 6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 ```jldoctest gradient
 
 grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
 
 # output
-(([3.0], [2.0]), 6.0)
+(derivs = ([3.0], [2.0]), val = 6.0)
 ```
 
 ```jldoctest gradient
 grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
 # output
-(([3.0], nothing), 6.0)
+(derivs = ([3.0], nothing), val = 6.0)
 ```
 
 """
@@ -1161,7 +1161,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
         return quote
             Base.@_inline_meta
             $(toemit...)
-            (($(resargs...),), res[2])
+            (; derivs=($(resargs...),), val=res[2])
         end
     else
         return quote
@@ -1196,14 +1196,14 @@ dx = [0.0, 0.0]
 gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 
 # output
-(([3.0, 2.0],), 6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 """
 @inline function gradient!(rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, dx::X, f::F, x::X) where {X<:Array, F, ReturnPrimal, RuntimeActivity, ABI, Holomorphic, ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
-        ((dx,), res[2])
+        (; derivs=(dx,), val=res[2])
     else
         (dx,)
     end
@@ -1300,7 +1300,7 @@ gradient(Forward, f, [2.0, 3.0])
 gradient(ForwardWithPrimal, f, [2.0, 3.0])
 
 # output
-(([3.0, 2.0],), 6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 
 ```jldoctest gradfwd
@@ -1315,7 +1315,7 @@ gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
 gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 
 # output
-(([3.0, 2.0],), 6.0)
+(derivs = ([3.0, 2.0],), val = 6.0)
 ```
 
 For functions which return an AbstractArray or scalar, this function will return an AbstracttArray
@@ -1336,10 +1336,10 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
 """
 @inline function gradient(fm::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity}, f, x; chunk::CS=nothing, shadows=create_shadows(chunk, x)) where {ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity, CS}
     if length(shadows[1]) == 0
-        if ReturnPrimal
-            ((x,), f(x.val))
+        return if ReturnPrimal
+            (; derivs=(x,), val=f(x.val))
         else
-            return (x,)
+            (x,)
         end
     end
     if chunk == Val(0)
@@ -1430,7 +1430,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
         cols
     end
     if ReturnPrimal
-        ((res,), gradtup[2])
+        (; derivs=(res,), val=gradtup[2])
     else
         (res,)
     end
@@ -1498,7 +1498,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         end
 
         return if ReturnPrimal
-            (jac, res)
+            (; derivs=jac, val=res)
         else
             jac
         end
@@ -1606,7 +1606,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         end
         if ReturnPrimal
           # TODO optimize away redundant fwd pass
-	  (res, if f isa Enzyme.Const
+	  (; derivs=res, val=if f isa Enzyme.Const
 		f.val(x)
 	   else
 		f(x)
