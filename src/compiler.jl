@@ -6048,7 +6048,6 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         end
     end
 
-    println("pre", string(mod))
     if DumpPreOpt[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
