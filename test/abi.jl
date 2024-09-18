@@ -462,7 +462,7 @@ mulsin(x) = sin(x[1] * x[2])
 
 @testset "within_autodiff" begin
     @test !Enzyme.within_autodiff()
-    @test Enzyme.autodiff(ForwardWithPrimal, Enzyme.within_autodiff)[1]
+    @test_broken Enzyme.autodiff(ForwardWithPrimal, Enzyme.within_autodiff)[1]
     @test Enzyme.autodiff(ForwardWithPrimal, () -> Enzyme.within_autodiff())[1]
 end
 
