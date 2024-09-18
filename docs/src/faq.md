@@ -193,7 +193,7 @@ That is why Enzyme provides a helper function `Enzyme.make_zero` that does this 
 
 ```jldoctest sparse
 Enzyme.make_zero(a)
-Enzyme.gradient(Reverse, sum, a) # This calls make_zero(a)
+Enzyme.gradient(Reverse, sum, a)[1] # This calls make_zero(a)
 
 # output
 
