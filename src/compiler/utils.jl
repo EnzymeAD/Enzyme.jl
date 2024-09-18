@@ -313,6 +313,14 @@ function reinsert_gcmarker!(func, PB=nothing)
     end
 end
 
+function eraseInst(bb, inst)
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
+
 function unique_gcmarker!(func)
     entry_bb = first(blocks(func))
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
@@ -327,7 +335,7 @@ function unique_gcmarker!(func)
         for i in 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
             ops = LLVM.collect(operands(found[i]))
-            Base.unsafe_delete!(entry_bb, found[i])
+            eraseInst(entry_bb, found[i])
         end
     end
     return nothing

@@ -533,7 +533,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                 end
             end
             for inst in todel
-                unsafe_delete!(LLVM.parent(inst), inst)
+                eraseInst(LLVM.parent(inst), inst)
             end
         end
     end
@@ -1145,7 +1145,7 @@ function prop_global!(g)
                             end
                 end
                 replace_uses!(var, res)
-                unsafe_delete!(LLVM.parent(var), var)
+                eraseInst(LLVM.parent(var), var)
                 continue
             end
             if isa(var, LLVM.AddrSpaceCastInst)
@@ -1441,7 +1441,7 @@ function propagate_returned!(mod::LLVM.Module)
                     end
                     if !illegalUse
                         for c in reverse(torem)
-                            unsafe_delete!(LLVM.parent(c), c)
+                            eraseInst(LLVM.parent(c), c)
                         end
                         B = IRBuilder()
                         position!(B, first(instructions(first(blocks(fn)))))
@@ -1617,7 +1617,7 @@ function propagate_returned!(mod::LLVM.Module)
                     end
                     API.EnzymeSetCalledFunction(un, nfn, toremove)
                 end
-                unsafe_delete!(mod, fn)
+                eraseInst(mod, fn)
                 changed = true
             catch
                break
@@ -2030,26 +2030,26 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
 
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
-        unsafe_delete!(LLVM.parent(u), u)
+        eraseInst(LLVM.parent(u), u)
     end
-    unsafe_delete!(mod, rfunc)
+    eraseInst(mod, rfunc)
     for u in LLVM.uses(sfunc)
         u = LLVM.user(u)
-        unsafe_delete!(LLVM.parent(u), u)
+        eraseInst(LLVM.parent(u), u)
     end
-    unsafe_delete!(mod, sfunc)
+    eraseInst(mod, sfunc)
     for fn in functions(mod)
         for b in blocks(fn)
             inst = first(LLVM.instructions(b))
             if isa(inst, LLVM.CallInst)
                 fn = LLVM.called_operand(inst)
                 if fn == func
-                    unsafe_delete!(b, inst)
+                    eraseInst(b, inst)
                 end
             end
         end
     end
-    unsafe_delete!(mod, func)
+    eraseInst(mod, func)
 end
 
 function optimize!(mod::LLVM.Module, tm)
