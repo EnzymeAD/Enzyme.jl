@@ -317,7 +317,7 @@ function eraseInst(bb, inst)
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
     else
-        Base.unsafe_delete!(bb, inst)
+        unsafe_delete!(bb, inst)
     end
 end
 
