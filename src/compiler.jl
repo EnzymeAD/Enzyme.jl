@@ -4053,11 +4053,11 @@ function get_subprogram(f::LLVM.Function)
     end
 end
 
-function set_subprogram(f::LLVM.Function, sp)
+function set_subprogram!(f::LLVM.Function, sp)
     @static if isdefined(LLVM, :subprogram)
         LLVM.subprogram!(f, sp)
     else
-        LLVM.set_subprogram(f, sp)
+        LLVM.set_subprogram!(f, sp)
     end
 end
 
@@ -5427,10 +5427,10 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
-        unsafe_delete!(mod, globals(mod)["llvm.used"])
+        eraseInst(mod, globals(mod)["llvm.used"])
         for u in user.(collect(uses(entry_f)))
             if isa(u, LLVM.GlobalVariable) && endswith(LLVM.name(u), "_slot") && startswith(LLVM.name(u), "julia")
-                unsafe_delete!(mod, u)
+                eraseInst(mod, u)
             end
         end
     end
@@ -6485,7 +6485,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             st = LLVM.user(u)
             LLVM.API.LLVMInstructionEraseFromParent(st)
         end
-        LLVM.unsafe_delete!(mod, f)
+        eraseInst(mod, f)
     end
 
     linkage!(adjointf, LLVM.API.LLVMExternalLinkage)

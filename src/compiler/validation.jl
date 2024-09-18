@@ -112,7 +112,7 @@ function restore_lookups(mod::LLVM.Module)
         if haskey(functions(mod), k)
             f = functions(mod)[k]
             replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(T_size_t, convert(UInt, v)), value_type(f))))
-            unsafe_delete!(mod, f)
+            eraseInst(mod, f)
         end
     end
 end
@@ -272,7 +272,7 @@ function check_ir!(job, errors, mod::LLVM.Module)
 
         mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
         replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
-        unsafe_delete!(mod, f)
+        eraseInst(mod, f)
     end
     rewrite_ccalls!(mod)
     for f in collect(functions(mod))
