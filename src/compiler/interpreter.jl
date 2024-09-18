@@ -213,7 +213,7 @@ let # overload `inlining_policy`
 end
 
 import Core.Compiler: abstract_call, abstract_call_known, ArgInfo, StmtInfo, AbsIntState, get_max_methods,
-                      CallMeta, Effects, NoCallInfo, widenconst, mapany
+                      CallMeta, Effects, NoCallInfo, widenconst, mapany, MethodResultPure
 
 struct AutodiffCallInfo <: CallInfo
     # ...
@@ -227,7 +227,7 @@ function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
     (; fargs, argtypes) = arginfo
     
     if f === Enzyme.within_autodiff
-        if length(argtypes) != 0
+        if length(argtypes) != 1
             @static if VERSION < v"1.11.0-"
                 return CallMeta(Union{}, Effects(), NoCallInfo())
             else
@@ -235,9 +235,9 @@ function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
             end
         end
         @static if VERSION < v"1.11.0-"
-            return CallMeta(Const(true), CC.EFFECTS_TOTAL, MethodResultPure())
+            return CallMeta(Core.Const(true), Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
         else
-            return CallMeta(Const(true), Union{}, CC.EFFECTS_TOTAL, MethodResultPure())
+            return CallMeta(Core.Const(true), Union{}, Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
         end
     end
 
