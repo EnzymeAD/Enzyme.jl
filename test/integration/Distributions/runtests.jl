@@ -7,10 +7,13 @@ using FiniteDifferences: FiniteDifferences
 using LinearAlgebra: Diagonal, Hermitian, I, Symmetric, diag, cholesky
 using PDMats: PDMat
 using Random: randn
+using StableRNGs: StableRNG
 using Test: @test, @testset
 
 # TODO(mhauru) Could we at some point make do without this?
 Enzyme.API.runtimeActivity!(true)
+
+rng = StableRNG(23)
 
 """
 Test Enzyme.gradient, both Forward and Reverse mode, against FiniteDifferences.grad, for a
@@ -18,15 +21,15 @@ given function f and argument x.
 """
 function test_grad(f, x; rtol=1e-6, atol=1e-6)
     @nospecialize
-    finitediff = FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x)[1]
+    finitediff = collect(FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x)[1])
     # TODO(mhauru) The Val(1) works around https://github.com/EnzymeAD/Enzyme.jl/issues/1807
     @test(
-        collect(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(f), x, Val(1))) ≈ collect(finitediff),
+        reshape(collect(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(f), x, Val(1))), size(finitediff)) ≈ finitediff,
         rtol = rtol,
         atol = atol
     )
     @test(
-        Enzyme.gradient(Enzyme.Reverse, Enzyme.Const(f), x) ≈ finitediff,
+        collect(Enzyme.gradient(Enzyme.Reverse, Enzyme.Const(f), x)) ≈ finitediff,
         rtol = rtol, atol = atol
     )
     return nothing
@@ -210,33 +213,33 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
 
         (
             MatrixNormal(
-                randn(2, 3), _pdmat(randn(2, 2)), _pdmat(randn(3, 3))
+                randn(rng, 2, 3), _pdmat(randn(rng, 2, 2)), _pdmat(randn(rng, 3, 3))
             ),
-            randn(2, 3),
+            randn(rng, 2, 3),
         ),
         (
-            Wishart(5, _pdmat(randn(3, 3))),
-            Symmetric(collect(_pdmat(randn(3, 3)))),
+            Wishart(5, _pdmat(randn(rng, 3, 3))),
+            Symmetric(collect(_pdmat(randn(rng, 3, 3)))),
         ),
         (
-            InverseWishart(5, _pdmat(randn(3, 3))),
-            Symmetric(collect(_pdmat(randn(3, 3)))),
+            InverseWishart(5, _pdmat(randn(rng, 3, 3))),
+            Symmetric(collect(_pdmat(randn(rng, 3, 3)))),
         ),
         (
             MatrixTDist(
                 3.1,
-                randn(2, 3),
-                _pdmat(randn(2, 2)),
-                _pdmat(randn(3, 3)),
+                randn(rng, 2, 3),
+                _pdmat(randn(rng, 2, 2)),
+                _pdmat(randn(rng, 3, 3)),
             ),
-            randn(2, 3),
+            randn(rng, 2, 3),
         ),
-        (MatrixBeta(5, 6.0, 7.0), rand(MatrixBeta(5, 6.0, 6.0))),
+        (MatrixBeta(5, 6.0, 7.0), rand(rng, MatrixBeta(5, 6.0, 6.0))),
         (
-            MatrixFDist(6.0, 7.0, _pdmat(randn(5, 5))),
-            rand(MatrixFDist(6.0, 7.0, _pdmat(randn(5, 5)))),
+            MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5))),
+            rand(rng, MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5)))),
         ),
-        (LKJ(5, 1.1), rand(LKJ(5, 1.1))),
+        (LKJ(5, 1.1), rand(rng, LKJ(5, 1.1))),
     ]
 
     # Cases where the function to differentiate isn't just straight up `logpdf(d, x)`.
@@ -282,7 +285,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
                 C = cholesky(Symmetric(Λ * S * Λ))
                 return logpdf(LKJCholesky(2, v), C)
             end,
-            (randn(2, 2), 1.1),
+            (randn(rng, 2, 2), 1.1),
         ),
     ]
 
