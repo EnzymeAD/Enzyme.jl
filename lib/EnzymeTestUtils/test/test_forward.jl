@@ -20,6 +20,7 @@ function f_kwargs_fwd!(x; kwargs...)
 end
 
 function EnzymeRules.forward(
+    config,
     func::Const{typeof(f_kwargs_fwd)},
     RT::Type{
         <:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}
