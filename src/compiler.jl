@@ -4045,6 +4045,22 @@ function enzyme!(job, mod, primalf, TT, mode, width, parallel, actualRetType, wr
     return adjointf, augmented_primalf, TapeType
 end
 
+function get_subprogram(f::LLVM.Function)
+    @static if isdefined(LLVM, :subprogram)
+        LLVM.subprogram(f)
+    else
+        LLVM.get_subprogram(f)
+    end
+end
+
+function set_subprogram(f::LLVM.Function, sp)
+    @static if isdefined(LLVM, :subprogram)
+        LLVM.subprogram!(f, sp)
+    else
+        LLVM.set_subprogram(f, sp)
+    end
+end
+
 function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType, Mode::API.CDerivativeMode, augmented, width, returnPrimal, shadow_init, world, interp)
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split   = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
@@ -4422,8 +4438,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                 push!(args, psret)
             end
             res = LLVM.call!(builder, LLVM.function_type(llvmf), llvmf, args)
-            if LLVM.get_subprogram(llvmf) !== nothing
-                metadata(res)[LLVM.MD_dbg] = DILocation( 0, 0, LLVM.get_subprogram(llvm_f) )
+            if get_subprogram(llvmf) !== nothing
+                metadata(res)[LLVM.MD_dbg] = DILocation( 0, 0, get_subprogram(llvm_f) )
             end
             if psret !== nothing
                 res = load!(builder, convert(LLVMType, Func_RT), psret)
@@ -4449,8 +4465,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
     end
 
     val = call!(builder, LLVM.function_type(enzymefn), enzymefn, realparms)
-    if LLVM.get_subprogram(llvm_f) !== nothing
-        metadata(val)[LLVM.MD_dbg] = DILocation( 0, 0, LLVM.get_subprogram(llvm_f) )
+    if get_subprogram(llvm_f) !== nothing
+        metadata(val)[LLVM.MD_dbg] = DILocation( 0, 0, get_subprogram(llvm_f) )
     end
 
     @inline function fixup_abi(index, value)
@@ -4514,8 +4530,8 @@ function create_abi_wrapper(enzymefn::LLVM.Function, TT, rettype, actualRetType,
                     push!(function_attributes(cf), EnumAttribute("alwaysinline", 0))
                     for shadowv in shadows
                         c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
-                        if LLVM.get_subprogram(llvm_f) !== nothing
-                            metadata(c)[LLVM.MD_dbg] = DILocation( 0, 0, LLVM.get_subprogram(llvm_f) )
+                        if get_subprogram(llvm_f) !== nothing
+                            metadata(c)[LLVM.MD_dbg] = DILocation( 0, 0, get_subprogram(llvm_f) )
                         end
                     end
                 end
@@ -5027,9 +5043,9 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
     wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
     callconv!(wrapper_f, callconv(entry_f))
-    sfn = LLVM.get_subprogram(entry_f)
+    sfn = get_subprogram(entry_f)
     if sfn !== nothing
-        LLVM.set_subprogram!(wrapper_f, sfn)
+        set_subprogram!(wrapper_f, sfn)
     end
 
     hasReturnsTwice = any(map(k->kind(k)==kind(EnumAttribute("returns_twice")), collect(function_attributes(entry_f))))
@@ -5107,8 +5123,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
 
         entry = BasicBlock(wrapper_f, "entry")
         position!(builder, entry)
-        if LLVM.get_subprogram(entry_f) !== nothing
-            debuglocation!(builder, DILocation(0, 0, LLVM.get_subprogram(entry_f)))
+        if get_subprogram(entry_f) !== nothing
+            debuglocation!(builder, DILocation(0, 0, get_subprogram(entry_f)))
         end
 
         wrapper_args = Vector{LLVM.Value}()
@@ -5178,8 +5194,8 @@ function lower_convention(functy::Type, mod::LLVM.Module, entry_f::LLVM.Function
         end
         res = call!(builder, LLVM.function_type(entry_f), entry_f, wrapper_args)
 
-        if LLVM.get_subprogram(entry_f) !== nothing
-            metadata(res)[LLVM.MD_dbg] = DILocation( 0, 0, LLVM.get_subprogram(entry_f) )
+        if get_subprogram(entry_f) !== nothing
+            metadata(res)[LLVM.MD_dbg] = DILocation( 0, 0, get_subprogram(entry_f) )
         end
 
         callconv!(res, LLVM.callconv(entry_f))
