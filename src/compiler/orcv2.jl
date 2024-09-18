@@ -224,7 +224,7 @@ function get_trampoline(job)
                 # but it would be nicer if _thunk just codegen'd the half
                 # we need.
                 other_func = functions(mod)[other_name]
-                Enzyme.Compiler.eraseInst(mod, other_func)
+                Compiler.eraseInst(mod, other_func)
             end
 
             tsm = move_to_threadsafe(mod)
