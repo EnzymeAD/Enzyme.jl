@@ -102,7 +102,10 @@ Of note, when we seed both arguments at once the tangent return is the sum of bo
 
 ```jldoctest rosenbrock
 julia> autodiff(ForwardWithPrimal, rosenbrock, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
-(400.0, -400.0)
+(-400.0, 400.0)
+
+julia> autodiff(Forward, rosenbrock, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
+(-400.0,)
 ```
 
 We can also use forward mode with our inplace method.
@@ -118,8 +121,8 @@ julia> dx = [1.0, 1.0]
  1.0
  1.0
 
-julia> autodiff(Forward, rosenbrock_inp, Duplicated, Duplicated(x, dx))
-(400.0, -400.0)
+julia> autodiff(ForwardWithPrimal, rosenbrock_inp, Duplicated, Duplicated(x, dx))
+(-400.0, 400.0)
 ```
 
 Note the seeding through `dx`.
@@ -130,7 +133,7 @@ We can also use vector mode to calculate both derivatives at once.
 
 ```jldoctest rosenbrock
 julia> autodiff(ForwardWithPrimal, rosenbrock, BatchDuplicated(1.0, (1.0, 0.0)), BatchDuplicated(3.0, (0.0, 1.0)))
-(400.0, (var"1" = -800.0, var"2" = 400.0))
+((var"1" = -800.0, var"2" = 400.0), 400.0)
 
 julia> x = [1.0, 3.0]
 2-element Vector{Float64}:
@@ -140,7 +143,7 @@ julia> x = [1.0, 3.0]
 julia> dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
 
 julia> autodiff(ForwardWithPrimal, rosenbrock_inp, BatchDuplicated(x, (dx_1, dx_2)))
-(400.0, (var"1" = -800.0, var"2" = 400.0))
+((var"1" = -800.0, var"2" = 400.0), 400.0)
 ```
 
 ## Gradient Convenience functions
@@ -161,7 +164,7 @@ julia> gradient(Reverse, rosenbrock_inp, [1.0, 2.0])
 ([-400.0, 200.0],)
 
 julia> gradient(ReverseWithPrimal, rosenbrock_inp, [1.0, 2.0])
-(derivs=[-400.0, 200.0], val=100.0)
+(derivs = ([-400.0, 200.0],), val = 100.0)
 
 julia> # inplace variant
        dx = [0.0, 0.0];
@@ -177,7 +180,7 @@ julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
 ([-400.0, 200.0],)
 
 julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
-(derivs = [-400.0, 200.0], val = 100.0)
+(derivs = ([-400.0, 200.0],), val = 100.0)
 
 julia> # in forward mode, we can also optionally pass a chunk size
        # to specify the number of derivatives computed simulateneously
@@ -200,22 +203,22 @@ Both forward and reverse modes take an optional chunk size to compute several de
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
 julia> jacobian(Reverse, foo, [1.0, 2.0]) 
-([-400.0  200.0; 2.0    1.0],)
+([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0]) 
-(derivs = ([-400.0  200.0; 2.0    1.0],), val = [100.0, 2.0])
+(derivs = ([-400.0 200.0; 2.0 1.0],), val = [100.0, 2.0])
 
 julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2)) 
-([-400.0  200.0; 2.0    1.0],)
+([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2), n_outs=Val((2,)))
-([-400.0  200.0; 2.0    1.0],)
+([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Forward, foo, [1.0, 2.0])
-([-400.0  200.0; 2.0    1.0],)
+([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Forward, foo, [1.0, 2.0], chunk=Val(2))
-([-400.0  200.0; 2.0    1.0],)
+([-400.0 200.0; 2.0 1.0],)
 ```
 
 ## Hessian Vector Product Convenience functions
