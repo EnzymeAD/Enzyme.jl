@@ -220,8 +220,6 @@ struct AutodiffCallInfo <: CallInfo
     info::CallInfo
 end
 
-always_true() = true
-
 function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
         arginfo::ArgInfo, si::StmtInfo, sv::AbsIntState,
         max_methods::Int = get_max_methods(interp, f, sv))
@@ -229,13 +227,18 @@ function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
     (; fargs, argtypes) = arginfo
     
     if f === Enzyme.within_autodiff
-          arginfo2 = ArgInfo(
-            fargs isa Nothing ? nothing : [:(Enzyme.Interpreter.always_true), fargs[2:end]...],
-            [Core.Const(Enzyme.Interpreter.always_true), argtypes[2:end]...]
-          )
-          return abstract_call_known(
-            interp, Enzyme.always_true, arginfo2,
-            si, sv, max_methods)
+        if length(argtypes) != 0
+            @static if VERSION < v"1.11.0-"
+                return CallMeta(Union{}, Effects(), NoCallInfo())
+            else
+                return CallMeta(Union{}, Union{}, Effects(), NoCallInfo())
+            end
+        end
+        @static if VERSION < v"1.11.0-"
+            return CallMeta(Const(true), CC.EFFECTS_TOTAL, MethodResultPure())
+        else
+            return CallMeta(Const(true), Union{}, CC.EFFECTS_TOTAL, MethodResultPure())
+        end
     end
 
     if f === Enzyme.autodiff && length(argtypes) >= 4
