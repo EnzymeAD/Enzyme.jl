@@ -293,6 +293,6 @@ Mark a particular type `Ty` as always being inactive.
 """
 inactive_type(::Type) = false
 
-@inline EnzymeCore.set_runtime_activity(::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(M, runtime_activity(config))
+@inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
 
 end # EnzymeRules
