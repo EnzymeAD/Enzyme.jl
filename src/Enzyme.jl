@@ -317,7 +317,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 end
 
 """
-    autodiff(mode::Mode, f, ::Type{A}, args::Vararg{Annotation, Nargs})
+    autodiff(mode::Mode, f, ::Type{A}, args::Annotation...)
 
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
@@ -532,7 +532,7 @@ code, as well as high-order differentiation.
 end
 
 """
-    autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation, Nargs})
+    autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
 ftype when called with args of type `argtypes` when using reverse mode.
@@ -628,7 +628,7 @@ end
 end
 
 """
-    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
+    autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the thunk forward mode function for annotated function type
 ftype when called with args of type `argtypes`.
@@ -798,7 +798,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
 end
 
 """
-    autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Vararg{Type{<:Annotation}, Nargs})
+    autodiff_deferred_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
 ftype when called with args of type `argtypes` when using reverse mode.
