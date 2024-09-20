@@ -14,12 +14,12 @@ using Enzyme_jll
 end
 
 @static Enzyme.EnzymeRules.issupported() && @testset "rules" begin
-    @testset "rules" include("rules.jl")
-    @testset "rrules" include("rrules.jl")
-    @testset "kwrules" include("kwrules.jl")
-    @testset "kwrrules" include("kwrrules.jl")
-    @testset "internal rules" include("internal_rules.jl")
-    @testset "rule invalidation" include("ruleinvalidation.jl")
+    @testset "rules" include("rules/rules.jl")
+    @testset "rrules" include("rules/rrules.jl")
+    @testset "kwrules" include("rules/kwrules.jl")
+    @testset "kwrrules" include("rules/kwrrules.jl")
+    @testset "internal rules" include("rules/internal_rules.jl")
+    @testset "rule invalidation" include("rules/ruleinvalidation.jl")
 end
 
 @static Sys.iswindows() || @testset "blas" include("blas.jl")

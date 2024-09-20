@@ -1,5 +1,7 @@
 using Enzyme, Test
 
+@isdefined(UTILS_INCLUDE) || include("utils.jl")
+
 
 @testset "DiffTest" begin
     include("DiffTests.jl")

@@ -1,7 +1,11 @@
 using Enzyme, Test
 
+@isdefined(UTILS_INCLUDE) || include("utils.jl")
+
 
 @testset "Simple tests" begin
+    make3() = (1.0, 2.0, 3.0)
+
     f1(x) = 1.0 + x
     f2(x) = x*x
     @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0

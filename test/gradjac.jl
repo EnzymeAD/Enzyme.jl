@@ -1,5 +1,5 @@
 using Enzyme, Test
-using SparseArrays, StaticArrays
+using LinearAlgebra, SparseArrays, StaticArrays
 
 @isdefined(UTILS_INCLUDE) || include("utils.jl")
 

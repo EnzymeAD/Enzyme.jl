@@ -1,6 +1,8 @@
 using Enzyme, Test
 using FiniteDifferences
 
+@isdefined(UTILS_INCLUDE) || include("utils.jl")
+
 
 @testset "Compare against" begin
     x = 3.0

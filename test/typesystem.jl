@@ -2,6 +2,111 @@ using Enzyme, Test
 using Random
 
 
+genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
+function genlatestsinx(xp)
+    x = @inbounds xp[1]
+    @inbounds xp[1] = 0.0
+    Base.invokelatest(sin, x)::Float64 + 1
+end
+
+function loadsin(xp)
+    x = @inbounds xp[1]
+    @inbounds xp[1] = 0.0
+    sin(x)
+end
+function invsin(xp)
+    xp = Base.invokelatest(convert, Vector{Float64}, xp)
+    loadsin(xp)
+end
+
+let
+    function loadsin2(xp)
+        x = @inbounds xp[1]
+        @inbounds xp[1] = 0.0
+        sin(x)
+    end
+    global invsin2
+    function invsin2(xp)
+        xp = Base.invokelatest(convert, Vector{Float64}, xp)
+        loadsin2(xp)
+    end
+    x = [2.0]
+end
+
+@testset "generic" begin
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(Reverse, genlatestsin, Active, Active(2.0))[1][1]
+    @test -0.4161468365471424 ≈ Enzyme.autodiff(Forward, genlatestsin, Duplicated(2.0, 1.0))[1]
+
+    x = [2.0]
+    dx = [0.0]
+    Enzyme.autodiff(Reverse, genlatestsinx, Active, Duplicated(x, dx))
+    @test 0 ≈ x[1]
+    @test -0.4161468365471424 ≈ dx[1]
+
+    x = [2.0]
+    dx = [0.0]
+    Enzyme.autodiff(Reverse, invsin, Active, Duplicated(x, dx))
+    @test 0 ≈ x[1]
+    @test -0.4161468365471424 ≈ dx[1]
+
+	function inactive_gen(x)
+		n = 1
+		for k in 1:2
+			y = falses(n)
+		end
+		return x
+	end
+    @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1][1]
+	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
+
+    function whocallsmorethan30args(R)
+        temp = diag(R)     
+         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
+             0. temp[2] 0. 0. 0. 0.; 
+             0. 0. temp[3] 0. 0. 0.; 
+             0. 0. 0. temp[4] 0. 0.; 
+             0. 0. 0. 0. temp[5] 0.; 
+         ]
+    
+        return sum(R_inv)
+    end
+    
+    R = zeros(6,6)    
+    dR = zeros(6, 6)
+
+    @static if VERSION ≥ v"1.10-"
+        @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    else
+        autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    	@test 1.0 ≈ dR[1, 1]
+    	@test 1.0 ≈ dR[2, 2]
+    	@test 1.0 ≈ dR[3, 3]
+    	@test 1.0 ≈ dR[4, 4]
+    	@test 1.0 ≈ dR[5, 5]
+    	@test 0.0 ≈ dR[6, 6]
+    end
+end
+
+@testset "invoke" begin
+    @noinline apply(@nospecialize(func)) = func()
+
+    function invtest(arr)
+        function f()
+           arr[1] *= 5.0
+           nothing
+        end
+        apply(f)
+    end
+
+    x  = [2.0]
+    dx = [1.0]
+
+    Enzyme.autodiff(Reverse, invtest, Duplicated(x, dx))
+
+    @test 10.0 ≈ x[1]
+    @test 5.0 ≈ dx[1]
+end
+
 @testset "Struct return" begin
     x = [2.0]
     dx = [0.0]
@@ -151,14 +256,6 @@ end
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
                 Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
     end
-end
-
-function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
-    a1  =  1 / @inbounds poly[1]
-    E1  = 2*a1
-    E12 =  E1*E1
-    s1 = log(E12)
-    return nothing
 end
 
 function indirectfltret(a)::DataType

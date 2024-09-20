@@ -1,5 +1,7 @@
 using Enzyme, Test
-using Statistics
+using Statistics, Random
+
+@isdefined(UTILS_INCLUDE) || include("utils.jl")
 
 
 @testset "Base functions" begin

@@ -7,6 +7,7 @@ Include with
 @isdefined(UTILS_INCLUDE) || include("utils.jl")
 ====================================================================================================#
 using Enzyme, Test
+using FiniteDifferences
 
 const UTILS_INCLUDE = true
 
