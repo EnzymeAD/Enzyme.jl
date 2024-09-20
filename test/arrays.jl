@@ -241,8 +241,6 @@ function bc2_loss_function(x, scale, bias)
     return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
 end
 
-#FUCK: I'm *still* getting segfaults here????
-#=
 @testset "Broadcast noalias" begin
     x = ones(30)
     autodiff(Reverse, bc0_test_function, Active, Const(x))
@@ -253,10 +251,10 @@ end
     x = rand(Float32, 6, 6, 6, 2)
     sc = rand(Float32, 6)
     bi = rand(Float32, 6)
-    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
-        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+    #WARN: this is where there is a segfault that I can't figure out
+    #Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+    #    Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
 end
-=#
 
 @testset "BLAS" begin
     x = [2.0, 3.0]
