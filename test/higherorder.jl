@@ -1,4 +1,5 @@
 using Enzyme, Test
+using LinearAlgebra
 
 
 function f_ip(x, tmp)
@@ -65,9 +66,6 @@ end
     hv = make_zero(v)
     tmp = similar(x)
 
-    #WARN: this fails with an assertion error from somewhere deep inside enzyme/compiler and I 
-    # have absolutely no idea why
-    # definitely fails when file is run in isolation, not sure about otherwise
     f_hvp!(hv, x, v, tmp)
     @test hv ≈ [-1.0]
 end
