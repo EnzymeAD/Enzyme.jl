@@ -1,5 +1,4 @@
-using Enzyme
-using Test
+using Enzyme, Test
 using ChainRules
 using ChainRulesCore
 using LinearAlgebra
@@ -160,10 +159,4 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
         # test_reverse(Base.sort, BatchDuplicatedNoNeed, (x, Const))
     end
 end
-
-
-
-
-
-
 

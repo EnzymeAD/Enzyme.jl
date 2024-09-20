@@ -524,5 +524,3 @@ end
 
     Enzyme.autodiff(Forward, byrefs, BatchDuplicated([1.0], ([1.0], [1.0])), BatchDuplicated([1.0], ([1.0], [1.0]) ) )
 end
-
-include("usermixed.jl")
