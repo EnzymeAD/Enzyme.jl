@@ -5746,7 +5746,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
 
-        if !(haskey(functions(mod), k_name) || has_custom_rule)
+        if !haskey(functions(mod), k_name)
             continue
         end
 
