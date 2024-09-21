@@ -10,7 +10,7 @@ import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
 @inline function use_ojit()
-    return !Sys.iswindows()
+    return true
 end
 
 export get_trampoline
