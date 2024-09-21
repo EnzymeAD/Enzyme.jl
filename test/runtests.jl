@@ -85,14 +85,13 @@ end
 include("abi.jl")
 include("typetree.jl")
 
-@static if Enzyme.EnzymeRules.issupported()
-    include("rules.jl")
-    include("rrules.jl")
-    include("kwrules.jl")
-    include("kwrrules.jl")
-    include("internal_rules.jl")
-    include("ruleinvalidation.jl")
-end
+include("rules.jl")
+include("rrules.jl")
+include("kwrules.jl")
+include("kwrrules.jl")
+include("internal_rules.jl")
+include("ruleinvalidation.jl")
+
 @static if !Sys.iswindows()
     include("blas.jl")
 end

@@ -7,12 +7,7 @@ for N in 1:30
     eval(quote
         function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
             Base.@_inline_meta
-            @static if VERSION ≤ v"1.8"
-                # callsite inline syntax unsupported in <= 1.8
-                f($(argexprs...); fkwargs...)
-            else
-                @inline f($(argexprs...); fkwargs...)
-            end
+	    @inline f($(argexprs...); fkwargs...)
         end
     end)
 end
