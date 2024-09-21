@@ -44,6 +44,7 @@ const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
 
 get_tm() = tm[]
+get_jit() = jit[].jit
 
 function absolute_symbol_materialization(name, ptr)
 	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
