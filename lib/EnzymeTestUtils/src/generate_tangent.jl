@@ -60,14 +60,8 @@ end
 
 # get around the constructors and make the type directly
 # Note this is moderately evil accessing julia's internals
-if VERSION >= v"1.3"
-    @generated function _force_construct(T, args...)
-        return Expr(:splatnew, :T, :args)
-    end
-else
-    @generated function _force_construct(T, args...)
-        return Expr(:new, :T, Any[:(args[$i]) for i in 1:length(args)]...)
-    end
+@generated function _force_construct(T, args...)
+    return Expr(:splatnew, :T, :args)
 end
 
 function _construct(T, args...)
