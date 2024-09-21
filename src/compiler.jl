@@ -3293,7 +3293,7 @@ end
 # Define EnzymeTarget
 Base.@kwdef struct EnzymeTarget <: AbstractCompilerTarget
 end
-GPUCompiler.llvm_triple(::EnzymeTarget) = Sys.MACHINE
+GPUCompiler.llvm_triple(::EnzymeTarget) = LLVM.triple()
 
 # GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
 
