@@ -9,24 +9,12 @@ import GPUCompiler
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
-@inline function use_ojit()
-    return !Sys.iswindows()
-end
-
 export get_trampoline
 
-@static if use_ojit()
-    struct CompilerInstance
-        jit::LLVM.JuliaOJIT
-        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-        ism::Union{LLVM.IndirectStubsManager, Nothing}
-    end
-else
-    struct CompilerInstance
-        jit::LLVM.LLJIT
-        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-        ism::Union{LLVM.IndirectStubsManager, Nothing}
-    end
+struct CompilerInstance
+    jit::LLVM.JuliaOJIT
+    lctm::Union{LLVM.LazyCallThroughManager, Nothing}
+    ism::Union{LLVM.IndirectStubsManager, Nothing}
 end
 
 function LLVM.dispose(ci::CompilerInstance)
@@ -44,6 +32,7 @@ const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
 
 get_tm() = tm[]
+get_jit() = jit[].jit
 
 function absolute_symbol_materialization(name, ptr)
 	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
@@ -80,37 +69,7 @@ function __init__()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
     
-    lljit = @static if !use_ojit()
-        tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
-        LLVM.asm_verbosity!(tempTM, true)
-
-        gdb = haskey(ENV, "ENABLE_GDBLISTENER")
-        perf = haskey(ENV, "ENABLE_JITPROFILING")
-        if gdb || perf
-            ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
-                oll = ObjectLinkingLayer(es)
-                if gdb
-                    register!(oll, GDBRegistrationListener())
-                end
-                if perf
-                    register!(oll, IntelJITEventListener())
-                    register!(oll, PerfJITEventListener())
-                end
-                return oll
-            end
-            GC.@preserve ollc begin
-                builder = LLJITBuilder()
-                LLVM.linkinglayercreator!(builder, ollc)
-                tmb = TargetMachineBuilder(tempTM)
-                LLVM.targetmachinebuilder!(builder, tmb)
-                LLJIT(builder)
-            end
-        else
-            LLJIT(;tm=tempTM)
-        end
-    else
-        JuliaOJIT()
-    end
+    lljit = JuliaOJIT()
 
     jd_main = JITDylib(lljit)
 
@@ -145,10 +104,6 @@ function __init__()
     end
 
     atexit() do
-        @static if !use_ojit()
-           ci = jit[]
-           dispose(ci)
-        end
         dispose(tm[])
     end
 end
@@ -229,11 +184,7 @@ function get_trampoline(job)
 
             tsm = move_to_threadsafe(mod)
 
-            il = @static if use_ojit()
-                LLVM.IRCompileLayer(lljit)
-            else
-                LLVM.IRTransformLayer(lljit)
-            end
+            il = LLVM.IRCompileLayer(lljit)
             LLVM.emit(il, mr, tsm)
         end
         return nothing
