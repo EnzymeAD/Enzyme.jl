@@ -1,5 +1,8 @@
 
 function julia_activity_rule(f::LLVM.Function)
+    if startswith(LLVM.name(f)) == "japi3"
+        return
+    end
     mi, RT = enzyme_custom_extract_mi(f)
 
     llRT, sret, returnRoots = get_return_info(RT)
