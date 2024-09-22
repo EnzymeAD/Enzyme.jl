@@ -1,6 +1,12 @@
 module Interpreter
 import Enzyme: API
-using Core.Compiler: AbstractInterpreter, InferenceResult, InferenceParams, InferenceState, OptimizationParams, MethodInstance
+using Core.Compiler:
+    AbstractInterpreter,
+    InferenceResult,
+    InferenceParams,
+    InferenceState,
+    OptimizationParams,
+    MethodInstance
 using GPUCompiler: @safe_debug
 if VERSION < v"1.11.0-DEV.1552"
     using GPUCompiler: CodeCache, WorldView, @safe_debug
@@ -18,11 +24,11 @@ else
 end
 
 struct EnzymeInterpreter <: AbstractInterpreter
-@static if HAS_INTEGRATED_CACHE
-    token::Any
-else
-    code_cache::CodeCache
-end
+    @static if HAS_INTEGRATED_CACHE
+        token::Any
+    else
+        code_cache::CodeCache
+    end
     method_table::Union{Nothing,Core.MethodTable}
 
     # Cache of inference results for this particular interpreter
@@ -37,11 +43,16 @@ end
     mode::API.CDerivativeMode
 end
 
-function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, world::UInt, mode::API.CDerivativeMode)
+function EnzymeInterpreter(
+    cache_or_token,
+    mt::Union{Nothing,Core.MethodTable},
+    world::UInt,
+    mode::API.CDerivativeMode,
+)
     @assert world <= Base.get_world_counter()
 
     parms = @static if VERSION < v"1.12"
-        InferenceParams(unoptimize_throw_blocks=false)
+        InferenceParams(unoptimize_throw_blocks = false)
     else
         InferenceParams()
     end
@@ -57,9 +68,9 @@ function EnzymeInterpreter(cache_or_token, mt::Union{Nothing,Core.MethodTable}, 
         world,
 
         # parameters for inference and optimization
-	parms,
+        parms,
         OptimizationParams(),
-        mode
+        mode,
     )
 end
 
@@ -70,7 +81,8 @@ Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cach
 @static if HAS_INTEGRATED_CACHE
     Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
 else
-    Core.Compiler.code_cache(interp::EnzymeInterpreter) = WorldView(interp.code_cache, interp.world)
+    Core.Compiler.code_cache(interp::EnzymeInterpreter) =
+        WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
@@ -87,14 +99,14 @@ Core.Compiler.may_discard_trees(::EnzymeInterpreter) = false
 Core.Compiler.verbose_stmt_info(::EnzymeInterpreter) = false
 
 if isdefined(Base.Experimental, Symbol("@overlay"))
-Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
-    Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
+    Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
+        Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 else
 
-# On 1.6- CUDA.jl will poison the method table at the end of the world
-# using GPUCompiler: WorldOverlayMethodTable
-# Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
-#     WorldOverlayMethodTable(interp.world)
+    # On 1.6- CUDA.jl will poison the method table at the end of the world
+    # using GPUCompiler: WorldOverlayMethodTable
+    # Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
+    #     WorldOverlayMethodTable(interp.world)
 end
 
 function is_alwaysinline_func(@nospecialize(TT))
@@ -114,8 +126,11 @@ function is_primitive_func(@nospecialize(TT))
     end
 
     # FIXME(@wsmoses): For which types should we not inline?
-    if ft === typeof(Base.wait) || ft === typeof(Base._wait) || ft === typeof(Base.enq_work) ||
-       ft === typeof(Base.Threads.threadid) || ft == typeof(Base.Threads.nthreads) ||
+    if ft === typeof(Base.wait) ||
+       ft === typeof(Base._wait) ||
+       ft === typeof(Base.enq_work) ||
+       ft === typeof(Base.Threads.threadid) ||
+       ft == typeof(Base.Threads.nthreads) ||
        ft === typeof(Base.Threads.threading_run)
         return true
     end
@@ -123,7 +138,7 @@ function is_primitive_func(@nospecialize(TT))
 end
 
 function isKWCallSignature(@nospecialize(TT))
-    return TT <: Tuple{typeof(Core.kwcall), Any, Any, Vararg}
+    return TT <: Tuple{typeof(Core.kwcall),Any,Any,Vararg}
 end
 
 function simplify_kw(@nospecialize specTypes)
@@ -137,27 +152,46 @@ end
 import Core.Compiler: CallInfo
 struct NoInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
-    tt # ::Type
+    tt::Any # ::Type
     kind::Symbol
-    NoInlineCallInfo(@nospecialize(info::CallInfo), @nospecialize(tt), kind::Symbol) = new(info, tt, kind)
+    NoInlineCallInfo(@nospecialize(info::CallInfo), @nospecialize(tt), kind::Symbol) =
+        new(info, tt, kind)
 end
 Core.Compiler.nsplit_impl(info::NoInlineCallInfo) = Core.Compiler.nsplit(info.info)
-Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) = Core.Compiler.getsplit(info.info, idx)
-Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) = Core.Compiler.getresult(info.info, idx)
+Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) =
+    Core.Compiler.getsplit(info.info, idx)
+Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) =
+    Core.Compiler.getresult(info.info, idx)
 struct AlwaysInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
-    tt # ::Type
+    tt::Any # ::Type
     AlwaysInlineCallInfo(@nospecialize(info::CallInfo), @nospecialize(tt)) = new(info, tt)
 end
 Core.Compiler.nsplit_impl(info::AlwaysInlineCallInfo) = Core.Compiler.nsplit(info.info)
-Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) = Core.Compiler.getsplit(info.info, idx)
-Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) = Core.Compiler.getresult(info.info, idx)
+Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
+    Core.Compiler.getsplit(info.info, idx)
+Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
+    Core.Compiler.getresult(info.info, idx)
 
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
-function Core.Compiler.abstract_call_gf_by_type(interp::EnzymeInterpreter, @nospecialize(f),
-    arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype), sv::AbsIntState, max_methods::Int)
-    ret = @invoke Core.Compiler.abstract_call_gf_by_type(interp::AbstractInterpreter, f::Any,
-        arginfo::ArgInfo, si::StmtInfo, atype::Any, sv::AbsIntState, max_methods::Int)
+function Core.Compiler.abstract_call_gf_by_type(
+    interp::EnzymeInterpreter,
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    @nospecialize(atype),
+    sv::AbsIntState,
+    max_methods::Int,
+)
+    ret = @invoke Core.Compiler.abstract_call_gf_by_type(
+        interp::AbstractInterpreter,
+        f::Any,
+        arginfo::ArgInfo,
+        si::StmtInfo,
+        atype::Any,
+        sv::AbsIntState,
+        max_methods::Int,
+    )
     callinfo = ret.info
     method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
@@ -175,21 +209,43 @@ function Core.Compiler.abstract_call_gf_by_type(interp::EnzymeInterpreter, @nosp
         callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
     end
     @static if VERSION ≥ v"1.11-"
-    return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
     else
-    return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
     end
 end
 
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
-        sigs_ex = :(interp::EnzymeInterpreter, @nospecialize(src), @nospecialize(info::Core.Compiler.CallInfo), stmt_flag::UInt32)
-        args_ex = :(interp::AbstractInterpreter, src::Any, info::Core.Compiler.CallInfo, stmt_flag::UInt32)
+        sigs_ex = :(
+            interp::EnzymeInterpreter,
+            @nospecialize(src),
+            @nospecialize(info::Core.Compiler.CallInfo),
+            stmt_flag::UInt32,
+        )
+        args_ex = :(
+            interp::AbstractInterpreter,
+            src::Any,
+            info::Core.Compiler.CallInfo,
+            stmt_flag::UInt32,
+        )
     else
-        sigs_ex = :(interp::EnzymeInterpreter,
-            @nospecialize(src), @nospecialize(info::Core.Compiler.CallInfo), stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
-        args_ex = :(interp::AbstractInterpreter,
-            src::Any, info::Core.Compiler.CallInfo, stmt_flag::UInt8, mi::MethodInstance, argtypes::Vector{Any})
+        sigs_ex = :(
+            interp::EnzymeInterpreter,
+            @nospecialize(src),
+            @nospecialize(info::Core.Compiler.CallInfo),
+            stmt_flag::UInt8,
+            mi::MethodInstance,
+            argtypes::Vector{Any},
+        )
+        args_ex = :(
+            interp::AbstractInterpreter,
+            src::Any,
+            info::Core.Compiler.CallInfo,
+            stmt_flag::UInt8,
+            mi::MethodInstance,
+            argtypes::Vector{Any},
+        )
     end
     @eval function Core.Compiler.inlining_policy($(sigs_ex.args...))
         if info isa NoInlineCallInfo
@@ -212,20 +268,36 @@ let # overload `inlining_policy`
     end
 end
 
-import Core.Compiler: abstract_call, abstract_call_known, ArgInfo, StmtInfo, AbsIntState, get_max_methods,
-                      CallMeta, Effects, NoCallInfo, widenconst, mapany, MethodResultPure
+import Core.Compiler:
+    abstract_call,
+    abstract_call_known,
+    ArgInfo,
+    StmtInfo,
+    AbsIntState,
+    get_max_methods,
+    CallMeta,
+    Effects,
+    NoCallInfo,
+    widenconst,
+    mapany,
+    MethodResultPure
 
 struct AutodiffCallInfo <: CallInfo
     # ...
     info::CallInfo
 end
 
-function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
-        arginfo::ArgInfo, si::StmtInfo, sv::AbsIntState,
-        max_methods::Int = get_max_methods(interp, f, sv))
+function abstract_call_known(
+    interp::EnzymeInterpreter,
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    sv::AbsIntState,
+    max_methods::Int = get_max_methods(interp, f, sv),
+)
 
     (; fargs, argtypes) = arginfo
-    
+
     if f === Enzyme.within_autodiff
         if length(argtypes) != 1
             @static if VERSION < v"1.11.0-"
@@ -235,26 +307,48 @@ function abstract_call_known(interp::EnzymeInterpreter, @nospecialize(f),
             end
         end
         @static if VERSION < v"1.11.0-"
-            return CallMeta(Core.Const(true), Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
+            return CallMeta(
+                Core.Const(true),
+                Core.Compiler.EFFECTS_TOTAL,
+                MethodResultPure(),
+            )
         else
-            return CallMeta(Core.Const(true), Union{}, Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
+            return CallMeta(
+                Core.Const(true),
+                Union{},
+                Core.Compiler.EFFECTS_TOTAL,
+                MethodResultPure(),
+            )
         end
     end
 
     if f === Enzyme.autodiff && length(argtypes) >= 4
-        if widenconst(argtypes[2]) <: Enzyme.Mode && widenconst(argtypes[3]) <: Enzyme.Annotation && widenconst(argtypes[4]) <: Type{<:Enzyme.Annotation}
-          arginfo2 = ArgInfo(
-            fargs isa Nothing ? nothing : [:(Enzyme.autodiff_deferred), fargs[2:end]...],
-            [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...]
-          )
-          return abstract_call_known(
-            interp, Enzyme.autodiff_deferred, arginfo2,
-            si, sv, max_methods)
-       end
+        if widenconst(argtypes[2]) <: Enzyme.Mode &&
+           widenconst(argtypes[3]) <: Enzyme.Annotation &&
+           widenconst(argtypes[4]) <: Type{<:Enzyme.Annotation}
+            arginfo2 = ArgInfo(
+                fargs isa Nothing ? nothing :
+                [:(Enzyme.autodiff_deferred), fargs[2:end]...],
+                [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...],
+            )
+            return abstract_call_known(
+                interp,
+                Enzyme.autodiff_deferred,
+                arginfo2,
+                si,
+                sv,
+                max_methods,
+            )
+        end
     end
     return Base.@invoke abstract_call_known(
-        interp::AbstractInterpreter, f, arginfo::ArgInfo,
-        si::StmtInfo, sv::AbsIntState, max_methods::Int)
+        interp::AbstractInterpreter,
+        f,
+        arginfo::ArgInfo,
+        si::StmtInfo,
+        sv::AbsIntState,
+        max_methods::Int,
+    )
 end
 
 end

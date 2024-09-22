@@ -1,9 +1,8 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-function absint(arg::LLVM.Value, partial::Bool=false)
-    if isa(arg, LLVM.BitCastInst) ||
-       isa(arg, LLVM.AddrSpaceCastInst)
+function absint(arg::LLVM.Value, partial::Bool = false)
+    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
     if isa(arg, ConstantExpr)
@@ -18,12 +17,17 @@ function absint(arg::LLVM.Value, partial::Bool=false)
             nm = LLVM.name(fn)
         end
         for (fname, ty) in (
-                             ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
-                             ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
-                             ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
-                             ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
-                             ("jl_box_char", Char), ("ijl_box_char", Char),
-                            )
+            ("jl_box_int64", Int64),
+            ("ijl_box_int64", Int64),
+            ("jl_box_uint64", UInt64),
+            ("ijl_box_uint64", UInt64),
+            ("jl_box_int32", Int32),
+            ("ijl_box_int32", Int32),
+            ("jl_box_uint32", UInt32),
+            ("ijl_box_uint32", UInt32),
+            ("jl_box_char", Char),
+            ("ijl_box_char", Char),
+        )
             if nm == fname
                 v = first(operands(arg))
                 if isa(v, ConstantInt)
@@ -39,7 +43,7 @@ function absint(arg::LLVM.Value, partial::Bool=false)
             return absint(operands(arg)[1], partial)
         end
         if nm == "jl_typeof" || nm == "ijl_typeof"
-    		vals = abs_typeof(operands(arg)[1], partial)
+            vals = abs_typeof(operands(arg)[1], partial)
             return (vals[1], vals[2])
         end
         if LLVM.callconv(arg) == 37 || nm == "julia.call"
@@ -55,11 +59,11 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                 legal, Ty = absint(operands(arg)[index], partial)
                 unionalls = []
                 for sarg in operands(arg)[index+1:end-1]
-                    slegal , foundv = absint(sarg, partial)
+                    slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
                     elseif partial
-                        foundv = TypeVar(Symbol("sarg"*string(sarg)))
+                        foundv = TypeVar(Symbol("sarg" * string(sarg)))
                         push!(found, foundv)
                         push!(unionalls, foundv)
                     else
@@ -81,7 +85,7 @@ function absint(arg::LLVM.Value, partial::Bool=false)
                 found = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
-                    slegal , foundv = absint(sarg, partial)
+                    slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
                     else
@@ -108,25 +112,28 @@ function absint(arg::LLVM.Value, partial::Bool=false)
         end
     end
 
-    if isa(arg, GlobalVariable)    
+    if isa(arg, GlobalVariable)
         gname = LLVM.name(arg)
         for (k, v) in JuliaGlobalNameMap
-            if gname == k || gname == "ejl_"*k
+            if gname == k || gname == "ejl_" * k
                 return (true, v)
             end
         end
         for (k, v) in JuliaEnzymeNameMap
-            if gname == k || gname == "ejl_"*k
+            if gname == k || gname == "ejl_" * k
                 return (true, v)
             end
         end
     end
 
-    if isa(arg, LLVM.LoadInst) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    if isa(arg, LLVM.LoadInst) &&
+       value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
         ptr = operands(arg)[1]
         ce = ptr
         while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
+               opcode(ce) == LLVM.API.LLVMBitCast ||
+               opcode(ce) == LLVM.API.LLVMIntToPtr
                 ce = operands(ce)[1]
             else
                 break
@@ -150,9 +157,11 @@ function absint(arg::LLVM.Value, partial::Bool=false)
     return (false, nothing)
 end
 
-function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Type},Tuple{Bool, Nothing}}
-    if isa(arg, LLVM.BitCastInst) ||
-       isa(arg, LLVM.AddrSpaceCastInst)
+function abs_typeof(
+    arg::LLVM.Value,
+    partial::Bool = false,
+)::Union{Tuple{Bool,Type},Tuple{Bool,Nothing}}
+    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return abs_typeof(operands(arg)[1], partial)
     end
     if isa(arg, ConstantExpr)
@@ -161,7 +170,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
     end
 
-	if isa(arg, LLVM.CallInst)
+    if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
         if isa(fn, LLVM.Function)
@@ -171,28 +180,36 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         if nm == "julia.pointer_from_objref"
             return abs_typeof(operands(arg)[1], partial)
         end
-        
+
         for (fname, ty) in (
-                             ("jl_box_int64", Int64), ("ijl_box_int64", Int64),
-                             ("jl_box_uint64", UInt64), ("ijl_box_uint64", UInt64),
-                             ("jl_box_int32", Int32), ("ijl_box_int32", Int32),
-                             ("jl_box_uint32", UInt32), ("ijl_box_uint32", UInt32),
-                             ("jl_box_float32", Float32), ("ijl_box_float32", Float32),
-                             ("jl_box_char", Char), ("ijl_box_char", Char),
-                             ("jl_specializations_get_linfo", Core.MethodInstance), 
-                             ("ijl_specializations_get_linfo", Core.MethodInstance), 
-                            )
+            ("jl_box_int64", Int64),
+            ("ijl_box_int64", Int64),
+            ("jl_box_uint64", UInt64),
+            ("ijl_box_uint64", UInt64),
+            ("jl_box_int32", Int32),
+            ("ijl_box_int32", Int32),
+            ("jl_box_uint32", UInt32),
+            ("ijl_box_uint32", UInt32),
+            ("jl_box_float32", Float32),
+            ("ijl_box_float32", Float32),
+            ("jl_box_char", Char),
+            ("ijl_box_char", Char),
+            ("jl_specializations_get_linfo", Core.MethodInstance),
+            ("ijl_specializations_get_linfo", Core.MethodInstance),
+        )
             if nm == fname
                 return (true, ty, GPUCompiler.MUT_REF)
             end
         end
-        
-    	# Type tag is arg 3
-        if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
-        	vals = absint(operands(arg)[3], partial)
+
+        # Type tag is arg 3
+        if nm == "julia.gc_alloc_obj" ||
+           nm == "jl_gc_alloc_typed" ||
+           nm == "ijl_gc_alloc_typed"
+            vals = absint(operands(arg)[3], partial)
             return (vals[1], vals[2], GPUCompiler.BITS_REF)
         end
-    	# Type tag is arg 1
+        # Type tag is arg 1
         if nm == "jl_alloc_array_1d" ||
            nm == "ijl_alloc_array_1d" ||
            nm == "jl_alloc_array_2d" ||
@@ -201,12 +218,12 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
            nm == "ijl_alloc_array_3d" ||
            nm == "jl_new_array" ||
            nm == "ijl_new_array"
-        	vals = absint(operands(arg)[1], partial)
+            vals = absint(operands(arg)[1], partial)
             return (vals[1], vals[2], GPUCompiler.MUT_REF)
         end
 
         if nm == "jl_new_structt" || nm == "ijl_new_structt"
-        	vals = absint(operands(arg)[1], partial)
+            vals = absint(operands(arg)[1], partial)
             return (vals[1], vals[2], GPUCompiler.MUT_REF)
         end
 
@@ -217,14 +234,14 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 nm = LLVM.name(fn)
                 index += 1
             end
-            
- 	        if nm == "jl_f_isdefined" || nm == "ijl_f_isdefined"
-	        	return (true, Bool, GPUCompiler.MUT_REF)
-	        end
+
+            if nm == "jl_f_isdefined" || nm == "ijl_f_isdefined"
+                return (true, Bool, GPUCompiler.MUT_REF)
+            end
 
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
-        	    vals = absint(operands(arg)[index], partial)
+                vals = absint(operands(arg)[index], partial)
                 return (vals[1], vals[2], GPUCompiler.MUT_REF)
             end
 
@@ -234,11 +251,11 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                 unionalls = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
-                    slegal , foundv, _ = abs_typeof(sarg, partial)
+                    slegal, foundv, _ = abs_typeof(sarg, partial)
                     if slegal
                         push!(found, foundv)
                     elseif partial
-                        foundv = TypeVar(Symbol("sarg"*string(sarg)))
+                        foundv = TypeVar(Symbol("sarg" * string(sarg)))
                         push!(found, foundv)
                         push!(unionalls, foundv)
                     else
@@ -266,7 +283,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-        	legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+            legal, RT, _ = abs_typeof(operands(arg)[1], partial)
             if legal
                 @assert RT <: Array
             end
@@ -284,15 +301,16 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         offset = nothing
         error = false
         while true
-            if isa(larg, LLVM.BitCastInst) ||
-               isa(larg, LLVM.AddrSpaceCastInst)
-               larg = operands(larg)[1]
-               continue
+            if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst)
+                larg = operands(larg)[1]
+                continue
             end
-            if offset === nothing && isa(larg, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(larg)[2:end])
-                b = LLVM.IRBuilder() 
+            if offset === nothing &&
+               isa(larg, LLVM.GetElementPtrInst) &&
+               all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+                b = LLVM.IRBuilder()
                 position!(b, larg)
-                offty = LLVM.IntType(8*sizeof(Int))
+                offty = LLVM.IntType(8 * sizeof(Int))
                 offset = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
                 @assert isa(offset, LLVM.ConstantInt)
                 offset = convert(Int, offset)
@@ -307,7 +325,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
         end
 
         if !error
-        	legal, typ, byref = abs_typeof(larg)
+            legal, typ, byref = abs_typeof(larg)
             if legal && (byref == GPUCompiler.MUT_REF && GPUCompiler.BITS_REF)
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
@@ -326,22 +344,24 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                         elseif isa(ty, LLVM.IntegerType)
                             return LLVM.width(ty) / 8
                         end
-                        error("Unknown llvm type to size: "*string(ty))
+                        error("Unknown llvm type to size: " * string(ty))
                     end
                     if offset === nothing
                         return (true, typ, GPUCompiler.BITS_VALUE)
                     else
                         @assert Base.isconcretetype(typ)
-                        for i in 1:fieldcount(typ)
+                        for i = 1:fieldcount(typ)
                             if fieldoffset(typ, i) == offset
-                                subT  = fieldtype(typ, i)
+                                subT = fieldtype(typ, i)
                                 fsize = if i == fieldcount(typ)
                                     sizeof(typ)
                                 else
-                                    fieldoffset(typ, i+1)
+                                    fieldoffset(typ, i + 1)
                                 end - offset
                                 if fsize == llsz(value_type(larg))
-                                    if Base.isconcretetype(subT) && is_concrete_tuple(subT) && length(subT.parameters) == 1
+                                    if Base.isconcretetype(subT) &&
+                                       is_concrete_tuple(subT) &&
+                                       length(subT.parameters) == 1
                                         subT = subT.parameters[1]
                                     end
                                     return (true, subT, GPUCompiler.BITS_VALUE)
@@ -353,14 +373,15 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             elseif legal && if typ <: Ptr && Base.isconcretetype(typ)
                 return (true, eltype(typ), GPUCompiler.BITS_VALUE)
             end
+            end
         end
     end
-   
+
     if isa(arg, LLVM.ExtractValueInst)
         larg = operands(arg)[1]
         indptrs = LLVM.API.LLVMGetIndices(arg)
         numind = LLVM.API.LLVMGetNumIndices(arg)
-        offset = Cuint[unsafe_load(indptrs, i) for i in 1:numind]
+        offset = Cuint[unsafe_load(indptrs, i) for i = 1:numind]
         found, typ, byref = abs_typeof(larg, partial)
         if !found
             return (false, nothing, nothing)
@@ -369,7 +390,7 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
             for ind in offset
                 @assert Base.isconcretetype(typ)
                 cnt = 0
-                for i in 1:fieldcount(typ)
+                for i = 1:fieldcount(typ)
                     styp = fieldtype(typ, i)
                     if isghostty(styp)
                         continue
@@ -378,53 +399,53 @@ function abs_typeof(arg::LLVM.Value, partial::Bool=false)::Union{Tuple{Bool, Typ
                         typ = styp
                         break
                     end
-                    cnt+=1
+                    cnt += 1
                 end
             end
             return (true, typ, GPUCompiler.BITS_VALUE)
         end
     end
-        
+
 
     if isa(arg, LLVM.Argument)
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
-        typ, byref = enzyme_extract_parm_type(f, idx, #=error=#false)
+        typ, byref = enzyme_extract_parm_type(f, idx, false) #=error=#
         if typ !== nothing
             return (true, typ, byref)
         end
     end
 
     legal, val = absint(arg, partial)
-	if legal
-		return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
-	end
-	return (false, nothing, nothing)
+    if legal
+        return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
+    end
+    return (false, nothing, nothing)
 end
-
-function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
-    if isa(arg, ConstantExpr)
-        ce = arg
-	    while isa(ce, ConstantExpr)
-	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
-	            ce = operands(ce)[1]
-            elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
-                    ce = operands(ce)[1]
-                else
-                    break
-                end
-	        else
-	            break
-	        end
-	    end
-	    if isa(ce, LLVM.GlobalVariable)
-	        ce = LLVM.initializer(ce)
-	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
-		    end
-
-	    end
-	end
-	return (false, "")
-end
+# 
+# function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
+#     if isa(arg, ConstantExpr)
+#         ce = arg
+# 	    while isa(ce, ConstantExpr)
+# 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
+# 	            ce = operands(ce)[1]
+#             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
+#                 if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+#                     ce = operands(ce)[1]
+#                 else
+#                     break
+#                 end
+# 	        else
+# 	            break
+# 	        end
+# 	    end
+# 	    if isa(ce, LLVM.GlobalVariable)
+# 	        ce = LLVM.initializer(ce)
+# 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
+# 	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
+# 		    end
+# 
+# 	    end
+# 	end
+# 	return (false, "")
+# end
