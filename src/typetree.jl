@@ -93,18 +93,22 @@ function get_offsets(@nospecialize(T::Type))
             return ((typetree_primitive(T), 0),)
         end
     end
-    for sT in (DataType, AbstractString, TypeTreeEmptyPointers...)
+    for sT in (DataType, AbstractString)
         if T <: sT
             return ((API.DT_Pointer, 0),)
         end
     end
-
+    for sT in TypeTreeEmptyPointers
+        if T == sT
+            return ((API.DT_Pointer, 0),)
+        end
+    end
     @static if VERSION < v"1.11-"
         TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array)
     else
         TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array, GenericMemory)
     end
-    for sT in TypeTreeEmptyPointers
+    for sT in TypeTreePtrs
         if T <: sT
             return ((API.DT_Pointer, 0),)
         end
