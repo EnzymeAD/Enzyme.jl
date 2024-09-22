@@ -364,7 +364,11 @@ function abs_typeof(
                                        length(subT.parameters) == 1
                                         subT = subT.parameters[1]
                                     end
-                                    return (true, subT, GPUCompiler.BITS_VALUE)
+                                    if Base.allocatedinline(subT)
+                                        return (true, subT, GPUCompiler.BITS_VALUE)
+                                    else
+                                        return (true, subT, GPUCompiler.MUT_REF)
+                                    end
                                 end
                             end
                         end
@@ -402,7 +406,11 @@ function abs_typeof(
                     cnt += 1
                 end
             end
-            return (true, typ, GPUCompiler.BITS_VALUE)
+            if Base.allocatedinline(typ)
+                return (true, typ, GPUCompiler.BITS_VALUE)
+            else
+                return (true, typ, GPUCompiler.MUT_REF)
+            end
         end
     end
 
