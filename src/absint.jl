@@ -326,7 +326,7 @@ function abs_typeof(
 
         if !error
             legal, typ, byref = abs_typeof(larg)
-            if legal && (byref == GPUCompiler.MUT_REF && GPUCompiler.BITS_REF)
+            if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF)
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
                         T = eltype(typ)
