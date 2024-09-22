@@ -625,9 +625,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 
                 legal, iterlib = absint(operands(inst)[iteroff+1])
                 if legal && iterlib == Base.iterate
-                    legal, GT = abs_typeof(operands(inst)[4+1], true)
+                    legal, GT, byref = abs_typeof(operands(inst)[4+1], true)
                     funcoff = 3
-                    legal2, funclib = abs_typeof(operands(inst)[funcoff+1])
+                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff+1])
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
                             tys = [funclib, Vararg{Any}]
@@ -654,11 +654,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
-                legal, flibty = abs_typeof(operands(inst)[offset+1])
+                legal, flibty, byref = abs_typeof(operands(inst)[offset+1])
                 if legal
                     tys = Type[flibty]
                     for op in collect(operands(inst))[start+1:end-1]
-                        legal, typ = abs_typeof(op, true)
+                        legal, typ, byref2 = abs_typeof(op, true)
                         if !legal
                             typ = Any
                         end
@@ -721,11 +721,11 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
         if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
             offset, start = generic_method_offsets[LLVM.name(dest)]
 
-            legal, flibty = abs_typeof(operands(inst)[offset])
+            legal, flibty, byref = abs_typeof(operands(inst)[offset])
             if legal
                 tys = Type[flibty]
                 for op in collect(operands(inst))[start:end-1]
-                    legal, typ = abs_typeof(op, true)
+                    legal, typ, byref2 = abs_typeof(op, true)
                     if !legal
                         typ = Any
                     end
@@ -833,9 +833,8 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
                 nm = LLVM.name(fn)
             end
 
-            # Type tag is arg 3
             if nm == "julia.gc_alloc_obj"
-                legal, Ty = abs_typeof(cur)
+                legal, Ty, byref = abs_typeof(cur)
                 @assert legal
                 reg = active_reg_inner(Ty, (), world)
                 if reg == ActiveState || reg == MixedState
@@ -908,7 +907,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
         end
 
         if length(off) == 0 && value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
-            legal, typ = abs_typeof(cur)
+            legal, typ, byref = abs_typeof(cur)
             if legal
                 reg = active_reg_inner(typ, (), world)
                 if !(reg == ActiveState || reg == MixedState)

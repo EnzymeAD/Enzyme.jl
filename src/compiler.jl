@@ -1176,7 +1176,7 @@ function emit_jltypeof!(B::LLVM.IRBuilder, arg::LLVM.Value)::LLVM.Value
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    legal, val = abs_typeof(arg)
+    legal, val, byref = abs_typeof(arg)
     if legal
         return unsafe_to_llvm(B, val)
     end
@@ -2255,7 +2255,7 @@ function julia_error(cstr::Cstring, val::LLVM.API.LLVMValueRef, errtype::API.Err
                 return seen[cur]
             end
             
-            legal, TT = abs_typeof(cur, true)
+            legal, TT, byref = abs_typeof(cur, true)
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
@@ -2908,7 +2908,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient || mode == API.DEM_ReverseModeCombined
         fn = LLVM.parent(LLVM.parent(V))
         world = enzyme_extract_world(fn)
-        has, Ty = abs_typeof(V)
+        has, Ty, byref = abs_typeof(V)
         @assert has 
         rt = active_reg_inner(Ty, (), world)
         if rt == ActiveState || rt == MixedState
@@ -6093,7 +6093,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
         if !API.HasFromStack(inst) && isa(inst, LLVM.CallInst) && (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
-            legal, source_typ = abs_typeof(inst)
+            legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
                 typ = if codegen_typ isa LLVM.PointerType
@@ -6102,17 +6102,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     # - literal pointer values
                     if source_typ <: Ptr || source_typ <: Core.LLVMPtr
                         source_typ
-                    elseif llvm_source_typ isa LLVM.PointerType
-                        #if llvm_source_typ != codegen_typ
-                        #    throw(AssertionError("llvmtype ($llvm_source_typ) is not codegen_typ ($codegen_typ), source_typ = $source_typ within $(string(inst))"))
-                        #end
-                        # push!(args, (cc=MUT_REF, typ=source_typ, name=source_name, idx=codegen_i))
+                    elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
-                    # - references to aggregates
                     else
-                        @assert llvm_source_typ != codegen_typ
-                        # push!(args, (cc=BITS_REF, typ=source_typ, name=source_name, idx=codegen_i))
-                        Ptr{source_typ}
+                        @assert false
                     end
                 else
                     source_typ
@@ -6143,7 +6136,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             intr = LLVM.API.LLVMGetIntrinsicID(fn)
 
             if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id || intr == LLVM.Intrinsic("llvm.memset").id
-                legal, jTy = abs_typeof(operands(inst)[1])
+                legal, jTy, byref = abs_typeof(operands(inst)[1])
                 sz = if intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id
                     operands(inst)[3]
                 else
@@ -6152,7 +6145,10 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                 if legal && Base.isconcretetype(jTy)
                     if !(jTy isa UnionAll || jTy isa Union || jTy == Union{} || jTy === Tuple  || (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)))
                         if isa(sz, LLVM.ConstantInt) && sizeof(jTy) == convert(Int, sz)
-                            metadata(inst)["enzyme_truetype"] = to_fullmd(jTy)
+                            md = to_fullmd(jTy)
+                            @assert byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+                            @show operands(inst)[1], inst, jTy, md
+                            metadata(inst)["enzyme_truetype"] = md
                         end
                     end
                 end
@@ -6164,7 +6160,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             continue
         end
 
-        legal, jTy = abs_typeof(inst, true)
+        legal, jTy, byref = abs_typeof(inst, true)
         if !legal
             continue
         end
@@ -6206,7 +6202,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                     end
 
                     if !mayWriteToMemory(user)
-                        slegal , foundv = abs_typeof(user)
+                        slegal , foundv, byref = abs_typeof(user)
                         if slegal
                             reg2 = active_reg_inner(foundv, (), world)
                             if reg2 == ActiveState || reg2 == AnyState
@@ -6232,7 +6228,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                         end
                         # we are storing into the variable
                         if operands(user)[2] == cur
-                            slegal , foundv = abs_typeof(operands(user)[1])
+                            slegal , foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
                                 reg2 = active_reg_inner(foundv, (), world)
                                 if reg2 == AnyState
@@ -6259,7 +6255,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                 continue
                             end
                             if is_readonly(called)
-                                slegal , foundv = abs_typeof(user)
+                                slegal , foundv, byref = abs_typeof(user)
                                 if slegal
                                     reg2 = active_reg_inner(foundv, (), world)
                                     if reg2 == ActiveState || reg2 == AnyState
@@ -6275,7 +6271,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
                                         push!(todo, parm)
                                     end
                                 end
-                                slegal , foundv = abs_typeof(user)
+                                slegal , foundv, byref = abs_typeof(user)
                                 if slegal
                                     reg2 = active_reg_inner(foundv, (), world)
                                     if reg2 == ActiveState || reg2 == AnyState

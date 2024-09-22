@@ -62,7 +62,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
@@ -83,7 +83,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
             end
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)

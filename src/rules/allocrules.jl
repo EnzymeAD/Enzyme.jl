@@ -8,7 +8,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst)
     if !legal
         throw(AssertionError("Could not statically ahead-of-time determine allocation element type of "*string(inst)))
     end

@@ -367,6 +367,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
 
         internal_tape, origRet, initShadow = forward(dupClosure0 ? $dup : Const(f), args...)
         annotation = annotationA
+        @show internal_tape, origRet, initShadow
+        @show f, args
 
         resT = typeof(origRet)
         if annotation <: Const
@@ -389,6 +391,7 @@ function func_runtime_generic_augfwd(N, Width)
 
     quote
         function runtime_generic_augfwd(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, RT::Val{ReturnType}, f::F, df::DF, $(allargs...))::ReturnType where {ActivityTup, MB, ReturnType, RuntimeActivity, F, DF, $(typeargs...)}
+            @show $(allargs...)
             $body
         end
     end
@@ -435,13 +438,15 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 :(tup[$i][$w])
             end
             shad = shadowargs[i][w]
-            out = :(if tup[$i] === nothing
+            out = quote
+              @show tup[$i], $shad
+              if tup[$i] === nothing
               elseif $shad isa Base.RefValue
                   $shad[] = recursive_add($shad[], $expr)
-                else
+              else
                     error("Enzyme Mutability Error: Cannot add one in place to immutable value "*string($shad)*" tup[i]="*string(tup[$i])*" i="*string($i)*" w="*string($w)*" tup="*string(tup))
-                end
-               )
+              end
+            end
             push!(outs, out)
         end
     end
@@ -508,15 +513,24 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
         _, adjoint = thunk(opt_mi, dupClosure0 ? $dupty : Const{FT},
                                  annotation, Tuple{$(Types...)}, Val(API.DEM_ReverseModePrimal), width,
                                  ModifiedBetween, #=returnPrimal=#Val(true), #=shadowInit=#Val(false), FFIABI, #=erriffuncwritten=#Val(false), runtimeActivity)
+        
+        @show "pre", f, args
+        @show tape
+        @show f, args
 
         tup = if annotation0 <: Active || annotation0 <: MixedDuplicated || annotation0 <: BatchMixedDuplicated
+            @show $shadowret
             adjoint(dupClosure0 ? $dup : Const(f), args..., $shadowret, tape.internal_tape)[1]
         else
             adjoint(dupClosure0 ? $dup : Const(f), args..., tape.internal_tape)[1]
         end
 
+        @show "post", tup, f, args
+
         $(outs...)
-        return nothing
+        
+        @show "post2", tup, f, args
+        # return nothing
     end
 end
 
@@ -526,7 +540,10 @@ function func_runtime_generic_rev(N, Width)
 
     quote
         function runtime_generic_rev(activity::Type{Val{ActivityTup}}, runtimeActivity::Val{RuntimeActivity}, width::Val{$Width}, ModifiedBetween::Val{MB}, tape::TapeType, f::F, df::DF, $(allargs...)) where {ActivityTup, RuntimeActivity, MB, TapeType, F, DF, $(typeargs...)}
+            @show "revpre", $(allargs...)
             $body
+            @show "revpost", $(allargs...)
+            return nothing
         end
     end
 end

@@ -235,7 +235,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     abs = [abs_typeof(v) for v in origops[offset+1:end-1]]
 
     @assert length(icvs) == length(abs)
-    for (icv, (found_partial, typ_partial), (found, typ)) in zip(icvs, abs_partial, abs)
+    for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref)) in zip(icvs, abs_partial, abs)
         # Constants not handled unless known inactive from type
         if icv
             if !found_partial

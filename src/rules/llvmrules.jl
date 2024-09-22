@@ -1099,7 +1099,7 @@ end
             end
             args = LLVM.Value[anti, offset]
             
-            found, arty = abs_typeof(origops[1])
+            found, arty, byref = abs_typeof(origops[1])
             anti = shadowin
             elSize = if found
                 LLVM.ConstantInt(Csize_t(sizeof(eltype(arty))))
