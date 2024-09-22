@@ -160,7 +160,7 @@ end
 function abs_typeof(
     arg::LLVM.Value,
     partial::Bool = false,
-)::Union{Tuple{Bool,Type},Tuple{Bool,Nothing}}
+)::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return abs_typeof(operands(arg)[1], partial)
     end
@@ -207,7 +207,7 @@ function abs_typeof(
            nm == "jl_gc_alloc_typed" ||
            nm == "ijl_gc_alloc_typed"
             vals = absint(operands(arg)[3], partial)
-            return (vals[1], vals[2], GPUCompiler.BITS_REF)
+            return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
         end
         # Type tag is arg 1
         if nm == "jl_alloc_array_1d" ||
@@ -219,12 +219,12 @@ function abs_typeof(
            nm == "jl_new_array" ||
            nm == "ijl_new_array"
             vals = absint(operands(arg)[1], partial)
-            return (vals[1], vals[2], GPUCompiler.MUT_REF)
+            return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
         if nm == "jl_new_structt" || nm == "ijl_new_structt"
             vals = absint(operands(arg)[1], partial)
-            return (vals[1], vals[2], GPUCompiler.MUT_REF)
+            return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
         if LLVM.callconv(arg) == 37 || nm == "julia.call"
@@ -242,7 +242,7 @@ function abs_typeof(
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
                 vals = absint(operands(arg)[index], partial)
-                return (vals[1], vals[2], GPUCompiler.MUT_REF)
+                return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
             end
 
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
@@ -331,9 +331,9 @@ function abs_typeof(
                     if typ <: Array && Base.isconcretetype(typ)
                         T = eltype(typ)
                         if offset === nothing || offset == 0
-                            return (true, Ptr{T})
+                            return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
                         else
-                            return (true, Int)
+                            return (true, Int, GPUCompiler.BITS_VALUE)
                         end
                     end
                 end
@@ -386,7 +386,7 @@ function abs_typeof(
         if !found
             return (false, nothing, nothing)
         end
-        if legal && byref == GPUCompiler.BITS_VALUE
+        if byref == GPUCompiler.BITS_VALUE
             for ind in offset
                 @assert Base.isconcretetype(typ)
                 cnt = 0

@@ -476,8 +476,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
 
         internal_tape, origRet, initShadow = forward(dupClosure0 ? $dup : Const(f), args...)
         annotation = annotationA
-        @show internal_tape, origRet, initShadow
-        @show f, args
 
         resT = typeof(origRet)
         if annotation <: Const
@@ -516,7 +514,6 @@ function func_runtime_generic_augfwd(N, Width)
             df::DF,
             $(allargs...),
         )::ReturnType where {ActivityTup,MB,ReturnType,RuntimeActivity,F,DF,$(typeargs...)}
-            @show $(allargs...)
             $body
         end
     end
@@ -574,7 +571,6 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
             end
             shad = shadowargs[i][w]
             out = quote
-                @show tup[$i], $shad
                 if tup[$i] === nothing
                 elseif $shad isa Base.RefValue
                     $shad[] = recursive_add($shad[], $expr)
@@ -671,15 +667,10 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
             runtimeActivity,
         ) #=erriffuncwritten=#
 
-        @show "pre", f, args
-        @show tape
-        @show f, args
-
         tup =
             if annotation0 <: Active ||
                annotation0 <: MixedDuplicated ||
                annotation0 <: BatchMixedDuplicated
-                @show $shadowret
                 adjoint(
                     dupClosure0 ? $dup : Const(f),
                     args...,
@@ -690,12 +681,9 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 adjoint(dupClosure0 ? $dup : Const(f), args..., tape.internal_tape)[1]
             end
 
-        @show "post", tup, f, args
-
         $(outs...)
 
-        @show "post2", tup, f, args
-        # return nothing
+        return nothing
     end
 end
 
@@ -716,10 +704,7 @@ function func_runtime_generic_rev(N, Width)
             df::DF,
             $(allargs...),
         ) where {ActivityTup,RuntimeActivity,MB,TapeType,F,DF,$(typeargs...)}
-            @show "revpre", $(allargs...)
             $body
-            @show "revpost", $(allargs...)
-            return nothing
         end
     end
 end

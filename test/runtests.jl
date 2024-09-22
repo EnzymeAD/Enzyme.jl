@@ -2856,6 +2856,17 @@ end
     @test dx[3] ≈ 0
 end
 
+function unstable_fun(A0)
+    A = 'N' in ('H', 'h', 'S', 's') ? wrap(A0) : A0
+    (@inbounds A[1])::eltype(A0)
+end
+@testset "Type unstable static array index" begin
+    inp = ones(SVector{2, Float64})
+    res = Enzyme.gradient(Enzyme.Reverse, fun, inp)
+    @test res ≈ [1.0, 0.0]
+    res = Enzyme.gradient(Enzyme.Forward, fun, inp)
+    @test res ≈ [1.0, 0.0]
+end
 
 function sparse_eval(x::Vector{Float64})
     A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])

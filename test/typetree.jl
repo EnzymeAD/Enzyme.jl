@@ -90,5 +90,5 @@ end
     @test Enzyme.get_offsets(Ptr{Char}) == ((Enzyme.API.DT_Pointer,0),)
     @test Enzyme.get_offsets(Ptr{Float32}) == ((Enzyme.API.DT_Pointer,0),)
     @test Enzyme.get_offsets(Vector{Float32}) == ((Enzyme.API.DT_Pointer,0),)
-    @test Enzyme.get_offsets(Tuple{Float64, Int}) == ((Enzyme.API.DT_Double,0),(Enzyme.API.DT_Integer, 8))
+    @test Enzyme.get_offsets(Tuple{Float64, Int}) == [(Enzyme.API.DT_Double,0),(Enzyme.API.DT_Integer, 8)]
 end

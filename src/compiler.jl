@@ -8004,7 +8004,6 @@ function GPUCompiler.codegen(
                             md = to_fullmd(jTy)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
-                            @show operands(inst)[1], inst, jTy, md
                             metadata(inst)["enzyme_truetype"] = md
                         end
                     end
@@ -8829,13 +8828,6 @@ end
                rettype <: BatchMixedDuplicated
                 if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
                     return quote
-                        @show $width
-                        @show $(length(argtypes)),
-                        $is_adjoint,
-                        $needs_tape,
-                        $(length(argexprs))
-                        @show $argtypes
-                        @show $argexprs
                         throw(MethodError($CC(fptr), (fn, args...)))
                     end
                 end
