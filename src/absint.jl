@@ -286,8 +286,9 @@ function abs_typeof(
             legal, RT, _ = abs_typeof(operands(arg)[1], partial)
             if legal
                 @assert RT <: Array
+                return (legal, RT, GPUCompiler.MUT_REF)
             end
-            return (legal, RT, GPUCompiler.MUT_REF)
+            return (legal, RT, nothing)
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
