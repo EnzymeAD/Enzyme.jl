@@ -348,16 +348,26 @@ function abs_typeof(
                     end
                 end
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                    function llsz(ty)
-                        if isa(ty, LLVM.PointerType)
-                            return sizeof(Ptr{Cvoid})
-                        elseif isa(ty, LLVM.IntegerType)
-                            return LLVM.width(ty) / 8
-                        end
-                        error("Unknown llvm type to size: " * string(ty))
-                    end
+                    dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
                     if offset === nothing
-                        return (true, typ, GPUCompiler.BITS_VALUE)
+                        byref = GPUCompiler.BITS_VALUE
+                        legal = true
+                        typ2 = typ
+                        while sizeof(typ2) != sizeof(dl, value_type(arg))
+                            if fieldcount(typ2) > 0
+                                typ2 = fieldtyp(typ, 1)
+                                if !Base.allocatedinline(subT)
+                                    @assert byref == GPUCompiler.BITS_VALUE
+                                    byref = GPUCompiler.MUT_REF
+                                    continue
+                                end
+                            end
+                            legal = false
+                            break
+                        end
+                        if legal
+                            return (true, typ2, byref)
+                        end
                     else
                         @assert Base.isconcretetype(typ)
                         for i = 1:fieldcount(typ)
@@ -368,7 +378,7 @@ function abs_typeof(
                                 else
                                     fieldoffset(typ, i + 1)
                                 end - offset
-                                if fsize == llsz(value_type(larg))
+                                if fsize == sizeof(dl, value_type(arg))
                                     if Base.isconcretetype(subT) &&
                                        is_concrete_tuple(subT) &&
                                        length(subT.parameters) == 1
