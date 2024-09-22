@@ -355,7 +355,7 @@ function abs_typeof(
                         typ2 = typ
                         while sizeof(typ2) != sizeof(dl, value_type(arg))
                             if fieldcount(typ2) > 0
-                                typ2 = fieldtyp(typ, 1)
+                                typ2 = fieldtype(typ, 1)
                                 if !Base.allocatedinline(subT)
                                     @assert byref == GPUCompiler.BITS_VALUE
                                     byref = GPUCompiler.MUT_REF
