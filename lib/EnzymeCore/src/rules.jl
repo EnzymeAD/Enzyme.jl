@@ -77,17 +77,21 @@ const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 
 """
+    primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
     primal_type(::RevConfig, ::Type{<:Annotation{RT}})
 
 Compute the exepcted primal return type given a reverse mode config and return activity
 """
+@inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 @inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 
 """
+    shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
     shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
 
 Compute the exepcted shadow return type given a reverse mode config and return activity
 """
+@inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 @inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 
 """
@@ -191,9 +195,6 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
                       caller::Union{Nothing,Core.MethodInstance}=nothing)
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
-    @static if VERSION < v"1.7.0"
-        return !isempty(Base._methods_by_ftype(sig, -1, world))
-    end
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
     mt isa Core.MethodTable || return false
     if method_table === nothing
@@ -232,14 +233,6 @@ end
 function add_mt_backedge!(caller::Core.MethodInstance, mt::Core.MethodTable, @nospecialize(sig))
     ccall(:jl_method_table_add_backedge, Cvoid, (Any, Any, Any), mt, sig, caller)
     return nothing
-end
-
-function issupported()
-    @static if VERSION < v"1.7.0"
-        return false
-    else
-        return true
-    end
 end
 
 """

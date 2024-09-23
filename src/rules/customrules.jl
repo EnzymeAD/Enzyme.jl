@@ -497,7 +497,7 @@ end
     if RT <: Const
         if needsPrimal
             if RealRt != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing
@@ -508,7 +508,7 @@ end
             end
         else
             if Nothing != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
                 return false
             end
         end
@@ -519,7 +519,7 @@ end
                 ST = NTuple{Int(width), ST}
             end
             if ST != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing
@@ -539,7 +539,7 @@ end
                 BatchDuplicated{RealRt, Int(width)}
             end
             if ST != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing

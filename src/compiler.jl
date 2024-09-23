@@ -3293,9 +3293,9 @@ end
 # Define EnzymeTarget
 Base.@kwdef struct EnzymeTarget <: AbstractCompilerTarget
 end
-GPUCompiler.llvm_triple(::EnzymeTarget) = Sys.MACHINE
 
-# GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
+GPUCompiler.llvm_triple(::EnzymeTarget) = LLVM.triple(JIT.get_jit())
+GPUCompiler.llvm_datalayout(::EnzymeTarget) = LLVM.datalayout(JIT.get_jit())
 
 function GPUCompiler.llvm_machine(::EnzymeTarget)
     return JIT.get_tm()
@@ -5746,7 +5746,7 @@ function GPUCompiler.codegen(output::Symbol, job::CompilerJob{<:EnzymeTarget};
             end
         end
 
-        if !(haskey(functions(mod), k_name) || has_custom_rule)
+        if !haskey(functions(mod), k_name)
             continue
         end
 
