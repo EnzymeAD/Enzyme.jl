@@ -13,7 +13,7 @@ using Enzyme_jll
     @testset "misc internals" include("internals/internals.jl")
 end
 
-@static Enzyme.EnzymeRules.issupported() && @testset "rules" begin
+@testset "rules" begin
     @testset "rules" include("rules/rules.jl")
     @testset "rrules" include("rules/rrules.jl")
     @testset "kwrules" include("rules/kwrules.jl")
