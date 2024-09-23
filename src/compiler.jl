@@ -7936,6 +7936,8 @@ function GPUCompiler.codegen(
                     elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
                     else
+                        println(string(mod))
+                        @show legal, source_typ, byref, llvm_source_typ, codegen_typ, string(inst)
                         @assert false
                     end
                 else
