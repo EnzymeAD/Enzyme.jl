@@ -158,7 +158,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
 end
 
 function actual_size(@nospecialize(typ2))
-    if typ <: Array
+    if typ2 <: Array
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
