@@ -157,6 +157,16 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     return (false, nothing)
 end
 
+function actual_size(@nospecialize(typ2))
+    if typ <: Array
+        return sizeof(Int)
+    elseif Base.isconcretetype(typ2)
+        return sizeof(typ2)
+    else
+        return sizeof(Int)
+    end
+end
+
 function abs_typeof(
     arg::LLVM.Value,
     partial::Bool = false,
@@ -353,13 +363,6 @@ function abs_typeof(
                         byref = GPUCompiler.BITS_VALUE
                         legal = true
                         typ2 = typ
-                        function actual_size(@nospecialize(typ2))
-                            if Base.isconcretetype(typ2)
-                                return sizeof(typ2)
-                            else
-                                return sizeof(Int)
-                            end
-                        end
                         while actual_size(typ2) != sizeof(dl, value_type(arg))
                             if fieldcount(typ2) > 0
                                 typ2 = fieldtype(typ, 1)
