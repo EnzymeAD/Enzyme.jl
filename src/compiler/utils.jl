@@ -110,6 +110,19 @@ function is_noreturn(f::LLVM.Function)
 end
 
 function is_readonly(f::LLVM.Function)
+    intr = LLVM.API.LLVMGetIntrinsicID(f)
+    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.assume").id
+        return true
+    end
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+        return true
+    end
     for attr in collect(function_attributes(f))
         if kind(attr) == kind(EnumAttribute("readonly"))
             return true
@@ -129,6 +142,19 @@ function is_readonly(f::LLVM.Function)
 end
 
 function is_readnone(f::LLVM.Function)
+    intr = LLVM.API.LLVMGetIntrinsicID(f)
+    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.assume").id
+        return true
+    end
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+        return true
+    end
     for attr in collect(function_attributes(cur))
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
@@ -145,6 +171,19 @@ function is_readnone(f::LLVM.Function)
 end
 
 function is_writeonly(f::LLVM.Function)
+    intr = LLVM.API.LLVMGetIntrinsicID(f)
+    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+        return true
+    end
+    if intr == LLVM.Intrinsic("llvm.assume").id
+        return true
+    end
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+        return true
+    end
     for attr in collect(function_attributes(cur))
         if kind(attr) == kind(EnumAttribute("readnone"))
             return true
@@ -222,72 +261,6 @@ T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
     return v
 end
 
-if VERSION < v"1.7.0-DEV.1205"
-
-declare_ptls!(mod) = get_function!(mod, "julia.ptls_states", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
-
-function emit_ptls!(B)
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-    func, fty = declare_ptls!(mod)
-    return call!(B, fty, func)
-end
-
-function get_ptls(func)
-    entry_bb = first(blocks(func))
-    ptls_func = declare_ptls!(LLVM.parent(func))
-
-    for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_operand(I) == ptls_func
-            return I
-        end
-    end
-    return nothing
-end
-
-function reinsert_gcmarker!(func, PB=nothing)
-	ptls = get_ptls(func) 
-    if isnothing(ptls)
-        B = IRBuilder()
-        entry_bb = first(blocks(func))
-        if !isempty(instructions(entry_bb))
-            position!(B, first(instructions(entry_bb)))
-        else
-            position!(B, entry_bb)
-        end
-        emit_ptls!(B)
-	else
-        entry_bb = first(blocks(func))
-        fst = first(instructions(entry_bb))
-        if fst != ptls
-            API.moveBefore(ptls, fst, PB === nothing ? C_NULL : PB.ref)
-        end
-		ptls
-    end
-end
-
-function unique_gcmarker!(func)
-    entry_bb = first(blocks(func))
-    ptls_func = declare_ptls!(LLVM.parent(func))
-
-    found = LLVM.CallInst[]
-    for I in instructions(entry_bb)
-        if I isa LLVM.CallInst && called_operand(I) == ptls_func
-            push!(found, I)
-        end
-    end
-    if length(found) > 1
-        for i in 2:length(found)
-            LLVM.replace_uses!(found[i], found[1])
-            Base.unsafe_delete!(entry_bb, found[i])
-        end
-    end
-    return nothing
-end
-
-else
-
 function declare_pgcstack!(mod) 
         get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
 end
@@ -340,6 +313,14 @@ function reinsert_gcmarker!(func, PB=nothing)
     end
 end
 
+function eraseInst(bb, inst)
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
+
 function unique_gcmarker!(func)
     entry_bb = first(blocks(func))
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
@@ -354,11 +335,10 @@ function unique_gcmarker!(func)
         for i in 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
             ops = LLVM.collect(operands(found[i]))
-            Base.unsafe_delete!(entry_bb, found[i])
+            eraseInst(entry_bb, found[i])
         end
     end
     return nothing
-end
 end
 
 @inline AnonymousStruct(::Type{U}) where U<:Tuple = NamedTuple{ntuple(i->Symbol(i), Val(length(U.parameters))), U}

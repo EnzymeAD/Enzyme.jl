@@ -13,6 +13,7 @@ end
 
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
 get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
+get_runtime_activity(gutils::GradientUtils) = API.EnzymeGradientUtilsGetRuntimeActivity(gutils)
 
 function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
     w = get_width(gutils)

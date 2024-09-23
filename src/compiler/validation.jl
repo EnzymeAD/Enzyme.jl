@@ -9,56 +9,19 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
-        @static if VERSION >= v"1.7"
-            function __init__()
-                @static if VERSION > v"1.8"
-                  global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
-                else
-                  global blas_handle = Libdl.dlopen(BLAS.libblas)
-                end
+        function __init__()
+            global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
+        end
+        function get_blas_symbols()
+            symbols = BLAS.get_config().exported_symbols
+            if BLAS.USE_BLAS64
+                return map(n->n*"64_", symbols)
             end
-            function get_blas_symbols()
-                symbols = BLAS.get_config().exported_symbols
-                if BLAS.USE_BLAS64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
+            return symbols
+        end
 
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
-        else
-            function __init__()
-                global blas_handle = Libdl.dlopen(BLAS.libblas)
-            end
-            function get_blas_symbols()
-                symbols = Set{String}()
-                path = Libdl.dlpath(BLAS.libblas)
-                ignoreSymbols = Set(String["", "edata", "_edata", "end", "_end", "_bss_start", "__bss_start", ".text", ".data"])
-                for meta in readmeta(open(path, "r"))
-                    for s in Symbols(meta)
-                        name = symbol_name(s)
-                        if !Sys.iswindows() && BLAS.vendor() == :openblas64
-                            endswith(name, "64_") || continue
-                        else
-                            endswith(name, "_") || continue
-                        end
-                        if !in(name, ignoreSymbols)
-                            push!(symbols, name)
-                        end
-                    end
-                end
-                symbols = collect(symbols)
-                if Sys.iswindows() &&  BLAS.vendor() == :openblas64
-                    return map(n->n*"64_", symbols)
-                end
-                return symbols
-            end
-
-            function lookup_blas_symbol(name)
-                Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
-            end
+        function lookup_blas_symbol(name)
+            Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error=false)
         end
     end
 
@@ -100,6 +63,7 @@ module FFI
             "jl_array_isassigned", "ijl_array_isassigned",
             "jl_array_ptr_copy", "ijl_array_ptr_copy",
             "jl_array_typetagdata", "ijl_array_typetagdata",
+            "jl_idtable_rehash"
         )
         for name in known_names
             sym = LLVM.find_symbol(name)
@@ -148,7 +112,7 @@ function restore_lookups(mod::LLVM.Module)
         if haskey(functions(mod), k)
             f = functions(mod)[k]
             replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstIntToPtr(ConstantInt(T_size_t, convert(UInt, v)), value_type(f))))
-            unsafe_delete!(mod, f)
+            eraseInst(mod, f)
         end
     end
 end
@@ -195,8 +159,12 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     if changed
                         prevname = LLVM.name(inst)
                         LLVM.name!(inst, "")
-                        newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(map(LLVM.OperandBundleDef, operand_bundles(inst))), prevname)
-                        for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
+                        if !isdefined(LLVM, :OperandBundleDef)
+			  newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(operand_bundles(inst)), prevname)
+			else
+			  newinst = call!(B, called_type(inst), called_operand(inst), uservals, collect(map(LLVM.OperandBundleDef, operand_bundles(inst))), prevname)
+			end
+			for idx = [LLVM.API.LLVMAttributeFunctionIndex, LLVM.API.LLVMAttributeReturnIndex, [LLVM.API.LLVMAttributeIndex(i) for i in 1:(length(arguments(inst)))]...]
                             idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                             count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx);
                             Attrs = Base.unsafe_convert(Ptr{LLVM.API.LLVMAttributeRef}, Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef)*count))
@@ -212,13 +180,27 @@ function rewrite_ccalls!(mod::LLVM.Module)
                     end
                     continue
                 end
-                newbundles = OperandBundleDef[]
-                for bunduse in operand_bundles(inst)
-                    bunduse = LLVM.OperandBundleDef(bunduse)
-                    if LLVM.tag_name(bunduse) != "jl_roots"
-                        push!(newbundles, bunduse)
-                        continue
-                    end
+                if !isdefined(LLVM, :OperandBundleDef)
+                  newbundles = OperandBundle[]
+		else
+		  newbundles = OperandBundleDef[]
+		end
+		for bunduse in operand_bundles(inst)
+                    if isdefined(LLVM, :OperandBundleDef)
+		      bunduse = LLVM.OperandBundleDef(bunduse)
+		    end
+
+                    if !isdefined(LLVM, :OperandBundleDef)
+			    if LLVM.tag(bunduse) != "jl_roots"
+				push!(newbundles, bunduse)
+				continue
+			    end
+		    else
+			    if LLVM.tag_name(bunduse) != "jl_roots"
+				push!(newbundles, bunduse)
+				continue
+			    end
+		    end
                     uservals = LLVM.Value[]
                     subchanged = false
                     for lval in LLVM.inputs(bunduse)
@@ -245,7 +227,11 @@ function rewrite_ccalls!(mod::LLVM.Module)
                         continue
                     end
                     changed = true
-                    push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                    if !isdefined(LLVM, :OperandBundleDef)
+                      push!(newbundles, OperandBundle(LLVM.tag(bunduse), uservals))
+                    else
+                      push!(newbundles, OperandBundleDef(LLVM.tag_name(bunduse), uservals))
+                    end
                 end
                 changed = false
                 if changed
@@ -286,7 +272,7 @@ function check_ir!(job, errors, mod::LLVM.Module)
 
         mfn = LLVM.API.LLVMAddFunction(mod, "malloc", LLVM.FunctionType(ptr8, parameters(prev_ft)))
         replace_uses!(f, LLVM.Value(LLVM.API.LLVMConstPointerCast(mfn, value_type(f))))
-        unsafe_delete!(mod, f)
+        eraseInst(mod, f)
     end
     rewrite_ccalls!(mod)
     for f in collect(functions(mod))
@@ -338,10 +324,8 @@ end
     return has_method(sig, mt.world, nothing)
 end
 
-@static if VERSION >= v"1.7"
 @inline function has_method(sig, world::UInt, mt::Core.Compiler.OverlayMethodTable)
     return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
-end
 end
 
 @inline function is_inactive(tys, world::UInt, mt)
@@ -716,11 +700,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
 
             if length(frames) >= 1
-                @static if VERSION >= v"1.4.0-DEV.123"
-                    fn, file, line, linfo, fromC, inlined = last(frames)
-                else
-                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
-                end
+                fn, file, line, linfo, fromC, inlined = last(frames)
 
                 # Remember pointer in our global map
                 fn = FFI.memoize!(ptr, string(fn))
@@ -861,7 +841,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width
                 if reg == ActiveState || reg == MixedState
                     NTy = Base.RefValue{Ty}
                     @assert sizeof(Ty) == sizeof(NTy)
-                    LLVM.API.LLVMSetOperand(cur, 2, unsafe_to_llvm(NTy))
+                    LLVM.API.LLVMSetOperand(cur, 2, unsafe_to_llvm(LLVM.IRBuilder(cur), NTy))
                 end
                 continue
             end

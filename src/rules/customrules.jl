@@ -31,7 +31,8 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+    ofn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(ofn)
 
     for arg in jlargs
         @assert arg.cc != RemovedParam
@@ -55,7 +56,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
-                val = unsafe_to_llvm(arg.typ.parameters[1])
+                val = unsafe_to_llvm(B, arg.typ.parameters[1])
                 store!(B, val, ptr)
 
                 if any_jltypes(llty)
@@ -135,7 +136,12 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 ptr = inbounds_gep!(B, llty, al, [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)])
                 if value_type(val) != eltype(value_type(ptr))
                     if overwritten[end]
-                        emit_error(B, orig, "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))")
+                        emit_error(
+                            B,
+                            orig,
+                            "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). "
+                            * "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                        )
                     end
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)
@@ -231,7 +237,7 @@ function enzyme_custom_setup_args(B, orig::LLVM.CallInst, gutils::GradientUtils,
                 if mixed
                     RefTy = arg.typ
                     if width != 1
-                        RefTy = NTuple{N, RefTy}
+                        RefTy = NTuple{Int(width), RefTy}
                     end
                     llrty = convert(LLVMType, RefTy)
                     RefTy = Base.RefValue{RefTy}
@@ -340,7 +346,7 @@ function custom_rule_method_error(world, fn, args...)
     throw(MethodError(fn, (args...,), world))
 end
 
-function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -367,6 +373,8 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     args, activity, overwritten, actives, kwtup, _ = enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, #=reverse=#false, isKWCall)
     RT, needsPrimal, needsShadow, origNeedsPrimal = enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
 
+    C = EnzymeRules.FwdConfig{Bool(needsPrimal), Bool(needsShadow), Int(width), get_runtime_activity(gutils)}
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = get_mode(gutils)
@@ -378,10 +386,12 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
         @assert kwtup !== nothing
         insert!(tt, 1, kwtup)
         insert!(tt, 2, Core.typeof(EnzymeRules.forward))
-        insert!(tt, 4, Type{RT})
+        insert!(tt, 3, C)
+        insert!(tt, 5, Type{RT})
     else
         @assert kwtup === nothing
-        insert!(tt, 2, Type{RT})
+        insert!(tt, 1, C)
+        insert!(tt, 3, Type{RT})
     end
     TT = Tuple{tt...}
 
@@ -485,10 +495,9 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
     normalV = C_NULL
 
     if RT <: Const
-        # TODO introduce const-no-need
-        if needsPrimal || true
+        if needsPrimal
             if RealRt != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of const primal-only forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just return type "*string(RealRt)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing
@@ -499,7 +508,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
             end
         else
             if Nothing != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of const no-primal forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just return type Nothing found "*string(fwd_RT))
                 return false
             end
         end
@@ -510,7 +519,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
                 ST = NTuple{Int(width), ST}
             end
             if ST != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of shadow-only forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing
@@ -530,7 +539,7 @@ function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
                 BatchDuplicated{RealRt, Int(width)}
             end
             if ST != fwd_RT
-                emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
+                emit_error(B, orig, "Enzyme: incorrect return type of prima/shadow forward custom rule - $C "*(string(RT))*" "*string(activity)*" want just shadow type "*string(ST)*" found "*string(fwd_RT))
                 return false
             end
             if get_return_info(RealRt)[2] !== nothing
@@ -589,7 +598,7 @@ end
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
+    C = EnzymeRules.RevConfig{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten, get_runtime_activity(gutils)}
     
     mode = get_mode(gutils)
 
@@ -640,7 +649,7 @@ end
     return aug_fwd_mi(orig, gutils)[1] !== nothing
 end
 
-function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils, normalR, shadowR, tape)::LLVM.API.LLVMValueRef
+@register_rev function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils, normalR, shadowR, tape)::LLVM.API.LLVMValueRef
 
     ctx = LLVM.context(orig)
 
@@ -667,7 +676,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         needsShadow
     end
 
-    C = EnzymeRules.Config{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten}
+    C = EnzymeRules.RevConfig{Bool(needsPrimal), Bool(needsShadowJL), Int(width), overwritten, get_runtime_activity(gutils)}
 
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
@@ -695,11 +704,26 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     if (aug_RT <: EnzymeRules.AugmentedReturn || aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT isa UnionAll) && !(aug_RT isa Union) && !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
+    elseif (aug_RT isa UnionAll) && (aug_RT <: EnzymeRules.AugmentedReturn) && aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            TapeT = aug_RT.body.parameters[3].ub
+        else
+            TapeT = Any
+        end
+    elseif (aug_RT isa UnionAll) && (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturnFlexShadow.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            TapeT = aug_RT.body.parameters[3].ub
+        else
+            TapeT = Any
+        end
+    else
+        TapeT = Any
     end
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
+    applicablefn = true
 
     if forward
         llvmf = nested_codegen!(mode, mod, ami, world)
@@ -733,6 +757,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
                 pushfirst!(args, LLVM.ConstantInt(world))
                 rev_RT = Union{}
+                applicablefn = false
             end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
@@ -744,6 +769,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
                 pushfirst!(args, LLVM.ConstantInt(world))
                 rev_RT = Union{}
+                applicablefn = false
             end
         end
     end
@@ -774,16 +800,22 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots = get_return_info(miRT)
+    sret_union = is_sret_union(miRT)
+
+    if sret_union    
+        emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " had a union sret of type "*string(miRT)*" which is not currently supported")
+        return tapeV
+    end
 
     if !forward
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2] 
         if needsTape
             @assert tape != C_NULL
-            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (rev_RT == Union{}) 
+            tape_idx = 1+(kwtup!==nothing && !isghostty(kwtup)) + !isghostty(funcTy) + (!applicablefn)
             trueidx = tape_idx+(sret !== nothing)+(returnRoots !== nothing)+swiftself + (RT <: Active)
             innerTy = value_type(parameters(llvmf)[trueidx])
             if innerTy != value_type(tape)
-                if isabstracttype(TapeT) || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
+                if isabstracttype(TapeT) || TapeT isa UnionAll || TapeT == Tuple || TapeT.layout == C_NULL || TapeT == Array
                     msg = sprint() do io
                         println(io, "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))")
                         println(io, "tape_idx=", tape_idx)
@@ -797,6 +829,8 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                         println(io, "returnRoots=", returnRoots)
                         println(io, "swiftself=", swiftself)
                         println(io, "RT=", RT)
+                        println(io, "rev_RT=", rev_RT)
+                        println(io, "applicablefn=", applicablefn)
                         println(io, "tape=", tape)
                         println(io, "llvmf=", string(LLVM.function_type(llvmf)))
                         println(io, "TapeT=", TapeT)
@@ -825,7 +859,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
                 API.EnzymeGradientUtilsSetDiffe(gutils, orig, LLVM.null(value_type(val)), B)
             else
-                llety = convert(LLVMType, eltype(RT))
+                llety = convert(LLVMType, eltype(RT); allow_boxed=true)
                 ptr_val = invert_pointer(gutils, operands(orig)[1 + !isghostty(funcTy)], B)
                 val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
                 for idx in 1:width
@@ -846,7 +880,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             if any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
             end
-            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup)) + (rev_RT == Union{}),  al)
+            insert!(args, 1+(!isghostty(funcTy))+(kwtup!==nothing && !isghostty(kwtup)) + (!applicablefn),  al)
         end
     end
 
@@ -954,16 +988,33 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
                 ST = EnzymeRules.AugmentedReturnFlexShadow{needsPrimal ? RealRt : Nothing, needsShadowJL ? EnzymeRules.shadow_type(aug_RT) : Nothing, TapeT}
             end
         end
+        abstract = false
         if aug_RT != ST
-            ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
-            emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
-            return tapeV
+            abs = (EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, T} where T)
+            if aug_RT <: abs
+                abstract = true
+            else
+                ST = EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Any}
+                emit_error(B, orig, "Enzyme: Augmented forward pass custom rule " * string(augprimal_TT) * " return type mismatch, expected "*string(ST)*" found "* string(aug_RT))
+                return tapeV
+            end
+        end
+
+        resV = if abstract
+            StructTy = convert(LLVMType, EnzymeRules.AugmentedReturn{needsPrimal ? RealRt : Nothing, needsShadowJL ? ShadT : Nothing, Nothing})
+            if StructTy != LLVM.VoidType()
+                load!(B, StructTy, bitcast!(B, res, LLVM.PointerType(StructTy, addrspace(value_type(res)))))
+            else
+                res
+            end
+        else
+            res
         end
 
         idx = 0
         if needsPrimal
             @assert !isghostty(RealRt)
-            normalV = extract_value!(B, res, idx)
+            normalV = extract_value!(B, resV, idx)
             if get_return_info(RealRt)[2] !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
                 store!(B, normalV, val)
@@ -976,7 +1027,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         if needsShadow
             if needsShadowJL
                 @assert !isghostty(RealRt)
-                shadowV = extract_value!(B, res, idx)
+                shadowV = extract_value!(B, resV, idx)
                 if get_return_info(RealRt)[2] !== nothing
                     dval = invert_pointer(gutils, operands(orig)[1], B)
 
@@ -996,11 +1047,15 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
             end
         end
         if needsTape
-            tapeV = extract_value!(B, res, idx).ref
+            tapeV = if abstract
+                emit_nthfield!(B, res, LLVM.ConstantInt(2)).ref
+            else
+                extract_value!(B, res, idx).ref
+            end
             idx+=1
         end
     else
-        Tys = (A <: Active ? eltype(A) : Nothing for A in activity[2+isKWCall:end])
+        Tys = (A <: Active ? (width == 1 ? eltype(A) : NTuple{Int(width), eltype(A)}) : Nothing for A in activity[2+isKWCall:end])
         ST = Tuple{Tys...}
         if rev_RT != ST
             emit_error(B, orig, "Enzyme: Reverse pass custom rule " * string(rev_TT) * " return type mismatch, expected "*string(ST)*" found "* string(rev_RT))
@@ -1035,7 +1090,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
         for (ptr_val, argTyp, refal) in mixeds
             RefTy = argTyp
             if width != 1
-                RefTy = NTuple{N, RefTy}
+                RefTy = NTuple{Int(width), RefTy}
             end
             curs = load!(B, convert(LLVMType, RefTy), refal)
 
@@ -1065,7 +1120,7 @@ function enzyme_custom_common_rev(forward::Bool, B, orig::LLVM.CallInst, gutils,
 end
 
 
-function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return true
     end
@@ -1076,8 +1131,7 @@ function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     return false
 end
 
-
-function enzyme_custom_rev(B, orig, gutils, tape)
+@register_rev function enzyme_custom_rev(B, orig, gutils, tape)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return
     end
@@ -1085,11 +1139,27 @@ function enzyme_custom_rev(B, orig, gutils, tape)
     return nothing
 end
 
-function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+@register_diffuse function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
     # use default
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig) && !has_aug_fwd_rule(orig, gutils)
         return (false, true)
     end
+    non_rooting_use = false
+    fop = called_operand(orig)::LLVM.Function
+    for (i, v) in enumerate(operands(orig)[1:end-1])
+      if v == val
+         if !any(a->kind(a) == kind(StringAttribute("enzymejl_returnRoots")), collect(parameter_attributes(fop, i)))
+            non_rooting_use = true
+	    break
+	 end
+      end
+    end
+    
+    # If the operand is just rooting, we don't need it and should override defaults
+    if !non_rooting_use
+      return (false, false)
+    end
+    
     # don't use default and always require the arg
     return (true, false)
 end
