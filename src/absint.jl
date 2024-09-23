@@ -367,7 +367,10 @@ function abs_typeof(
                             if fieldcount(typ2) > 0
                                 typ2 = fieldtype(typ, 1)
                                 if !Base.allocatedinline(typ2)
-                                    # @assert byref == GPUCompiler.BITS_VALUE
+                                    if byref != GPUCompiler.BITS_VALUE
+                                        legal = false
+                                        break
+                                    end
                                     byref = GPUCompiler.MUT_REF
                                     continue
                                 end
