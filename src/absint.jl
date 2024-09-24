@@ -359,18 +359,24 @@ function abs_typeof(
                 end
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
-                    function should_recurse(typ2, arg_t)
-                        if actual_size(typ2) != sizeof(dl, arg_t)
-                            return true
+                    function should_recurse(typ2, arg_t, byref)
+                        sz = sizeof(dl, arg_t)
+                        if byref != GPUCompiler.BITS_VALUE
+                            @assert sz == sizeof(Int)
+                            return false
                         else
-                            if Base.isconcretetype(typ2)
-                                if fieldcount(typ2) > 0
-                                    if actual_size(fieldtype(typ2,1)) == actual_size(fieldtype(typ2, 1))
-                                        return true
+                            if actual_size(typ2) != sz
+                                return true
+                            else
+                                if Base.isconcretetype(typ2)
+                                    if fieldcount(typ2) > 0
+                                        if actual_size(fieldtype(typ2,1)) == sz
+                                            return true
+                                        end
                                     end
                                 end
+                                return false
                             end
-                            return false
                         end
                     end
                     
@@ -414,7 +420,7 @@ function abs_typeof(
                     end
                     
                     typ2 = typ
-                    while should_recurse(typ2, value_type(arg))
+                    while should_recurse(typ2, value_type(arg), byref)
                         if fieldcount(typ2) > 0
                             typ2 = fieldtype(typ2, 1)
                             if !Base.allocatedinline(typ2)
