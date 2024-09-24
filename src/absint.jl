@@ -379,6 +379,7 @@ function abs_typeof(
 
                     while offset !== nothing && legal
                         @assert Base.isconcretetype(typ)
+                        seen = false
                         for i = 1:fieldcount(typ)
                             if fieldoffset(typ, i) == offset
                                 offset = nothing
@@ -389,16 +390,19 @@ function abs_typeof(
                                     end
                                     byref = GPUCompiler.MUT_REF
                                 end
+                                seen = true
                                 break
                             elseif fieldoffset(typ, i) > offset
-                                offset = fieldoffset(typ, i-1) - offset
+                                offset = offset - fieldoffset(typ, i-1)
                                 typ = fieldtype(typ, i-1)
                                 if !Base.allocatedinline(typ)
                                     legal = false
                                 end
+                                seen = true
                                 break
                             end
                         end
+                        @assert seen
                     end
                     
                     typ2 = typ
