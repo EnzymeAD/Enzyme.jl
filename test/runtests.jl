@@ -3959,6 +3959,35 @@ function harmonic_f!(inter_list, coords, inters)
     return si
 end
 
+function invwsumsq(w::AbstractVector, a::AbstractVector)
+    s = zero(zero(eltype(a)) / zero(eltype(w)))
+    for i in eachindex(w)
+        s += abs2(a[i]) / w[i]
+    end
+    return s
+end
+
+_logpdf(d, x) = invwsumsq(d.Σ.diag, x .- d.μ)
+
+function demo_func(x::Any=transpose([1.5 2.0;]);)
+    m = [-0.30725218207431315, 0.5492115788562757]
+    d = (; Σ = LinearAlgebra.Diagonal([1.0, 1.0]), μ = m)
+    logp = _logpdf(d, reshape(x, (2,)))
+    return logp
+end
+
+demof(x) = demo_func()
+
+@testset "Type checks" begin
+    x = [0.0, 0.0]
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        Enzyme.Const(demof),
+        Enzyme.Active,
+        Enzyme.Duplicated(x, zero(x)),
+    )
+end
+
 @testset "Decay preservation" begin
     inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
     inter_list = [1, 3]
