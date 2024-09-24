@@ -2862,9 +2862,9 @@ function unstable_fun(A0)
 end
 @testset "Type unstable static array index" begin
     inp = ones(SVector{2, Float64})
-    res = Enzyme.gradient(Enzyme.Reverse, unstable_fun, inp)
+    res = Enzyme.gradient(Enzyme.Reverse, unstable_fun, inp)[1]
     @test res ≈ [1.0, 0.0]
-    res = Enzyme.gradient(Enzyme.Forward, unstable_fun, inp)
+    res = Enzyme.gradient(Enzyme.Forward, unstable_fun, inp)[1]
     @test res ≈ [1.0, 0.0]
 end
 
