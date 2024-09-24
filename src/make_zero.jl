@@ -1,4 +1,3 @@
-
 @inline function EnzymeCore.make_zero(x::FT)::FT where {FT<:AbstractFloat}
     return Base.zero(x)
 end
@@ -58,124 +57,142 @@ end
     prev::Complex{RT},
     ::Val{copy_if_inactive} = Val(false),
 )::Complex{RT} where {copy_if_inactive,RT<:AbstractFloat}
-    return RT(0)
+    return Complex{RT}(0)
 end
 
 @inline function EnzymeCore.make_zero(
-    ::Type{RT},
-    seen::IdDict,
-    prev::RT,
-    ::Val{copy_if_inactive} = Val(false),
-)::RT where {copy_if_inactive,RT<:Array}
-    if haskey(seen, prev)
-        return seen[prev]
+    ::Type{RT}, seen::IdDict, prev::RT, copyval::Val{copy_if_inactive}=Val(false)
+) where {copy_if_inactive,RT}
+    function f(p)
+        T = Core.Typeof(p)
+        if guaranteed_const_nongen(T, nothing)
+            return (copy_if_inactive ? Base.deepcopy_internal(p, seen) : p)::T
+        end
+        return EnzymeCore.make_zero(T, seen, p, copyval)::T
     end
-    if guaranteed_const_nongen(RT, nothing)
-        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
+    function isleaftype(::Type{T}) where {T}
+        baseTs = Union{
+            AbstractFloat,
+            Complex{<:AbstractFloat},
+            Array{<:AbstractFloat},
+            Array{<:Complex{<:AbstractFloat}},
+        }
+        return (T <: baseTs) || guaranteed_const_nongen(T, nothing)
     end
-    newa = RT(undef, size(prev))
-    seen[prev] = newa
-    for I in eachindex(prev)
-        if isassigned(prev, I)
-            pv = prev[I]
-            innerty = Core.Typeof(pv)
-            @inbounds newa[I] =
-                EnzymeCore.make_zero(innerty, seen, pv, Val(copy_if_inactive))
+    return recursive_map(RT, f, seen, (prev,), isleaftype)::RT
+end
+
+recursive_map(f::F, x::T...) where {F,T} = recursive_map(T, f, IdDict(), x)::T
+
+@inline function recursive_map(
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype::L=Returns(false)
+) where {RT,F,N,L}
+    if isleaftype(RT)
+        return f(xs...)::RT
+    end
+    return _recursive_map(RT, f, seen, xs, isleaftype)::RT
+end
+
+@inline function _recursive_map(
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+) where {RT<:Array,F,N}
+    if haskey(seen, xs)
+        return seen[xs]
+    end
+    x1 = first(xs)
+    s = size(x1)
+    @assert all(x -> (size(x) == s), xs[2:end])
+    y = RT(undef, s)
+    seen[xs] = y
+    for i in eachindex(x1)
+        if all(x -> isassigned(x, i), xs)
+            xis = ntuple(j -> xs[j][i], N)
+            T = Core.Typeof(first(xis))
+            @inbounds y[i] = recursive_map(T, f, seen, xis, isleaftype)
         end
     end
-    return newa
+    return y
 end
 
-@inline function EnzymeCore.make_zero(
-    ::Type{RT},
-    seen::IdDict,
-    prev::RT,
-    ::Val{copy_if_inactive} = Val(false),
-)::RT where {copy_if_inactive,RT<:Tuple}
-    return ntuple(length(prev)) do i
+@inline function _recursive_map(
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+) where {M,RT<:NTuple{M,Any},F,N}
+    return ntuple(M) do i
         Base.@_inline_meta
-        EnzymeCore.make_zero(RT.parameters[i], seen, prev[i], Val(copy_if_inactive))
+        xis = ntuple(j -> xs[j][i], N)
+        recursive_map(RT.parameters[i], f, seen, xis, isleaftype)
     end
 end
 
-@inline function EnzymeCore.make_zero(
-    ::Type{NamedTuple{A,RT}},
-    seen::IdDict,
-    prev::NamedTuple{A,RT},
-    ::Val{copy_if_inactive} = Val(false),
-)::NamedTuple{A,RT} where {copy_if_inactive,A,RT}
-    return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
+@inline function _recursive_map(
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+) where {T,RT<:NamedTuple{<:Any,T},F,N}
+    y = recursive_map(T, f, seen, ntuple(i -> T(xs[i]), N), isleaftype)
+    return RT(y)
 end
 
-@inline function EnzymeCore.make_zero(
-    ::Type{Core.Box},
-    seen::IdDict,
-    prev::Core.Box,
-    ::Val{copy_if_inactive} = Val(false),
-) where {copy_if_inactive}
-    if haskey(seen, prev)
-        return seen[prev]
+@inline function _recursive_map(
+    ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, isleaftype
+) where {F,N}
+    if haskey(seen, xs)
+        return seen[xs]
     end
-    prev2 = prev.contents
+    xcontents = ntuple(i -> xs[i].contents, N)
+    T = Core.Typeof(first(xcontents))
     res = Core.Box()
-    seen[prev] = res
-    res.contents = Base.Ref(
-        EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive)),
-    )
+    seen[xs] = res
+    res.contents = Base.Ref(recursive_map(T, f, seen, xcontents, isleaftype))
     return res
 end
 
-@inline function EnzymeCore.make_zero(
-    ::Type{RT},
-    seen::IdDict,
-    prev::RT,
-    ::Val{copy_if_inactive} = Val(false),
-)::RT where {copy_if_inactive,RT}
-    if guaranteed_const_nongen(RT, nothing)
-        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
-    end
-    if haskey(seen, prev)
-        return seen[prev]
+@inline function _recursive_map(
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+) where {RT,F,N}
+    if haskey(seen, xs)
+        return seen[xs]
     end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
     nf = fieldcount(RT)
-
-    if ismutable(prev)
-        y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)::RT
-        seen[prev] = y
-        for i = 1:nf
-            if isdefined(prev, i)
-                xi = getfield(prev, i)
-                T = Core.Typeof(xi)
-                xi = EnzymeCore.make_zero(T, seen, xi, Val(copy_if_inactive))
+    
+    if ismutabletype(RT)
+        y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
+        seen[xs] = y
+        for i in 1:nf
+            if all(x -> isdefined(x, i), xs)
+                xis = ntuple(j -> getfield(xs[j], i), N)
+                T = Core.Typeof(first(xis))
+                yi = recursive_map(T, f, seen, xis, isleaftype)
                 if Base.isconst(RT, i)
-                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, yi)
                 else
-                    setfield!(y, i, xi)
+                    setfield!(y, i, yi)
                 end
             end
         end
         return y
     end
-
+    
     if nf == 0
-        return prev
+        y = f(xs...)
+        seen[xs] = y
+        return y
     end
 
     flds = Vector{Any}(undef, nf)
-    for i = 1:nf
-        if isdefined(prev, i)
-            xi = getfield(prev, i)
-            xi = EnzymeCore.make_zero(Core.Typeof(xi), seen, xi, Val(copy_if_inactive))
-            flds[i] = xi
+    for i in 1:nf
+        if isdefined(xs, i)
+            xis = ntuple(j -> getfield(xs[j], i), N)
+            T = Core.Typeof(first(xis))
+            yi = recursive_map(T, f, seen, xis, isleaftype)
+            flds[i] = yi
         else
             nf = i - 1 # rest of tail must be undefined values
             break
         end
     end
     y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)
-    seen[prev] = y
+    seen[xs] = y
     return y
 end
 
@@ -202,203 +219,4 @@ function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} w
         Base.@_inline_meta
         make_zero_immutable!(prev[a[i]], seen)
     end)
-end
-
-
-function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
-    if guaranteed_const_nongen(T, nothing)
-        return prev
-    end
-    @assert !ismutable(prev)
-
-    RT = Core.Typeof(prev)
-    @assert !Base.isabstracttype(RT)
-    @assert Base.isconcretetype(RT)
-    nf = fieldcount(RT)
-
-    flds = Vector{Any}(undef, nf)
-    for i = 1:nf
-        if isdefined(prev, i)
-            xi = getfield(prev, i)
-            ST = Core.Typeof(xi)
-            flds[i] = if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
-                make_zero_immutable!(xi, seen)
-            else
-                EnzymeCore.make_zero!(xi, seen)
-                xi
-            end
-        else
-            nf = i - 1 # rest of tail must be undefined values
-            break
-        end
-    end
-    ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::T
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(T)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(Complex{T})
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{T,N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    fill!(prev, zero(T))
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    fill!(prev, zero(Complex{T}))
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-)::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
-    if in(seen, prev)
-        return
-    end
-    push!(seen, prev)
-
-    for I in eachindex(prev)
-        if isassigned(prev, I)
-            pv = prev[I]
-            SBT = Core.Typeof(pv)
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                @inbounds prev[I] = make_zero_immutable!(pv, seen)
-                nothing
-            else
-                EnzymeCore.make_zero!(pv, seen)
-                nothing
-            end
-        end
-    end
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
-    if in(seen, prev)
-        return
-    end
-    push!(seen, prev)
-
-    pv = prev[]
-    SBT = Core.Typeof(pv)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        prev[] = make_zero_immutable!(pv, seen)
-        nothing
-    else
-        EnzymeCore.make_zero!(pv, seen)
-        nothing
-    end
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Core.Box, seen::ST)::Nothing where {ST}
-    pv = prev.contents
-    T = Core.Typeof(pv)
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
-    if in(seen, prev)
-        return
-    end
-    push!(seen, prev)
-    SBT = Core.Typeof(pv)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        prev.contents = EnzymeCore.make_zero_immutable!(pv, seen)
-        nothing
-    else
-        EnzymeCore.make_zero!(pv, seen)
-        nothing
-    end
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::T,
-    seen::S = Base.IdSet{Any}(),
-)::Nothing where {T,S}
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
-    if in(prev, seen)
-        return
-    end
-    @assert !Base.isabstracttype(T)
-    @assert Base.isconcretetype(T)
-    nf = fieldcount(T)
-
-
-    if nf == 0
-        return
-    end
-
-    push!(seen, prev)
-
-    for i = 1:nf
-        if isdefined(prev, i)
-            xi = getfield(prev, i)
-            SBT = Core.Typeof(xi)
-            if guaranteed_const_nongen(SBT, nothing)
-                continue
-            end
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                setfield!(prev, i, make_zero_immutable!(xi, seen))
-                nothing
-            else
-                EnzymeCore.make_zero!(xi, seen)
-                nothing
-            end
-        end
-    end
-    return
 end
