@@ -386,14 +386,16 @@ function abs_typeof(
                                 if !Base.allocatedinline(typ)
                                     if byref != GPUCompiler.BITS_VALUE
                                         legal = false
-                                        break
                                     end
                                     byref = GPUCompiler.MUT_REF
                                 end
                                 break
                             elseif fieldoffset(typ, i) > offset
-                                offset = fieldoffset(typ, i) - offset
-                                typ = fieldtype(typ, i)
+                                offset = fieldoffset(typ, i-1) - offset
+                                typ = fieldtype(typ, i-1)
+                                if !Base.allocatedinline(typ)
+                                    legal = false
+                                end
                                 break
                             end
                         end
