@@ -380,7 +380,9 @@ function abs_typeof(
                     while offset !== nothing && legal
                         @assert Base.isconcretetype(typ)
                         seen = false
+                        lasti = 1
                         for i = 1:fieldcount(typ)
+                            fo = fieldoffset(typ, i)
                             if fieldoffset(typ, i) == offset
                                 offset = nothing
                                 typ = fieldtype(typ, i)
@@ -393,16 +395,22 @@ function abs_typeof(
                                 seen = true
                                 break
                             elseif fieldoffset(typ, i) > offset
-                                offset = offset - fieldoffset(typ, i-1)
-                                typ = fieldtype(typ, i-1)
+                                offset = offset - fieldoffset(typ, lasti)
+                                typ = fieldtype(typ, lasti)
                                 if !Base.allocatedinline(typ)
                                     legal = false
                                 end
                                 seen = true
                                 break
                             end
+                            
+                            if fo != 0 && fo != fieldoffset(typ, i-1)
+                                lasti = i
+                            end
                         end
-                        @assert seen
+                        if !seen
+                            legal = false
+                        end
                     end
                     
                     typ2 = typ
