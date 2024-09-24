@@ -5,10 +5,16 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
+@inline unsafe_to_pointer(val::Type{T}) where {T} = ccall(
+    Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)),
+    Ptr{Cvoid},
+    (Any,),
+    val,
+)
 export unsafe_to_pointer
 
-@inline is_concrete_tuple(x::Type{T2}) where T2 = (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
+@inline is_concrete_tuple(x::Type{T2}) where {T2} =
+    (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
 export is_concrete_tuple
 
 const Tracked = 10
@@ -20,11 +26,11 @@ const captured_constants = Base.IdSet{Any}()
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"
-    if Base.haskey(globs, "ejl_"*k)
+    if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_"*k]
     end
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
     API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
     API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
@@ -56,13 +62,13 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
         if v === val
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_"*k)
+            if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
@@ -78,12 +84,12 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
         if v === val
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_"*k)
+            if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
@@ -153,7 +159,11 @@ using Base: _methods_by_ftype
 # on 1.10 (JuliaLang/julia#48611) the generated function knows which world it was invoked in
 
 function _generated_ex(world, source, ex)
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :ft, :tt), Core.svec())
+    stub = Core.GeneratedFunctionStub(
+        identity,
+        Core.svec(:methodinstance, :ft, :tt),
+        Core.svec(),
+    )
     stub(world, source, ex)
 end
 
@@ -164,23 +174,38 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     tt = tt.parameters[1]
 
     # validation
-    ft <: Core.Builtin && error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
+    ft <: Core.Builtin &&
+        error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
     # look up the method
     method_error = :(throw(MethodError(ft, tt, $world)))
-    sig = Tuple{ft, tt.parameters...}
+    sig = Tuple{ft,tt.parameters...}
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    mthds =         Base._methods_by_ftype(sig, #=mt=# nothing, #=lim=# -1,
-                               world, #=ambig=# false,
-                               min_world, max_world, has_ambig)
+    mthds = Base._methods_by_ftype(
+        sig,
+        nothing,
+        -1, #=lim=#
+        world,
+        false, #=ambig=#
+        min_world,
+        max_world,
+        has_ambig,
+    )
     mthds === nothing && return _generated_ex(world, source, method_error)
     length(mthds) == 1 || return _generated_ex(world, source, method_error)
 
     # look up the method and code instance
     mtypes, msp, m = mthds[1]
-    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance}, (Any, Any, Any), m, mtypes, msp)
+    mi = ccall(
+        :jl_specializations_get_linfo,
+        Ref{MethodInstance},
+        (Any, Any, Any),
+        m,
+        mtypes,
+        msp,
+    )
     ci = retrieve_code_info(mi, world)::CodeInfo
 
     # prepare a new code info
@@ -222,8 +247,3 @@ end
 end
 
 export codegen_world_age
-
-
-
-
-

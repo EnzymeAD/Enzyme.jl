@@ -51,7 +51,7 @@ function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
     API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
 
-function merge!(dst::TypeTree, src::TypeTree; consume=true)
+function merge!(dst::TypeTree, src::TypeTree; consume = true)
     API.EnzymeMergeTypeTree(dst, src)
     if consume
         LLVM.dispose(src)
@@ -80,28 +80,12 @@ end
 
 
 @static if VERSION >= v"1.11-"
-const TypeTreePrimitives = (
-    Char,
-    Float16,
-    Float32,
-    Float64,
-    Core.BFloat16
-)
+    const TypeTreePrimitives = (Char, Float16, Float32, Float64, Core.BFloat16)
 else
-const TypeTreePrimitives = (
-    Char,
-    Float16,
-    Float32,
-    Float64
-)
+    const TypeTreePrimitives = (Char, Float16, Float32, Float64)
 end
 
-const TypeTreeEmptyPointers = (
-    BigFloat,
-    Any,
-    Symbol,
-    Union{},
-)
+const TypeTreeEmptyPointers = (BigFloat, Any, Symbol, Union{})
 
 function get_offsets(@nospecialize(T::Type))
     for sT in (Integer, TypeTreePrimitives...)
@@ -109,18 +93,22 @@ function get_offsets(@nospecialize(T::Type))
             return ((typetree_primitive(T), 0),)
         end
     end
-    for sT in (DataType, AbstractString, TypeTreeEmptyPointers...)
+    for sT in (DataType, AbstractString)
         if T <: sT
             return ((API.DT_Pointer, 0),)
         end
     end
-
-@static if VERSION < v"1.11-"
-    TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array)
-else
-    TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array, GenericMemory)
-end
     for sT in TypeTreeEmptyPointers
+        if T == sT
+            return ((API.DT_Pointer, 0),)
+        end
+    end
+    @static if VERSION < v"1.11-"
+        TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array)
+    else
+        TypeTreePtrs = (Core.SimpleVector, Ptr, Core.LLVMPtr, Array, GenericMemory)
+    end
+    for sT in TypeTreePtrs
         if T <: sT
             return ((API.DT_Pointer, 0),)
         end
@@ -132,8 +120,8 @@ end
         return ()
     end
 
-    results = Tuple{API.CConcreteType, Int}[]
-    for f in 1:fieldcount(T)
+    results = Tuple{API.CConcreteType,Int}[]
+    for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = fieldtype(T, f)
 
@@ -141,9 +129,9 @@ end
             push!(results, (API.DT_Pointer, offset))
             continue
         end
-        
+
         for (sT, sO) in get_offsets(subT)
-            push!(results, (sT, sO+offset))
+            push!(results, (sT, sO + offset))
         end
     end
     return results
@@ -173,10 +161,17 @@ function to_fullmd(@nospecialize(T::Type))
 end
 
 function to_md(tt::TypeTree, ctx)
-    return LLVM.Metadata(LLVM.MetadataAsValue(ccall((:EnzymeTypeTreeToMD, API.libEnzyme),
-                                                    LLVM.API.LLVMValueRef,
-                                                    (API.CTypeTreeRef,
-                                                     LLVM.API.LLVMContextRef), tt, ctx)))
+    return LLVM.Metadata(
+        LLVM.MetadataAsValue(
+            ccall(
+                (:EnzymeTypeTreeToMD, API.libEnzyme),
+                LLVM.API.LLVMValueRef,
+                (API.CTypeTreeRef, LLVM.API.LLVMContextRef),
+                tt,
+                ctx,
+            ),
+        ),
+    )
 end
 
 const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
@@ -190,7 +185,7 @@ Construct a Enzyme typetree from a Julia type.
     When using a memoized lookup by providing `seen` across multiple calls to typtree
     the user must call `copy` on the returned value before mutating it.
 """
-function typetree(@nospecialize(T::Type), ctx, dl, seen=TypeTreeTable())
+function typetree(@nospecialize(T::Type), ctx, dl, seen = TypeTreeTable())
     if haskey(seen, T)
         tree = seen[T]
         if tree === nothing
@@ -209,7 +204,7 @@ function typetree_inner(::Type{<:Integer}, ctx, dl, seen::TypeTreeTable)
 end
 for sT in TypeTreePrimitives
     @eval function typetree_inner(::Type{$sT}, ctx, dl, seen::TypeTreeTable)
-            return TypeTree($(typetree_primitive(sT)), -1, ctx)
+        return TypeTree($(typetree_primitive(sT)), -1, ctx)
     end
 end
 
@@ -221,21 +216,25 @@ function typetree_inner(::Type{<:AbstractString}, ctx, dl, seen::TypeTreeTable)
 end
 for sT in TypeTreeEmptyPointers
     @eval function typetree_inner(::Type{$sT}, ctx, dl, seen::TypeTreeTable)
-            return TypeTree()
+        return TypeTree()
     end
 end
 
 
 function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
-    for i in 0:(sizeof(Csize_t) - 1)
+    for i = 0:(sizeof(Csize_t)-1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
 end
 
-function typetree_inner(::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}}, ctx, dl,
-                        seen::TypeTreeTable) where {T}
+function typetree_inner(
+    ::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}},
+    ctx,
+    dl,
+    seen::TypeTreeTable,
+) where {T}
     tt = copy(typetree(T, ctx, dl, seen))
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
@@ -261,13 +260,18 @@ end
             sizeofstruct += sizeof(Csize_t)
         end
 
-        for i in offset:(sizeofstruct-1)
+        for i = offset:(sizeofstruct-1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
         return tt
     end
 else
-    function typetree_inner(::Type{<:GenericMemory{kind, T}}, ctx, dl, seen::TypeTreeTable) where {kind, T}
+    function typetree_inner(
+        ::Type{<:GenericMemory{kind,T}},
+        ctx,
+        dl,
+        seen::TypeTreeTable,
+    ) where {kind,T}
         offset = 0
         tt = copy(typetree(T, ctx, dl, seen))
         if !allocatedinline(T) && Base.isconcretetype(T)
@@ -277,7 +281,7 @@ else
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
         only!(tt, sizeof(Csize_t))
 
-        for i in 0:(sizeof(Csize_t)-1)
+        for i = 0:(sizeof(Csize_t)-1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
         return tt
@@ -327,7 +331,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     end
 
     tt = TypeTree()
-    for f in 1:fieldcount(T)
+    for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = fieldtype(T, f)
         subtree = copy(typetree(subT, ctx, dl, seen))
@@ -358,7 +362,10 @@ struct FnTypeInfo
 end
 Base.cconvert(::Type{API.CFnTypeInfo}, fnti::FnTypeInfo) = fnti
 function Base.unsafe_convert(::Type{API.CFnTypeInfo}, fnti::FnTypeInfo)
-    args_kv = Base.unsafe_convert(Ptr{API.IntList}, Base.cconvert(Ptr{API.IntList}, fnti.known_values))
+    args_kv = Base.unsafe_convert(
+        Ptr{API.IntList},
+        Base.cconvert(Ptr{API.IntList}, fnti.known_values),
+    )
     rTT = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, fnti.rTT))
 
     tts = API.CTypeTreeRef[]
@@ -366,6 +373,9 @@ function Base.unsafe_convert(::Type{API.CFnTypeInfo}, fnti::FnTypeInfo)
         raw_tt = Base.unsafe_convert(API.CTypeTreeRef, Base.cconvert(API.CTypeTreeRef, tt))
         push!(tts, raw_tt)
     end
-    argTTs = Base.unsafe_convert(Ptr{API.CTypeTreeRef}, Base.cconvert(Ptr{API.CTypeTreeRef}, tts))
+    argTTs = Base.unsafe_convert(
+        Ptr{API.CTypeTreeRef},
+        Base.cconvert(Ptr{API.CTypeTreeRef}, tts),
+    )
     return API.CFnTypeInfo(argTTs, rTT, args_kv)
 end
