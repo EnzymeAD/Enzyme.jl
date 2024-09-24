@@ -363,9 +363,19 @@ function abs_typeof(
                         byref = GPUCompiler.BITS_VALUE
                         legal = true
                         typ2 = typ
-                        while actual_size(typ2) != sizeof(dl, value_type(arg))
+                        function should_recurse(typ2, arg_t)
+                            if actual_size(typ2) != sizeof(dl, arg_t)
+                                return true
+                            else
+                                if Base.isconcretetype(typ2) && fieldcount(typ2) > 0 && actual_size(typ2) == actual_size(fieldtype(typ2, 1))
+                                    return true
+                                end
+                                return false
+                            end
+                        end
+                        while should_recursse(typ2, value_type(arg))
                             if fieldcount(typ2) > 0
-                                typ2 = fieldtype(typ, 1)
+                                typ2 = fieldtype(typ2, 1)
                                 if !Base.allocatedinline(typ2)
                                     if byref != GPUCompiler.BITS_VALUE
                                         legal = false
