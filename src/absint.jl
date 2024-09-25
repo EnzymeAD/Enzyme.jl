@@ -346,7 +346,7 @@ function abs_typeof(
 
         if !error
             legal, typ, byref = abs_typeof(larg)
-            if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF)
+            if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
                         T = eltype(typ)
@@ -383,7 +383,7 @@ function abs_typeof(
                     byref = GPUCompiler.BITS_VALUE
                     legal = true
 
-                    while offset !== nothing && legal
+                    while (offset !== nothing  && offset != 0) && legal
                         @assert Base.isconcretetype(typ)
                         seen = false
                         lasti = 1
@@ -403,6 +403,7 @@ function abs_typeof(
                             elseif fieldoffset(typ, i) > offset
                                 offset = offset - fieldoffset(typ, lasti)
                                 typ = fieldtype(typ, lasti)
+                                @assert Base.isconcretetype(typ)
                                 if !Base.allocatedinline(typ)
                                     legal = false
                                 end
