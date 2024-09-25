@@ -125,7 +125,7 @@ jobs:
         with:
           file: lcov.info
   enzymetestutils:
-    name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
+    name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.version == 'nightly' }}
     env:
@@ -141,13 +141,29 @@ jobs:
           - ubuntu-latest
         arch:
           - x64
+        assertions:
+          - false
+          - true
         libEnzyme: [packaged]
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
+        if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+      - uses: actions/checkout@v3
+        if: ${{ matrix.assertions }}
+        with:
+          repository: 'JuliaLang/julia'
+          ref: release-${{ matrix.version }}
+          path: 'julia'
+      - name: Compile Julia
+        if: ${{ matrix.assertions }}
+        run: |
+          sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
+          make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
+          echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: actions/cache@v1
         env:
           cache-name: cache-artifacts
