@@ -153,16 +153,19 @@ end
     end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
+ 
+    @inline function newyi(i)
+        xis = ntuple(j -> getfield(xs[j], i), N)
+        T = Core.Typeof(first(xis))
+        return recursive_map(T, f, seen, xis, isleaftype)
+    end
+   
     nf = fieldcount(RT)
-    
     if ismutabletype(RT)
         y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
-        seen[xs] = y
         for i in 1:nf
             if all(x -> isdefined(x, i), xs)
-                xis = ntuple(j -> getfield(xs[j], i), N)
-                T = Core.Typeof(first(xis))
-                yi = recursive_map(T, f, seen, xis, isleaftype)
+                yi = newyi(i)
                 if Base.isconst(RT, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, yi)
                 else
@@ -170,28 +173,24 @@ end
                 end
             end
         end
-        return y
-    end
-    
-    if nf == 0
+    elseif nf == 0
         y = f(xs...)
-        seen[xs] = y
-        return y
-    end
-
-    flds = Vector{Any}(undef, nf)
-    for i in 1:nf
-        if isdefined(xs, i)
-            xis = ntuple(j -> getfield(xs[j], i), N)
-            T = Core.Typeof(first(xis))
-            yi = recursive_map(T, f, seen, xis, isleaftype)
-            flds[i] = yi
-        else
-            nf = i - 1 # rest of tail must be undefined values
-            break
+    elseif all(x -> isdefined(x, nf), xs)
+        # fast path when all fields are set
+        y = splatnew(RT, ntuple(newyi, Val(nf)))
+    else
+        flds = Vector{Any}(undef, nf)
+        nset = nf
+        for i in 1:nf
+            if all(x -> isdefined(x, i), xs)
+                flds[i] = newyi(i)
+            else
+                nset = i - 1 # rest of tail must be undefined values
+                break
+            end
         end
+        y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nset)
     end
-    y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)
     seen[xs] = y
     return y
 end
@@ -219,4 +218,203 @@ function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} w
         Base.@_inline_meta
         make_zero_immutable!(prev[a[i]], seen)
     end)
+end
+
+
+function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
+    if guaranteed_const_nongen(T, nothing)
+        return prev
+    end
+    @assert !ismutable(prev)
+
+    RT = Core.Typeof(prev)
+    @assert !Base.isabstracttype(RT)
+    @assert Base.isconcretetype(RT)
+    nf = fieldcount(RT)
+
+    flds = Vector{Any}(undef, nf)
+    for i = 1:nf
+        if isdefined(prev, i)
+            xi = getfield(prev, i)
+            ST = Core.Typeof(xi)
+            flds[i] = if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
+                make_zero_immutable!(xi, seen)
+            else
+                EnzymeCore.make_zero!(xi, seen)
+                xi
+            end
+        else
+            nf = i - 1 # rest of tail must be undefined values
+            break
+        end
+    end
+    ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::T
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{T},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,ST}
+    T[] = zero(T)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{Complex{T}},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,ST}
+    T[] = zero(Complex{T})
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Array{T,N},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,N,ST}
+    fill!(prev, zero(T))
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Array{Complex{T},N},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,N,ST}
+    fill!(prev, zero(Complex{T}))
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{T},
+)::Nothing where {T<:AbstractFloat}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{Complex{T}},
+)::Nothing where {T<:AbstractFloat}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Array{Complex{T},N},
+)::Nothing where {T<:AbstractFloat,N}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
+    if guaranteed_const_nongen(T, nothing)
+        return
+    end
+    if in(seen, prev)
+        return
+    end
+    push!(seen, prev)
+
+    for I in eachindex(prev)
+        if isassigned(prev, I)
+            pv = prev[I]
+            SBT = Core.Typeof(pv)
+            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+                @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                nothing
+            else
+                EnzymeCore.make_zero!(pv, seen)
+                nothing
+            end
+        end
+    end
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{T},
+    seen::ST,
+)::Nothing where {T,ST}
+    if guaranteed_const_nongen(T, nothing)
+        return
+    end
+    if in(seen, prev)
+        return
+    end
+    push!(seen, prev)
+
+    pv = prev[]
+    SBT = Core.Typeof(pv)
+    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+        prev[] = make_zero_immutable!(pv, seen)
+        nothing
+    else
+        EnzymeCore.make_zero!(pv, seen)
+        nothing
+    end
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(prev::Core.Box, seen::ST)::Nothing where {ST}
+    pv = prev.contents
+    T = Core.Typeof(pv)
+    if guaranteed_const_nongen(T, nothing)
+        return
+    end
+    if in(seen, prev)
+        return
+    end
+    push!(seen, prev)
+    SBT = Core.Typeof(pv)
+    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+        prev.contents = EnzymeCore.make_zero_immutable!(pv, seen)
+        nothing
+    else
+        EnzymeCore.make_zero!(pv, seen)
+        nothing
+    end
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::T,
+    seen::S = Base.IdSet{Any}(),
+)::Nothing where {T,S}
+    if guaranteed_const_nongen(T, nothing)
+        return
+    end
+    if in(prev, seen)
+        return
+    end
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+    nf = fieldcount(T)
+
+
+    if nf == 0
+        return
+    end
+
+    push!(seen, prev)
+
+    for i = 1:nf
+        if isdefined(prev, i)
+            xi = getfield(prev, i)
+            SBT = Core.Typeof(xi)
+            if guaranteed_const_nongen(SBT, nothing)
+                continue
+            end
+            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+                setfield!(prev, i, make_zero_immutable!(xi, seen))
+                nothing
+            else
+                EnzymeCore.make_zero!(xi, seen)
+                nothing
+            end
+        end
+    end
+    return
 end
