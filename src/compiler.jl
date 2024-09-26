@@ -7936,8 +7936,10 @@ function GPUCompiler.codegen(
                     elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
                     else
-                        println(string(mod))
+                        # println(string(mod))
+                        println(string(f))
                         @show legal, source_typ, byref, llvm_source_typ, codegen_typ, string(inst)
+                        @show enzyme_custom_extract_mi(f)
                         @assert false
                     end
                 else
