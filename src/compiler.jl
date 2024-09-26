@@ -4048,7 +4048,7 @@ if VERSION >= v"1.11.0-DEV.1552"
         always_inline::Any
         method_table::Core.MethodTable
         param_type::Type
-        is_fwd::Bool
+        mode::API.CDerivativeMode
     end
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -4057,15 +4057,15 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.always_inline,
             GPUCompiler.method_table(job),
             typeof(job.config.params),
-            job.config.params.mode == API.DEM_ForwardMode,
+            API.DEM_ForwardMode,
         )
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
+        GPUCompiler.GPUInterpreter(
             GPUCompiler.ci_cache_token(job),
             GPUCompiler.method_table(job),
             job.world,
-            job.config.params.mode,
+            meta=Interpreter.EnzymeMeta(job.config.params.mode),
         )
 else
 
@@ -4074,6 +4074,7 @@ else
     # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
     const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
     const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
+    # TODO: Branch on target... otherwise GPU and CPU code end in the same cache
     function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
         return if job.config.params.mode == API.DEM_ForwardMode
             GLOBAL_FWD_CACHE
@@ -4086,11 +4087,11 @@ else
         enzyme_ci_cache(job)
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
+        GPUCompiler.GPUInterpreter(
             enzyme_ci_cache(job),
             GPUCompiler.method_table(job),
             job.world,
-            job.config.params.mode,
+            meta=Interpreter.EnzymeMeta(job.config.params.mode),
         )
 end
 
