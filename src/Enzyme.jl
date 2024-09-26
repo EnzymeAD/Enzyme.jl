@@ -46,7 +46,9 @@ import EnzymeCore:
     set_abi,
     set_runtime_activity,
     clear_runtime_activity,
-    within_autodiff
+    within_autodiff,
+    WithPrimal,
+    NoPrimal
 export Annotation,
     Const,
     Active,
@@ -63,6 +65,8 @@ export Annotation,
     set_abi,
     set_runtime_activity,
     clear_runtime_activity,
+    WithPrimal,
+    NoPrimal,
     within_autodiff
 
 import EnzymeCore: BatchDuplicatedFunc

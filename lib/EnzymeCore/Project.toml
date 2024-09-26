@@ -1,7 +1,7 @@
 name = "EnzymeCore"
 uuid = "f151be2c-9106-41f4-ab19-57ee4f262869"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.8.2"
+version = "0.8.3"
 
 [compat]
 Adapt = "3, 4"
