@@ -443,7 +443,6 @@ function abs_typeof(
             elseif legal && typ <: Ptr && Base.isconcretetype(typ)
                 return (true, eltype(typ), GPUCompiler.BITS_VALUE)
             end
-            end
         end
     end
 
