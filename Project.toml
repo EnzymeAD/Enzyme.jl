@@ -21,6 +21,7 @@ BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [extensions]
@@ -28,6 +29,7 @@ EnzymeBFloat16sExt = "BFloat16s"
 EnzymeChainRulesCoreExt = "ChainRulesCore"
 EnzymeLogExpFunctionsExt = "LogExpFunctions"
 EnzymeSpecialFunctionsExt = "SpecialFunctions"
+EnzymeSparseArraysExt = "SparseArrays"
 EnzymeStaticArraysExt = "StaticArrays"
 
 [compat]
@@ -50,4 +52,5 @@ BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
