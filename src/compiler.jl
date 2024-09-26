@@ -8732,8 +8732,13 @@ end
     end
 end
 
+"""
+    recursive_accumulate(x, y, f=identity)
 
-# Recursively In-place accumulate(aka +=). E.g. generalization of x .+= f(y)
+Recursive in-place accumulation that generalizes `x .+= f(y)` beyond arrays.
+"""
+function recursive_accumulate end
+
 @inline function recursive_accumulate(x::Core.Box, y::Core.Box, f::F = identity) where {F}
     recursive_accumulate(x.contents, y.contents, seen, f)
 end
