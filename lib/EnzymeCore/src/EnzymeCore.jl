@@ -425,14 +425,14 @@ struct ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{
 end
 
 """
-const Forward
+    const Forward
 
 Default instance of [`ForwardMode`](@ref) that doesn't return the primal
 """
 const Forward = ForwardMode{false, DefaultABI, false, false}()
 
 """
-const ForwardWithPrimal
+    const ForwardWithPrimal
 
 Default instance of [`ForwardMode`](@ref) that also returns the primal
 """
