@@ -303,7 +303,7 @@ Subtype of [`Mode`](@ref) for reverse mode differentiation.
 
 !!! warning
     The type parameters of `ReverseMode` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead:
+    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)):
     - [`Reverse`](@ref)
     - [`ReverseWithPrimal`](@ref)
     - [`ReverseHolomorphic`](@ref)
@@ -370,7 +370,7 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
 
 !!! warning
     The type parameters of `ReverseModeSplit` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead: 
+    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)): 
     - [`ReverseSplitNoPrimal`](@ref)
     - [`ReverseSplitWithPrimal`](@ref)
 """
@@ -417,7 +417,7 @@ Subtype of [`Mode`](@ref) for forward mode differentiation.
 
 !!! warning
     The type parameters of `ForwardMode` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead:
+    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)):
     - [`Forward`](@ref)
     - [`ForwardWithPrimal`](@ref).
 """
