@@ -977,7 +977,7 @@ end
        !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
     elseif (aug_RT isa UnionAll) &&
-           (aug_RT <: EnzymeRules.AugmentedReturn) &&
+           (aug_RT <: EnzymeRules.AugmentedReturn) && hasfield(typeof(aug_RT.body), :name) &&
            aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
         if aug_RT.body.parameters[3] isa TypeVar
             TapeT = aug_RT.body.parameters[3].ub
@@ -985,7 +985,7 @@ end
             TapeT = Any
         end
     elseif (aug_RT isa UnionAll) &&
-           (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) &&
+           (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && hasfield(typeof(aug_RT.body), :name) &&
            aug_RT.body.name ==
            EnzymeCore.EnzymeRules.AugmentedReturnFlexShadow.body.body.body.name
         if aug_RT.body.parameters[3] isa TypeVar
