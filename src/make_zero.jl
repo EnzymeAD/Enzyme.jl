@@ -1,82 +1,48 @@
-@inline function EnzymeCore.make_zero(x::FT)::FT where {FT<:AbstractFloat}
-    return Base.zero(x)
+const _RealOrComplexFloat = Union{AbstractFloat,Complex{<:AbstractFloat}}
+
+@inline function EnzymeCore.make_zero(prev::FT) where {FT<:_RealOrComplexFloat}
+    return Base.zero(prev)::FT
 end
-@inline function EnzymeCore.make_zero(x::Complex{FT})::Complex{FT} where {FT<:AbstractFloat}
-    return Base.zero(x)
-end
+
 @inline function EnzymeCore.make_zero(
-    x::Array{FT,N},
-)::Array{FT,N} where {FT<:AbstractFloat,N}
-    return Base.zero(x)
+    ::Type{FT},
+    @nospecialize(seen::IdDict),
+    prev::FT,
+    @nospecialize(_::Val{copy_if_inactive}=Val(false)),
+) where {FT<:_RealOrComplexFloat,copy_if_inactive}
+    return EnzymeCore.make_zero(prev)::FT
 end
-@inline function EnzymeCore.make_zero(
-    x::Array{Complex{FT},N},
-)::Array{Complex{FT},N} where {FT<:AbstractFloat,N}
-    return Base.zero(x)
+
+@inline function EnzymeCore.make_zero(prev::Array{FT,N}) where {FT<:_RealOrComplexFloat,N}
+    # convert because Base.zero may return different eltype when FT is not concrete
+    return convert(Array{FT,N}, Base.zero(prev))::Array{FT,N}
 end
 
 @inline function EnzymeCore.make_zero(
     ::Type{Array{FT,N}},
     seen::IdDict,
     prev::Array{FT,N},
-    ::Val{copy_if_inactive} = Val(false),
-)::Array{FT,N} where {copy_if_inactive,FT<:AbstractFloat,N}
+    @nospecialize(_::Val{copy_if_inactive}=Val(false)),
+) where {FT<:_RealOrComplexFloat,N,copy_if_inactive}
     if haskey(seen, prev)
-        return seen[prev]
+        return seen[prev]::Array{FT,N}
     end
-    newa = Base.zero(prev)
+    newa = EnzymeCore.make_zero(prev)
     seen[prev] = newa
-    return newa
-end
-@inline function EnzymeCore.make_zero(
-    ::Type{Array{Complex{FT},N}},
-    seen::IdDict,
-    prev::Array{Complex{FT},N},
-    ::Val{copy_if_inactive} = Val(false),
-)::Array{Complex{FT},N} where {copy_if_inactive,FT<:AbstractFloat,N}
-    if haskey(seen, prev)
-        return seen[prev]
-    end
-    newa = Base.zero(prev)
-    seen[prev] = newa
-    return newa
+    return newa::Array{FT,N}
 end
 
 @inline function EnzymeCore.make_zero(
-    ::Type{RT},
-    seen::IdDict,
-    prev::RT,
-    ::Val{copy_if_inactive} = Val(false),
-)::RT where {copy_if_inactive,RT<:AbstractFloat}
-    return RT(0)
-end
-
-@inline function EnzymeCore.make_zero(
-    ::Type{Complex{RT}},
-    seen::IdDict,
-    prev::Complex{RT},
-    ::Val{copy_if_inactive} = Val(false),
-)::Complex{RT} where {copy_if_inactive,RT<:AbstractFloat}
-    return Complex{RT}(0)
-end
-
-@inline function EnzymeCore.make_zero(
-    ::Type{RT}, seen::IdDict, prev::RT, copyval::Val{copy_if_inactive}=Val(false)
+    ::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false)
 ) where {copy_if_inactive,RT}
-    function f(p)
-        T = Core.Typeof(p)
+    function f(p::T) where {T}
         if guaranteed_const_nongen(T, nothing)
-            return (copy_if_inactive ? Base.deepcopy_internal(p, seen) : p)::T
+            return copy_if_inactive ? Base.deepcopy_internal(p, seen) : p
         end
-        return EnzymeCore.make_zero(T, seen, p, copyval)::T
+        return EnzymeCore.make_zero(T, seen, p, Val(copy_if_inactive))
     end
     function isleaftype(::Type{T}) where {T}
-        baseTs = Union{
-            AbstractFloat,
-            Complex{<:AbstractFloat},
-            Array{<:AbstractFloat},
-            Array{<:Complex{<:AbstractFloat}},
-        }
+        baseTs = Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}
         return (T <: baseTs) || guaranteed_const_nongen(T, nothing)
     end
     return recursive_map(RT, f, seen, (prev,), isleaftype)::RT
@@ -97,7 +63,7 @@ end
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
 ) where {RT<:Array,F,N}
     if haskey(seen, xs)
-        return seen[xs]
+        return seen[xs]::RT
     end
     x1 = first(xs)
     s = size(x1)
@@ -135,7 +101,7 @@ end
     ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, isleaftype
 ) where {F,N}
     if haskey(seen, xs)
-        return seen[xs]
+        return seen[xs]::Core.Box
     end
     xcontents = ntuple(i -> xs[i].contents, N)
     T = Core.Typeof(first(xcontents))
@@ -149,7 +115,7 @@ end
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
 ) where {RT,F,N}
     if haskey(seen, xs)
-        return seen[xs]
+        return seen[xs]::RT
     end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
@@ -174,7 +140,7 @@ end
             end
         end
     elseif nf == 0
-        y = f(xs...)
+        y = f(xs...)::RT
     elseif all(x -> isdefined(x, nf), xs)
         # fast path when all fields are set
         y = splatnew(RT, ntuple(newyi, Val(nf)))
