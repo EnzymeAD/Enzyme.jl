@@ -440,7 +440,7 @@ function abs_typeof(
                         return (true, typ2, byref)
                     end
                 end
-            elseif legal && if typ <: Ptr && Base.isconcretetype(typ)
+            elseif legal && typ <: Ptr && Base.isconcretetype(typ)
                 return (true, eltype(typ), GPUCompiler.BITS_VALUE)
             end
             end
