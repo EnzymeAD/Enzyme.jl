@@ -13,14 +13,14 @@ using LinearAlgebra
         Tα in (Const, Active), Tβ in (Const, Active)
 
         are_activities_compatible(Tret, Tret, Tv, Tα, Tβ) || continue
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
 
     end
 
 
     for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
         are_activities_compatible(Tret, Tret, Tv) || continue
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 end
 
@@ -35,11 +35,11 @@ end
         Tα in (Const, Active), Tβ in (Const, Active)
 
         are_activities_compatible(Tret, Tv, Tα, Tβ) || continue
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
     end
 
     for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
         are_activities_compatible(Tret, Tv) || continue
-        test_reverse(mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 end
