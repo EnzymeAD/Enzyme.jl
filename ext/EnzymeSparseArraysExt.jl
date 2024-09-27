@@ -7,6 +7,10 @@ using EnzymeCore: EnzymeRules
 using SparseArrays
 using SparseArrays: LinearAlgebra, SparseMatrixCSCUnion
 
+
+@inline Enzyme.Compiler.ptreltype(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = T
+@inline Enzyme.Compiler.is_arrayorvararg_ty(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = true
+
 # TODO don't limit A to be Const. Currently I'd have to implement a new matmul for this
 # or bootstrap ChainRules ProjectTo mechanism to enforce the structural zeros
 # Currently we put the rule on the 5-arg mul!, since spdensemul! isn't a public API and I am unsure
