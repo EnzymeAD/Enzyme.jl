@@ -39,6 +39,7 @@ import GPUCompiler: CompilerJob, codegen, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 using Printf
+import SparseArrays
 
 using Preferences
 
@@ -521,6 +522,7 @@ end
 @inline ptreltype(::Type{Tuple{Vararg{T}}}) where {T} = T
 @inline ptreltype(::Type{IdDict{K,V}}) where {K,V} = V
 @inline ptreltype(::Type{IdDict{K,V} where K}) where {V} = V
+@inline ptreltype(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = T
 
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
@@ -532,6 +534,7 @@ end
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V}}) where {K,V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V} where K}) where {V} = true
+@inline is_arrayorvararg_ty(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = true
 
 @inline function datatype_fieldcount(t::Type{T}) where {T}
     return Base.datatype_fieldcount(t)
