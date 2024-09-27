@@ -432,13 +432,22 @@ function abs_typeof(
                                 lasti = i
                             end
                         end
+			if !seen && fieldcount(typ) > 0
+			    offset = offset - fieldoffset(typ, lasti)
+		            typ = fieldtype(typ, lasti)
+			    @assert Base.isconcretetype(typ)
+			    if !Base.allocatedinline(typ)
+			        legal = false
+			    end
+			    seen = true
+			end
                         if !seen
                             legal = false
                         end
                     end
                     
                     typ2 = typ
-                    while should_recurse(typ2, value_type(arg), byref, dl)
+                    while legal && should_recurse(typ2, value_type(arg), byref, dl)
                         idx, _ = first_non_ghost(typ2)
                         if idx != -1
                             typ2 = fieldtype(typ2, idx)
