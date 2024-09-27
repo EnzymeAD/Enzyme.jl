@@ -1,16 +1,27 @@
 
-function array_inner(::Type{<:Array{T}}) where T
+function array_inner(::Type{<:Array{T}}) where {T}
     return T
 end
-function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMValueRef, numArgs::Csize_t, Args::Ptr{LLVM.API.LLVMValueRef}, gutils::API.EnzymeGradientUtilsRef)::LLVM.API.LLVMValueRef
+function array_shadow_handler(
+    B::LLVM.API.LLVMBuilderRef,
+    OrigCI::LLVM.API.LLVMValueRef,
+    numArgs::Csize_t,
+    Args::Ptr{LLVM.API.LLVMValueRef},
+    gutils::API.EnzymeGradientUtilsRef,
+)::LLVM.API.LLVMValueRef
     inst = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst)
     if !legal
-        throw(AssertionError("Could not statically ahead-of-time determine allocation element type of "*string(inst)))
+        throw(
+            AssertionError(
+                "Could not statically ahead-of-time determine allocation element type of " *
+                string(inst),
+            ),
+        )
     end
 
     typ = eltype(typ)
@@ -25,7 +36,7 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
         push!(valTys, API.VT_Primal)
     end
 
-    anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, #=lookup=#false)
+    anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
 
     prod = get_array_len(b, anti)
 
@@ -33,11 +44,11 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
 
     isunion = typ isa Union
 
-    LLT_ALIGN(x, sz) = (((x) + (sz)-1) & ~((sz)-1))
+    LLT_ALIGN(x, sz) = (((x) + (sz) - 1) & ~((sz) - 1))
 
     if !isunboxed
         elsz = sizeof(Ptr{Cvoid})
-        al = elsz;
+        al = elsz
     else
         elsz = LLT_ALIGN(elsz, al)
     end
@@ -63,7 +74,11 @@ function array_shadow_handler(B::LLVM.API.LLVMBuilderRef, OrigCI::LLVM.API.LLVMV
     return ref
 end
 
-function null_free_handler(B::LLVM.API.LLVMBuilderRef, ToFree::LLVM.API.LLVMValueRef, Fn::LLVM.API.LLVMValueRef)::LLVM.API.LLVMValueRef
+function null_free_handler(
+    B::LLVM.API.LLVMBuilderRef,
+    ToFree::LLVM.API.LLVMValueRef,
+    Fn::LLVM.API.LLVMValueRef,
+)::LLVM.API.LLVMValueRef
     return C_NULL
 end
 
@@ -76,22 +91,78 @@ end
 @inline function register_alloc_rules()
     register_alloc_handler!(
         ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
-        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
-        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+        @cfunction(
+            array_shadow_handler,
+            LLVM.API.LLVMValueRef,
+            (
+                LLVM.API.LLVMBuilderRef,
+                LLVM.API.LLVMValueRef,
+                Csize_t,
+                Ptr{LLVM.API.LLVMValueRef},
+                API.EnzymeGradientUtilsRef,
+            )
+        ),
+        @cfunction(
+            null_free_handler,
+            LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
+        )
     )
     register_alloc_handler!(
         ("jl_alloc_array_2d", "ijl_alloc_array_2d"),
-        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
-        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+        @cfunction(
+            array_shadow_handler,
+            LLVM.API.LLVMValueRef,
+            (
+                LLVM.API.LLVMBuilderRef,
+                LLVM.API.LLVMValueRef,
+                Csize_t,
+                Ptr{LLVM.API.LLVMValueRef},
+                API.EnzymeGradientUtilsRef,
+            )
+        ),
+        @cfunction(
+            null_free_handler,
+            LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
+        )
     )
     register_alloc_handler!(
         ("jl_alloc_array_3d", "ijl_alloc_array_3d"),
-        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
-        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+        @cfunction(
+            array_shadow_handler,
+            LLVM.API.LLVMValueRef,
+            (
+                LLVM.API.LLVMBuilderRef,
+                LLVM.API.LLVMValueRef,
+                Csize_t,
+                Ptr{LLVM.API.LLVMValueRef},
+                API.EnzymeGradientUtilsRef,
+            )
+        ),
+        @cfunction(
+            null_free_handler,
+            LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
+        )
     )
     register_alloc_handler!(
         ("jl_new_array", "ijl_new_array"),
-        @cfunction(array_shadow_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Csize_t, Ptr{LLVM.API.LLVMValueRef}, API.EnzymeGradientUtilsRef)),
-        @cfunction(null_free_handler, LLVM.API.LLVMValueRef, (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef))
+        @cfunction(
+            array_shadow_handler,
+            LLVM.API.LLVMValueRef,
+            (
+                LLVM.API.LLVMBuilderRef,
+                LLVM.API.LLVMValueRef,
+                Csize_t,
+                Ptr{LLVM.API.LLVMValueRef},
+                API.EnzymeGradientUtilsRef,
+            )
+        ),
+        @cfunction(
+            null_free_handler,
+            LLVM.API.LLVMValueRef,
+            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
+        )
     )
 end

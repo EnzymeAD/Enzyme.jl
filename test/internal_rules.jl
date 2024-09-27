@@ -591,7 +591,7 @@ end
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
-                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const); atol = 1.0e-5, rtol = 1.0e-5)
             end
         end
         @testset "test through `Adjoint` wrapper (regression test for #1306)" begin

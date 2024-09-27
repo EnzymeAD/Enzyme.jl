@@ -2856,6 +2856,17 @@ end
     @test dx[3] ≈ 0
 end
 
+function unstable_fun(A0)
+    A = 'N' in ('H', 'h', 'S', 's') ? wrap(A0) : A0
+    (@inbounds A[1])::eltype(A0)
+end
+@testset "Type unstable static array index" begin
+    inp = ones(SVector{2, Float64})
+    res = Enzyme.gradient(Enzyme.Reverse, unstable_fun, inp)[1]
+    @test res ≈ [1.0, 0.0]
+    res = Enzyme.gradient(Enzyme.Forward, unstable_fun, inp)[1]
+    @test res ≈ [1.0, 0.0]
+end
 
 function sparse_eval(x::Vector{Float64})
     A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
@@ -3948,6 +3959,35 @@ function harmonic_f!(inter_list, coords, inters)
     return si
 end
 
+function invwsumsq(w::AbstractVector, a::AbstractVector)
+    s = zero(zero(eltype(a)) / zero(eltype(w)))
+    for i in eachindex(w)
+        s += abs2(a[i]) / w[i]
+    end
+    return s
+end
+
+_logpdf(d, x) = invwsumsq(d.Σ.diag, x .- d.μ)
+
+function demo_func(x::Any=transpose([1.5 2.0;]);)
+    m = [-0.30725218207431315, 0.5492115788562757]
+    d = (; Σ = LinearAlgebra.Diagonal([1.0, 1.0]), μ = m)
+    logp = _logpdf(d, reshape(x, (2,)))
+    return logp
+end
+
+demof(x) = demo_func()
+
+@testset "Type checks" begin
+    x = [0.0, 0.0]
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        Enzyme.Const(demof),
+        Enzyme.Active,
+        Enzyme.Duplicated(x, zero(x)),
+    )
+end
+
 @testset "Decay preservation" begin
     inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
     inter_list = [1, 3]
@@ -4024,6 +4064,25 @@ end
     @test res[2][4] ≈ 4.0
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
+end
+
+@testset "WithPrimal" begin
+    @test WithPrimal(Reverse) === ReverseWithPrimal
+    @test NoPrimal(Reverse) === Reverse
+    @test WithPrimal(ReverseWithPrimal) === ReverseWithPrimal
+    @test NoPrimal(ReverseWithPrimal) === Reverse
+
+    @test WithPrimal(set_runtime_activity(Reverse)) === set_runtime_activity(ReverseWithPrimal)
+
+    @test WithPrimal(Forward) === ForwardWithPrimal
+    @test NoPrimal(Forward) === Forward
+    @test WithPrimal(ForwardWithPrimal) === ForwardWithPrimal
+    @test NoPrimal(ForwardWithPrimal) === Forward
+
+    @test WithPrimal(ReverseSplitNoPrimal) === ReverseSplitWithPrimal
+    @test NoPrimal(ReverseSplitNoPrimal) === ReverseSplitNoPrimal
+    @test WithPrimal(ReverseSplitWithPrimal) === ReverseSplitWithPrimal
+    @test NoPrimal(ReverseSplitWithPrimal) === ReverseSplitNoPrimal
 end
 
 # TEST EXTENSIONS 
