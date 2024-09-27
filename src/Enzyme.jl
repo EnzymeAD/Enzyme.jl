@@ -98,6 +98,7 @@ export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export markType, batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
+import SparseArrays
 import EnzymeCore: ReverseMode, ReverseModeSplit, ForwardMode, Mode
 
 import EnzymeCore: EnzymeRules
