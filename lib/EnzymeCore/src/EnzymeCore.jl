@@ -99,7 +99,7 @@ dout[]
 ```
 
 For example, marking the out variable as `DuplicatedNoNeed` instead of `Duplicated` allows
-Enzyme to avoid computing `v * v`.
+Enzyme to avoid computing `v * v` (while still computing its derivative).
 
 This should only be used if `x` is a write-only variable. Otherwise, if the differentiated
 function stores values in `x` and reads them back in subsequent computations, using
