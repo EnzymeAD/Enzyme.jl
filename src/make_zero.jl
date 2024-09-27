@@ -48,7 +48,7 @@ end
     return recursive_map(RT, f, seen, (prev,), isleaftype)::RT
 end
 
-recursive_map(f::F, x::T...) where {F,T} = recursive_map(T, f, IdDict(), x)::T
+recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
 
 @inline function recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype::L=Returns(false)
@@ -65,16 +65,13 @@ end
     if haskey(seen, xs)
         return seen[xs]::RT
     end
-    x1 = first(xs)
-    s = size(x1)
-    @assert all(x -> (size(x) == s), xs[2:end])
-    y = RT(undef, s)
+    y = RT(undef, size(first(xs)))
     seen[xs] = y
-    for i in eachindex(x1)
-        if all(x -> isassigned(x, i), xs)
-            xis = ntuple(j -> xs[j][i], N)
-            T = Core.Typeof(first(xis))
-            @inbounds y[i] = recursive_map(T, f, seen, xis, isleaftype)
+    for I in eachindex(xs...)
+        if all(x -> isassigned(x, I), xs)
+            xIs = ntuple(j -> xs[j][I], N)
+            ST = Core.Typeof(first(xIs))
+            @inbounds y[I] = recursive_map(ST, f, seen, xIs, isleaftype)
         end
     end
     return y
@@ -85,16 +82,15 @@ end
 ) where {M,RT<:NTuple{M,Any},F,N}
     return ntuple(M) do i
         Base.@_inline_meta
-        xis = ntuple(j -> xs[j][i], N)
-        recursive_map(RT.parameters[i], f, seen, xis, isleaftype)
+        recursive_map(RT.parameters[i], f, seen, ntuple(j -> xs[j][i], N), isleaftype)
     end
 end
 
 @inline function _recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
 ) where {T,RT<:NamedTuple{<:Any,T},F,N}
-    y = recursive_map(T, f, seen, ntuple(i -> T(xs[i]), N), isleaftype)
-    return RT(y)
+    yT = recursive_map(T, f, seen, ntuple(j -> T(xs[j]), N), isleaftype)
+    return RT(yT)
 end
 
 @inline function _recursive_map(
@@ -103,11 +99,11 @@ end
     if haskey(seen, xs)
         return seen[xs]::Core.Box
     end
-    xcontents = ntuple(i -> xs[i].contents, N)
-    T = Core.Typeof(first(xcontents))
+    xcontents = ntuple(j -> xs[j].contents, N)
+    ST = Core.Typeof(first(xcontents))
     res = Core.Box()
     seen[xs] = res
-    res.contents = Base.Ref(recursive_map(T, f, seen, xcontents, isleaftype))
+    res.contents = Base.Ref(recursive_map(ST, f, seen, xcontents, isleaftype))
     return res
 end
 
@@ -122,8 +118,8 @@ end
  
     @inline function newyi(i)
         xis = ntuple(j -> getfield(xs[j], i), N)
-        T = Core.Typeof(first(xis))
-        return recursive_map(T, f, seen, xis, isleaftype)
+        ST = Core.Typeof(first(xis))
+        return recursive_map(ST, f, seen, xis, isleaftype)
     end
    
     nf = fieldcount(RT)
