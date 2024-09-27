@@ -82,7 +82,7 @@ Like [`Duplicated`](@ref), except also specifies that Enzyme may avoid computing
 the original result and only compute the derivative values. This creates opportunities
 for improved performance.
 
-```jldoctest dupnoneed
+```julia
 
 function square_byref(out, v)
     out[] = v * v
