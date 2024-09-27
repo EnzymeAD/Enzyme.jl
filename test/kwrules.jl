@@ -10,7 +10,7 @@ function f_kw(x; kwargs...)
     x^2
 end
 
-function forward(::Const{typeof(f_kw)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; kwargs...)
+function forward(config, ::Const{typeof(f_kw)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; kwargs...)
     return 10+2*x.val*x.dval
 end
 
@@ -25,7 +25,7 @@ function f_kw2(x; kwargs...)
     x^2
 end
 
-function forward(::Const{typeof(f_kw2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, ::Const{typeof(f_kw2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return 10+2*x.val*x.dval
 end
 
@@ -37,7 +37,7 @@ function f_kw3(x; val=nothing)
     x^2
 end
 
-function forward(::Const{typeof(f_kw3)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; dval=nothing)
+function forward(config, ::Const{typeof(f_kw3)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; dval=nothing)
     return 10+2*x.val*x.dval
 end
 
@@ -49,7 +49,7 @@ function f_kw4(x; y=2.0)
     x*y
 end
 
-function forward(::Const{typeof(f_kw4)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; y)
+function forward(config, ::Const{typeof(f_kw4)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated; y)
     return 1000*y+2*x.val*x.dval
 end
 

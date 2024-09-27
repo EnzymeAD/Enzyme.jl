@@ -20,13 +20,13 @@ using Test
     
     @test () === autodiff(Forward, f, Const(nothing))
 
-    res = autodiff_deferred(Reverse, f, Const(nothing))
+    res = autodiff_deferred(Reverse, Const(f), Const, Const(nothing))
     @test res === ((nothing,),)
-    res = autodiff_deferred(Enzyme.set_abi(Reverse, NonGenABI), f, Const, Const(nothing))
+    res = autodiff_deferred(Enzyme.set_abi(Reverse, NonGenABI), Const(f), Const, Const(nothing))
     @test res === ((nothing,),)
     
-    @test () === autodiff_deferred(Forward, f, Const(nothing))
-    @test () === autodiff_deferred(Enzyme.set_abi(Forward, NonGenABI), f, Const, Const(nothing))
+    @test () === autodiff_deferred(Forward, Const(f), Const, Const(nothing))
+    @test () === autodiff_deferred(Enzyme.set_abi(Forward, NonGenABI), Const(f), Const, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(Reverse, f, Const, Const(Int))
@@ -37,15 +37,15 @@ using Test
     @test res === ((nothing,),)
     @test () === autodiff(Forward, f, Const(Int))
 
-    res = autodiff_deferred(Reverse, f, Const(Int))
+    res = autodiff_deferred(Reverse, Const(f), Const, Const(Int))
     @test res === ((nothing,),)
-    @test () === autodiff_deferred(Forward, f, Const(Int))
+    @test () === autodiff_deferred(Forward, Const(f), Const, Const(Int))
 
     # Complex numbers
     @test_throws ErrorException autodiff(Reverse, f, Active, Active(1.5 + 0.7im))
     cres,  = autodiff(ReverseHolomorphic, f, Active, Active(1.5 + 0.7im))[1]
     @test cres ≈ 1.0 + 0.0im
-    cres,  = autodiff(Forward, f, DuplicatedNoNeed, Duplicated(1.5 + 0.7im, 1.0 + 0im))
+    cres,  = autodiff(Forward, f, Duplicated, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
     @test_throws ErrorException autodiff(Reverse, f, Active(1.5 + 0.7im))
@@ -54,10 +54,10 @@ using Test
     cres,  = autodiff(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
-    @test_throws ErrorException autodiff_deferred(Reverse, f, Active(1.5 + 0.7im))
-    @test_throws ErrorException autodiff_deferred(ReverseHolomorphic, f, Active(1.5 + 0.7im))
+    @test_throws ErrorException autodiff_deferred(Reverse, Const(f), Active, Active(1.5 + 0.7im))
+    @test_throws ErrorException autodiff_deferred(ReverseHolomorphic, Const(f), Active, Active(1.5 + 0.7im))
 
-    cres,  = autodiff_deferred(Forward, f, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres,  = autodiff_deferred(Forward, Const(f), Duplicated, Duplicated(1.5 + 0.7im, 1.0+0im))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
@@ -68,12 +68,12 @@ using Test
     _, res0 = autodiff(Enzyme.set_abi(Reverse, NonGenABI), unused, Active, Const(nothing), Active(2.0))[1]
     @test res0 ≈ 1.0
     
-    res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
+    res0, = autodiff(Forward, unused, Duplicated, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
-    res0, = autodiff(Forward, unused, DuplicatedNoNeed, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
+    res0, = autodiff(Forward, unused, Duplicated, Const(nothing), DuplicatedNoNeed(2.0, 1.0))
     @test res0 ≈ 1.0
     
-    res0, = autodiff(Enzyme.set_abi(Forward, NonGenABI), unused, DuplicatedNoNeed, Const(nothing), Duplicated(2.0, 1.0))
+    res0, = autodiff(Enzyme.set_abi(Forward, NonGenABI), unused, Duplicated, Const(nothing), Duplicated(2.0, 1.0))
     @test res0 ≈ 1.0
 
     _, res0 = autodiff(Reverse, unused, Const(nothing), Active(2.0))[1]
@@ -97,7 +97,7 @@ using Test
 
     x = [0.0]
     dx = [1.2]
-    autodiff_deferred(Reverse, squareRetArray, Const, Duplicated(x, dx))
+    autodiff_deferred(Reverse, Const(squareRetArray), Const, Duplicated(x, dx))
 
     dx = [1.2]
     @test () === autodiff(Forward, squareRetArray, Const, Duplicated(x, dx))
@@ -113,7 +113,7 @@ using Test
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
-    pair = autodiff_deferred(Reverse, mul, Active(2.0), Active(3.0))[1]
+    pair = autodiff_deferred(Reverse, Const(mul), Active, Active(2.0), Active(3.0))[1]
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     
@@ -122,7 +122,7 @@ using Test
     @test pair[2] ≈ 2.0
     @test orig ≈ 6.0
     
-    pair, orig = autodiff_deferred(ReverseWithPrimal, mul, Active(2.0), Active(3.0))
+    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(mul), Active, Active(2.0), Active(3.0))
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     @test orig ≈ 6.0
@@ -142,7 +142,7 @@ using Test
     
     res = Ref(3.0)
     dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, inplace, Const, Duplicated(res, dres))
+    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace), Const, Duplicated(res, dres))
     @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
@@ -163,7 +163,7 @@ using Test
 
     res = Ref(3.0)
     dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, inplace2, Const, Duplicated(res, dres))
+    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace2), Const, Duplicated(res, dres))
     @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
@@ -193,7 +193,7 @@ using Test
     res2,  = autodiff(Reverse, g, Active, Active(Foo(3, 1.2)))[1]
     @test res2.qux ≈ 1.0
 
-    @test 1.0≈ first(autodiff(Forward, g, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0≈ first(autodiff(Forward, g, Duplicated, Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     res2,  = autodiff(Reverse, g, Active(Foo(3, 1.2)))[1]
     @test res2.qux ≈ 1.0
@@ -204,7 +204,7 @@ using Test
     _, resF = autodiff(Reverse, unused2, Active, Const(nothing), Active(Foo(3, 2.0)))[1]
     @test resF.qux ≈ 1.0
 
-    @test 1.0≈ first(autodiff(Forward, unused2, DuplicatedNoNeed, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
+    @test 1.0≈ first(autodiff(Forward, unused2, Duplicated, Const(nothing), Duplicated(Foo(3, 1.2), Foo(0, 1.0))))
 
     _, resF = autodiff(Reverse, unused2, Const(nothing), Active(Foo(3, 2.0)))[1]
     @test resF.qux ≈ 1.0
@@ -216,7 +216,7 @@ using Test
     @test res3[1].qux ≈ 3.4
     @test res3[2].qux ≈ 1.2
 
-    @test 7*3.4 + 9 * 1.2 ≈ first(autodiff(Forward, h, DuplicatedNoNeed, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
+    @test 7*3.4 + 9 * 1.2 ≈ first(autodiff(Forward, h, Duplicated, Duplicated(Foo(3, 1.2), Foo(0, 7.0)), Duplicated(Foo(5, 3.4), Foo(0, 9.0))))
 
     res3 = autodiff(Reverse, h, Active(Foo(3, 1.2)), Active(Foo(5, 3.4)))[1]
     @test res3[1].qux ≈ 3.4
@@ -228,7 +228,7 @@ using Test
     _, res4 = autodiff(Reverse, caller, Active, Const((x)->x), Active(3.0))[1]
     @test res4 ≈ 1.0
 
-    res4, = autodiff(Forward, caller, DuplicatedNoNeed, Const((x)->x), Duplicated(3.0, 1.0))
+    res4, = autodiff(Forward, caller, Duplicated, Const((x)->x), Duplicated(3.0, 1.0))
     @test res4 ≈ 1.0
 
     _, res4 = autodiff(Reverse, caller, Const((x)->x), Active(3.0))[1]
@@ -257,7 +257,7 @@ using Test
     @test ad === ((nothing,),)
     @test shadow.val ≈ 1.0 && shadow.next.val ≈ 1.0
 
-    @test 2.0 ≈ first(autodiff(Forward, sumlist, DuplicatedNoNeed, Duplicated(regular, shadow)))
+    @test 2.0 ≈ first(autodiff(Forward, sumlist, Duplicated, Duplicated(regular, shadow)))
 
     mulr(x, y) = x[] * y[]
     x = Ref(2.0)
@@ -273,7 +273,7 @@ using Test
     y = Ref(3.0)
     dx = Ref(5.0)
     dy = Ref(7.0)
-    @test 5.0*3.0 + 2.0*7.0≈ first(autodiff(Forward, mulr, DuplicatedNoNeed, Duplicated(x, dx), Duplicated(y, dy)))
+    @test 5.0*3.0 + 2.0*7.0≈ first(autodiff(Forward, mulr, Duplicated, Duplicated(x, dx), Duplicated(y, dy)))
 
     _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const((x->x*x,)), Active(2.0))[1]
     @test mid ≈ 4.0
@@ -281,10 +281,10 @@ using Test
     _, mid = Enzyme.autodiff(Reverse, (fs, x) -> fs[1](x), Active, Const([x->x*x]), Active(2.0))[1]
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const((x->x*x,)), Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), Duplicated, Const((x->x*x,)), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
-    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), DuplicatedNoNeed, Const([x->x*x]), Duplicated(2.0, 1.0))
+    mid, = Enzyme.autodiff(Forward, (fs, x) -> fs[1](x), Duplicated, Const([x->x*x]), Duplicated(2.0, 1.0))
     @test mid ≈ 4.0
 
 
@@ -394,8 +394,8 @@ end
     @test Enzyme.autodiff(Reverse, method, Active, Const(AFoo(2.0)), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, AFoo(2.0), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(AFoo(2.0)), Duplicated(3.0, 1.0))[1] ≈ 2.0
-    @test Enzyme.autodiff(Forward, AFoo(2.0), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, Duplicated, Const(AFoo(2.0)), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, AFoo(2.0), Duplicated, Duplicated(3.0, 1.0))[1] ≈ 2.0
 
     struct ABar
     end
@@ -407,8 +407,8 @@ end
     @test Enzyme.autodiff(Reverse, method, Active, Const(ABar()), Active(3.0))[1][2] ≈ 2.0
     @test Enzyme.autodiff(Reverse, ABar(), Active, Active(3.0))[1][1] ≈ 2.0
 
-    @test Enzyme.autodiff(Forward, method, DuplicatedNoNeed, Const(ABar()), Duplicated(3.0, 1.0))[1] ≈ 2.0
-    @test Enzyme.autodiff(Forward, ABar(), DuplicatedNoNeed, Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, method, Duplicated, Const(ABar()), Duplicated(3.0, 1.0))[1] ≈ 2.0
+    @test Enzyme.autodiff(Forward, ABar(), Duplicated, Duplicated(3.0, 1.0))[1] ≈ 2.0
 
     struct RWClos
         x::Vector{Float64}
@@ -446,19 +446,25 @@ end
 @testset "Promotion" begin
     x = [1.0, 2.0]; dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
     rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
-    r = autodiff(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
-    @test r[1] ≈ 100.0
-    @test r[2][1] ≈ -400.0
-    @test r[2][2] ≈ 200.0
-    r = autodiff_deferred(Forward, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
-    @test r[1] ≈ 100.0
-    @test r[2][1] ≈ -400.0
-    @test r[2][2] ≈ 200.0
+    r = autodiff(ForwardWithPrimal, rosenbrock_inp, Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[2] ≈ 100.0
+    @test r[1][1] ≈ -400.0
+    @test r[1][2] ≈ 200.0
+    r = autodiff_deferred(ForwardWithPrimal, Const(rosenbrock_inp), Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    @test r[2] ≈ 100.0
+    @test r[1][1] ≈ -400.0
+    @test r[1][2] ≈ 200.0
 end
 
 abssum(x) = sum(abs2, x);
 
 mulsin(x) = sin(x[1] * x[2])
+
+@testset "within_autodiff" begin
+    @test !Enzyme.within_autodiff()
+    @test_broken Enzyme.autodiff(ForwardWithPrimal, Enzyme.within_autodiff)[1]
+    @test Enzyme.autodiff(ForwardWithPrimal, () -> Enzyme.within_autodiff())[1]
+end
 
 @testset "Type inference" begin
     x = ones(10)
@@ -467,11 +473,14 @@ mulsin(x) = sin(x[1] * x[2])
     @inferred autodiff(Enzyme.ReverseHolomorphic, abssum, Duplicated(x,x))
     @inferred autodiff(Enzyme.ReverseHolomorphicWithPrimal, abssum, Duplicated(x,x))
     @inferred autodiff(Enzyme.Forward, abssum, Duplicated(x,x))
+    @inferred autodiff(Enzyme.ForwardWithPrimal, abssum, Duplicated, Duplicated(x,x))
     @inferred autodiff(Enzyme.Forward, abssum, Duplicated, Duplicated(x,x))
-    @inferred autodiff(Enzyme.Forward, abssum, DuplicatedNoNeed, Duplicated(x,x))
     
     @inferred gradient(Reverse, abssum, x)
     @inferred gradient!(Reverse, x, abssum, x)
+
+    @inferred gradient(ReverseWithPrimal, abssum, x)
+    @inferred gradient!(ReverseWithPrimal, x, abssum, x)
     
     cx = ones(10)
     @inferred autodiff(Enzyme.ReverseHolomorphic, sum, Duplicated(cx,cx))
@@ -488,6 +497,9 @@ mulsin(x) = sin(x[1] * x[2])
     
     @inferred gradient(Reverse, abssum, tx)
     @inferred gradient(Forward, abssum, tx)
+
+    @inferred gradient(ReverseWithPrimal, abssum, tx)
+    @inferred gradient(ForwardWithPrimal, abssum, tx)
 
     @inferred hvp(mulsin, [2.0, 3.0], [5.0, 2.7])
 

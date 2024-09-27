@@ -11,7 +11,7 @@ end
 import .EnzymeRules: augmented_primal, reverse
 using .EnzymeRules
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
     @show kwargs
     @assert length(overwritten(config)) == 2
     if needs_primal(config)
@@ -21,7 +21,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw)}, ::T
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
     @show kwargs # TODO do we want them here?
     @assert length(overwritten(config)) == 2
     if needs_primal(config)
@@ -43,7 +43,7 @@ function f_kw2(x; kwargs...)
     x^2
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw2)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw2)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -51,7 +51,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw2)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw2)}, dret::Active, tape, x::Active)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw2)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -68,7 +68,7 @@ function f_kw3(x; val=nothing)
     x^2
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw3)}, ::Type{<:Active}, x::Active; dval=nothing)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw3)}, ::Type{<:Active}, x::Active; dval=nothing)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -76,7 +76,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw3)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw3)}, dret::Active, tape, x::Active; dval=nothing)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw3)}, dret::Active, tape, x::Active; dval=nothing)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -92,7 +92,7 @@ function f_kw4(x; y=2.0)
     x*y
 end
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::Type{<:Active}, x::Active; y)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw4)}, ::Type{<:Active}, x::Active; y)
     @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
@@ -101,7 +101,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f_kw4)}, ::
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f_kw4)}, dret::Active, tape, x::Active; y)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw4)}, dret::Active, tape, x::Active; y)
     @assert length(overwritten(config)) == 2
     return (1000*y+2*x.val*dret.val,)
 end
@@ -126,7 +126,7 @@ function wrapclos(cl, x)
     cl(x; width=9)
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closure2},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Closure2},
     ::Type{<:Active}, args::Vararg{Active,N}; width=7) where {N}
     vec = copy(func.val.v)
     pval = func.val(args[1].val)
@@ -138,7 +138,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closur
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{Closure2},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{Closure2},
     dret::Active, tape, args::Vararg{Active,N}; width=7) where {N}
     dargs = ntuple(Val(N)) do i
         7 * args[1].val * dret.val + tape[1] * 1000 + width * 100000

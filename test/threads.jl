@@ -73,13 +73,8 @@ end
 
     out = [1.0, 2.0]
     dout = [1.0, 1.0]
-@static if VERSION < v"1.8"
-    # GPUCompiler causes a stack overflow due to https://github.com/JuliaGPU/GPUCompiler.jl/issues/587
-    # @test_throws AssertionError autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
-else
     res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
     @test res[1][2] ≈ 2.0
-end
 end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin

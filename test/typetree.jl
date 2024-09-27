@@ -79,3 +79,16 @@ end
               "{[0]:Pointer, [0,4]:Float@float, [0,8]:Float@double, [4]:Integer, [8]:Pointer, [8,4]:Float@float, [8,8]:Float@double, [12]:Integer, [16]:Pointer, [16,4]:Float@float, [16,8]:Float@double, [20]:Integer, [24]:Pointer, [24,4]:Float@float, [24,8]:Float@double}"
     end
 end
+
+@testset "GetOffsets" begin
+    @test Enzyme.get_offsets(Float16) == ((Enzyme.API.DT_Half,0),)
+    @test Enzyme.get_offsets(Float32) == ((Enzyme.API.DT_Float,0),)
+    @test Enzyme.get_offsets(Float64) == ((Enzyme.API.DT_Double,0),)
+    @test Enzyme.get_offsets(Int) == ((Enzyme.API.DT_Integer,0),)
+    @test Enzyme.get_offsets(Char) == ((Enzyme.API.DT_Integer,0),)
+    @test Enzyme.get_offsets(Ptr) == ((Enzyme.API.DT_Pointer,0),)
+    @test Enzyme.get_offsets(Ptr{Char}) == ((Enzyme.API.DT_Pointer,0),)
+    @test Enzyme.get_offsets(Ptr{Float32}) == ((Enzyme.API.DT_Pointer,0),)
+    @test Enzyme.get_offsets(Vector{Float32}) == ((Enzyme.API.DT_Pointer,0),)
+    @test Enzyme.get_offsets(Tuple{Float64, Int}) == [(Enzyme.API.DT_Double,0),(Enzyme.API.DT_Integer, 8)]
+end

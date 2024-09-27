@@ -1,7 +1,7 @@
 name = "EnzymeTestUtils"
 uuid = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 authors = ["Seth Axen <seth@sethaxen.com>", "William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.1.8"
+version = "0.2.0"
 
 [deps]
 ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
@@ -13,12 +13,12 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 ConstructionBase = "1.4.1"
-Enzyme = "0.11, 0.12, 0.13"
-EnzymeCore = "0.5, 0.6, 0.7"
+Enzyme = "0.13"
+EnzymeCore = "0.5, 0.6, 0.7, 0.8"
 FiniteDifferences = "0.12.12"
 MetaTesting = "0.1"
 Quaternions = "0.7"
-julia = "1.6"
+julia = "1.10"
 
 [extras]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

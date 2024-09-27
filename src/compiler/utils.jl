@@ -2,16 +2,9 @@ struct MemoryEffect
     data::UInt32
 end
 
-@enum(ModRefInfo,
-  MRI_NoModRef = 0,
-  MRI_Ref = 1,
-  MRI_Mod = 2,
-  MRI_ModRef = 3)
+@enum(ModRefInfo, MRI_NoModRef = 0, MRI_Ref = 1, MRI_Mod = 2, MRI_ModRef = 3)
 
-@enum(IRMemLocation,
-  ArgMem = 0,
-  InaccessibleMem = 1,
-  Other = 2)
+@enum(IRMemLocation, ArgMem = 0, InaccessibleMem = 1, Other = 2)
 
 const BitsPerLoc = UInt32(2)
 const LocMask = UInt32((1 << BitsPerLoc) - 1)
@@ -27,14 +20,30 @@ end
 function Base.:&(lhs::ModRefInfo, rhs::ModRefInfo)
     ModRefInfo(UInt32(lhs) & UInt32(rhs))
 end
-const AllEffects = MemoryEffect((MRI_ModRef << getLocationPos(ArgMem)) | (MRI_ModRef << getLocationPos(InaccessibleMem)) | (MRI_ModRef << getLocationPos(Other)))
-const ReadOnlyEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_Ref << getLocationPos(InaccessibleMem)) | (MRI_Ref << getLocationPos(Other)))
-const ReadOnlyArgMemEffects = MemoryEffect((MRI_Ref << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
-const NoEffects = MemoryEffect((MRI_NoModRef << getLocationPos(ArgMem)) | (MRI_NoModRef << getLocationPos(InaccessibleMem)) | (MRI_NoModRef << getLocationPos(Other)))
+const AllEffects = MemoryEffect(
+    (MRI_ModRef << getLocationPos(ArgMem)) |
+    (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+    (MRI_ModRef << getLocationPos(Other)),
+)
+const ReadOnlyEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+    (MRI_Ref << getLocationPos(InaccessibleMem)) |
+    (MRI_Ref << getLocationPos(Other)),
+)
+const ReadOnlyArgMemEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
+const NoEffects = MemoryEffect(
+    (MRI_NoModRef << getLocationPos(ArgMem)) |
+    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
 
 # Get ModRefInfo for any location.
 function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo
-    ModRefInfo((effect.data >> getLocationPos(loc)) & LocMask) 
+    ModRefInfo((effect.data >> getLocationPos(loc)) & LocMask)
 end
 
 function getModRef(effect::MemoryEffect)::ModRefInfo
@@ -54,7 +63,7 @@ end
 
 function setModRef(effect::MemoryEffect)::MemoryEffect
     for loc in (ArgMem, InaccessibleMem, Other)
-        effect = setModRef(effect, mri)= getModRef(effect, loc)
+        effect = setModRef(effect, mri) = getModRef(effect, loc)
     end
     return effect
 end
@@ -93,11 +102,11 @@ function is_writeonly(mri::ModRefInfo)
 end
 
 for n in (:is_readonly, :is_readnone, :is_writeonly)
-@eval begin
-    function $n(memeffect::MemoryEffect)
-        return $n(getModRef(memeffect))
+    @eval begin
+        function $n(memeffect::MemoryEffect)
+            return $n(getModRef(memeffect))
+        end
     end
-end
 end
 
 function is_noreturn(f::LLVM.Function)
@@ -120,7 +129,8 @@ function is_readonly(f::LLVM.Function)
     if intr == LLVM.Intrinsic("llvm.assume").id
         return true
     end
-    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" ||
+       LLVM.name(f) == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(function_attributes(f))
@@ -131,11 +141,11 @@ function is_readonly(f::LLVM.Function)
             return true
         end
         if LLVM.version().major > 15
-        if kind(attr) == kind(EnumAttribute("memory"))
-            if is_readonly(MemoryEffect(value(attr)))
-                return true
+            if kind(attr) == kind(EnumAttribute("memory"))
+                if is_readonly(MemoryEffect(value(attr)))
+                    return true
+                end
             end
-        end
         end
     end
     return false
@@ -152,7 +162,8 @@ function is_readnone(f::LLVM.Function)
     if intr == LLVM.Intrinsic("llvm.assume").id
         return true
     end
-    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" ||
+       LLVM.name(f) == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(function_attributes(cur))
@@ -160,11 +171,11 @@ function is_readnone(f::LLVM.Function)
             return true
         end
         if LLVM.version().major > 15
-        if kind(attr) == kind(EnumAttribute("memory"))
-            if is_readnone(MemoryEffect(value(attr)))
-                return true
+            if kind(attr) == kind(EnumAttribute("memory"))
+                if is_readnone(MemoryEffect(value(attr)))
+                    return true
+                end
             end
-        end
         end
     end
     return false
@@ -181,7 +192,8 @@ function is_writeonly(f::LLVM.Function)
     if intr == LLVM.Intrinsic("llvm.assume").id
         return true
     end
-    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" || LLVM.name(f) == "llvm.julia.gc_preserve_end"
+    if LLVM.name(f) == "llvm.julia.gc_preserve_begin" ||
+       LLVM.name(f) == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(function_attributes(cur))
@@ -192,11 +204,11 @@ function is_writeonly(f::LLVM.Function)
             return true
         end
         if LLVM.version().major > 15
-        if kind(attr) == kind(EnumAttribute("memory"))
-            if is_writeonly(MemoryEffect(value(attr)))
-                return true
+            if kind(attr) == kind(EnumAttribute("memory"))
+                if is_writeonly(MemoryEffect(value(attr)))
+                    return true
+                end
             end
-        end
         end
     end
     return false
@@ -205,7 +217,8 @@ end
 function set_readonly!(fn::LLVM.Function)
     attrs = collect(function_attributes(fn))
     if LLVM.version().major <= 15
-        if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) && !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
+        if !any(kind(attr) == kind(EnumAttribute("readonly")) for attr in attrs) &&
+           !any(kind(attr) == kind(EnumAttribute("readnone")) for attr in attrs)
             if any(kind(attr) == kind(EnumAttribute("writeonly")) for attr in attrs)
                 delete!(function_attributes(fn), EnumAttribute("writeonly"))
                 push!(function_attributes(fn), EnumAttribute("readnone"))
@@ -224,12 +237,20 @@ function set_readonly!(fn::LLVM.Function)
                 return old != eff
             end
         end
-        push!(function_attributes(fn), EnumAttribute("memory", set_readonly(AllEffects).data))
+        push!(
+            function_attributes(fn),
+            EnumAttribute("memory", set_readonly(AllEffects).data),
+        )
         return true
     end
 end
 
-function get_function!(mod::LLVM.Module, name::AbstractString, FT::LLVM.FunctionType, attrs=[])
+function get_function!(
+    mod::LLVM.Module,
+    name::AbstractString,
+    FT::LLVM.FunctionType,
+    attrs = [],
+)
     if haskey(functions(mod), name)
         F = functions(mod)[name]
         PT = LLVM.PointerType(FT)
@@ -261,8 +282,12 @@ T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
     return v
 end
 
-function declare_pgcstack!(mod) 
-        get_function!(mod, "julia.get_pgcstack", LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())))
+function declare_pgcstack!(mod)
+    get_function!(
+        mod,
+        "julia.get_pgcstack",
+        LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())),
+    )
 end
 
 function emit_pgcstack(B)
@@ -285,14 +310,19 @@ function get_pgcstack(func)
     return nothing
 end
 
-function reinsert_gcmarker!(func, PB=nothing)
+function reinsert_gcmarker!(func, PB = nothing)
     for (i, v) in enumerate(parameters(func))
-        if any(map(k->kind(k)==kind(EnumAttribute("swiftself")), collect(parameter_attributes(func, i))))
+        if any(
+            map(
+                k -> kind(k) == kind(EnumAttribute("swiftself")),
+                collect(parameter_attributes(func, i)),
+            ),
+        )
             return v
         end
     end
 
-	pgs = get_pgcstack(func)
+    pgs = get_pgcstack(func)
     if pgs === nothing
         context(LLVM.parent(func))
         B = IRBuilder()
@@ -303,13 +333,21 @@ function reinsert_gcmarker!(func, PB=nothing)
             position!(B, entry_bb)
         end
         emit_pgcstack(B)
-	else
+    else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
         if fst != pgs
             API.moveBefore(pgs, fst, PB === nothing ? C_NULL : PB.ref)
         end
-		pgs
+        pgs
+    end
+end
+
+function eraseInst(bb, inst)
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
     end
 end
 
@@ -324,16 +362,17 @@ function unique_gcmarker!(func)
         end
     end
     if length(found) > 1
-        for i in 2:length(found)
+        for i = 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
             ops = LLVM.collect(operands(found[i]))
-            Base.unsafe_delete!(entry_bb, found[i])
+            eraseInst(entry_bb, found[i])
         end
     end
     return nothing
 end
 
-@inline AnonymousStruct(::Type{U}) where U<:Tuple = NamedTuple{ntuple(i->Symbol(i), Val(length(U.parameters))), U}
+@inline AnonymousStruct(::Type{U}) where {U<:Tuple} =
+    NamedTuple{ntuple(i -> Symbol(i), Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
 function recursive_eltype(val::LLVM.Value, idxs::Vector{Cuint})
@@ -351,7 +390,15 @@ end
 
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
-function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev::LLVM.Value=LLVM.UndefValue(tape), lidxs::Vector{Cuint}=Cuint[], ridxs::Vector{Cuint}=Cuint[], emesg=nothing)::LLVM.Value
+function calling_conv_fixup(
+    builder,
+    val::LLVM.Value,
+    tape::LLVM.LLVMType,
+    prev::LLVM.Value = LLVM.UndefValue(tape),
+    lidxs::Vector{Cuint} = Cuint[],
+    ridxs::Vector{Cuint} = Cuint[],
+    emesg = nothing,
+)::LLVM.Value
     ctype = recursive_eltype(val, lidxs)
     if ctype == tape
         if length(lidxs) != 0
@@ -369,9 +416,9 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
             @assert length(ctype) == length(elements(tape))
             for (i, ty) in enumerate(elements(tape))
                 ln = copy(lidxs)
-                push!(ln, i-1)
+                push!(ln, i - 1)
                 rn = copy(ridxs)
-                push!(rn, i-1)
+                push!(rn, i - 1)
                 prev = calling_conv_fixup(builder, val, ty, prev, ln, rn, emesg)
             end
             return prev
@@ -380,9 +427,9 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
             @assert length(elements(ctype)) == length(elements(tape))
             for (i, ty) in enumerate(elements(tape))
                 ln = copy(lidxs)
-                push!(ln, i-1)
+                push!(ln, i - 1)
                 rn = copy(ridxs)
-                push!(rn, i-1)
+                push!(rn, i - 1)
                 prev = calling_conv_fixup(builder, val, ty, prev, ln, rn, emesg)
             end
             return prev
@@ -390,29 +437,31 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
     elseif isa(tape, LLVM.ArrayType)
         if isa(ctype, LLVM.ArrayType)
             @assert length(ctype) == length(tape)
-            for i in 1:length(tape)
+            for i = 1:length(tape)
                 ln = copy(lidxs)
-                push!(ln, i-1)
+                push!(ln, i - 1)
                 rn = copy(ridxs)
-                push!(rn, i-1)
+                push!(rn, i - 1)
                 prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn, emesg)
             end
             return prev
         end
         if isa(ctype, LLVM.StructType)
             @assert length(elements(ctype)) == length(tape)
-            for i in 1:length(tape)
+            for i = 1:length(tape)
                 ln = copy(lidxs)
-                push!(ln, i-1)
+                push!(ln, i - 1)
                 rn = copy(ridxs)
-                push!(rn, i-1)
+                push!(rn, i - 1)
                 prev = calling_conv_fixup(builder, val, eltype(tape), prev, ln, rn, emesg)
             end
             return prev
         end
     end
 
-    if isa(tape, LLVM.IntegerType) && LLVM.width(tape) == 1 && LLVM.width(ctype) != LLVM.width(tape)
+    if isa(tape, LLVM.IntegerType) &&
+       LLVM.width(tape) == 1 &&
+       LLVM.width(ctype) != LLVM.width(tape)
         if length(lidxs) != 0
             val = API.e_extract_value!(builder, val, lidxs)
         end
@@ -423,7 +472,9 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
             val
         end
     end
-    if isa(tape, LLVM.PointerType) && isa(ctype, LLVM.PointerType) && LLVM.addrspace(tape) == LLVM.addrspace(ctype)
+    if isa(tape, LLVM.PointerType) &&
+       isa(ctype, LLVM.PointerType) &&
+       LLVM.addrspace(tape) == LLVM.addrspace(ctype)
         if length(lidxs) != 0
             val = API.e_extract_value!(builder, val, lidxs)
         end
@@ -443,7 +494,7 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
 
     msg2 = sprint() do io
         println(io, "Enzyme Internal Error: Illegal calling convention fixup")
-        if  emesg !== nothing
+        if emesg !== nothing
             emesg(io)
         end
         println(io, "ctype = ", ctype)
@@ -453,7 +504,11 @@ function calling_conv_fixup(builder, val::LLVM.Value, tape::LLVM.LLVMType, prev:
         println(io, "lidxs = ", lidxs)
         println(io, "ridxs = ", ridxs)
         println(io, "tape_type(tape) = ", tape_type(tape))
-        println(io, "convert(LLVMType, tape_type(tape)) = ", convert(LLVM.LLVMType, tape_type(tape); allow_boxed=true))
+        println(
+            io,
+            "convert(LLVMType, tape_type(tape)) = ",
+            convert(LLVM.LLVMType, tape_type(tape); allow_boxed = true),
+        )
     end
     throw(AssertionError(msg2))
 end

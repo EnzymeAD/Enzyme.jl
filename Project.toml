@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.13.0"
+version = "0.13.4"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -15,22 +15,15 @@ ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
-[compat]
-BFloat16s = "0.2, 0.3, 0.4, 0.5"
-CEnum = "0.4, 0.5"
-ChainRulesCore = "1"
-EnzymeCore = "0.7.8"
-Enzyme_jll = "0.0.146, 0.0.148"
-GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27"
-LLVM = "6.1, 7, 8, =9.0"
-LogExpFunctions = "0.3"
-ObjectFile = "0.4"
-Preferences = "1.4"
-SparseArrays = "1"
-SpecialFunctions = "1, 2"
-StaticArrays = "1"
-julia = "1.10"
+[weakdeps]
+BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [extensions]
 EnzymeBFloat16sExt = "BFloat16s"
@@ -40,15 +33,23 @@ EnzymeSparseArraysExt = "SparseArrays"
 EnzymeSpecialFunctionsExt = "SpecialFunctions"
 EnzymeStaticArraysExt = "StaticArrays"
 
-[extras]
-BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
-ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
-SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
-SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+[compat]
+BFloat16s = "0.2, 0.3, 0.4, 0.5"
+CEnum = "0.4, 0.5"
+ChainRulesCore = "1"
+EnzymeCore = "0.8.3"
+Enzyme_jll = "0.0.150"
+GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27"
+LLVM = "6.1, 7, 8, 9"
+LogExpFunctions = "0.3"
+ObjectFile = "0.4"
+Preferences = "1.4"
+SparseArrays = "1"
+SpecialFunctions = "1, 2"
+StaticArrays = "1"
+julia = "1.10"
 
-[weakdeps]
+[extras]
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"

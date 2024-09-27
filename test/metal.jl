@@ -16,12 +16,12 @@ function fun_gpu!(A, B, a)
 end
 
 function ∇_fun_cpu!(A, Ā, B, B̄, a)
-    Enzyme.autodiff_deferred(Reverse, fun_cpu!, Const, DuplicatedNoNeed(A, Ā), DuplicatedNoNeed(B, B̄), Const(a))
+    Enzyme.autodiff_deferred(Reverse, Const(fun_cpu!), Const, DuplicatedNoNeed(A, Ā), DuplicatedNoNeed(B, B̄), Const(a))
     nothing
 end
 
 function ∇_fun_gpu!(A_d, Ā_d, B_d, B̄_d, a)
-    Enzyme.autodiff_deferred(Reverse, fun_gpu!, Const, Duplicated(A_d, Ā_d), Duplicated(B_d, B̄_d), Const(a))
+    Enzyme.autodiff_deferred(Reverse, Const(fun_gpu!), Const, Duplicated(A_d, Ā_d), Duplicated(B_d, B̄_d), Const(a))
     nothing
 end
 

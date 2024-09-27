@@ -4,7 +4,7 @@ using Enzyme
 using Enzyme: EnzymeRules
 using Test
 
-import .EnzymeRules: forward, Annotation, has_frule_from_sig
+import .EnzymeRules: forward, Annotation, has_frule_from_sig, FwdConfig
 
 f(x) = x^2
 
@@ -13,23 +13,23 @@ function f_ip(x)
     return nothing
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, ::Const{typeof(f)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return 10+2*x.val*x.dval
 end
 
-function forward(::Const{typeof(f)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
+function forward(config, ::Const{typeof(f)}, ::Type{<:BatchDuplicatedNoNeed}, x::BatchDuplicated{T, N}) where {T, N}
     return NTuple{N, T}(1000+2*x.val*dv for dv in x.dval)
 end
 
-function forward(func::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
+function forward(config, func::Const{typeof(f)}, ::Type{<:Duplicated}, x::Duplicated)
     return Duplicated(func.val(x.val), 100+2*x.val*x.dval)
 end
 
-function forward(func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
+function forward(config, func::Const{typeof(f)}, ::Type{<:BatchDuplicated}, x::BatchDuplicated{T, N}) where {T,N}
     return BatchDuplicated(func.val(x.val), NTuple{N, T}(10000+2*x.val*dv for dv in x.dval))
 end
 
-function forward(::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function forward(config, ::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     ld = x.val[1]
     x.val[1] *= ld
     x.dval[1] *= 2 * ld + 10
@@ -38,7 +38,7 @@ end
 
 function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world=Base.get_world_counter())
     TT = Base.unwrap_unionall(TT)
-    TT = Tuple{<:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
+    TT = Tuple{<:FwdConfig, <:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
     EnzymeRules.isapplicable(forward, TT; world)
 end
 
@@ -61,11 +61,11 @@ end
     @test autodiff(Forward, f, Duplicated(2.0, 1.0))[1] ≈ 14.0
     @test autodiff(Forward, x->f(x)^2, Duplicated(2.0, 1.0))[1] ≈ 832.0
 
-    res = autodiff(Forward, f, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 3.0)))[1] 
+    res = autodiff(Forward, f, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0)))[1] 
     @test res[1] ≈ 1004.0
     @test res[2] ≈ 1012.0
 
-    res = Enzyme.autodiff(Forward, x->f(x)^2, BatchDuplicatedNoNeed, BatchDuplicated(2.0, (1.0, 3.0)))[1]
+    res = Enzyme.autodiff(Forward, x->f(x)^2, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0)))[1]
 
     @test res[1] ≈ 80032.0
     @test res[2] ≈ 80096.0
@@ -82,7 +82,7 @@ end
 end
 
 g(x) = x ^ 2
-function forward(func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
+function forward(config, func::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
@@ -107,11 +107,11 @@ function h2(x)
     y * y
 end
 
-function forward(func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq)}, ::Type{<:Duplicated}, x::Duplicated)
     return Duplicated(Ref(x.val*x.val), Ref(10*2*x.val*x.dval))
 end
 
-function forward(func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return Ref(1000*2*x.val*x.dval)
 end
 
@@ -123,20 +123,20 @@ function h3(x)
     alloc_sq2(x)[]
 end
 
-function forward(func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
+function forward(config, func::Const{typeof(alloc_sq2)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated)
     return Duplicated(Ref(0.0), Ref(1000*2*x.val*x.dval))
 end
 
 @testset "Shadow" begin
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
-    @test Enzyme.autodiff(Forward, h, Duplicated, Duplicated(3.0, 1.0))  == (9.0, 60.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, h, Duplicated(3.0, 1.0))  == (60.0, 9.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
     @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
 
 foo(x) = 2x;
 
-function EnzymeRules.forward(
+function EnzymeRules.forward(config, 
     func::Const{typeof(foo)},
     RT::Type{<:Union{Duplicated,BatchDuplicated}},
     x::Union{Duplicated,BatchDuplicated},
@@ -149,10 +149,10 @@ function EnzymeRules.forward(
 end
 
 @testset "Batch complex" begin
-     res = autodiff(Forward, foo, BatchDuplicated, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))  # errors, see below
-     @test res[1] ≈ 0.2 + 0.0im
-     @test res[2][1] ≈ 0.4 + 0.0im
-     @test res[2][2] ≈ 0.6 + 0.0im
+     res = autodiff(ForwardWithPrimal, foo, BatchDuplicated(0.1 + 0im, (0.2 + 0im, 0.3 + 0im)))
+     @test res[2] ≈ 0.2 + 0.0im
+     @test res[1][1] ≈ 0.4 + 0.0im
+     @test res[1][2] ≈ 0.6 + 0.0im
 end
 
 end # module ForwardRules

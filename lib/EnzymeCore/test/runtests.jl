@@ -4,7 +4,7 @@ using EnzymeCore
 import EnzymeCore.EnzymeRules: forward, has_frule_from_sig
 
 g(x) = x ^ 2
-function forward(::Const{typeof(g)}, ::Type{<:Const}, x::Const)
+function forward(config, ::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
@@ -12,7 +12,7 @@ end
 
 f(;kwargs) = 1.0
 
-function forward(::Const{typeof(f)}, ::Type{<:Const}; kwargs...)
+function forward(config, ::Const{typeof(f)}, ::Type{<:Const}; kwargs...)
     return Const(f(; kwargs...))
 end
 

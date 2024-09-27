@@ -3,30 +3,18 @@ module JIT
 
 using LLVM
 using Libdl
-import LLVM:TargetMachine
+import LLVM: TargetMachine
 
 import GPUCompiler
 import ..Compiler
 import ..Compiler: API, cpu_name, cpu_features
 
-@inline function use_ojit()
-    return !Sys.iswindows()
-end
-
 export get_trampoline
 
-@static if use_ojit()
-    struct CompilerInstance
-        jit::LLVM.JuliaOJIT
-        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-        ism::Union{LLVM.IndirectStubsManager, Nothing}
-    end
-else
-    struct CompilerInstance
-        jit::LLVM.LLJIT
-        lctm::Union{LLVM.LazyCallThroughManager, Nothing}
-        ism::Union{LLVM.IndirectStubsManager, Nothing}
-    end
+struct CompilerInstance
+    jit::LLVM.JuliaOJIT
+    lctm::Union{LLVM.LazyCallThroughManager,Nothing}
+    ism::Union{LLVM.IndirectStubsManager,Nothing}
 end
 
 function LLVM.dispose(ci::CompilerInstance)
@@ -44,26 +32,27 @@ const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
 
 get_tm() = tm[]
+get_jit() = jit[].jit
 
 function absolute_symbol_materialization(name, ptr)
-	address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
-	flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
-	symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
-	gv = if LLVM.version() >= v"15"
-		LLVM.API.LLVMOrcCSymbolMapPair(name, symbol)
-	else
-		LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
-	end
-	return LLVM.absolute_symbols(Ref(gv))
+    address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
+    flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+    symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
+    gv = if LLVM.version() >= v"15"
+        LLVM.API.LLVMOrcCSymbolMapPair(name, symbol)
+    else
+        LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
+    end
+    return LLVM.absolute_symbols(Ref(gv))
 end
 
 function define_absolute_symbol(jd, name)
-	ptr = LLVM.find_symbol(name)
-	if ptr !== C_NULL
-		LLVM.define(jd, absolute_symbol_materialization(name, ptr))
-		return true
-	end
-	return false
+    ptr = LLVM.find_symbol(name)
+    if ptr !== C_NULL
+        LLVM.define(jd, absolute_symbol_materialization(name, ptr))
+        return true
+    end
+    return false
 end
 
 function __init__()
@@ -79,38 +68,8 @@ function __init__()
     tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
-    
-    lljit = @static if !use_ojit()
-        tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
-        LLVM.asm_verbosity!(tempTM, true)
 
-        gdb = haskey(ENV, "ENABLE_GDBLISTENER")
-        perf = haskey(ENV, "ENABLE_JITPROFILING")
-        if gdb || perf
-            ollc = LLVM.ObjectLinkingLayerCreator() do es, triple
-                oll = ObjectLinkingLayer(es)
-                if gdb
-                    register!(oll, GDBRegistrationListener())
-                end
-                if perf
-                    register!(oll, IntelJITEventListener())
-                    register!(oll, PerfJITEventListener())
-                end
-                return oll
-            end
-            GC.@preserve ollc begin
-                builder = LLJITBuilder()
-                LLVM.linkinglayercreator!(builder, ollc)
-                tmb = TargetMachineBuilder(tempTM)
-                LLVM.targetmachinebuilder!(builder, tmb)
-                LLJIT(builder)
-            end
-        else
-            LLJIT(;tm=tempTM)
-        end
-    else
-        JuliaOJIT()
-    end
+    lljit = JuliaOJIT()
 
     jd_main = JITDylib(lljit)
 
@@ -118,10 +77,10 @@ function __init__()
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
     LLVM.add!(jd_main, dg)
 
-	if Sys.iswindows() && Int === Int64
-		# TODO can we check isGNU?
-		define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
-	end
+    if Sys.iswindows() && Int === Int64
+        # TODO can we check isGNU?
+        define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
+    end
 
     es = ExecutionSession(lljit)
     try
@@ -136,19 +95,21 @@ function __init__()
     hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
     for (k, v) in Compiler.JuliaGlobalNameMap
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
-        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
+        LLVM.define(
+            jd_main,
+            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
+        )
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         ptr = Compiler.unsafe_to_ptr(v)
-        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, "ejl_"*k), ptr))
+        LLVM.define(
+            jd_main,
+            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
+        )
     end
 
     atexit() do
-        @static if !use_ojit()
-           ci = jit[]
-           dispose(ci)
-        end
         dispose(tm[])
     end
 end
@@ -168,13 +129,15 @@ end
 
 function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     flags = LLVM.API.LLVMJITSymbolFlags(
-                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+        LLVM.API.LLVMJITSymbolGenericFlagsCallable |
+        LLVM.API.LLVMJITSymbolGenericFlagsExported,
+        0,
+    )
 
     alias = LLVM.API.LLVMOrcCSymbolAliasMapPair(
-                mangle(lljit, entry),
-                LLVM.API.LLVMOrcCSymbolAliasMapEntry(
-                    mangle(lljit, target), flags))
+        mangle(lljit, entry),
+        LLVM.API.LLVMOrcCSymbolAliasMapEntry(mangle(lljit, target), flags),
+    )
 
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
@@ -185,8 +148,8 @@ end
 function get_trampoline(job)
     compiler = jit[]
     lljit = compiler.jit
-    lctm  = compiler.lctm
-    ism   = compiler.ism
+    lctm = compiler.lctm
+    ism = compiler.ism
 
     if lctm === nothing || ism === nothing
         error("Delayed compilation not available.")
@@ -200,8 +163,7 @@ function get_trampoline(job)
 
     sym = String(gensym(:func))
     _sym = String(gensym(:func))
-    addr = add_trampoline!(jd, (lljit, lctm, ism),
-                                   _sym, sym)
+    addr = add_trampoline!(jd, (lljit, lctm, ism), _sym, sym)
 
     # 3. add MU that will call back into the compiler
     function materialize(mr)
@@ -224,16 +186,12 @@ function get_trampoline(job)
                 # but it would be nicer if _thunk just codegen'd the half
                 # we need.
                 other_func = functions(mod)[other_name]
-                LLVM.unsafe_delete!(mod, other_func)
+                Compiler.eraseInst(mod, other_func)
             end
 
             tsm = move_to_threadsafe(mod)
 
-            il = @static if use_ojit()
-                LLVM.IRCompileLayer(lljit)
-            else
-                LLVM.IRTransformLayer(lljit)
-            end
+            il = LLVM.IRCompileLayer(lljit)
             LLVM.emit(il, mr, tsm)
         end
         return nothing
@@ -242,16 +200,14 @@ function get_trampoline(job)
     function discard(jd, sym) end
 
     flags = LLVM.API.LLVMJITSymbolFlags(
-                LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-                LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
+        LLVM.API.LLVMJITSymbolGenericFlagsCallable |
+        LLVM.API.LLVMJITSymbolGenericFlagsExported,
+        0,
+    )
 
-    symbols = [
-        LLVM.API.LLVMOrcCSymbolFlagsMapPair(
-            mangle(lljit, sym), flags),
-    ]
+    symbols = [LLVM.API.LLVMOrcCSymbolFlagsMapPair(mangle(lljit, sym), flags)]
 
-    mu = LLVM.CustomMaterializationUnit(sym, symbols,
-                                        materialize, discard)
+    mu = LLVM.CustomMaterializationUnit(sym, symbols, materialize, discard)
     LLVM.define(jd, mu)
     return addr
 end
