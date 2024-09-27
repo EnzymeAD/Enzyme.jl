@@ -8778,6 +8778,8 @@ end
 function add_one_in_place(x)
     if x isa Base.RefValue
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
+    elseif x isa (Array{T,0} where T)
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
         error(
             "Enzyme Mutability Error: Cannot add one in place to immutable value " *
