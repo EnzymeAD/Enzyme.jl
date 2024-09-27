@@ -240,11 +240,10 @@ Abstract type for which differentiation mode will be used.
 
 !!! warning
     The type parameters of `Mode` are not part of the public API and can change without notice.
-    To modify them on a concrete instance, please use the following helper functions:
-    - [`set_err_if_func_written`](@ref)
-    - [`clear_err_if_func_written`](@ref)
-    - [`set_runtime_activity`](@ref)
-    - [`clear_runtime_activity`](@ref)
+    You can modify them with the following helper functions:
+    - [`WithPrimal`](@ref) / [`NoPrimal`](@ref)
+    - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
+    - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
     - [`set_abi`](@ref)
 """
 abstract type Mode{ABI, ErrIfFuncWritten, RuntimeActivity} end
@@ -280,7 +279,7 @@ function clear_runtime_activity end
 """
     set_abi(::Mode, ::Type{ABI})
 
-Return a new mode with its ABI set to the chosen type.
+Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
 
@@ -317,11 +316,16 @@ Subtype of [`Mode`](@ref) for reverse mode differentiation.
 
 !!! warning
     The type parameters of `ReverseMode` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)):
+    Please use one of the following concrete instantiations instead:
     - [`Reverse`](@ref)
     - [`ReverseWithPrimal`](@ref)
     - [`ReverseHolomorphic`](@ref)
     - [`ReverseHolomorphicWithPrimal`](@ref)
+    You can modify them with the following helper functions:
+    - [`WithPrimal`](@ref) / [`NoPrimal`](@ref)
+    - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
+    - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
+    - [`set_abi`](@ref)
 """
 struct ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
 
@@ -389,9 +393,15 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
 
 !!! warning
     The type parameters of `ReverseModeSplit` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)): 
+    Please use one of the following concrete instantiations instead: 
     - [`ReverseSplitNoPrimal`](@ref)
     - [`ReverseSplitWithPrimal`](@ref)
+    You can modify them with the following helper functions:
+    - [`WithPrimal`](@ref) / [`NoPrimal`](@ref)
+    - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
+    - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
+    - [`set_abi`](@ref)
+    - [`ReverseSplitModified`](@ref), [`ReverseSplitWidth`](@ref)
 """
 struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,RuntimeActivity,ModifiedBetween,ABI, ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
 
@@ -455,9 +465,14 @@ Subtype of [`Mode`](@ref) for forward mode differentiation.
 
 !!! warning
     The type parameters of `ForwardMode` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead (combined with setter functions like [`set_runtime_activity`](@ref)):
+    Please use one of the following concrete instantiations instead:
     - [`Forward`](@ref)
-    - [`ForwardWithPrimal`](@ref).
+    - [`ForwardWithPrimal`](@ref)
+    You can modify them with the following helper functions:
+    - [`WithPrimal`](@ref) / [`NoPrimal`](@ref)
+    - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
+    - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
+    - [`set_abi`](@ref)
 """
 struct ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity}
 end
