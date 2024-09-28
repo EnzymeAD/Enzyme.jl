@@ -2866,8 +2866,8 @@ end
     @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
     @test gradient(Forward, f1, x)[1] isa SMatrix
     @test gradient(Forward, f1, x)[1] == [0 1.0; 0 2.0]
-    @test jacobian(Forward, f2, x)[1] isa SArray
-    @test jacobian(Forward, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+    @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
+    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
 
     x = @SMatrix Float64[1 2; 3 4]
 
@@ -2876,8 +2876,8 @@ end
     @test convert(SArray, dx) == fill(2.0, (2,2))
     @test gradient(Forward, f1, x)[1] isa SArray
     @test gradient(Forward, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
-    @test jacobian(Forward, f2, x)[1] isa SArray
-    @test jacobian(Forward, f2, x)[1] == reshape(
+    @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
+    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(
         Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
     )
 
@@ -2888,15 +2888,15 @@ end
     @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
     @test_broken gradient(Reverse, f1, x)[1] isa SMatrix
     @test_broken gradient(Reverse, f1, x)[1] == [0 1.0; 0 2.0]
-    @test_broken jacobian(Reverse, f2, x)[1] isa SArray
-    @test_broken jacobian(Reverse, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
 
     x = @SMatrix Float64[1 2; 3 4]
 
     @test_broken gradient(Reverse, f1, x)[1] isa SArray
     @test_broken gradient(Reverse, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
-    @test_broken jacobian(Reverse, f2, x)[1] isa SArray
-    @test_broken jacobian(Reverse, f2, x)[1] == reshape(
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(
         Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
     )
 end
