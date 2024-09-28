@@ -204,6 +204,34 @@ function should_recurse(@nospecialize(typ2), arg_t, byref, dl)
     end
 end
 
+function get_base_and_offset(larg::LLVM.Value)::Tuple{LLVM.Value, Int, Bool}
+    offset = 0
+    error = false
+    while true
+        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst)
+            larg = operands(larg)[1]
+            continue
+        end
+        if isa(larg, LLVM.GetElementPtrInst) &&
+           all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+            b = LLVM.IRBuilder()
+            position!(b, larg)
+            offty = LLVM.IntType(8 * sizeof(Int))
+            offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+            @assert isa(offset2, LLVM.ConstantInt)
+            offset += convert(Int, offset2)
+            larg = operands(larg)[1]
+            continue
+        end
+        if isa(larg, LLVM.Argument)
+            break
+        end
+        error = true
+        break
+    end
+    return larg, offset, error
+end
+
 function abs_typeof(
     arg::LLVM.Value,
     partial::Bool = false,
@@ -354,32 +382,7 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.LoadInst)
-        larg = operands(arg)[1]
-        offset = nothing
-        error = false
-        while true
-            if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst)
-                larg = operands(larg)[1]
-                continue
-            end
-            if offset === nothing &&
-               isa(larg, LLVM.GetElementPtrInst) &&
-               all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
-                b = LLVM.IRBuilder()
-                position!(b, larg)
-                offty = LLVM.IntType(8 * sizeof(Int))
-                offset = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
-                @assert isa(offset, LLVM.ConstantInt)
-                offset = convert(Int, offset)
-                larg = operands(larg)[1]
-                continue
-            end
-            if isa(larg, LLVM.Argument)
-                break
-            end
-            error = true
-            break
-        end
+        larg, offset, error = get_base_and_offset(operands(arg)[1])
 
         if !error
             legal, typ, byref = abs_typeof(larg)
@@ -387,7 +390,7 @@ function abs_typeof(
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
                         T = eltype(typ)
-                        if offset === nothing || offset == 0
+                        if offset == 0
                             return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
                         else
                             return (true, Int, GPUCompiler.BITS_VALUE)
@@ -400,14 +403,14 @@ function abs_typeof(
                     byref = GPUCompiler.BITS_VALUE
                     legal = true
 
-                    while (offset !== nothing  && offset != 0) && legal
+                    while offset != 0 && legal
                         @assert Base.isconcretetype(typ)
                         seen = false
                         lasti = 1
                         for i = 1:fieldcount(typ)
                             fo = fieldoffset(typ, i)
                             if fieldoffset(typ, i) == offset
-                                offset = nothing
+                                offset = 0
                                 typ = fieldtype(typ, i)
                                 if !Base.allocatedinline(typ)
                                     if byref != GPUCompiler.BITS_VALUE

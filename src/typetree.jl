@@ -137,9 +137,28 @@ function get_offsets(@nospecialize(T::Type))
     return results
 end
 
-function to_fullmd(@nospecialize(T::Type))
+function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
     mds = LLVM.Metadata[]
-    for (sT, sO) in get_offsets(T)
+    offs = get_offsets(T)
+
+    minoff = -1
+    for (sT, sO) in offs
+        if sO >= offset
+            if sO == offset
+                minOff = sO
+            end
+        else
+            minoff = max(minoff, sO)
+        end
+    end
+
+    for (sT, sO) in offs
+        if sO != minoff && (sO < offset)
+            continue
+        end
+        if sO >= lim
+            continue
+        end
         if sT == API.DT_Pointer
             push!(mds, LLVM.MDString("Pointer"))
         elseif sT == API.DT_Integer
@@ -155,7 +174,7 @@ function to_fullmd(@nospecialize(T::Type))
         else
             @assert false
         end
-        push!(mds, LLVM.Metadata(LLVM.ConstantInt(sO)))
+        push!(mds, LLVM.Metadata(LLVM.ConstantInt(min(0, sO - offset))))
     end
     return LLVM.MDNode(mds)
 end
