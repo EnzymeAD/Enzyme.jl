@@ -7106,7 +7106,7 @@ function GPUCompiler.codegen(
     disableFallback = String[]
 
     ForwardModeDerivatives =
-        ("nrm2", "dot", "gemm", "gemv", "axpy", "copy", "scal", "symm", "syrk", "potrf")
+        ("nrm2", "dot", "gemm", "gemv", "axpy", "copy", "scal", "symv", "symm", "syrk", "potrf")
     ReverseModeDerivatives = (
         "nrm2",
         "dot",
@@ -7115,6 +7115,7 @@ function GPUCompiler.codegen(
         "axpy",
         "copy",
         "scal",
+        "symv",
         "symm",
         "trmv",
         "syrk",
