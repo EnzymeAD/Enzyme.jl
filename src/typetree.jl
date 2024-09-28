@@ -174,7 +174,7 @@ function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
         else
             @assert false
         end
-        push!(mds, LLVM.Metadata(LLVM.ConstantInt(min(0, sO - offset))))
+        push!(mds, LLVM.Metadata(LLVM.ConstantInt(max(0, sO - offset))))
     end
     return LLVM.MDNode(mds)
 end
