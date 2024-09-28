@@ -5,6 +5,7 @@ version = "0.13.4"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
+DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
@@ -12,9 +13,11 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
+OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
