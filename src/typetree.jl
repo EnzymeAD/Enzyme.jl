@@ -145,7 +145,7 @@ function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
     for (sT, sO) in offs
         if sO >= offset
             if sO == offset
-                minOff = sO
+                minoff = sO
             end
         else
             minoff = max(minoff, sO)
