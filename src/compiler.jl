@@ -22,7 +22,6 @@ import Enzyme:
     merge!,
     to_md,
     to_fullmd,
-    get_offsets,
     TypeAnalysis,
     FnTypeInfo,
     Logic,
@@ -8014,7 +8013,6 @@ function GPUCompiler.codegen(
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
-                                    @show jTy, offset, lim, sizeof(jTy), string(md), get_offsets(jTy), string(inst)
                             metadata(inst)["enzyme_truetype"] = md
                         end
                     end
