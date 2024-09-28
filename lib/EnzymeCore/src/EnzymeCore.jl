@@ -269,57 +269,6 @@ Abstract type for which differentiation mode will be used.
 abstract type Mode{ABI, ErrIfFuncWritten, RuntimeActivity} end
 
 """
-    set_err_if_func_written(::Mode)
-
-Return a new mode which throws an error for any attempt to write into an unannotated function object.
-"""
-function set_err_if_func_written end
-
-"""
-    clear_err_if_func_written(::Mode)
-
-Return a new mode which doesn't throw an error for attempts to write into an unannotated function object.
-"""
-function clear_err_if_func_written end
-
-"""
-    set_runtime_activity(::Mode)
-    set_runtime_activity(::Mode, activitiy::Bool)
-    set_runtime_activity(::Mode, config::Union{FwdConfig,RevConfig})
-
-Return a new mode where runtime activity analysis is activated / set to the desired value.
-"""
-function set_runtime_activity end
-
-"""
-    clear_runtime_activity(::Mode)
-
-Return a new mode where runtime activity analysis is deactivated.
-"""
-function clear_runtime_activity end
-
-"""
-    set_abi(::Mode, ::Type{ABI})
-
-Return a new mode with its [`ABI`](@ref) set to the chosen type.
-"""
-function set_abi end
-
-"""
-    WithPrimal(::Mode)
-
-Return a new mode which includes the primal value.
-"""
-function WithPrimal end
-
-"""
-    NoPrimal(::Mode)
-
-Return a new mode which excludes the primal value.
-"""
-function NoPrimal end
-
-"""
     struct ReverseMode{
         ReturnPrimal,
         RuntimeActivity,
@@ -581,5 +530,56 @@ end
 Returns true if within autodiff, otherwise false.
 """
 function within_autodiff end
+
+"""
+    set_err_if_func_written(::Mode)
+
+Return a new mode which throws an error for any attempt to write into an unannotated function object.
+"""
+function set_err_if_func_written end
+
+"""
+    clear_err_if_func_written(::Mode)
+
+Return a new mode which doesn't throw an error for attempts to write into an unannotated function object.
+"""
+function clear_err_if_func_written end
+
+"""
+    set_runtime_activity(::Mode)
+    set_runtime_activity(::Mode, activitiy::Bool)
+    set_runtime_activity(::Mode, config::Union{FwdConfig,RevConfig})
+
+Return a new mode where runtime activity analysis is activated / set to the desired value.
+"""
+function set_runtime_activity end
+
+"""
+    clear_runtime_activity(::Mode)
+
+Return a new mode where runtime activity analysis is deactivated.
+"""
+function clear_runtime_activity end
+
+"""
+    set_abi(::Mode, ::Type{ABI})
+
+Return a new mode with its [`ABI`](@ref) set to the chosen type.
+"""
+function set_abi end
+
+"""
+    WithPrimal(::Mode)
+
+Return a new mode which includes the primal value.
+"""
+function WithPrimal end
+
+"""
+    NoPrimal(::Mode)
+
+Return a new mode which excludes the primal value.
+"""
+function NoPrimal end
 
 end # module EnzymeCore
