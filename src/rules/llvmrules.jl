@@ -1519,7 +1519,7 @@ end
             found, arty, byref = abs_typeof(origops[1])
             anti = shadowin
             elSize = if found
-                LLVM.ConstantInt(Csize_t(sizeof(eltype(arty))))
+                LLVM.ConstantInt(Csize_t(actual_size(eltype(arty))))
             else
                 elSize = LLVM.zext!(
                     B,
