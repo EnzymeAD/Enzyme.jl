@@ -145,7 +145,7 @@ function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
     for (sT, sO) in offs
         if sO >= offset
             if sO == offset
-                minOff = sO
+                minoff = sO
             end
         else
             minoff = max(minoff, sO)
@@ -156,7 +156,7 @@ function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
         if sO != minoff && (sO < offset)
             continue
         end
-        if sO >= lim
+        if sO >= lim + offset
             continue
         end
         if sT == API.DT_Pointer
