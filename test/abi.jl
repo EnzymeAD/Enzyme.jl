@@ -300,6 +300,20 @@ using Test
     # returns: sret, const/ghost, !deserve_retbox
 end
 
+unstable_load(x) = Base.inferencebarrier(x)[1]
+
+@testset "Any Return" begin
+    x = [2.7]
+    dx = [0.0]
+    Enzyme.autodiff(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
+    @test dx ≈ [1.0] 
+
+    x = [2.7]
+    dx = [0.0]
+    Enzyme.autodiff_deferred(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
+    @test dx ≈ [1.0] 
+end
+
 @testset "Mutable Struct ABI" begin
     mutable struct MStruct
         val::Float32

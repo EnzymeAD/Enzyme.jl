@@ -351,6 +351,8 @@ function EnzymeRules.augmented_primal(
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
         false,
+        false,
+        false
     }()
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
@@ -405,6 +407,8 @@ function EnzymeRules.reverse(
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
         false,
+        false,
+        false
     }()
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
