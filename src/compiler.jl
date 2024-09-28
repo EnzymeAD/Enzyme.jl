@@ -663,7 +663,7 @@ end
         return AnyState
     end
 
-    if isghostty(T) || Core.Compiler.isconstType(T)
+    if isghostty(T) || Core.Compiler.isconstType(T) || T <: Type
         return AnyState
     end
 
