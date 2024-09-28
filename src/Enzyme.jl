@@ -1577,12 +1577,29 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
     x::ty_0,
     args::Vararg{Any,N},
 ) where {F,ty_0,ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten,N}
-    toemit = Expr[quote
-        act_0 =
-            !(x isa Enzyme.Const) &&
-            Compiler.active_reg_inner(Core.Typeof(x), (), nothing, Val(true)) ==
-            Compiler.ActiveState #=justActive=#
-    end]
+    toemit = Expr[]
+    Actives = Bool[]
+
+    if x <: Enzyme.Const
+        push!(toemit, quote
+            act_0 = false
+        end)
+        push!(Actives, false)
+    elseif Compiler.active_reg_inner(x, (), nothing) == Compiler.ActiveState
+        push!(toemit, quote
+            act_0 = false
+        end)
+        push!(Actives, true)
+    else
+        push!(toemit, quote
+            act_0 =
+                !(x isa Enzyme.Const) &&
+                Compiler.active_reg_inner(Core.Typeof(x), (), nothing, Val(true)) ==
+                Compiler.ActiveState #=justActive=#
+        end)
+        push!(Actives, false)
+    end
+
     rargs = Union{Symbol,Expr}[:x]
     acts = Symbol[Symbol("act_0")]
 
@@ -1593,55 +1610,71 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
         push!(rargs, argidx)
         sym = Symbol("act_$i")
         push!(acts, sym)
-        push!(
-            toemit,
-            quote
+
+        if args[i] <: Enzyme.Const
+            push!(toemit, quote
+                $sym = false
+            end)
+            push!(Actives, false)
+        elseif Compiler.active_reg_inner(x, (), nothing) == Compiler.ActiveState
+            push!(toemit, quote
+                $sym = false
+            end)
+            push!(Actives, true)
+        else
+            push!(toemit, quote
                 $sym =
-                    !($argidx isa Enzyme.Const) &&
-                    Compiler.active_reg_inner(
-                        Core.Typeof($argidx),
-                        (),
-                        nothing,
-                        Val(true),
-                    ) == Compiler.ActiveState #=justActive=#
-            end,
-        )
+                    !(x isa Enzyme.Const) &&
+                    Compiler.active_reg_inner(Core.Typeof($argidx), (), nothing, Val(true)) ==
+                    Compiler.ActiveState #=justActive=#
+            end)
+            push!(Actives, false)
+        end
     end
 
     idx = 0
     shadows = Symbol[]
     enz_args = Expr[]
     resargs = Expr[]
-    for (arg, act) in zip(rargs, acts)
-        shad = Symbol("shad_$idx")
-        push!(shadows, shad)
-        push!(toemit, quote
-            $shad = if $arg isa Enzyme.Const
-                nothing
-            elseif $act
-                Ref(make_zero($arg))
-            else
-                make_zero($arg)
-            end
-        end)
-        push!(enz_args, quote
-            if $arg isa Enzyme.Const
-                $arg
-            elseif $act
-                MixedDuplicated($arg, $shad)
-            else
-                Duplicated($arg, $shad)
-            end
-        end)
-        push!(resargs, quote
-            if $arg isa Enzyme.Const
-                nothing
-            elseif $act
-                $shad[]
-            else
-                $shad
-            end
-        end)
+    for (arg, act, fact) in zip(rargs, acts, Actives)
+        if fact
+            push!(enz_args, quote
+                Active($arg)
+            end)
+            push!(resargs, quote
+                res[1][$(idx+1)]
+            end)
+        else
+            shad = Symbol("shad_$idx")
+            push!(shadows, shad)
+            push!(toemit, quote
+                $shad = if $arg isa Enzyme.Const
+                    nothing
+                elseif $act
+                    Ref(make_zero($arg))
+                else
+                    make_zero($arg)
+                end
+            end)
+            push!(enz_args, quote
+                if $arg isa Enzyme.Const
+                    $arg
+                elseif $act
+                    MixedDuplicated($arg, $shad)
+                else
+                    Duplicated($arg, $shad)
+                end
+            end)
+            push!(resargs, quote
+                if $arg isa Enzyme.Const
+                    nothing
+                elseif $act
+                    $shad[]
+                else
+                    $shad
+                end
+            end)
+        end
         idx += 1
     end
     push!(toemit, quote
