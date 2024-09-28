@@ -3,8 +3,6 @@ module EnzymeStaticArraysExt
 using StaticArrays
 using Enzyme
 
-#TODO: it would be better if we could always return SArray from gradient directly,
-# to retain shape information.  for now we are at least able to convert
 @inline function Base.convert(::Type{SArray}, tpa::Enzyme.TupleArray{T,S,L,N}) where {T,S,L,N}
     SArray{Tuple{S...},T,N,L}(tpa.data)
 end
