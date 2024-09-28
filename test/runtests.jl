@@ -513,8 +513,8 @@ end
 
     mul3(z) = Base.inferencebarrier(2 * z)
 
-    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active, Active(z))
-    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
+    @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active, Active(z))
+    @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
 
     vals = Complex{Float64}[3.4 + 2.7im]
     dvals = Complex{Float64}[0.0]
