@@ -7988,7 +7988,8 @@ function GPUCompiler.codegen(
             if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
-                legal, jTy, byref = abs_typeof(operands(inst)[1])
+                base, offset, _ = get_base_and_offset(operands(inst)[1])
+                legal, jTy, byref = abs_typeof(base)
                 sz =
                     if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                        intr == LLVM.Intrinsic("llvm.memmove").id
@@ -8007,8 +8008,9 @@ function GPUCompiler.codegen(
                             any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)
                         )
                     )
-                        if isa(sz, LLVM.ConstantInt) && sizeof(jTy) == convert(Int, sz)
-                            md = to_fullmd(jTy)
+                        if offset < sizeof(jTy) && isa(sz, LLVM.ConstantInt) && sizeof(jTy) - offset >= convert(Int, sz)
+                            lim = convert(Int, sz)
+                            md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
                             metadata(inst)["enzyme_truetype"] = md
