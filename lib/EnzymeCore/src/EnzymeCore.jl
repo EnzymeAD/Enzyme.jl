@@ -337,8 +337,18 @@ const ReverseHolomorphicWithPrimal = ReverseMode{true,false,DefaultABI, true, fa
 @inline set_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,rt,ABI,Holomorphic,ErrIfFuncWritten}()
 @inline clear_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,false,ABI,Holomorphic,ErrIfFuncWritten}()
 
+"""
+    WithPrimal(::Mode)
+
+Return a new mode which includes the primal value.
+"""
 @inline WithPrimal(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{true,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}()
 
+"""
+    NoPrimal(::Mode)
+
+Return a new mode which excludes the primal value.
+"""
 @inline NoPrimal(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{false,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}()
 
 """
@@ -567,19 +577,5 @@ function clear_runtime_activity end
 Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
-
-"""
-    WithPrimal(::Mode)
-
-Return a new mode which includes the primal value.
-"""
-function WithPrimal end
-
-"""
-    NoPrimal(::Mode)
-
-Return a new mode which excludes the primal value.
-"""
-function NoPrimal end
 
 end # module EnzymeCore
