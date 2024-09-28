@@ -1437,7 +1437,7 @@ function EnzymeRules.augmented_primal(
     rng::Annotation{<:Random.AbstractRNG},
     dst::Annotation{<:AbstractArray}
 )
-    Ty.val(rng.val, dst.val, smpl.val)
+    Ty.val(rng.val, dst.val)
     if RT <: Duplicated || RT <: DuplicatedNoNeed
         make_zero!(dst.dval)
         dst.dval
