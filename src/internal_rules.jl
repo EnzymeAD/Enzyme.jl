@@ -74,7 +74,7 @@ function EnzymeRules.inactive(
 )
     return nothing
 end
-function EnzymeRules.inactive(::typeof(Random.randn!), args...)
+function EnzymeRules.inactive(::typeof(Random.randn!), ::Random.AbstractRNG, ::AbstractArray)
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.default_rng), args...)
@@ -351,6 +351,8 @@ function EnzymeRules.augmented_primal(
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
         false,
+        false,
+        false
     }()
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
@@ -405,6 +407,8 @@ function EnzymeRules.reverse(
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
         false,
+        false,
+        false
     }()
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
@@ -723,6 +727,133 @@ function EnzymeRules.reverse(
     end
     return (nothing, nothing)
 end
+
+
+function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, 
+                                      func::Const{typeof(LinearAlgebra.mul!)},
+                                      ::Type{RT}, 
+                                      C::Annotation{<:StridedVecOrMat},
+                                      A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                                      B::Annotation{<:StridedVecOrMat},
+                                      α::Annotation{<:Number},
+                                      β::Annotation{<:Number}
+                                    ) where {RT}
+
+    cache_C = !(isa(β, Const)) ? copy(C.val) : nothing
+    # Always need to do forward pass otherwise primal may not be correct
+    func.val(C.val, A.val, B.val, α.val, β.val)
+
+    primal = if EnzymeRules.needs_primal(config)
+        C.val
+    else
+        nothing
+    end
+
+    shadow = if EnzymeRules.needs_shadow(config)
+        C.dval
+    else
+        nothing
+    end
+
+    # Check if A is overwritten and B is active (and thus required)
+    cache_A = ( EnzymeRules.overwritten(config)[5]
+                && !(typeof(B) <: Const)
+                && !(typeof(C) <: Const)
+                ) ? copy(A.val) : nothing
+    
+    # cache_B = ( EnzymeRules.overwritten(config)[6]) ? copy(B.val) : nothing
+
+    if !isa(α, Const)
+        cache_α = A.val*B.val
+    else
+        cache_α = nothing
+    end
+    
+    cache = (cache_C, cache_A, cache_α)
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, cache)
+end
+
+function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
+                             func::Const{typeof(LinearAlgebra.mul!)},
+                             ::Type{RT}, cache,
+                             C::Annotation{<:StridedVecOrMat},
+                             A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                             B::Annotation{<:StridedVecOrMat},
+                             α::Annotation{<:Number},
+                             β::Annotation{<:Number}
+                             ) where {RT}
+
+    cache_C, cache_A, cache_α = cache
+    Cval = !isnothing(cache_C) ? cache_C : C.val
+    Aval = !isnothing(cache_A) ? cache_A : A.val
+    # Bval = !isnothing(cache_B) ? cache_B : B.val
+
+    N = EnzymeRules.width(config)
+    if !isa(C, Const)
+        dCs = C.dval
+        dBs  = isa(B, Const) ? dCs : B.dval
+
+        dα = if !isa(α, Const)
+                if N == 1
+                    LinearAlgebra.dot(C.dval, cache_α)
+                else
+                    ntuple(Val(N)) do i
+                        Base.@_inline_meta
+                        LinearAlgebra.dot(C.dval[i], cache_α)
+                    end
+                end
+        else
+            nothing
+        end
+
+        dβ = if !isa(β, Const)
+                if N == 1
+                    LinearAlgebra.dot(C.dval, Cval)
+                else
+                    ntuple(Val(N)) do i
+                        Base.@_inline_meta
+                        LinearAlgebra.dot(C.dval[i], Cval)
+                    end
+                end
+        else
+            nothing
+        end
+
+        for i in 1:N
+            # This rule is incorrect since you need to project dA to have the same
+            # sparsity pattern as A.
+            # if !isa(A, Const)
+            #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+            #     #dA .+= α*dC*B'
+            #     mul!(dA, dC, Bval', α.val, true)
+            # end
+
+            if !isa(B, Const)
+                #dB .+= α*A'*dC
+                if N ==1
+                    func.val(dBs, Aval', dCs, α.val, true)
+                else
+                    func.val(dBs[i], Aval', dCs[i], α.val, true)
+                end
+            end
+
+            if N==1
+                dCs .*= β.val
+            else
+                dCs[i] .*= β.val
+            end
+        end
+    end
+   
+    return (nothing, nothing, nothing, dα, dβ)
+end
+
+
+
+
+
+
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
@@ -1269,4 +1400,71 @@ function EnzymeRules.reverse(
     smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
 ) where {rngty<:Union{TaskLocalRNG,Xoshiro},FT<:Union{Float32,Float64}}
     return (nothing, nothing, nothing)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    Ty::Const{typeof(Random.randn!)},
+    RT::Type,
+    rng::Annotation{<:Random.AbstractRNG},
+    dst::Annotation{<:AbstractArray})
+
+    Ty.val(rng.val, dst.val)
+
+    if !(dst isa Const)
+        if EnzymeRules.width(config) == 1
+            make_zero!(dst.dval)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                make_zero!(dst.dval[i])
+                nothing
+            end
+        end
+    end
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        dst
+    elseif EnzymeRules.needs_shadow(config)
+        dst.dval
+    elseif EnzymeRules.needs_primal(config)
+        dst.val
+    else
+        nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    Ty::Const{typeof(Random.randn!)},
+    RT::Type,
+    rng::Annotation{<:Random.AbstractRNG},
+    dst::Annotation{<:AbstractArray}
+)
+    Ty.val(rng.val, dst.val)
+    if RT <: Duplicated || RT <: DuplicatedNoNeed
+        make_zero!(dst.dval)
+        dst.dval
+    elseif RT <: BatchDuplicated || RT <: BatchDuplicatedNoNeed
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            make_zero!(dst.dval[i])
+            nothing
+        end
+    end
+    return EnzymeRules.AugmentedReturn(
+        EnzymeRules.needs_primal(config) ? dst.val : nothing,
+        EnzymeRules.needs_shadow(config) ? dst.dval : nothing,
+        nothing,
+    )
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    Ty::Const{typeof(Random.randn!)},
+    RT::Type,
+    tape,
+    rng::Annotation{<:Random.AbstractRNG},
+    dst::Annotation{<:AbstractArray})
+    return (nothing, nothing)
 end

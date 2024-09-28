@@ -7106,7 +7106,7 @@ function GPUCompiler.codegen(
     disableFallback = String[]
 
     ForwardModeDerivatives =
-        ("nrm2", "dot", "gemm", "gemv", "axpy", "copy", "scal", "symm", "syrk", "potrf")
+        ("nrm2", "dot", "gemm", "gemv", "axpy", "copy", "scal", "symv", "symm", "syrk", "potrf")
     ReverseModeDerivatives = (
         "nrm2",
         "dot",
@@ -7115,6 +7115,7 @@ function GPUCompiler.codegen(
         "axpy",
         "copy",
         "scal",
+        "symv",
         "symm",
         "trmv",
         "syrk",
@@ -8777,6 +8778,8 @@ end
 
 function add_one_in_place(x)
     if x isa Base.RefValue
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
+    elseif x isa (Array{T,0} where T)
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
         error(
