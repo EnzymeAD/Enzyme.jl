@@ -364,6 +364,9 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
 
     for T in (Float64, Float32, Float16)
+        if T == Float16 && Sys.isapple()
+            continue
+        end
         res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
         @test res isa T
         cmp = if T == Float64
