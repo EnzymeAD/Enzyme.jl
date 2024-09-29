@@ -3554,6 +3554,36 @@ end
 	@test din[2, 1] ≈ 1.0
 end
 
+@testset "View Vars" begin
+
+    x = [Float32(0.25)]
+    dx = [Float32(0.0)]
+    rng = Base.UnitRange{Int64}(1, 0)
+
+    f = Const(Base.SubArray{T, N, P, I, L} where L where I where P where N where T)
+    a1 = Const(Base.IndexLinear())
+    a2 = Duplicated(x, dx)
+    a3 = Const((rng,))
+    a4 = Const((true,))
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal,
+         typeof(f),
+         Duplicated,
+         typeof(a1),
+         typeof(a2),
+         typeof(a3),
+         typeof(a4)
+    )
+
+    res = fwd(f,a1,a2,a3,a4)
+    @test res[2].indices == (rng,)
+    @test res[3].indices == (rng,)
+    @test res[2].offset1 == 0
+    @test res[3].offset1 == 0
+    @test res[2].stride1 == 1
+    @test res[3].stride1 == 1
+end
+
 @testset "Uncached batch sizes" begin
     genericsin(x) = Base.invokelatest(sin, x)
     res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))[1]
