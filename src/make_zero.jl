@@ -34,33 +34,33 @@ end
 
 @inline function EnzymeCore.make_zero(
     ::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false)
-) where {copy_if_inactive,RT}
-    function f(p::T) where {T}
-        if guaranteed_const_nongen(T, nothing)
-            return copy_if_inactive ? Base.deepcopy_internal(p, seen) : p
-        end
-        return EnzymeCore.make_zero(T, seen, p, Val(copy_if_inactive))
-    end
-    function isleaftype(::Type{T}) where {T}
-        baseTs = Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}
-        return (T <: baseTs) || guaranteed_const_nongen(T, nothing)
-    end
-    return recursive_map(RT, f, seen, (prev,), isleaftype)::RT
+) where {RT,copy_if_inactive}
+    isleaftype(_) = false
+    isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
+    f(p) = EnzymeCore.make_zero(Core.Typeof(p), seen, p, Val(copy_if_inactive))
+    return recursive_map(RT, f, seen, (prev,), Val(copy_if_inactive), isleaftype)::RT
 end
 
 recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
 
 @inline function recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype::L=Returns(false)
-) where {RT,F,N,L}
-    if isleaftype(RT)
+    ::Type{RT},
+    f::F,
+    seen::IdDict,
+    xs::NTuple{N,RT},
+    ::Val{copy_if_inactive}=Val(false),
+    isleaftype::L=Returns(false),
+) where {RT,F,N,L,copy_if_inactive}
+    if guaranteed_const_nongen(RT, nothing)
+        return copy_if_inactive ? Base.deepcopy_internal(first(xs), seen) : first(xs)
+    elseif isleaftype(RT)
         return f(xs...)::RT
     end
-    return _recursive_map(RT, f, seen, xs, isleaftype)::RT
+    return _recursive_map(RT, f, seen, xs, Val(copy_if_inactive), isleaftype)::RT
 end
 
 @inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT<:Array,F,N}
     if haskey(seen, xs)
         return seen[xs]::RT
@@ -71,30 +71,30 @@ end
         if all(x -> isassigned(x, I), xs)
             xIs = ntuple(j -> xs[j][I], N)
             ST = Core.Typeof(first(xIs))
-            @inbounds y[I] = recursive_map(ST, f, seen, xIs, isleaftype)
+            @inbounds y[I] = recursive_map(ST, f, seen, xIs, args...)
         end
     end
     return y
 end
 
 @inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {M,RT<:NTuple{M,Any},F,N}
     return ntuple(M) do i
         Base.@_inline_meta
-        recursive_map(RT.parameters[i], f, seen, ntuple(j -> xs[j][i], N), isleaftype)
+        recursive_map(RT.parameters[i], f, seen, ntuple(j -> xs[j][i], N), args...)
     end
 end
 
 @inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {T,RT<:NamedTuple{<:Any,T},F,N}
-    yT = recursive_map(T, f, seen, ntuple(j -> T(xs[j]), N), isleaftype)
+    yT = recursive_map(T, f, seen, ntuple(j -> T(xs[j]), N), args...)
     return RT(yT)
 end
 
 @inline function _recursive_map(
-    ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, isleaftype
+    ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, args...
 ) where {F,N}
     if haskey(seen, xs)
         return seen[xs]::Core.Box
@@ -103,12 +103,12 @@ end
     ST = Core.Typeof(first(xcontents))
     res = Core.Box()
     seen[xs] = res
-    res.contents = Base.Ref(recursive_map(ST, f, seen, xcontents, isleaftype))
+    res.contents = Base.Ref(recursive_map(ST, f, seen, xcontents, args...))
     return res
 end
 
 @inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, isleaftype
+    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT,F,N}
     if haskey(seen, xs)
         return seen[xs]::RT
@@ -119,7 +119,7 @@ end
     @inline function newyi(i)
         xis = ntuple(j -> getfield(xs[j], i), N)
         ST = Core.Typeof(first(xis))
-        return recursive_map(ST, f, seen, xis, isleaftype)
+        return recursive_map(ST, f, seen, xis, args...)
     end
    
     nf = fieldcount(RT)
