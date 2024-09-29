@@ -480,6 +480,19 @@ mulsin(x) = sin(x[1] * x[2])
     @test Enzyme.autodiff(ForwardWithPrimal, () -> Enzyme.within_autodiff())[1]
 end
 
+mutable struct ConstVal
+    x::Float64
+    const y::Float64
+end
+
+@testset "Make Zero" begin
+    v = ConstVal(2.0, 3.0)
+    dv = make_zero(v)
+    @test dv isa ConstVal
+    @test dv.x ≈ 0.0
+    @test dv.y ≈ 0.0
+end
+
 @testset "Type inference" begin
     x = ones(10)
     @inferred autodiff(Enzyme.Reverse, abssum, Duplicated(x,x))
