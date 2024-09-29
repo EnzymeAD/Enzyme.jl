@@ -149,7 +149,7 @@ end
                 xi = getfield(prev, i)
                 T = Core.Typeof(xi)
                 xi = EnzymeCore.make_zero(T, seen, xi, Val(copy_if_inactive))
-                if Base.isconst(y, i)
+                if Base.isconst(RT, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i-1, xi)
                 else
                     setfield!(y, i, xi)
