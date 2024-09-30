@@ -157,226 +157,240 @@ end
     return y
 end
 
-function make_zero_immutable!(prev::T, seen::S)::T where {T<:AbstractFloat,S}
-    zero(T)
+@inline function recursive_map_immutable!(f::F, y::T, xs::T...) where {F,T}
+    return recursive_map_immutable!(f, y, Base.IdSet(), xs)::T
 end
 
-function make_zero_immutable!(
-    prev::Complex{T},
-    seen::S,
-)::Complex{T} where {T<:AbstractFloat,S}
-    zero(T)
-end
-
-function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
-    ntuple(Val(length(T.parameters))) do i
-        Base.@_inline_meta
-        make_zero_immutable!(prev[i], seen)
-    end
-end
-
-function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} where {a,b,S}
-    NamedTuple{a,b}(ntuple(Val(length(T.parameters))) do i
-        Base.@_inline_meta
-        make_zero_immutable!(prev[a[i]], seen)
-    end)
-end
-
-
-function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
+@inline function recursive_map_immutable!(
+    f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
+) where {F,N,T,L}
     if guaranteed_const_nongen(T, nothing)
-        return prev
+        return y
+    elseif isleaftype(T)
+        # If there exist T such that isleaftype(T) and T does not have mutable content that
+        # is not guaranteed const, then f must have a corresponding non-mutating method:
+        return f(xs...)::T
     end
-    @assert !ismutable(prev)
+    return _recursive_map_immutable!(f, y, seen, xs, isleaftype)::T
+end
 
-    RT = Core.Typeof(prev)
-    @assert !Base.isabstracttype(RT)
-    @assert Base.isconcretetype(RT)
-    nf = fieldcount(RT)
+@inline function _recursive_map_immutable!(
+    f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
+) where {F,M,T<:NTuple{M,Any},N}
+    return ntuple(M) do i
+        Base.@_inline_meta
+        recursive_map_immutable!(f, y[i], seen, ntuple(j -> xs[j][i], N), isleaftype)
+    end
+end
 
-    flds = Vector{Any}(undef, nf)
-    for i = 1:nf
-        if isdefined(prev, i)
-            xi = getfield(prev, i)
-            ST = Core.Typeof(xi)
-            flds[i] = if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
-                make_zero_immutable!(xi, seen)
-            else
-                EnzymeCore.make_zero!(xi, seen)
-                xi
-            end
+@inline function _recursive_map_immutable!(
+    f::F, y::NT, seen, xs::NTuple{N,NT}, isleaftype
+) where {F,T,NT<:NamedTuple{<:Any,T},N}
+    newTy = recursive_map_immutable!(f, T(y), seen, ntuple(j -> T(xs[j]), N), isleaftype)
+    return NT(newTy)
+end
+
+@inline function _recursive_map_immutable!(
+    f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
+) where {F,N,T}
+    @assert !ismutabletype(T)
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+
+    @inline function newyi(i)
+        yi = getfield(y, i)
+        xis = ntuple(j -> getfield(xs[j], i), N)
+        ST = Core.Typeof(first(xis))
+        return if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
+            recursive_map_immutable!(f, yi, seen, xis, isleaftype)
         else
-            nf = i - 1 # rest of tail must be undefined values
-            break
+            recursive_map!(f, yi, seen, xis, isleaftype)
+            yi
         end
     end
-    ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::T
-end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(T)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(Complex{T})
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{T,N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    fill!(prev, zero(T))
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    fill!(prev, zero(Complex{T}))
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-)::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return
+    nf = fieldcount(T)
+    if nf == 0
+        newy = f(xs...)::T
+    elseif isdefined(y, nf) && all(x -> isdefined(x, nf), xs)
+        # fast path when all fields are set
+        newy = splatnew(T, ntuple(newyi, Val(nf)))
+    else
+        flds = Vector{Any}(undef, nf)
+        nset = nf
+        for i = 1:nf
+            if isdefined(y, i) && all(x -> isdefined(x, i), xs)
+                flds[i] = newyi(i)
+            else
+                nset = i - 1 # rest of tail must be undefined values
+                break
+            end
+        end
+        newy = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nset)
     end
-    if in(seen, prev)
-        return
+    return newy
+end
+
+@inline function EnzymeCore.make_zero!(prev::Base.RefValue{T}) where {T<:_RealOrComplexFloat}
+    prev[] = zero(T)
+    return nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Base.RefValue{T}, seen::Base.IdSet,
+) where {T<:_RealOrComplexFloat}
+    if prev in seen
+        return nothing
     end
     push!(seen, prev)
+    EnzymeCore.make_zero!(prev)
+    return nothing
+end
 
-    for I in eachindex(prev)
-        if isassigned(prev, I)
-            pv = prev[I]
-            SBT = Core.Typeof(pv)
+@inline function EnzymeCore.make_zero!(prev::Array{T,N}) where {T<:_RealOrComplexFloat,N}
+    fill!(prev, zero(T))
+    return nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::Array{T,N}, seen::Base.IdSet,
+) where {T<:_RealOrComplexFloat,N}
+    if prev in seen
+        return nothing
+    end
+    push!(seen, prev)
+    EnzymeCore.make_zero!(prev)
+    return nothing
+end
+
+@inline function EnzymeCore.make_zero!(prev, seen::Base.IdSet=Base.IdSet())
+    LeafType = Union{
+        _RealOrComplexFloat,
+        Base.RefValue{<:_RealOrComplexFloat},
+        Array{<:_RealOrComplexFloat},
+    }
+    isleaftype(_) = false
+    isleaftype(::Type{<:LeafType}) = true
+    f(p) = make_zero(p)
+    function f(pout::T, pin::T) where {T}
+        @assert pout === pin
+        EnzymeCore.make_zero!(pout, seen)
+        return nothing
+    end
+    return recursive_map!(f, prev, seen, (prev,), isleaftype)::Nothing
+end
+
+@inline function recursive_map!(f::F, y::T, xs::T...) where {F,T}
+    return recursive_map!(f, y, Base.IdSet(), xs)::Nothing
+end
+
+@inline function recursive_map!(
+    f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
+) where {F,T,N,L}
+    if guaranteed_const_nongen(T, nothing)
+        return nothing
+    elseif isleaftype(T)
+        # If there exist T such that isleaftype(T) and T has mutable content that is not
+        # guaranteed const, including mutables nested inside immutables like Tuple{Vector},
+        # then f must have a corresponding mutating method:
+        f(y, xs...)
+        return nothing
+    end
+    return _recursive_map!(f, y, seen, xs, isleaftype)::Nothing
+end
+
+@inline function _recursive_map!(
+    f::F, y::Array{T,M}, seen, xs::NTuple{N,Array{T,M}}, isleaftype
+) where {F,T,M,N}
+    if y in seen
+        return nothing
+    end
+    push!(seen, y)
+    for I in eachindex(y, xs...)
+        if isassigned(y, I) && all(x -> isassigned(x, I), xs)
+            yvalue = y[I]
+            xvalues = ntuple(j -> xs[j][I], N)
+            SBT = Core.Typeof(yvalue)
             if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                @inbounds prev[I] = make_zero_immutable!(pv, seen)
-                nothing
+                @inbounds y[I] = recursive_map_immutable!(
+                    f, yvalue, seen, xvalues, isleaftype
+                )
             else
-                EnzymeCore.make_zero!(pv, seen)
-                nothing
+                recursive_map!(f, yvalue, seen, xvalues, isleaftype)
             end
         end
     end
-    nothing
+    return nothing
 end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return
+@inline function _recursive_map!(
+    f::F, y::Base.RefValue{T}, seen, xs::NTuple{N,Base.RefValue{T}}, isleaftype
+) where {F,T,N}
+    if y in seen
+        return nothing
     end
-    if in(seen, prev)
-        return
-    end
-    push!(seen, prev)
-
-    pv = prev[]
-    SBT = Core.Typeof(pv)
+    push!(seen, y)
+    yvalue = y[]
+    xvalues = ntuple(j -> xs[j][], N)
+    SBT = Core.Typeof(yvalue)
     if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        prev[] = make_zero_immutable!(pv, seen)
-        nothing
+        y[] = recursive_map_immutable!(f, yvalue, seen, xvalues, isleaftype)
     else
-        EnzymeCore.make_zero!(pv, seen)
-        nothing
+        recursive_map!(f, yvalue, seen, xvalues, isleaftype)
     end
-    nothing
+    return nothing
 end
 
-@inline function EnzymeCore.make_zero!(prev::Core.Box, seen::ST)::Nothing where {ST}
-    pv = prev.contents
-    T = Core.Typeof(pv)
-    if guaranteed_const_nongen(T, nothing)
-        return
+@inline function _recursive_map!(
+    f::F, y::Core.Box, seen, xs::NTuple{N,Core.Box}, isleaftype
+) where {F,N}
+    if y in seen
+        return nothing
     end
-    if in(seen, prev)
-        return
-    end
-    push!(seen, prev)
-    SBT = Core.Typeof(pv)
+    push!(seen, y)
+    ycontents = y.contents
+    xcontents = ntuple(j -> xs[j].contents, N)
+    SBT = Core.Typeof(ycontents)
     if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        prev.contents = EnzymeCore.make_zero_immutable!(pv, seen)
-        nothing
+        y.contents = recursive_map_immutable!(f, ycontents, seen, xcontents, isleaftype)
     else
-        EnzymeCore.make_zero!(pv, seen)
-        nothing
+        recursive_map!(f, ycontents, seen, xcontents, isleaftype)
     end
-    nothing
+    return nothing
 end
 
-@inline function EnzymeCore.make_zero!(
-    prev::T,
-    seen::S = Base.IdSet{Any}(),
-)::Nothing where {T,S}
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
-    if in(prev, seen)
-        return
+@inline function _recursive_map!(
+    f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
+) where {F,T,N}
+    if y in seen
+        return nothing
     end
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
     nf = fieldcount(T)
-
-
     if nf == 0
-        return
+        return nothing
     end
-
-    push!(seen, prev)
-
+    push!(seen, y)
     for i = 1:nf
-        if isdefined(prev, i)
-            xi = getfield(prev, i)
-            SBT = Core.Typeof(xi)
-            if guaranteed_const_nongen(SBT, nothing)
+        if isdefined(y, i) && all(x -> isdefined(x, i), xs)
+            yi = getfield(y, i)
+            xis = ntuple(j -> getfield(xs[j], i), N)
+            SBT = Core.Typeof(yi)
+            activitystate = active_reg_inner(SBT, (), nothing, Val(false))
+            if activitystate == AnyState
                 continue
-            end
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                setfield!(prev, i, make_zero_immutable!(xi, seen))
-                nothing
+            elseif activitystate == DupState
+                recursive_map!(f, yi, seen, xis, isleaftype)
             else
-                EnzymeCore.make_zero!(xi, seen)
-                nothing
+                yi = recursive_map_immutable!(f, yi, seen, xis, isleaftype)
+                if Base.isconst(T, i)
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, yi)
+                else
+                    setfield!(y, i, yi)
+                end
             end
         end
     end
-    return
+    return nothing
 end
