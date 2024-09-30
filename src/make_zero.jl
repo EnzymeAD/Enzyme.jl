@@ -78,22 +78,6 @@ end
 end
 
 @inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
-) where {M,RT<:NTuple{M,Any},F,N}
-    return ntuple(M) do i
-        Base.@_inline_meta
-        recursive_map(RT.parameters[i], f, seen, ntuple(j -> xs[j][i], N), args...)
-    end
-end
-
-@inline function _recursive_map(
-    ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
-) where {T,RT<:NamedTuple{<:Any,T},F,N}
-    yT = recursive_map(T, f, seen, ntuple(j -> T(xs[j]), N), args...)
-    return RT(yT)
-end
-
-@inline function _recursive_map(
     ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, args...
 ) where {F,N}
     if haskey(seen, xs)
@@ -172,22 +156,6 @@ end
         return f(xs...)::T
     end
     return _recursive_map_immutable!(f, y, seen, xs, isleaftype)::T
-end
-
-@inline function _recursive_map_immutable!(
-    f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
-) where {F,M,T<:NTuple{M,Any},N}
-    return ntuple(M) do i
-        Base.@_inline_meta
-        recursive_map_immutable!(f, y[i], seen, ntuple(j -> xs[j][i], N), isleaftype)
-    end
-end
-
-@inline function _recursive_map_immutable!(
-    f::F, y::NT, seen, xs::NTuple{N,NT}, isleaftype
-) where {F,T,NT<:NamedTuple{<:Any,T},N}
-    newTy = recursive_map_immutable!(f, T(y), seen, ntuple(j -> T(xs[j]), N), isleaftype)
-    return NT(newTy)
 end
 
 @inline function _recursive_map_immutable!(
