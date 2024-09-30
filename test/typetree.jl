@@ -37,6 +37,12 @@ struct Sibling2{T}
     b::T
 end
 
+struct UnionMember
+    a::Float32
+    b::Union{Function, Number}
+    c::Bool
+end
+
 @testset "TypeTree" begin
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
@@ -54,6 +60,8 @@ end
     @test at2.y == 0.0
     @test at2.z == 0.0
     @test at2.type == 4
+
+    @test tt(UnionMember) =="{[0]:Float@float, [8]:Pointer, [16]:Integer}"
 
     if Sys.WORD_SIZE == 64
         @test tt(LList2{Float64}) == "{[8]:Float@double}"
@@ -91,4 +99,5 @@ end
     @test Enzyme.get_offsets(Ptr{Float32}) == ((Enzyme.API.DT_Pointer,0),)
     @test Enzyme.get_offsets(Vector{Float32}) == ((Enzyme.API.DT_Pointer,0),)
     @test Enzyme.get_offsets(Tuple{Float64, Int}) == [(Enzyme.API.DT_Double,0),(Enzyme.API.DT_Integer, 8)]
+    @test Enzyme.get_offsets(UnionMember) == [(Enzyme.API.DT_Float,0),(Enzyme.API.DT_Pointer, 8), (Enzyme.API.DT_Integer, 16)]
 end

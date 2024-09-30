@@ -353,12 +353,17 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = fieldtype(T, f)
-        subtree = copy(typetree(subT, ctx, dl, seen))
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
+            if !allocatedinline(subT)
+                subtree = TypeTree(API.DT_Pointer, offset, ctx)
+                merge!(tt, subtree)
+            end
             # FIXME: Handle union
             continue
         end
+        
+        subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path
         if allocatedinline(subT)
