@@ -689,7 +689,7 @@ code, as well as high-order differentiation.
     end
 
     if rt == Union{}
-        error("Return type inferred to be Union{}. Giving up.")
+        throw(ErrorException("Return type inferred to be Union{}. Giving up."))
     end
 
     ModifiedBetweenT = falses_from_args(Nargs + 1)
