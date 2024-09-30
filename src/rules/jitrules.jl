@@ -458,7 +458,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         end
 
         internal_tape, origRet, initShadow, annotation = if f isa typeof(Core.getglobal)
-            gv = Core.getglobal(map(x->x.val, args)...)
+            gv = Core.getglobal(args[1].val, args[2].val)
             @assert sizeof(gv) == 0
             (nothing, gv, nothing, Const)
         else
