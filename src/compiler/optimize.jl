@@ -2416,8 +2416,15 @@ function optimize!(mod::LLVM.Module, tm)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     ModulePassManager() do pm
+
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
+
+        scoped_no_alias_aa!(pm)
+        type_based_alias_analysis!(pm)
+        basic_alias_analysis!(pm)
+        cpu_features_tm!(pm, tm)
+
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
         gvn!(pm) # Extra
         LLVM.run!(pm, mod)
@@ -2426,6 +2433,11 @@ function optimize!(mod::LLVM.Module, tm)
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
+
+        scoped_no_alias_aa!(pm)
+        type_based_alias_analysis!(pm)
+        basic_alias_analysis!(pm)
+        cpu_features_tm!(pm, tm)
 
         instruction_combining!(pm)
         jl_inst_simplify!(pm)
@@ -2494,6 +2506,14 @@ function optimize!(mod::LLVM.Module, tm)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     ModulePassManager() do pm
+        add_library_info!(pm, triple(mod))
+        add_transform_info!(pm, tm)
+
+        scoped_no_alias_aa!(pm)
+        type_based_alias_analysis!(pm)
+        basic_alias_analysis!(pm)
+        cpu_features_tm!(pm, tm)
+
         LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
         gvn!(pm) # Exxtra
         LLVM.run!(pm, mod)
