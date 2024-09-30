@@ -1101,7 +1101,7 @@ end
     end
 
     if !forward
-        funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
+	funcTy = rev_TT.parameters[(isKWCall ? 5 : 2) + (!applicablefn)]
         if needsTape
             @assert tape != C_NULL
             tape_idx =
