@@ -78,20 +78,6 @@ end
 end
 
 @inline function _recursive_map(
-    ::Type{Core.Box}, f::F, seen::IdDict, xs::NTuple{N,Core.Box}, args...
-) where {F,N}
-    if haskey(seen, xs)
-        return seen[xs]::Core.Box
-    end
-    xcontents = ntuple(j -> xs[j].contents, N)
-    ST = Core.Typeof(first(xcontents))
-    res = Core.Box()
-    seen[xs] = res
-    res.contents = Base.Ref(recursive_map(ST, f, seen, xcontents, args...))
-    return res
-end
-
-@inline function _recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT,F,N}
     if haskey(seen, xs)
@@ -199,22 +185,6 @@ end
     return newy
 end
 
-@inline function EnzymeCore.make_zero!(prev::Base.RefValue{T}) where {T<:_RealOrComplexFloat}
-    prev[] = zero(T)
-    return nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T}, seen::Base.IdSet,
-) where {T<:_RealOrComplexFloat}
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    EnzymeCore.make_zero!(prev)
-    return nothing
-end
-
 @inline function EnzymeCore.make_zero!(prev::Array{T,N}) where {T<:_RealOrComplexFloat,N}
     fill!(prev, zero(T))
     return nothing
@@ -232,13 +202,8 @@ end
 end
 
 @inline function EnzymeCore.make_zero!(prev, seen::Base.IdSet=Base.IdSet())
-    LeafType = Union{
-        _RealOrComplexFloat,
-        Base.RefValue{<:_RealOrComplexFloat},
-        Array{<:_RealOrComplexFloat},
-    }
     isleaftype(_) = false
-    isleaftype(::Type{<:LeafType}) = true
+    isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
     f(p) = make_zero(p)
     function f(pout::T, pin::T) where {T}
         @assert pout === pin
@@ -287,42 +252,6 @@ end
                 recursive_map!(f, yvalue, seen, xvalues, isleaftype)
             end
         end
-    end
-    return nothing
-end
-
-@inline function _recursive_map!(
-    f::F, y::Base.RefValue{T}, seen, xs::NTuple{N,Base.RefValue{T}}, isleaftype
-) where {F,T,N}
-    if y in seen
-        return nothing
-    end
-    push!(seen, y)
-    yvalue = y[]
-    xvalues = ntuple(j -> xs[j][], N)
-    SBT = Core.Typeof(yvalue)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        y[] = recursive_map_immutable!(f, yvalue, seen, xvalues, isleaftype)
-    else
-        recursive_map!(f, yvalue, seen, xvalues, isleaftype)
-    end
-    return nothing
-end
-
-@inline function _recursive_map!(
-    f::F, y::Core.Box, seen, xs::NTuple{N,Core.Box}, isleaftype
-) where {F,N}
-    if y in seen
-        return nothing
-    end
-    push!(seen, y)
-    ycontents = y.contents
-    xcontents = ntuple(j -> xs[j].contents, N)
-    SBT = Core.Typeof(ycontents)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        y.contents = recursive_map_immutable!(f, ycontents, seen, xcontents, isleaftype)
-    else
-        recursive_map!(f, ycontents, seen, xcontents, isleaftype)
     end
     return nothing
 end
