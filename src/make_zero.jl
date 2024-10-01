@@ -43,7 +43,11 @@ recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
 ) where {T,F,N,L,copy_if_inactive}
     x1 = first(xs)
     if guaranteed_const_nongen(T, nothing)
-        return copy_if_inactive ? Base.deepcopy_internal(x1, seen)::T : first(xs)
+        if copy_if_inactive
+            return Base.deepcopy_internal(x1, seen)::T
+        else
+            return first(xs)
+        end
     elseif haskey(seen, xs)
         return seen[x1]::T
     end
@@ -172,7 +176,9 @@ end
     f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
 ) where {F,T,N,L}
     activitystate = active_reg_inner(T, (), nothing, Val(false))
-    if (activitystate == AnyState) || (y in seen)  # guaranteed const or already handled dup
+    if activitystate == AnyState  # guaranteed const
+        return y
+    elseif y in seen  # dup but already seen and updated
         return y
     elseif activitystate == DupState
         push!(seen, y)
@@ -183,7 +189,11 @@ end
         end
     else
         if isleaftype(T)
-            return (activitystate == ActiveState) ? f(xs...)::T : f(y, xs...)::T
+            if activitystate == ActiveState
+                return f(xs...)::T
+            else 
+                return f(y, xs...)::T
+            end
         else
             return _recursive_map_active_or_mixed!!(f, y, seen, xs, isleaftype)::T
         end
