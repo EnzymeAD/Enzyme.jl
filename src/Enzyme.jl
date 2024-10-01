@@ -1566,6 +1566,26 @@ end
     return (one(x),)
 end
 
+@inline function _herm_sym_onehot(type, x::AbstractMatrix, start=1, endl=length(x))
+    idxs = CartesianIndices(x)
+    ntuple(Val(endl - start + 1)) do i0
+        Base.@_inline_meta
+        i = start + i0 - 1
+        idx = idxs[i]
+        res = zeros(eltype(x), size(x))
+        res[idx] = 1
+        res[idx[2],idx[1]] = 1
+        type(res)
+    end
+end
+
+@inline onehot(x::Hermitian) = _herm_sym_onehot(Hermitian, x)
+@inline onehot(x::Symmetric) = _herm_sym_onehot(Symmetric, x)
+
+@inline onehot(x::Hermitian, start, endl) = _herm_sym_onehot(Hermitian, x, start, endl)
+@inline onehot(x::Symmetric, start, endl) = _herm_sym_onehot(Symmetric, x, start, endl)
+
+
 """
     gradient(::ReverseMode, f, args...)
 
