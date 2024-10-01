@@ -71,18 +71,23 @@ end
     nf = fieldcount(RT)
     x1 = first(xs)
     if ismutabletype(RT)
-        y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
-        for i in 1:nf
-            if isdefined(x1, i)
-                yi = newyi(i)
-                if Base.isconst(RT, i)
-                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, yi)
-                else
-                    setfield!(y, i, yi)
+        if all(i -> isdefined(x1, i), 1:nf)
+            # fast path when all fields are set
+            return splatnew(RT, ntuple(newyi, Val(nf)))
+        else
+            y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
+            for i in 1:nf
+                if isdefined(x1, i)
+                    yi = newyi(i)
+                    if Base.isconst(RT, i)
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, yi)
+                    else
+                        setfield!(y, i, yi)
+                    end
                 end
             end
+            return y
         end
-        return y
     elseif nf == 0
         return f(xs...)::RT
     elseif isdefined(x1, nf)
