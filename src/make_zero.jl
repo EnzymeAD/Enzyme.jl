@@ -21,6 +21,10 @@ element of `xs` such that `yi == x1i`. If `copy_if_inactive == false`, this is d
 sharing, `yi = x1i`; if `copy_if_inactive == true`, it is done by copying,
 `yi = deepcopy(x1i)`.
 
+The first element of `xs` is also used as the source of truth for aliasing, that is, which
+values, if any, within the objects are references to the same memory. This structure is
+reproduced in the return value `y`.
+
 A function `isleaftype` can be provided to customize which types are considered leafs:
 values of type `T` such that `isleaftype(T) == true` are passed to `f` rather than recursed
 into. Non-array types with `fieldcount(T) == 0`, including all primitve types such as
@@ -36,20 +40,24 @@ recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
     ::Val{copy_if_inactive}=Val(false),
     isleaftype::L=Returns(false),
 ) where {T,F,N,L,copy_if_inactive}
+    x1 = first(xs)
     if guaranteed_const_nongen(T, nothing)
-        return copy_if_inactive ? Base.deepcopy_internal(first(xs), seen) : first(xs)
-    elseif isleaftype(T)
-        return f(xs...)::T
+        return copy_if_inactive ? Base.deepcopy_internal(x1, seen)::T : first(xs)
+    elseif haskey(seen, xs)
+        return seen[x1]::T
     end
-    return _recursive_map(T, f, seen, xs, Val(copy_if_inactive), isleaftype)::T
+    y = if isleaftype(T)
+        f(xs...)::T
+    else
+        _recursive_map(T, f, seen, xs, Val(copy_if_inactive), isleaftype)::T
+    end
+    seen[x1] = y
+    return y
 end
 
 @inline function _recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT,F,N}
-    if haskey(seen, xs)
-        return seen[xs]::RT
-    end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
  
@@ -72,11 +80,12 @@ end
                 end
             end
         end
+        return y
     elseif nf == 0
-        y = f(xs...)::RT
+        return f(xs...)::RT
     elseif all(x -> isdefined(x, nf), xs)
         # fast path when all fields are set
-        y = splatnew(RT, ntuple(newyi, Val(nf)))
+        return splatnew(RT, ntuple(newyi, Val(nf)))
     else
         flds = Vector{Any}(undef, nf)
         nset = nf
@@ -88,20 +97,14 @@ end
                 break
             end
         end
-        y = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nset)
+        return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nset)
     end
-    seen[xs] = y
-    return y
 end
 
 @inline function _recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT<:Array,F,N}
-    if haskey(seen, xs)
-        return seen[xs]::RT
-    end
     y = RT(undef, size(first(xs)))
-    seen[xs] = y
     for I in eachindex(xs...)
         if all(x -> isassigned(x, I), xs)
             xIs = ntuple(j -> xs[j][I], N)
@@ -157,9 +160,10 @@ end
     f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
 ) where {F,T,N,L}
     activitystate = active_reg_inner(T, (), nothing, Val(false))
-    if (y in seen) || (activitystate == AnyState)  # guaranteed const
+    if (activitystate == AnyState) || (y in seen)  # guaranteed const or already handled
         return nothing
     elseif activitystate == DupState
+        push!(seen, y)
         if isleaftype(T)
             return f(y, xs...)::Nothing
         else
@@ -176,10 +180,6 @@ end
 @inline function _recursive_map!(
     f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
 ) where {F,T,N}
-    if y in seen
-        return nothing
-    end
-    push!(seen, y)
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
     nf = fieldcount(T)
@@ -209,10 +209,6 @@ end
 @inline function _recursive_map!(
     f::F, y::Array{T,M}, seen, xs::NTuple{N,Array{T,M}}, isleaftype
 ) where {F,T,M,N}
-    if y in seen
-        return nothing
-    end
-    push!(seen, y)
     for I in eachindex(y, xs...)
         if isassigned(y, I) && all(x -> isassigned(x, I), xs)
             yvalue = y[I]
@@ -340,35 +336,12 @@ const _RealOrComplexFloat = Union{AbstractFloat,Complex{<:AbstractFloat}}
 ) where {RT,copy_if_inactive}
     isleaftype(_) = false
     isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
-    f(p) = EnzymeCore.make_zero(Core.Typeof(p), seen, p, Val(copy_if_inactive))
+    f(p) = EnzymeCore.make_zero(p)
     return recursive_map(RT, f, seen, (prev,), Val(copy_if_inactive), isleaftype)::RT
-end
-
-@inline function EnzymeCore.make_zero(
-    ::Type{FT},
-    @nospecialize(seen::IdDict),
-    prev::FT,
-    @nospecialize(_::Val{copy_if_inactive}=Val(false)),
-) where {FT<:_RealOrComplexFloat,copy_if_inactive}
-    return EnzymeCore.make_zero(prev)::FT
 end
 
 @inline function EnzymeCore.make_zero(prev::FT) where {FT<:_RealOrComplexFloat}
     return Base.zero(prev)::FT
-end
-
-@inline function EnzymeCore.make_zero(
-    ::Type{Array{FT,N}},
-    seen::IdDict,
-    prev::Array{FT,N},
-    @nospecialize(_::Val{copy_if_inactive}=Val(false)),
-) where {FT<:_RealOrComplexFloat,N,copy_if_inactive}
-    if haskey(seen, prev)
-        return seen[prev]::Array{FT,N}
-    end
-    newa = EnzymeCore.make_zero(prev)
-    seen[prev] = newa
-    return newa::Array{FT,N}
 end
 
 @inline function EnzymeCore.make_zero(prev::Array{FT,N}) where {FT<:_RealOrComplexFloat,N}
@@ -382,21 +355,10 @@ end
     f(p) = make_zero(p)
     function f(pout::T, pin::T) where {T}
         @assert pout === pin
-        EnzymeCore.make_zero!(pout, seen)
+        EnzymeCore.make_zero!(pout)
         return nothing
     end
     return recursive_map!(f, prev, seen, (prev,), isleaftype)::Nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{T,N}, seen::Base.IdSet,
-) where {T<:_RealOrComplexFloat,N}
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    EnzymeCore.make_zero!(prev)
-    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::Array{T,N}) where {T<:_RealOrComplexFloat,N}
