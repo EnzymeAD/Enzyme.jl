@@ -600,7 +600,7 @@ f(x) = x*x
     if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
         throw(
             ErrorException(
-                "Return activity `DuplicatedNoNeed` is no longer now returning or avoiding the primal is passed in for Forward Mode AD.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)",
+                "Return activity `DuplicatedNoNeed` passed in for Forward Mode AD is no longer now returning or avoiding the primal.\nPlease use autodiff(Forward, ...) or autodiff(ForwardWithPrimal, ...)",
             ),
         )
     end
