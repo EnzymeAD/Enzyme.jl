@@ -9,13 +9,13 @@
         isleaftype=Returns(false),
     ) where {T,N,copy_if_inactive}
 
-Recursively map `f` over the active contents of `N` objects `xs = (x1, x2, ..., xN)` of
-arbitrary but identical type and layout. Returns a new object `y` of the same type and
-layout such that each actively typed leaf value `yi` in `y` equals
+Recursively map `f` over the differentiable contents of `N` objects `xs = (x1, x2, ..., xN)`
+of arbitrary but identical type and layout. Returns a new object `y` of the same type and
+layout such that each differentiable leaf value `yi` in `y` equals
 `yi = f(x1i, x2i, ..., xNi)` where `x1i, x2i, ..., xNi` are the corresponding leaf values in
 the `xs`.
 
-For each subtree in the `xs` that can be proven by type to only contain inactively typed
+For each subtree in the `xs` that can be proven by type to only contain non-differentiable
 values, `f` is not invoked and the corresponding subtree `yi` in `y` is taken from the first
 element of `xs` such that `yi == x1i`. If `copy_if_inactive == false`, this is done by
 sharing, `yi = x1i`; if `copy_if_inactive == true`, it is done by copying,
@@ -25,9 +25,9 @@ The first element of `xs` is also used to keep track of values that reference th
 memory. This structure is reproduced in the return value `y`.
 
 A function `isleaftype` can be provided to customize which types are considered leafs:
-values of type `T` such that `isleaftype(T) == true` are passed to `f` rather than recursed
-into. Non-array types with `fieldcount(T) == 0`, including all primitve types such as
-built-in floats, are always considered leaf types as they cannot be recursed into.
+values of type `T` such that `isleaftype(T) == true` are not recursed into, but instead
+passed to `f`. Non-array types with `fieldcount(T) == 0`, including built-in floats and
+other primitve types, are always considered leaf types as they cannot be recursed into.
 """
 recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
 
@@ -115,68 +115,69 @@ end
 end
 
 """
-    recursive_map!(f, y::T, xs::T...) where {T}
-    recursive_map!(
+    recursive_map!!(f, y::T, xs::T...) where {T}
+    recursive_map!!(
         f, y::T seen::Base.IdSet, xs::NTuple{N,T}, isleaftype=Returns(false)
     ) where {T,N}
 
-Recursively update `y` in-place such that each actively typed leaf value `yi` in `y` is
-updated to equal `yi = f(x1i, x2i, ..., xNi)`, where `x1i, x2i, ..., xNi` are the
-corresponding leaf values in the `xs`. Each subtree in `y` that can be proven by type to
-only contain inactively typed values is left unchanged.
+Recursively update `y` such that each differentiable leaf value `yi` in `y` is updated to
+equal `f(x1i, x2i, ..., xNi)`, where `x1i, x2i, ..., xNi` are the corresponding leaf values
+in the `xs`. Each subtree in `y` that can be proven by type to only contain
+non-differentiable values is left unchanged.
 
-Every actively typed value in `y` must be contained in a mutable object, but `y` itself need
-not be mutable. For example, `y = (1, [(2.0,)])` is a valid input; `y` itself is not
-mutable, so the inactively typed integer `1` cannot be changed, but the actively typed value
-`2.0` is nested within an array. In other words, the inferred activity state for `y` must be
-either duplicated or constant (in the latter case, `y` will be left unchanged).
+If every differentiable value in `y` is contained in a mutable object (i.e., `y` has
+inferred activity state Duplicated), this function performs a fully in-place update and
+returns `y`. If every differentiable value is held in immutable storage (i.e., `y`
+has inferred activity state Active), this function is equivalent to `recursive_map` and `y`
+is not used. If differentiable values within `y` are contained in a mix of mutable and
+immutable locations (i.e., `y` has inferred activity state MixedDuplicated), mutable memory
+is updated in-place and reused, but the returned value will be a newly constructed object.
+In all cases, the returned value has the same type and structure as `y`.
 
 A function `isleaftype` can be provided to customize which types are considered leafs:
-values of type `T` such that `isleaftype(T) == true` are updated directly by `f` rather than
-recursed into. Non-array types with `fieldcount(T) == 0`, including all primitve types such
-as built-in floats, are always considered leaf types as they cannot be recursed into.
+values of type `T` such that `isleaftype(T) == true` are not recursed into, but instead
+passed to `f`. Non-array types with `fieldcount(T) == 0`, including built-in floats and
+other primitve types, are always considered leaf types as they cannot be recursed into.
 
-If a custom leaf `yi` has active values contained only in mutable objects, i.e., would be a
-valid input to `recursive_map!` (in other words, has inferred activity state Duplicated),
-the function `f` must have a corresponding method `f(yi, x1i, x2i, ..., xNi)` that mutates
-`y` in-place and returns `nothing`, like `recursive_map!` would.
+The function `f` should follow the semantics of `recursive_map!!`. That is,
 
-If a custom leaf `yi` has active values contained in a mix of mutable and immutable
-locations, i.e., would be a valid input to `recursive_map_immutable!` (in other words, has
-inferred activity state MixedDuplicated), the function `f` must have a corresponding method
-`newyi = f(yi, x1i, x2i, ..., xNi)` that updates the mutable parts of `yi` in-place and
-wraps them in a return value `newyi` with updated values in immutable locations, like
-`recursive_map_immutable!` would.
+* For leaves `yi` where all differentiable values are in immutable storage, i.e., with
+inferred activity state Active, `f` should have a corresponding out-of-place method
+`newyi = f(x1i, x2i, ..., xNi)`. This includes the default leaf types.
 
-The default leaf types always have inferred activity state Active and only require the
-out-of-place method `yi = f(x1i, x2i, ..., xNi)`, like `recursive_map`.
+* For leaves `yi` with differentiable values contained in mutable storage, i.e., with
+inferred activity state Duplicated or MixedDuplicated, the function `f` should have a
+corresponding method `newyi = f(yi, x1i, x2i, ..., xNi)` that updates the mutable parts of
+`y` in-place and reuses them in the returned value `newyi`. If the inferred activity state
+is Duplicated this implies `newyi === yi`.
 """
-function recursive_map!(f::F, y::T, xs::T...) where {F,T}
-    return recursive_map!(f, y, Base.IdSet(), xs)::Nothing
+function recursive_map!!(f::F, y::T, xs::T...) where {F,T}
+    return recursive_map!!(f, y, Base.IdSet(), xs)::T
 end
 
-@inline function recursive_map!(
+@inline function recursive_map!!(
     f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
 ) where {F,T,N,L}
     activitystate = active_reg_inner(T, (), nothing, Val(false))
-    if (activitystate == AnyState) || (y in seen)  # guaranteed const or already handled
-        return nothing
+    if (activitystate == AnyState) || (y in seen)  # guaranteed const or already handled dup
+        return y
     elseif activitystate == DupState
         push!(seen, y)
         if isleaftype(T)
-            return f(y, xs...)::Nothing
+            return f(y, xs...)::T
         else
-            return _recursive_map!(f, y, seen, xs, isleaftype)::Nothing
+            return _recursive_map_dup!(f, y, seen, xs, isleaftype)::T
         end
     else
-        error(
-            "recursive_map! only accepts types with "
-            * "inferred activity state DupState or AnyState"
-        )
+        if isleaftype(T)
+            return (activitystate == ActiveState) ? f(xs...)::T : f(y, xs...)::T
+        else
+            return _recursive_map_active_or_mixed!!(f, y, seen, xs, isleaftype)::T
+        end
     end
 end
 
-@inline function _recursive_map!(
+@inline function _recursive_map_dup!(
     f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
 ) where {F,T,N}
     @assert !Base.isabstracttype(T)
@@ -189,105 +190,36 @@ end
         if isdefined(y, i) && all(x -> isdefined(x, i), xs)
             yi = getfield(y, i)
             xis = ntuple(j -> getfield(xs[j], i), N)
-            SBT = Core.Typeof(yi)
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                newyi = recursive_map_immutable!(f, yi, seen, xis, isleaftype)
+            newyi = recursive_map!!(f, yi, seen, xis, isleaftype)
+            if newyi !== yi
                 if Base.isconst(T, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, newyi)
                 else
                     setfield!(y, i, newyi)
                 end
-            else
-                recursive_map!(f, yi, seen, xis, isleaftype)
             end
         end
     end
-    return nothing
+    return y
 end
 
-@inline function _recursive_map!(
+@inline function _recursive_map_dup!(
     f::F, y::Array{T,M}, seen, xs::NTuple{N,Array{T,M}}, isleaftype
 ) where {F,T,M,N}
     for I in eachindex(y, xs...)
         if isassigned(y, I) && all(x -> isassigned(x, I), xs)
             yvalue = y[I]
             xvalues = ntuple(j -> xs[j][I], N)
-            SBT = Core.Typeof(yvalue)
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                @inbounds y[I] = recursive_map_immutable!(
-                    f, yvalue, seen, xvalues, isleaftype
-                )
-            else
-                recursive_map!(f, yvalue, seen, xvalues, isleaftype)
+            newyvalue = recursive_map!!(f, yvalue, seen, xvalues, isleaftype)
+            if newyvalue !== yvalue
+                @inbounds y[I] = newyvalue
             end
         end
     end
-    return nothing
+    return y
 end
 
-"""
-    recursive_map_immutable!(f, y::T, xs::T...) where {T}
-    recursive_map_immutable!(
-        f, y::T seen::Base.IdSet, xs::NTuple{N,T}, isleaftype=Returns(false)
-    ) where {T,N}
-
-Recursively update the mutable parts of `y` in-place and wrap new immutable objects around
-them, such that each actively typed leaf value `newyi` in the return value `newy` equals
-`newyi = f(x1i, x2i, ..., xNi)`, where `x1i, x2i, ..., xNi` are the corresponding leaf
-values in the `xs`. Each subtree in `y` that can be proven by type to only contain
-inactively typed values is included in `newy` unchanged.
-
-If every actively typed value in `y` is contained in a mutable object (i.e., `y` has
-inferred activity state Duplicated), this function is equivalent to `recursive_map!`, except
-it also returns `y`. If every actively typed value is in an immutable location (i.e., `y`
-has inferred activity state Active), it is equivalent to `recursive_map` and `y` is not
-used. If active values within `y` are contained in a mix of mutable and immutable locations
-(i.e., `y` has inferred activity state MixedDuplicated), the returned value will be equal to
-what `recursive_map` would return, but with mutable storage within `y` reused.
-
-A function `isleaftype` can be provided to customize which types are considered leafs:
-values of type `T` such that `isleaftype(T) == true` are updated directly by `f` rather than
-recursed into. Non-array types with `fieldcount(T) == 0`, including all primitve types such
-as built-in floats, are always considered leaf types as they cannot be recursed into.
-
-If a custom leaf `yi` has all active values contained in mutable objects, i.e., would be a
-valid input to `recursive_map!` (in other words, has inferred activity state Duplicated),
-the function `f` must have a corresponding method `f(yi, x1i, x2i, ..., xNi)` that mutates
-`y` in-place and returns `nothing`, like `recursive_map!` would.
-
-If a custom leaf `yi` has active values contained in a mix of mutable and immutable
-locations, i.e., would be a valid input to `recursive_map_immutable!` (in other words, has
-inferred activity state MixedDuplicated), the function `f` must have a corresponding method
-`newyi = f(yi, x1i, x2i, ..., xNi)` that updates the mutated parts of `yi` in-place and
-reuses them in a newly constructed return value `newyi` with updated values in immutable
-locations of active type, like `recursive_map_immutable!` would.
-
-The default leaf types always have inferred activity state Active and only require the
-out-of-place method `yi = f(x1i, x2i, ..., xNi)`, like `recursive_map`.
-"""
-function recursive_map_immutable!(f::F, y::T, xs::T...) where {F,T}
-    return recursive_map_immutable!(f, y, Base.IdSet(), xs)::T
-end
-
-@inline function recursive_map_immutable!(
-    f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
-) where {F,N,T,L}
-    activitystate = active_reg_inner(T, (), nothing, Val(false))
-    if activitystate == AnyState  # guaranteed const
-        return y
-    elseif activitystate == DupState
-        recursive_map!(f, y, seen, xs, isleaftype)::Nothing
-        return y
-    else
-        if isleaftype(T)
-            return (activitystate == ActiveState) ? f(xs...)::T : f(y, xs...)::T
-        else
-            return _recursive_map_immutable!(f, y, seen, xs, isleaftype)::T
-        end
-    end
-end
-
-@inline function _recursive_map_immutable!(
+@inline function _recursive_map_active_or_mixed!!(
     f::F, y::T, seen, xs::NTuple{N,T}, isleaftype
 ) where {F,N,T}
     @assert !ismutabletype(T)
@@ -297,21 +229,15 @@ end
     @inline function newyi(i)
         yi = getfield(y, i)
         xis = ntuple(j -> getfield(xs[j], i), N)
-        ST = Core.Typeof(first(xis))
-        if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
-            return recursive_map_immutable!(f, yi, seen, xis, isleaftype)
-        else
-            recursive_map!(f, yi, seen, xis, isleaftype)
-            return yi
-        end
+        return recursive_map!!(f, yi, seen, xis, isleaftype)
     end
 
     nf = fieldcount(T)
     if nf == 0
-        newy = f(xs...)::T
+        return f(xs...)::T
     elseif isdefined(y, nf) && all(x -> isdefined(x, nf), xs)
         # fast path when all fields are set
-        newy = splatnew(T, ntuple(newyi, Val(nf)))
+        return splatnew(T, ntuple(newyi, Val(nf)))
     else
         flds = Vector{Any}(undef, nf)
         nset = nf
@@ -319,13 +245,40 @@ end
             if isdefined(y, i) && all(x -> isdefined(x, i), xs)
                 flds[i] = newyi(i)
             else
-                nset = i - 1 # rest of tail must be undefined values
+                nset = i - 1  # rest of tail must be undefined values
                 break
             end
         end
-        newy = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nset)
+        return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nset)
     end
-    return newy
+end
+
+"""
+    recursive_map!(f, y::T, xs::T...) where {T}
+    recursive_map!(
+        f, y::T seen::Base.IdSet, xs::NTuple{N,T}, isleaftype=Returns(false)
+    ) where {T,N}
+
+Recursively update `y` in-place such that each differentiable leaf value `yi` in `y` is
+updated to equal `f(x1i, x2i, ..., xNi)`, where `x1i, x2i, ..., xNi` are the corresponding
+leaf values in the `xs`. This works like `recursive_map!!`, except it requires `y` that can
+be fully updated in-place, and always returns `nothing`. See the docstring for
+`recursive_map!!` for further details.
+"""
+function recursive_map!(f::F, y::T, xs::T...) where {F,T}
+    return recursive_map!(f, y, Base.IdSet(), xs)::Nothing
+end
+
+function recursive_map!(f, y::T, seen, xs::NTuple{N,T}, isleaftype) where {N,T}
+    if active_reg_inner(T, (), nothing, Val(true)) == ActiveState  # justActive
+        msg = (
+            "recursive_map! called on objects that may "
+            * "contain immutable differentiable values"
+        )
+        throw(ArgumentError(msg))
+    end
+    recursive_map!!(f, y, seen, xs, isleaftype)
+    return nothing
 end
 
 const _RealOrComplexFloat = Union{AbstractFloat,Complex{<:AbstractFloat}}
@@ -335,11 +288,11 @@ _zero_f(p) = EnzymeCore.make_zero(p)
 function _zero_f(pout::T, pin::T) where {T}
     @assert pout === pin
     EnzymeCore.make_zero!(pout)
-    return nothing
+    return pout
 end
 
-_zero_isleaftype(_) = false
 _zero_isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
+_zero_isleaftype(::Any) = false
 
 @inline function EnzymeCore.make_zero(
     ::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false)
