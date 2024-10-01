@@ -21,9 +21,8 @@ element of `xs` such that `yi == x1i`. If `copy_if_inactive == false`, this is d
 sharing, `yi = x1i`; if `copy_if_inactive == true`, it is done by copying,
 `yi = deepcopy(x1i)`.
 
-The first element of `xs` is also used as the source of truth for aliasing, that is, which
-values, if any, within the objects are references to the same memory. This structure is
-reproduced in the return value `y`.
+The first element of `xs` is also used to keep track of values that reference the same
+memory. This structure is reproduced in the return value `y`.
 
 A function `isleaftype` can be provided to customize which types are considered leafs:
 values of type `T` such that `isleaftype(T) == true` are passed to `f` rather than recursed
@@ -331,13 +330,23 @@ end
 
 const _RealOrComplexFloat = Union{AbstractFloat,Complex{<:AbstractFloat}}
 
+_zero_f(p) = EnzymeCore.make_zero(p)
+
+function _zero_f(pout::T, pin::T) where {T}
+    @assert pout === pin
+    EnzymeCore.make_zero!(pout)
+    return nothing
+end
+
+_zero_isleaftype(_) = false
+_zero_isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
+
 @inline function EnzymeCore.make_zero(
     ::Type{RT}, seen::IdDict, prev::RT, ::Val{copy_if_inactive}=Val(false)
 ) where {RT,copy_if_inactive}
-    isleaftype(_) = false
-    isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
-    f(p) = EnzymeCore.make_zero(p)
-    return recursive_map(RT, f, seen, (prev,), Val(copy_if_inactive), isleaftype)::RT
+    return recursive_map(
+        RT, _zero_f, seen, (prev,), Val(copy_if_inactive), _zero_isleaftype
+    )::RT
 end
 
 @inline function EnzymeCore.make_zero(prev::FT) where {FT<:_RealOrComplexFloat}
@@ -350,15 +359,7 @@ end
 end
 
 @inline function EnzymeCore.make_zero!(prev, seen::Base.IdSet=Base.IdSet())
-    isleaftype(_) = false
-    isleaftype(::Type{<:Union{_RealOrComplexFloat,Array{<:_RealOrComplexFloat}}}) = true
-    f(p) = make_zero(p)
-    function f(pout::T, pin::T) where {T}
-        @assert pout === pin
-        EnzymeCore.make_zero!(pout)
-        return nothing
-    end
-    return recursive_map!(f, prev, seen, (prev,), isleaftype)::Nothing
+    return recursive_map!(_zero_f, prev, seen, (prev,), _zero_isleaftype)::Nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::Array{T,N}) where {T<:_RealOrComplexFloat,N}
