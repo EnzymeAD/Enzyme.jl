@@ -46,9 +46,9 @@ recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
         if copy_if_inactive
             return Base.deepcopy_internal(x1, seen)::T
         else
-            return first(xs)
+            return x1
         end
-    elseif haskey(seen, xs)
+    elseif haskey(seen, x1)
         return seen[x1]::T
     end
     y = if isleaftype(T)
@@ -72,8 +72,8 @@ end
         return recursive_map(ST, f, seen, xis, args...)
     end
    
-    nf = fieldcount(RT)
     x1 = first(xs)
+    nf = fieldcount(RT)
     if ismutabletype(RT)
         if all(i -> isdefined(x1, i), 1:nf)
             # fast path when all fields are set
@@ -115,8 +115,8 @@ end
 @inline function _recursive_map(
     ::Type{RT}, f::F, seen::IdDict, xs::NTuple{N,RT}, args...
 ) where {RT<:Array,F,N}
-    y = RT(undef, size(first(xs)))
     x1 = first(xs)
+    y = RT(undef, size(x1))
     for I in eachindex(y, xs...)
         @inbounds if isassigned(x1, I)
             xIs = ntuple(j -> xs[j][I], N)
