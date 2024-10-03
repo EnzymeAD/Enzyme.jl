@@ -104,7 +104,7 @@ end
     prev::Complex{RT},
     ::Val{copy_if_inactive} = Val(false),
 )::Complex{RT} where {copy_if_inactive,RT<:AbstractFloat}
-    return RT(0)
+    return Complex{RT}(0)
 end
 
 @inline function EnzymeCore.make_zero(
@@ -191,11 +191,10 @@ end
         return seen[prev]
     end
     prev2 = prev.contents
-    res = Core.Box()
-    seen[prev] = res
-    res.contents = Base.Ref(
+    res = Core.Box(
         EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive)),
     )
+    seen[prev] = res
     return res
 end
 
@@ -234,7 +233,9 @@ end
     end
 
     if nf == 0
-        return prev
+        # Unclear what types might end up here rather than in specialized methods or
+        # guaranteed_const_nongen, but as a last-ditch attempt try falling back to Base.zero
+        return Base.zero(prev)::RT
     end
 
     flds = Vector{Any}(undef, nf)
@@ -261,27 +262,41 @@ function make_zero_immutable!(
     prev::Complex{T},
     seen::S,
 )::Complex{T} where {T<:AbstractFloat,S}
-    zero(T)
+    zero(Complex{T})
 end
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
     ntuple(Val(length(T.parameters))) do i
         Base.@_inline_meta
-        make_zero_immutable!(prev[i], seen)
+        p = prev[i]
+        SBT = Core.Typeof(p)
+        if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+            make_zero_immutable!(p, seen)
+        else
+            EnzymeCore.make_zero!(p, seen)
+            p
+        end
     end
 end
 
 function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} where {a,b,S}
-    NamedTuple{a,b}(ntuple(Val(length(T.parameters))) do i
+    NamedTuple{a,b}(ntuple(Val(length(b.parameters))) do i
         Base.@_inline_meta
-        make_zero_immutable!(prev[a[i]], seen)
+        p = prev[a[i]]
+        SBT = Core.Typeof(p)
+        if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+            make_zero_immutable!(p, seen)
+        else
+            EnzymeCore.make_zero!(p, seen)
+            p
+        end
     end)
 end
 
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
     if guaranteed_const_nongen(T, nothing)
-        return prev
+        return prev  # Note: unreachable from make_zero!
     end
     @assert !ismutable(prev)
 
@@ -313,7 +328,7 @@ end
     prev::Base.RefValue{T},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(T)
+    prev[] = zero(T)
     nothing
 end
 
@@ -321,7 +336,7 @@ end
     prev::Base.RefValue{Complex{T}},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,ST}
-    T[] = zero(Complex{T})
+    prev[] = zero(Complex{T})
     nothing
 end
 
@@ -390,7 +405,7 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(seen, prev)
+    if prev in seen
         return
     end
     push!(seen, prev)
@@ -429,7 +444,7 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(seen, prev)
+    if prev in seen
         return
     end
     push!(seen, prev)
@@ -459,7 +474,7 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(seen, prev)
+    if prev in seen
         return
     end
     push!(seen, prev)
@@ -482,13 +497,13 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(seen, prev)
+    if prev in seen
         return
     end
     push!(seen, prev)
     SBT = Core.Typeof(pv)
     if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-        prev.contents = EnzymeCore.make_zero_immutable!(pv, seen)
+        prev.contents = make_zero_immutable!(pv, seen)
         nothing
     else
         EnzymeCore.make_zero!(pv, seen)
@@ -504,7 +519,7 @@ end
     if guaranteed_const_nongen(T, nothing)
         return
     end
-    if in(prev, seen)
+    if prev in seen
         return
     end
     @assert !Base.isabstracttype(T)
@@ -513,7 +528,7 @@ end
 
 
     if nf == 0
-        return
+        error("cannot zero $T in-place: it is apparently differentiable but has no fields")
     end
 
     push!(seen, prev)
@@ -526,7 +541,12 @@ end
                 continue
             end
             if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
-                setfield!(prev, i, make_zero_immutable!(xi, seen))
+                yi = make_zero_immutable!(xi, seen)
+                if Base.isconst(T, i)
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i-1, yi)
+                else
+                    setfield!(prev, i, yi)
+                end
                 nothing
             else
                 EnzymeCore.make_zero!(xi, seen)
