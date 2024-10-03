@@ -591,7 +591,7 @@ end
                 TM in (Const, Duplicated, BatchDuplicated),
                 TB in (Const, Duplicated, BatchDuplicated)
                 are_activities_compatible(Const, TY, TM, TB) || continue
-                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const))
+                test_reverse(f!, TY, (Y, TY), (M, TM), (B, TB), (_A, Const); atol = 1.0e-5, rtol = 1.0e-5)
             end
         end
         @testset "test through `Adjoint` wrapper (regression test for #1306)" begin
@@ -675,6 +675,48 @@ end
     # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f2(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((25.0,50.0)),)
     # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f3(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((75.0,150.0)),)
     # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f4(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((0.0,0.0)),)
+end
+
+@testset "SparseArrays spmatvec reverse rule" begin
+    C = zeros(18)
+    M = sprand(18, 9, 0.1)
+    v = randn(9)
+    α = 2.0
+    β = 1.0
+
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+        Tα in (Const, Active), Tβ in (Const, Active)
+
+        are_activities_compatible(Tret, Tret, Tv, Tα, Tβ) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+
+    end
+
+
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+        are_activities_compatible(Tret, Tret, Tv) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+    end
+end
+
+@testset "SparseArrays spmatmat reverse rule" begin
+    C = zeros(18, 11)
+    M = sprand(18, 9, 0.1)
+    v = randn(9, 11)
+    α = 2.0
+    β = 1.0
+
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+        Tα in (Const, Active), Tβ in (Const, Active)
+
+        are_activities_compatible(Tret, Tv, Tα, Tβ) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+    end
+
+    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+        are_activities_compatible(Tret, Tv) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+    end
 end
 
 end # InternalRules

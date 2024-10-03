@@ -1,12 +1,26 @@
 
-function int_return_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+function int_return_rule(
+    direction::Cint,
+    ret::API.CTypeTreeRef,
+    args::Ptr{API.CTypeTreeRef},
+    known_values::Ptr{API.IntList},
+    numArgs::Csize_t,
+    val::LLVM.API.LLVMValueRef,
+)::UInt8
     TT = TypeTree(API.DT_Integer, LLVM.context(LLVM.Value(val)))
     only!(TT, -1)
     API.EnzymeMergeTypeTree(ret, TT)
     return UInt8(false)
 end
 
-function inout_rule(direction::Cint, ret::API.CTypeTreeRef, args::Ptr{API.CTypeTreeRef}, known_values::Ptr{API.IntList}, numArgs::Csize_t, val::LLVM.API.LLVMValueRef)::UInt8
+function inout_rule(
+    direction::Cint,
+    ret::API.CTypeTreeRef,
+    args::Ptr{API.CTypeTreeRef},
+    known_values::Ptr{API.IntList},
+    numArgs::Csize_t,
+    val::LLVM.API.LLVMValueRef,
+)::UInt8
     if numArgs != 1
         return UInt8(false)
     end

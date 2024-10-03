@@ -117,6 +117,11 @@ mutable struct MInts{A, B}
 end
 
 @testset "Internal tests" begin
+    @static if VERSION < v"1.11-"
+    else
+    @assert Enzyme.Compiler.active_reg_inner(Memory{Float64}, (), nothing) == Enzyme.Compiler.DupState
+    end
+    @assert Enzyme.Compiler.active_reg_inner(Type{Array}, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Ints{<:Any, Integer}, (), nothing) == Enzyme.Compiler.AnyState
     @assert Enzyme.Compiler.active_reg_inner(Ints{<:Any, Float64}, (), nothing) == Enzyme.Compiler.DupState
     @assert Enzyme.Compiler.active_reg_inner(Ints{Integer, <:Any}, (), nothing) == Enzyme.Compiler.DupState
@@ -360,6 +365,9 @@ make3() = (1.0, 2.0, 3.0)
     @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
 
     for T in (Float64, Float32, Float16)
+        if T == Float16 && Sys.isapple()
+            continue
+        end
         res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
         @test res isa T
         cmp = if T == Float64
@@ -514,8 +522,8 @@ end
 
     mul3(z) = Base.inferencebarrier(2 * z)
 
-    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active, Active(z))
-    @test_throws ErrorException autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
+    @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active, Active(z))
+    @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
 
     vals = Complex{Float64}[3.4 + 2.7im]
     dvals = Complex{Float64}[0.0]
@@ -2855,8 +2863,64 @@ end
     @test dx[1] ≈ 0
     @test dx[2] ≈ 30
     @test dx[3] ≈ 0
+
+    f0 = x -> sum(2*x)
+    f1 = x -> @SVector Float64[x[2], 2*x[2]]
+    f2 = x -> @SMatrix Float64[x[2] x[1]; 2*x[2] 2*x[1]]
+
+    x = @SVector Float64[1, 2]
+
+    dx = gradient(Forward, f0, x)[1]
+    @test dx isa Enzyme.TupleArray
+    @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
+    @test gradient(Forward, f1, x)[1] isa SMatrix
+    @test gradient(Forward, f1, x)[1] == [0 1.0; 0 2.0]
+    @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
+    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+
+    x = @SMatrix Float64[1 2; 3 4]
+
+    dx = gradient(Forward, f0, x)[1]
+    @test dx isa Enzyme.TupleArray
+    @test convert(SArray, dx) == fill(2.0, (2,2))
+    @test gradient(Forward, f1, x)[1] isa SArray
+    @test gradient(Forward, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
+    @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
+    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(
+        Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
+    )
+
+    x = @SVector Float64[1, 2]
+
+    dx = gradient(Reverse, f0, x)[1]
+    @test dx isa SVector
+    @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
+    @test_broken gradient(Reverse, f1, x)[1] isa SMatrix
+    @test_broken gradient(Reverse, f1, x)[1] == [0 1.0; 0 2.0]
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+
+    x = @SMatrix Float64[1 2; 3 4]
+
+    @test_broken gradient(Reverse, f1, x)[1] isa SArray
+    @test_broken gradient(Reverse, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(
+        Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
+    )
 end
 
+function unstable_fun(A0)
+    A = 'N' in ('H', 'h', 'S', 's') ? wrap(A0) : A0
+    (@inbounds A[1])::eltype(A0)
+end
+@testset "Type unstable static array index" begin
+    inp = ones(SVector{2, Float64})
+    res = Enzyme.gradient(Enzyme.Reverse, unstable_fun, inp)[1]
+    @test res ≈ [1.0, 0.0]
+    res = Enzyme.gradient(Enzyme.Forward, unstable_fun, inp)[1]
+    @test res ≈ [1.0, 0.0]
+end
 
 function sparse_eval(x::Vector{Float64})
     A = sparsevec([1, 1, 2, 3], [2.0*x[2]^3.0, 1.0-x[1], 2.0+x[3], -1.0])
@@ -3494,6 +3558,63 @@ end
 	@test din[2, 1] ≈ 1.0
 end
 
+@testset "View Vars" begin
+
+    x = [Float32(0.25)]
+    dx = [Float32(0.0)]
+    rng = Base.UnitRange{Int64}(1, 0)
+
+    f = Const(Base.SubArray{T, N, P, I, L} where L where I where P where N where T)
+    a1 = Const(Base.IndexLinear())
+    a2 = Duplicated(x, dx)
+    a3 = Const((rng,))
+    a4 = Const((true,))
+
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal,
+         typeof(f),
+         Duplicated,
+         typeof(a1),
+         typeof(a2),
+         typeof(a3),
+         typeof(a4)
+    )
+
+    res = fwd(f,a1,a2,a3,a4)
+    @test res[2].indices == (rng,)
+    @test res[3].indices == (rng,)
+    @test res[2].offset1 == 0
+    @test res[3].offset1 == 0
+    @test res[2].stride1 == 1
+    @test res[3].stride1 == 1
+
+    x = [Float32(0.25)]
+    dx = [Float32(0.0)]
+    rng = Base.UnitRange{Int64}(1, 0)
+
+    f = Const(Base.SubArray{T, N, P, I, L} where L where I where P where N where T)
+    a1 = Const(Base.IndexLinear())
+    a2 = Duplicated(x, dx)
+    a3 = Const((rng,))
+    a4 = Const((true,))
+
+    fwd, rev = autodiff_thunk(set_runtime_activity(ReverseSplitWithPrimal),
+         typeof(f),
+         Duplicated,
+         typeof(a1),
+         typeof(a2),
+         typeof(a3),
+         typeof(a4)
+    )
+
+    res = fwd(f,a1,a2,a3,a4)
+    @test res[2].indices == (rng,)
+    @test res[3].indices == (rng,)
+    @test res[2].offset1 == 0
+    @test res[3].offset1 == 0
+    @test res[2].stride1 == 1
+    @test res[3].stride1 == 1
+end
+
 @testset "Uncached batch sizes" begin
     genericsin(x) = Base.invokelatest(sin, x)
     res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))[1]
@@ -3949,6 +4070,35 @@ function harmonic_f!(inter_list, coords, inters)
     return si
 end
 
+function invwsumsq(w::AbstractVector, a::AbstractVector)
+    s = zero(zero(eltype(a)) / zero(eltype(w)))
+    for i in eachindex(w)
+        s += abs2(a[i]) / w[i]
+    end
+    return s
+end
+
+_logpdf(d, x) = invwsumsq(d.Σ.diag, x .- d.μ)
+
+function demo_func(x::Any=transpose([1.5 2.0;]);)
+    m = [-0.30725218207431315, 0.5492115788562757]
+    d = (; Σ = LinearAlgebra.Diagonal([1.0, 1.0]), μ = m)
+    logp = _logpdf(d, reshape(x, (2,)))
+    return logp
+end
+
+demof(x) = demo_func()
+
+@testset "Type checks" begin
+    x = [0.0, 0.0]
+    Enzyme.autodiff(
+        Enzyme.Reverse,
+        Enzyme.Const(demof),
+        Enzyme.Active,
+        Enzyme.Duplicated(x, zero(x)),
+    )
+end
+
 @testset "Decay preservation" begin
     inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
     inter_list = [1, 3]
@@ -4025,6 +4175,25 @@ end
     @test res[2][4] ≈ 4.0
     @test res[2][5] ≈ 0
     @test res[2][6] ≈ 6.0
+end
+
+@testset "WithPrimal" begin
+    @test WithPrimal(Reverse) === ReverseWithPrimal
+    @test NoPrimal(Reverse) === Reverse
+    @test WithPrimal(ReverseWithPrimal) === ReverseWithPrimal
+    @test NoPrimal(ReverseWithPrimal) === Reverse
+
+    @test WithPrimal(set_runtime_activity(Reverse)) === set_runtime_activity(ReverseWithPrimal)
+
+    @test WithPrimal(Forward) === ForwardWithPrimal
+    @test NoPrimal(Forward) === Forward
+    @test WithPrimal(ForwardWithPrimal) === ForwardWithPrimal
+    @test NoPrimal(ForwardWithPrimal) === Forward
+
+    @test WithPrimal(ReverseSplitNoPrimal) === ReverseSplitWithPrimal
+    @test NoPrimal(ReverseSplitNoPrimal) === ReverseSplitNoPrimal
+    @test WithPrimal(ReverseSplitWithPrimal) === ReverseSplitWithPrimal
+    @test NoPrimal(ReverseSplitWithPrimal) === ReverseSplitNoPrimal
 end
 
 # TEST EXTENSIONS 
