@@ -20,6 +20,7 @@ function f_kwargs_fwd!(x; kwargs...)
 end
 
 function EnzymeRules.forward(
+    config,
     func::Const{typeof(f_kwargs_fwd)},
     RT::Type{
         <:Union{Const,Duplicated,DuplicatedNoNeed,BatchDuplicated,BatchDuplicatedNoNeed}
@@ -86,9 +87,6 @@ end
                     elseif TT <: NamedTuple
                         x = (a=randn(T), b=randn(T))
                     else  # TT <: TestStruct
-                        if VERSION <= v"1.8" && Tx == BatchDuplicated
-                            continue
-                        end
                         x = TestStruct(randn(T, 5), randn(T))
                     end
                     atol = rtol = sqrt(eps(real(T)))
@@ -116,38 +114,26 @@ end
                 a = randn(T)
                 atol = rtol = sqrt(eps(real(T)))
 
-                if VERSION < v"1.8" && (
-                    Tret <: BatchDuplicated ||
-                    Tx <: BatchDuplicated ||
-                    Ta <: BatchDuplicated
-                )
-                    @test !fails() do
-                        test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
-                    end skip = true
-                else
-                    @test !fails() do
-                        test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
-                    end broken = (
-                        VERSION < v"1.8" && Tx <: Const && !(Ta <: Const) && T <: Complex
-                    )
-                end
+	        @test !fails() do
+	        	test_forward(f_multiarg, Tret, (x, Tx), (a, Ta); atol, rtol)
+	        end
             end
         end
 
-        VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
-                                                                        @testset for Tret in (Const, Duplicated, BatchDuplicated),
-                                                                                     Tx in (Const, Duplicated, BatchDuplicated),
-                                                                                     T in (Float32, Float64, ComplexF32, ComplexF64)
+	@testset "structured array inputs/outputs" begin
+		@testset for Tret in (Const, Duplicated, BatchDuplicated),
+			     Tx in (Const, Duplicated, BatchDuplicated),
+			     T in (Float32, Float64, ComplexF32, ComplexF64)
 
-                                                                                 # if some are batch, none must be duplicated
-                                                                                 are_activities_compatible(Tret, Tx) || continue
+			 # if some are batch, none must be duplicated
+			 are_activities_compatible(Tret, Tx) || continue
 
-                                                                                 x = Hermitian(randn(T, 5, 5))
+			 x = Hermitian(randn(T, 5, 5))
 
-                                                                                 atol = rtol = sqrt(eps(real(T)))
-                                                                                 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
-                                                                                 end
-                                                                        end
+			 atol = rtol = sqrt(eps(real(T)))
+			 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
+		 end
+	end
 
         @testset "equivalent arrays in output" begin
             function f(x)
@@ -178,7 +164,6 @@ end
         end
 
         @testset "mutating function" begin
-            Enzyme.API.runtimeActivity!(true)
             sz = (2, 3)
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                 Tx in (Const, Duplicated, BatchDuplicated),
@@ -196,10 +181,9 @@ end
 
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
-                    test_forward(f_mut_fwd!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
-                end skip = (VERSION < v"1.8" && T <: Complex)
+                    test_forward(f_mut_fwd!, Tret, (y, Ty), (x, Tx), (a, Ta); atol, rtol, runtime_activity=true)
+                end
             end
-            Enzyme.API.runtimeActivity!(false)
         end
 
         @testset "incorrect mutated argument detected" begin
@@ -231,13 +215,7 @@ end
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
                     test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
-                end skip = (
-                    VERSION < v"1.8" && (
-                        Tret <: BatchDuplicated ||
-                        Tc <: BatchDuplicated ||
-                        Ty <: BatchDuplicated
-                    )
-                )
+                end
             end
         end
     end

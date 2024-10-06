@@ -17,7 +17,7 @@ function f_kwargs_rev!(x; kwargs...)
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
     RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
     x::Union{Const,Duplicated};
@@ -39,7 +39,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
     dret::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
     tape,

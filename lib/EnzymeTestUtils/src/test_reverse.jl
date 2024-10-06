@@ -7,12 +7,7 @@ for N in 1:30
     eval(quote
         function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
             Base.@_inline_meta
-            @static if VERSION ≤ v"1.8"
-                # callsite inline syntax unsupported in <= 1.8
-                f($(argexprs...); fkwargs...)
-            else
-                @inline f($(argexprs...); fkwargs...)
-            end
+	    @inline f($(argexprs...); fkwargs...)
         end
     end)
 end
@@ -81,6 +76,7 @@ function test_reverse(
     rtol::Real=1e-9,
     atol::Real=1e-9,
     testset_name=nothing,
+    runtime_activity::Bool=false
 )
     call_with_captured_kwargs(f, xs...) = f(xs...; fkwargs...)
     if testset_name === nothing
@@ -108,8 +104,9 @@ function test_reverse(
         dx_fdm = _fd_reverse(fdm, call_with_captured_kwargs, ȳ, activities, !(ret_activity <: Const))
         # call autodiff, allow mutating original arguments
         c_act = Const(call_with_kwargs)
+        mode = set_runtime_activity(ReverseSplitWithPrimal, runtime_activity)
         forward, reverse = autodiff_thunk(
-            ReverseSplitWithPrimal, typeof(c_act), ret_activity, typeof(Const(fkwargs)), map(typeof, activities)...
+            mode, typeof(c_act), ret_activity, typeof(Const(fkwargs)), map(typeof, activities)...
         )
         tape, y_ad, shadow_result = forward(c_act, Const(fkwargs), activities...)
         test_approx(

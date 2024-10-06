@@ -98,7 +98,7 @@ dby = [0.0]
 
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff_deferred(Reverse, f, x, y),
+    (x,y) -> Enzyme.autodiff(Reverse, f, x, y),
     Duplicated(Duplicated(x, bx), Duplicated(dx, dbx)),
     Duplicated(Duplicated(y, by), Duplicated(dy, dby)),
 )
@@ -121,7 +121,7 @@ dbx[2] == 1.0
 # \end{aligned}
 # ```
 function grad(x, dx, y, dy)
-  Enzyme.autodiff_deferred(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+  Enzyme.autodiff(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
   nothing
 end
 

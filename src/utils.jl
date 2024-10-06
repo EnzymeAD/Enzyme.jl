@@ -5,10 +5,16 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where T  = ccall(Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)), Ptr{Cvoid}, (Any,), val)
+@inline unsafe_to_pointer(val::Type{T}) where {T} = ccall(
+    Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)),
+    Ptr{Cvoid},
+    (Any,),
+    val,
+)
 export unsafe_to_pointer
 
-@inline is_concrete_tuple(x::Type{T2}) where T2 = (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
+@inline is_concrete_tuple(x::Type{T2}) where {T2} =
+    (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
 export is_concrete_tuple
 
 const Tracked = 10
@@ -20,11 +26,11 @@ const captured_constants = Base.IdSet{Any}()
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"
-    if Base.haskey(globs, "ejl_"*k)
+    if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_"*k]
     end
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
     API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
     API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
@@ -56,13 +62,13 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
         if v === val
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_"*k)
+            if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
@@ -78,12 +84,12 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
         if v === val
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_"*k)
+            if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_"*k, Tracked)
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy = Compiler.abs_typeof(gv, true)
+            legal, jTy, byref = Compiler.abs_typeof(gv, true)
             if legal
                 curent_bb = position(B)
                 fn = LLVM.parent(curent_bb)
@@ -124,11 +130,7 @@ function hasfieldcount(@nospecialize(dt))
     return true
 end
 
-if VERSION <= v"1.6"
-    allocatedinline(@nospecialize(T)) = T.isinlinealloc
-else
-    import Base: allocatedinline
-end
+import Base: allocatedinline
 
 #Excerpt from https://github.com/JuliaGPU/GPUCompiler.jl/blob/v0.19.4/src/jlgen.jl
 # !!! warning "codegen_world_age below is fundamentally unsound."
@@ -154,12 +156,14 @@ using Base: _methods_by_ftype
 # directly, instead use `cached_compilation` which handles invalidation for you.
 
 
-if VERSION >= v"1.10.0-DEV.873"
-
 # on 1.10 (JuliaLang/julia#48611) the generated function knows which world it was invoked in
 
 function _generated_ex(world, source, ex)
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :ft, :tt), Core.svec())
+    stub = Core.GeneratedFunctionStub(
+        identity,
+        Core.svec(:methodinstance, :ft, :tt),
+        Core.svec(),
+    )
     stub(world, source, ex)
 end
 
@@ -170,30 +174,38 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     tt = tt.parameters[1]
 
     # validation
-    ft <: Core.Builtin && error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
+    ft <: Core.Builtin &&
+        error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
     # look up the method
     method_error = :(throw(MethodError(ft, tt, $world)))
-    sig = Tuple{ft, tt.parameters...}
+    sig = Tuple{ft,tt.parameters...}
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    mthds = if VERSION >= v"1.7.0-DEV.1297"
-        Base._methods_by_ftype(sig, #=mt=# nothing, #=lim=# -1,
-                               world, #=ambig=# false,
-                               min_world, max_world, has_ambig)
-        # XXX: use the correct method table to support overlaying kernels
-    else
-        Base._methods_by_ftype(sig, #=lim=# -1,
-                               world, #=ambig=# false,
-                               min_world, max_world, has_ambig)
-    end
+    mthds = Base._methods_by_ftype(
+        sig,
+        nothing,
+        -1, #=lim=#
+        world,
+        false, #=ambig=#
+        min_world,
+        max_world,
+        has_ambig,
+    )
     mthds === nothing && return _generated_ex(world, source, method_error)
     length(mthds) == 1 || return _generated_ex(world, source, method_error)
 
     # look up the method and code instance
     mtypes, msp, m = mthds[1]
-    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance}, (Any, Any, Any), m, mtypes, msp)
+    mi = ccall(
+        :jl_specializations_get_linfo,
+        Ref{MethodInstance},
+        (Any, Any, Any),
+        m,
+        mtypes,
+        msp,
+    )
     ci = retrieve_code_info(mi, world)::CodeInfo
 
     # prepare a new code info
@@ -234,98 +246,4 @@ end
     $(Expr(:meta, :generated, codegen_world_age_generator))
 end
 
-else
-
-# on older versions of Julia we fall back to looking up the current world. this may be wrong
-# when the generator is invoked in a different world (TODO: when does this happen?)
-
-function codegen_world_age_generator(self, ft::Type, tt::Type)
-    @nospecialize
-    @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
-    ft = ft.parameters[1]
-    tt = tt.parameters[1]
-
-    # validation
-    ft <: Core.Builtin && error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
-
-    # look up the method
-    method_error = :(throw(MethodError(ft, tt)))
-    sig = Tuple{ft, tt.parameters...}
-    min_world = Ref{UInt}(typemin(UInt))
-    max_world = Ref{UInt}(typemax(UInt))
-    has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    mthds = if VERSION >= v"1.7.0-DEV.1297"
-        Base._methods_by_ftype(sig, #=mt=# nothing, #=lim=# -1,
-                               #=world=# typemax(UInt), #=ambig=# false,
-                               min_world, max_world, has_ambig)
-        # XXX: use the correct method table to support overlaying kernels
-    else
-        Base._methods_by_ftype(sig, #=lim=# -1,
-                               #=world=# typemax(UInt), #=ambig=# false,
-                               min_world, max_world, has_ambig)
-    end
-    # XXX: using world=-1 is wrong, but the current world isn't exposed to this generator
-    mthds === nothing && return method_error
-    length(mthds) == 1 || return method_error
-
-    # look up the method and code instance
-    mtypes, msp, m = mthds[1]
-    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance}, (Any, Any, Any), m, mtypes, msp)
-    ci = retrieve_code_info(mi)::CodeInfo
-
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    empty!(new_ci.codelocs)
-    resize!(new_ci.linetable, 1)                # see note below
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
-    new_ci.edges = MethodInstance[mi]
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:3]
-
-    # return the current world age (which is not technically the codegen world age,
-    # but works well enough for invalidation purposes)
-    push!(new_ci.code, ReturnNode(Base.get_world_counter()))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    push!(new_ci.codelocs, 1)   # see note below
-    new_ci.ssavaluetypes += 1
-
-    # NOTE: we keep the first entry of the original linetable, and use it for location info
-    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
-    #       corruption of the back trace), and reusing the target function's info
-    #       has as advantage that we see the name of the kernel in the backtraces.
-
-    return new_ci
-end
-
-@eval function codegen_world_age(ft, tt)
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta,
-           :generated,
-           Expr(:new,
-                Core.GeneratedFunctionStub,
-                :codegen_world_age_generator,
-                Any[:methodinstance, :ft, :tt],
-                Any[],
-                @__LINE__,
-                QuoteNode(Symbol(@__FILE__)),
-                true)))
-end
-
-end
-
 export codegen_world_age
-
-
-
-
-
