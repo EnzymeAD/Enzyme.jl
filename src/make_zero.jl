@@ -90,6 +90,8 @@ end
             return y
         end
     elseif nf == 0
+        # I can't think of a type that would wind up here and not get caught by
+        # guaranteed_const_nongen, unless floats are removed from make_zero's leaf types
         return f(xs...)::RT
     elseif isdefined(x1, nf)
         # fast path when all fields are set
@@ -183,7 +185,9 @@ is Duplicated this implies `newyi === yi`.
         if isleaftype(T)
             if activitystate == ActiveState
                 return f(xs...)::T
-            else 
+            else  # MixedState
+                # make_zero! does not have MixedState leaf types, so this branch is
+                # currently not covered by tests
                 return f(y, xs...)::T
             end
         else
@@ -199,6 +203,9 @@ end
     @assert Base.isconcretetype(T)
     nf = fieldcount(T)
     if nf == 0
+        # I can't think of a type that would wind up here and not get caught by
+        # guaranteed_const_nongen, and is not a leaf type of make_zero! (i.e., a float), so
+        # this branch is currently not covered by tests
         return nothing
     end
     for i = 1:nf
@@ -249,6 +256,9 @@ end
 
     nf = fieldcount(T)
     if nf == 0
+        # I can't think of a type that would wind up here and not get caught by
+        # guaranteed_const_nongen, and is not a leaf type of make_zero! (i.e., a float), so
+        # this branch is currently not covered by tests
         return f(xs...)::T
     elseif isdefined(y, nf)
         # fast path when all fields are set
