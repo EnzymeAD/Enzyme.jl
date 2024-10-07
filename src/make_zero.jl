@@ -1,5 +1,4 @@
 """
-    recursive_map(f, xs::T...) where {T}
     recursive_map(
         ::Type{T},
         f,
@@ -31,8 +30,6 @@ values of type `T` such that `isleaftype(T) == true` are not recursed into, but 
 passed to `f`. Non-array types with `fieldcount(T) == 0`, including built-in floats and
 other primitve types, are always considered leaf types as they cannot be recursed into.
 """
-recursive_map(f::F, xs::T...) where {F,T} = recursive_map(T, f, IdDict(), xs)::T
-
 @inline function recursive_map(
     ::Type{T},
     f::F,
@@ -128,7 +125,6 @@ end
 end
 
 """
-    recursive_map!!(f, y::T, xs::T...) where {T}
     recursive_map!!(
         f, y::T seen::Base.IdSet, xs::NTuple{N,T}, isleaftype=Returns(false)
     ) where {T,N}
@@ -168,10 +164,6 @@ corresponding method `newyi = f(yi, x1i, x2i, ..., xNi)` that updates the mutabl
 `y` in-place and reuses them in the returned value `newyi`. If the inferred activity state
 is Duplicated this implies `newyi === yi`.
 """
-function recursive_map!!(f::F, y::T, xs::T...) where {F,T}
-    return recursive_map!!(f, y, Base.IdSet(), xs)::T
-end
-
 @inline function recursive_map!!(
     f::F, y::T, seen::Base.IdSet, xs::NTuple{N,T}, isleaftype::L=Returns(false)
 ) where {F,T,N,L}
@@ -277,7 +269,6 @@ end
 end
 
 """
-    recursive_map!(f, y::T, xs::T...) where {T}
     recursive_map!(
         f, y::T seen::Base.IdSet, xs::NTuple{N,T}, isleaftype=Returns(false)
     ) where {T,N}
@@ -288,10 +279,6 @@ leaf values in the `xs`. This works like `recursive_map!!`, except it requires `
 be fully updated in-place, and always returns `nothing`. See the docstring for
 `recursive_map!!` for further details.
 """
-function recursive_map!(f::F, y::T, xs::T...) where {F,T}
-    return recursive_map!(f, y, Base.IdSet(), xs)::Nothing
-end
-
 function recursive_map!(f, y::T, seen, xs::NTuple{N,T}, isleaftype) where {N,T}
     if active_reg_inner(T, (), nothing, Val(true)) == ActiveState  # justActive
         msg = (
