@@ -1123,15 +1123,12 @@ end
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
-    func::Const{typeof(Base._linspace)},
-    RT::Type{
-        <:Union{Const,DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed},
-    },
-    type,
-    start::Annotation{<:Base.IEEEFloat},
-    stop::Annotation{<:Base.IEEEFloat},
+    func::Const{typeof(Base.range_start_stop_length)},
+    RT,
+    start::Annotation{T},
+    stop::Annotation{T},
     len::Annotation{<:Integer},
-)
+) where T <: Base.IEEEFloat
     ret = func.val(start.val, stop.val, len.val)
     dstart = if start isa Const
         zero(eltype(ret))
@@ -1195,13 +1192,12 @@ end
 
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
-    func::Const{typeof(Base._linspace)},
+    func::Const{typeof(Base.range_start_stop_length)},
     ::Type{RT},
-    type,
-    start::Annotation{<:Base.IEEEFloat},
-    stop::Annotation{<:Base.IEEEFloat},
+    start::Annotation{T},
+    stop::Annotation{T},
     len::Annotation{<:Base.Integer},
-) where RT
+) where {RT, T <: Base.IEEEFloat}
     if EnzymeRules.needs_primal(config)
         primal = func.val(start.val, stop.val, eln.val)
     else
@@ -1212,22 +1208,22 @@ end
 
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
-    func::Const{typeof(Base._linspace)},
+    func::Const{typeof(Base.range_start_stop_length)},
     dret,
-    tape::Nothing,
-    start::Annotation{T1},
-    stop::Annotation{T2},
+    tape,
+    start::Annotation{T},
+    stop::Annotation{T},
     len::Annotation{T3},
-) where {T1<:Base.IEEEFloat,T2<:Base.IEEEFloat,T3<:Integer}
+) where {T <: Base.IEEEFloat, T3<:Integer}
 
     dstart = if start isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        T1(dret.val.ref.hi)
+        T(dret.val.ref.hi)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            T1(dret.val[i].ref.hi)
+            T(dret.val[i].ref.hi)
         end
     end
 
@@ -1235,11 +1231,11 @@ function EnzymeRules.reverse(
     dstop = if stop isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        zero(T3)
+        zero(T)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            zero(T3)
+            zero(T)
         end
     end
 
