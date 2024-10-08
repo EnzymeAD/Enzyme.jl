@@ -1129,13 +1129,12 @@ function EnzymeRules.forward(
     stop::Annotation{T},
     len::Annotation{<:Integer},
 ) where T <: Base.IEEEFloat
-
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return Duplicated(
                 func.val(start.val, stop.val, len.val),
                 func.val(
-                        start isa Const ? zero(start.val) : start.dval,
+                        start isa Const ? zero(start.val) : -start.dval,
                         stop isa Const ? zero(stop.val) : stop.dval,
                         len.val)
                 )
@@ -1144,9 +1143,9 @@ function EnzymeRules.forward(
                 func.val(start.val, stop.val, len.val),
                 ntuple(
                     i -> func.val(
-                        start isa Const ? zero(start.val) : start.dval[i],
+                        start isa Const ? zero(start.val) : -start.dval[i],
                         stop isa Const ? zero(stop.val)  : stop.dval[i],
-                        length = len.val,
+                        len.val,
                     ),
                     Val(EnzymeRules.width(config)),
                 ),
@@ -1155,15 +1154,15 @@ function EnzymeRules.forward(
     elseif EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             return func.val(
-                        start isa Const ? zero(start.val) : start.dval,
+                        start isa Const ? zero(start.val) : -start.dval,
                         stop isa Const ? zero(stop.val) : stop.dval,
                         len.val)
         else
             return ntuple(
                 i -> func.val(
-                    start isa Const ? zero(start.val) : start.dval[i],
+                    start isa Const ? zero(start.val) : -start.dval[i],
                     stop isa Const ? zero(stop.val)  : stop.dval[i],
-                    length = len.val,
+                    len.val,
                 ),
                 Val(EnzymeRules.width(config)),
             )
@@ -1200,31 +1199,29 @@ function EnzymeRules.reverse(
     stop::Annotation{T},
     len::Annotation{T3},
 ) where {T <: Base.IEEEFloat, T3<:Integer}
-
     dstart = if start isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        T(dret.val.ref.hi)
+        T(dret.val.ref.hi) - T(dret.val.step.hi) / (len.val - 1)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            T(dret.val[i].ref.hi)
+            T(dret.val[i].ref.hi)  - T(dret.val[i].step.hi) / (len.val - 1)
         end
     end
 
-    # TODO check
     dstop = if stop isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        zero(T)
+        T(dret.val.step.hi) / (len.val - 1)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            zero(T)
+            T(dret.val[i].step.hi) / (len.val - 1)
         end
     end
 
-    return (dstart, dstop, len)
+    return (dstart, dstop, nothing)
 end
 
 
