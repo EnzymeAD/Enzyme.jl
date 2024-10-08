@@ -195,14 +195,14 @@ end
     @test z[2][1] == 0
     @test z[2][2] == 1
     @test z[3] ≈ [0.0, 0.0]
-
+    
     z2 = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
     Enzyme.make_zero!(z2)
     @test z2[1] ≈ [0.0, 0.0, 0.0]
     @test z2[2][1] == 0
     @test z2[2][2] == 1
     @test z2[3] ≈ [0.0, 0.0]
-
+    
     z3 = [3.4, "foo"]
     Enzyme.make_zero!(z3)
     @test z3[1] ≈ 0.0
@@ -210,7 +210,7 @@ end
 
     z4 = sin
     Enzyme.make_zero!(z4)
-
+    
     struct Dense
         n_inp::Int
         b::Vector{Float64}
@@ -249,21 +249,21 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-
+    
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-
+    
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-
+    
     fn = sprint() do io
        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
@@ -411,7 +411,7 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(x->rem2pi(x,RoundDown), 0.7)
     test_scalar(x->fma(x,x+1,x/3), 2.3)
     test_scalar(sqrt, 1.7+2.1im)
-
+    
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
     @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
@@ -437,7 +437,7 @@ end
 
 @testset "Deferred and deferred thunk" begin
     function dot(A)
-        return A[1] * A[1] + A[2] * A[2]
+        return A[1] * A[1] + A[2] * A[2] 
     end
     dA = zeros(2)
     A = [3.0, 5.0]
@@ -1063,7 +1063,7 @@ end
 
     bias = Float32[0.0;;;]
     res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
-
+    
     @test bias[1][1] ≈ 0.0
     @test res[1][1] ≈ cos(x[1])
 end
@@ -1183,12 +1183,12 @@ end
 
     Enzyme.autodiff(Reverse,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
     @test dv[1] ≈ 1.
-
+    
     DV1=Float32[0]
     DV2=Float32[1]
     v=ones(5)
     dv=zero(v)
-    dv[1] = 1.
+    dv[1] = 1.    
     Enzyme.autodiff(Forward,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
     @test DV2[1] ≈ 1.
 end
@@ -1444,7 +1444,7 @@ end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
     n = length(v)
-
+    
     m = 1.0 + p * (1.0 - alpha - 1.0)
     aleph = n*p + oftype(p, m)
     j = clamp(trunc(Int, aleph), 1, n-1)
@@ -1457,7 +1457,7 @@ end
         a = @inbounds v[j]
         b = @inbounds v[j + 1]
     end
-
+    
     return a + γ*(b-a)
 end
 
@@ -1679,18 +1679,18 @@ end
 	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
 
     function whocallsmorethan30args(R)
-        temp = diag(R)
-         R_inv = [temp[1] 0. 0. 0. 0. 0.;
-             0. temp[2] 0. 0. 0. 0.;
-             0. 0. temp[3] 0. 0. 0.;
-             0. 0. 0. temp[4] 0. 0.;
-             0. 0. 0. 0. temp[5] 0.;
+        temp = diag(R)     
+         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
+             0. temp[2] 0. 0. 0. 0.; 
+             0. 0. temp[3] 0. 0. 0.; 
+             0. 0. 0. temp[4] 0. 0.; 
+             0. 0. 0. 0. temp[5] 0.; 
          ]
-
+    
         return sum(R_inv)
     end
-
-    R = zeros(6,6)
+    
+    R = zeros(6,6)    
     dR = zeros(6, 6)
 
     @static if VERSION ≥ v"1.10-"
@@ -2296,7 +2296,7 @@ end
 
     x = ones(30)
     autodiff(Reverse, bc0_test_function, Active, Const(x))
-
+    
     x = rand(Float32, 2, 3)
     Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
 
@@ -2466,7 +2466,7 @@ end
 
     adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
     @test adres[1][4] ≈ 5050.0
-
+    
     mutable struct MyTypeM
        x::Float64
        y
@@ -2485,12 +2485,12 @@ end
        x = getfield_idx(v, fld)
        unstable_mul(x, y)
     end
-
+    
     mx = MyTypeM(3.0, 1)
     res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(:x))
     @test mx.x ≈ 3.0
     @test res[1][1] ≈ 3.0
-
+    
     mx = MyTypeM(3.0, 1)
     res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(0))
     @test mx.x ≈ 3.0
@@ -2572,7 +2572,7 @@ end
     end
     # TODO: Add test for NoShadowException
 end
-
+    
 function indirectfltret(a)::DataType
     a[] *= 2
     return Float64
@@ -2649,11 +2649,11 @@ end
         1,
         nothing
     )
-
+    
     nt1 = Enzyme.Compiler.runtime_generic_augfwd(args...)
     @test nt1[1] == (nothing,)
     @test nt1[2] == (nothing,)
-
+    
     args2 = (
         Val{(false, false, false)},
         Val(false),
@@ -2667,7 +2667,7 @@ end
         2,
         nothing
     )
-
+    
     nt = Enzyme.Compiler.runtime_generic_augfwd(args2...)
     @test nt[1] == MyFlux()
     @test nt[2] == MyFlux()
@@ -2935,7 +2935,7 @@ end
     dx = [0.0, 0.0, 0.0]
 
     autodiff(Reverse, sparse_eval, Duplicated(x, dx))
-
+    
     @test x ≈ [3.1, 2.7, 8.2]
     @test dx ≈ [-1.0, 43.74, 0]
 end
@@ -3127,7 +3127,7 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
         mkarray((2,2,2), matrix[1,2], 0.0, 0.0, matrix[2,2], matrix[1,1], 0.0, 0.0, matrix[2,1])
 
     # ∂ tuple / ∂ matrix
-    @test Enzyme.gradient(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)[1] ≃
+    @test Enzyme.gradient(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)[1] ≃ 
         [(matrix[1,2],0.0) (matrix[1,1],0.0); (0.0,matrix[2,2]) (0.0,matrix[2,1])]
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)
     @test Enzyme.jacobian(Enzyme.Forward, x->(x[1,1]*x[1,2],x[2,1]*x[2,2]), matrix)[1] ≃
@@ -3153,7 +3153,7 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
     @test Enzyme.gradient(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)[1] ≃
         [OutStruct(matrix[1,2],0.0, exp(matrix[1,1])) OutStruct(matrix[1,1],0.0,0.0); OutStruct(0.0,matrix[2,2],0.0) OutStruct(0.0,matrix[2,1], 1.0)]
     @test_broken Enzyme.gradient(Enzyme.Reverse, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)[1]
-    @test Enzyme.jacobian(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)[1] ≃
+    @test Enzyme.jacobian(Enzyme.Forward, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)[1] ≃ 
         [OutStruct(matrix[1,2],0.0, exp(matrix[1,1])) OutStruct(matrix[1,1],0.0,0.0); OutStruct(0.0,matrix[2,2],0.0) OutStruct(0.0,matrix[2,1], 1.0)]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x->OutStruct(x[1,1]*x[1,2],x[2,1]*x[2,2], exp(x[1,1])+x[2,2]), matrix)[1]
 
@@ -3694,7 +3694,7 @@ end
     res = autodiff(set_runtime_activity(ForwardWithPrimal), Const(f2), Duplicated, Duplicated(0.2, 1.0))
     @test res[2] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
-    # but since the return is abstractfloat doing the
+    # but since the return is abstractfloat doing the 
     @test res[1] ≈ 1.0
 end
 
@@ -3717,8 +3717,8 @@ function uns_sum2(x::Array{T})::T where T
     return v
 end
 
-function uns_ad_forward(scale_diag::Vector{T}, c) where T
-    ccall(:jl_, Cvoid, (Any,), scale_diag)
+function uns_ad_forward(scale_diag::Vector{T}, c) where T 
+    ccall(:jl_, Cvoid, (Any,), scale_diag) 
     res = uns_mymean(uns_sum2, [scale_diag,], T, c)
 	return res
 end
@@ -3904,7 +3904,7 @@ end
     @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ [1.0]
 end
 
-const CUmemoryPool2 = Ptr{Float64}
+const CUmemoryPool2 = Ptr{Float64} 
 
 struct CUmemPoolProps2
     reserved::NTuple{31,Char}
@@ -3963,7 +3963,7 @@ function cuMemPoolCreate2(pool, poolProps)
 end
 
 function cual()
-        props = Ref(CUmemPoolProps2(
+        props = Ref(CUmemPoolProps2( 
             ntuple(i->Char(0), 31)
         ))
         handle_ref = Ref{CUmemoryPool2}()
@@ -4116,10 +4116,10 @@ end
         Duplicated(inters, dinters),
     )
 
-    @test dinters[1].k ≈ 0.1
-    @test dinters[1].t0 ≈ 1.0
-    @test dinters[2].k ≈ 0.3
-    @test dinters[2].t0 ≈ 2.0
+    @test dinters[1].k ≈ 0.1 
+    @test dinters[1].t0 ≈ 1.0 
+    @test dinters[2].k ≈ 0.3 
+    @test dinters[2].t0 ≈ 2.0 
 end
 
 @testset "Statistics" begin
@@ -4197,7 +4197,7 @@ end
     @test NoPrimal(ReverseSplitWithPrimal) === ReverseSplitNoPrimal
 end
 
-# TEST EXTENSIONS
+# TEST EXTENSIONS 
 using SpecialFunctions
 @testset "SpecialFunctions ext" begin
     lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
