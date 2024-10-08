@@ -1129,41 +1129,23 @@ function EnzymeRules.forward(
     stop::Annotation{T},
     len::Annotation{<:Integer},
 ) where T <: Base.IEEEFloat
-    ret = func.val(start.val, stop.val, len.val)
-    dstart = if start isa Const
-        zero(eltype(ret))
-    elseif start isa Duplicated || start isa DuplicatedNoNeed
-        start.dval
-    elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
-        ntuple(i -> start.dval[i], Val(EnzymeRules.width(config)))
-    else
-        error(
-            "Annotation type $(typeof(start)) not supported for range start. Please open an issue",
-        )
-    end
-
-    dstop = if stop isa Const
-        zero(eltype(ret))
-    elseif step isa Duplicated || step isa DuplicatedNoNeed
-        step.dval
-    elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
-        ntuple(i -> step.dval[i], Val(EnzymeRules.width(config)))
-    else
-        error(
-            "Annotation type $(typeof(start)) not supported for range step. Please open an issue",
-        )
-    end
 
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            return Duplicated(ret, func.val(dstart, dstop, len.val))
+            return Duplicated(
+                func.val(start.val, stop.val, len.val),
+                func.val(
+                        start isa Const ? zero(start.val) : start.dval,
+                        stop isa Const ? zero(stop.val) : stop.dval,
+                        len.val)
+                )
         else
             return BatchDuplicated(
-                ret,
+                func.val(start.val, stop.val, len.val),
                 ntuple(
                     i -> func.val(
-                        dstart isa Number ? dstart : dstart[i],
-                        dstop isa Number ? dstop : dstop[i],
+                        start isa Const ? zero(start.val) : start.dval[i],
+                        stop isa Const ? zero(stop.val)  : stop.dval[i],
                         length = len.val,
                     ),
                     Val(EnzymeRules.width(config)),
@@ -1172,19 +1154,22 @@ function EnzymeRules.forward(
         end
     elseif EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            return func.val(dstart, dstop, len.val)
+            return func.val(
+                        start isa Const ? zero(start.val) : start.dval,
+                        stop isa Const ? zero(stop.val) : stop.dval,
+                        len.val)
         else
             return ntuple(
                 i -> func.val(
-                    dstart isa Number ? dstart : dstart[i],
-                    dstop isa Number ? dstop : dstop[i],
+                    start isa Const ? zero(start.val) : start.dval[i],
+                    stop isa Const ? zero(stop.val)  : stop.dval[i],
                     length = len.val,
                 ),
                 Val(EnzymeRules.width(config)),
             )
         end
     elseif EnzymeRules.needs_primal(config)
-        return ret
+        return func.val(start.val, stop.val, len.val)
     else
         return nothing
     end
@@ -1199,7 +1184,7 @@ function EnzymeRules.augmented_primal(
     len::Annotation{<:Base.Integer},
 ) where {RT, T <: Base.IEEEFloat}
     if EnzymeRules.needs_primal(config)
-        primal = func.val(start.val, stop.val, eln.val)
+        primal = func.val(start.val, stop.val, len.val)
     else
         primal = nothing
     end
