@@ -123,6 +123,7 @@ include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
 include("internal_rules.jl")
+include("sugar.jl")
 
 import .Compiler: CompilationException
 
@@ -907,7 +908,7 @@ forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Acti
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -1321,7 +1322,7 @@ forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Con
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -1896,7 +1897,7 @@ about the type of the AbstractArray returned by this function (which may or may 
 as the input AbstractArray if provided).
 
 For functions who return other types, this function will retun an AbstractArray
-of shape `size(input)` of values of the output type. 
+of shape `size(input)` of values of the output type.
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
 
@@ -2080,8 +2081,8 @@ This function will return an AbstractArray whose shape is `(size(output)..., siz
 No guarantees are presently made about the type of the AbstractArray returned by this function
 (which may or may not be the same as the input AbstractArray if provided).
 
-In the future, when this function is extended to handle non-array return types, 
-this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
+In the future, when this function is extended to handle non-array return types,
+this function will retun an AbstractArray of shape `size(output)` of values of the input type.
 ```
 """
 @inline function jacobian(

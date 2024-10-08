@@ -1,20 +1,4 @@
 """
-    pick_batchsize(totalsize, mode, ftype, return_activity, argtypes...)
-
-Return a reasonable batch size for batched differentiation.
-
-!!! warning
-    This function is experimental, and not part of the public API.
-"""
-function pick_batchsize(totalsize::Integer,
-                        mode::Mode,
-                        ftype::Type,
-                        return_activity, ::Type{<:Annotation},
-                        argtypes::Vararg{Type{<:Annotation},Nargs}) where {Nargs}
-    return min(totalsize, 16)
-end
-
-"""
     unsafe_to_pointer
 
 !!! warning
@@ -150,7 +134,7 @@ import Base: allocatedinline
 
 #Excerpt from https://github.com/JuliaGPU/GPUCompiler.jl/blob/v0.19.4/src/jlgen.jl
 # !!! warning "codegen_world_age below is fundamentally unsound."
-#     It was removed from GPUCompiler since it can produce incorrect results. 
+#     It was removed from GPUCompiler since it can produce incorrect results.
 
 using Core: MethodInstance
 using GPUCompiler: tls_world_age, MethodError, methodinstance
