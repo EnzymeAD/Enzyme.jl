@@ -1121,6 +1121,132 @@ function EnzymeRules.forward(
     end
 end
 
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base._linspace)},
+    RT::Type{
+        <:Union{Const,DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed},
+    },
+    type,
+    start::Annotation{<:Base.IEEEFloat},
+    stop::Annotation{<:Base.IEEEFloat},
+    len::Annotation{<:Integer},
+)
+    ret = func.val(start.val, stop.val, len.val)
+    dstart = if start isa Const
+        zero(eltype(ret))
+    elseif start isa Duplicated || start isa DuplicatedNoNeed
+        start.dval
+    elseif start isa BatchDuplicated || start isa BatchDuplicatedNoNeed
+        ntuple(i -> start.dval[i], Val(EnzymeRules.width(config)))
+    else
+        error(
+            "Annotation type $(typeof(start)) not supported for range start. Please open an issue",
+        )
+    end
+
+    dstop = if stop isa Const
+        zero(eltype(ret))
+    elseif step isa Duplicated || step isa DuplicatedNoNeed
+        step.dval
+    elseif step isa BatchDuplicated || step isa BatchDuplicatedNoNeed
+        ntuple(i -> step.dval[i], Val(EnzymeRules.width(config)))
+    else
+        error(
+            "Annotation type $(typeof(start)) not supported for range step. Please open an issue",
+        )
+    end
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(ret, func.val(dstart, dstop, len.val))
+        else
+            return BatchDuplicated(
+                ret,
+                ntuple(
+                    i -> func.val(
+                        dstart isa Number ? dstart : dstart[i],
+                        dstop isa Number ? dstop : dstop[i],
+                        length = len.val,
+                    ),
+                    Val(EnzymeRules.width(config)),
+                ),
+            )
+        end
+    elseif EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return func.val(dstart, dstop, len.val)
+        else
+            return ntuple(
+                i -> func.val(
+                    dstart isa Number ? dstart : dstart[i],
+                    dstop isa Number ? dstop : dstop[i],
+                    length = len.val,
+                ),
+                Val(EnzymeRules.width(config)),
+            )
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return ret
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Base._linspace)},
+    ::Type{RT},
+    type,
+    start::Annotation{<:Base.IEEEFloat},
+    stop::Annotation{<:Base.IEEEFloat},
+    len::Annotation{<:Base.Integer},
+) where RT
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, stop.val, eln.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Base._linspace)},
+    dret,
+    tape::Nothing,
+    start::Annotation{T1},
+    stop::Annotation{T2},
+    len::Annotation{T3},
+) where {T1<:Base.IEEEFloat,T2<:Base.IEEEFloat,T3<:Integer}
+
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        T1(dret.val.ref.hi)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            T1(dret.val[i].ref.hi)
+        end
+    end
+
+    # TODO check
+    dstop = if stop isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(T3)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(T3)
+        end
+    end
+
+    return (dstart, dstop, len)
+end
+
+
 # Ranges
 # Float64 ranges in Julia use bitwise `&` with higher precision
 # to correct for numerical error, thus we put rules over the
@@ -1195,8 +1321,6 @@ function EnzymeRules.forward(
         return nothing
     end
 end
-
-
 
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
