@@ -1884,6 +1884,8 @@ end
     end
 end
 
+@inline specialize_output(output, input) = output
+
 """
     gradient(::ForwardMode, f, x; shadows=onehot(x), chunk=nothing)
 
@@ -2135,11 +2137,11 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                             # st : outshape x total inputs
                             tupstack($tmp, outshape, inshape)
                         else
-                            TupleArray($tmp, size($arg))
+                            specialize_output(TupleArray($tmp, size($arg)), $(vals[1]))
                         end
                     end
                 else
-                    :(TupleArray($tmp, size($arg)))
+                    :(specialize_output(TupleArray($tmp, size($arg)), $(vals[1])))
                 end
             else
                 tmp

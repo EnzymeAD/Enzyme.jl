@@ -12,6 +12,8 @@ end
     reshape(reduce(hcat, map(vec, rows)), Size(outshape..., inshape...))
 end
 
+@inline Enzyme.specialize_output(output, input::StaticArray) = convert(SArray, output)
+
 @inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}) where {S, T, N, L}
     ntuple(Val(L)) do i
         Base.@_inline_meta
