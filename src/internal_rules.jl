@@ -1121,6 +1121,110 @@ function EnzymeRules.forward(
     end
 end
 
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.range_start_stop_length)},
+    RT,
+    start::Annotation{T},
+    stop::Annotation{T},
+    len::Annotation{<:Integer},
+) where T <: Base.IEEEFloat
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(
+                func.val(start.val, stop.val, len.val),
+                func.val(
+                        start isa Const ? zero(start.val) : -start.dval,
+                        stop isa Const ? zero(stop.val) : stop.dval,
+                        len.val)
+                )
+        else
+            return BatchDuplicated(
+                func.val(start.val, stop.val, len.val),
+                ntuple(
+                    i -> func.val(
+                        start isa Const ? zero(start.val) : -start.dval[i],
+                        stop isa Const ? zero(stop.val)  : stop.dval[i],
+                        len.val,
+                    ),
+                    Val(EnzymeRules.width(config)),
+                ),
+            )
+        end
+    elseif EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return func.val(
+                        start isa Const ? zero(start.val) : -start.dval,
+                        stop isa Const ? zero(stop.val) : stop.dval,
+                        len.val)
+        else
+            return ntuple(
+                i -> func.val(
+                    start isa Const ? zero(start.val) : -start.dval[i],
+                    stop isa Const ? zero(stop.val)  : stop.dval[i],
+                    len.val,
+                ),
+                Val(EnzymeRules.width(config)),
+            )
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return func.val(start.val, stop.val, len.val)
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Base.range_start_stop_length)},
+    ::Type{RT},
+    start::Annotation{T},
+    stop::Annotation{T},
+    len::Annotation{<:Base.Integer},
+) where {RT, T <: Base.IEEEFloat}
+    if EnzymeRules.needs_primal(config)
+        primal = func.val(start.val, stop.val, len.val)
+    else
+        primal = nothing
+    end
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Base.range_start_stop_length)},
+    dret,
+    tape,
+    start::Annotation{T},
+    stop::Annotation{T},
+    len::Annotation{T3},
+) where {T <: Base.IEEEFloat, T3<:Integer}
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        T(dret.val.ref.hi) - T(dret.val.step.hi) / (len.val - 1)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            T(dret.val[i].ref.hi)  - T(dret.val[i].step.hi) / (len.val - 1)
+        end
+    end
+
+    dstop = if stop isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        T(dret.val.step.hi) / (len.val - 1)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            T(dret.val[i].step.hi) / (len.val - 1)
+        end
+    end
+
+    return (dstart, dstop, nothing)
+end
+
+
 # Ranges
 # Float64 ranges in Julia use bitwise `&` with higher precision
 # to correct for numerical error, thus we put rules over the
@@ -1195,8 +1299,6 @@ function EnzymeRules.forward(
         return nothing
     end
 end
-
-
 
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
