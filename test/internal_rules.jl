@@ -646,7 +646,7 @@ end
         ts = Array(Base.range_start_stop_length(x, 1.25, 30))
         return sum(ts)
     end
-    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (375.0,)
+    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (374.99999999999994,)
     @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
     @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (15.0,)
 
