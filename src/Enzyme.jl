@@ -1847,6 +1847,8 @@ end
     end
 end
 
+@inline specialize_output(output, input) = output
+
 """
     gradient(::ForwardMode, f, x; shadows=onehot(x), chunk=nothing)
 
@@ -2010,7 +2012,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
         # st : outshape x total inputs
         tupstack(cols, outshape, inshape)
     elseif x isa AbstractArray
-        TupleArray(cols, size(x))
+        specialize_output(TupleArray(cols, size(x)), x)
     else
         cols
     end

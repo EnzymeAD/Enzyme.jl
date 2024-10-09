@@ -2869,9 +2869,11 @@ end
 
     x = @SVector Float64[1, 2]
 
+
+    @inferred gradient(Forward, f0, x)
     dx = gradient(Forward, f0, x)[1]
-    @test dx isa Enzyme.TupleArray
-    @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
+    @test dx isa SVector
+    @test dx == [2.0, 2.0]  # test to make sure conversion works
     @test gradient(Forward, f1, x)[1] isa SMatrix
     @test gradient(Forward, f1, x)[1] == [0 1.0; 0 2.0]
     @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
@@ -2879,9 +2881,10 @@ end
 
     x = @SMatrix Float64[1 2; 3 4]
 
+    @inferred gradient(Forward, f0, x)
     dx = gradient(Forward, f0, x)[1]
-    @test dx isa Enzyme.TupleArray
-    @test convert(SArray, dx) == fill(2.0, (2,2))
+    @test dx isa SVector
+    @test dx == fill(2.0, (2,2))
     @test gradient(Forward, f1, x)[1] isa SArray
     @test gradient(Forward, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
     @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
@@ -2891,9 +2894,10 @@ end
 
     x = @SVector Float64[1, 2]
 
+    @inferred gradient(Reverse, f0, x)
     dx = gradient(Reverse, f0, x)[1]
     @test dx isa SVector
-    @test convert(SArray, dx) == [2.0, 2.0]  # test to make sure conversion works
+    @test dx == [2.0, 2.0]  # test to make sure conversion works
     @test_broken gradient(Reverse, f1, x)[1] isa SMatrix
     @test_broken gradient(Reverse, f1, x)[1] == [0 1.0; 0 2.0]
     @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
