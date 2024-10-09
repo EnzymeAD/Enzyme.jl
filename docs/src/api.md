@@ -14,6 +14,10 @@ Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.A
 Order = [:macro, :function]
 ```
 
+```@docs
+Enzyme.Compiler.recursive_accumulate
+```
+
 ## Documentation
 
 ```@autodocs
