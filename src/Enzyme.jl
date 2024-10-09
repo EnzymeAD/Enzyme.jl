@@ -123,6 +123,7 @@ include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
 include("internal_rules.jl")
+include("sugar.jl")
 
 import .Compiler: CompilationException
 
