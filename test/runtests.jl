@@ -3191,6 +3191,23 @@ mkarray(sz, args...) = reshape(vcat(args...), sz)
     @test_broken Enzyme.gradient(Enzyme.Reverse, x -> OutStruct(x.i1 * x.i2, cos(x.i3) + x.i1, exp(x.i2)), istruct)[1]
     @test_broken Enzyme.jacobian(Enzyme.Forward, x -> OutStruct(x.i1 * x.i2, cos(x.i3) + x.i1, exp(x.i2)), istruct)[1]
     @test_broken Enzyme.jacobian(Enzyme.Reverse, x -> OutStruct(x.i1 * x.i2, cos(x.i3) + x.i1, exp(x.i2)), istruct)[1]
+
+    f0 = x -> x[1,1]^2 + 2*x[1,2]^2 + 3*x[2,1]^2 - x[2,2]^2
+    f1 = x -> [x[1,1]^2, 2*x[1,2]^2 + 3*x[2,1]^2, x[1,2]^2 + x[2,1]^2, x[2,2]^2]
+
+    for x ∈ (Float64[1 2; 0 3], Float64[1 2; 2 3])  # both are [1 2; 2 3]
+        for T ∈ (Hermitian, Symmetric)
+            x = T(x)
+            df = Enzyme.gradient(Enzyme.Forward, f0, x)[1]
+            @test df ≈ Float64[2 20; 20 -6]
+
+            df = Enzyme.gradient(Enzyme.Forward, f1, x)[1]
+            @test df[:,1,1] ≈ [2,0,0,0]
+            @test df[:,1,2] ≈ [0,20,8,0]
+            @test df[:,2,1] ≈ [0,20,8,0]
+            @test df[:,2,2] ≈ [0,0,0,6]
+        end
+    end
 end
 
 @testset "Simple Jacobian" begin

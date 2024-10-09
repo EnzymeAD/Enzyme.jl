@@ -1566,6 +1566,31 @@ end
     return (one(x),)
 end
 
+function _is_symmed_index(a::CartesianIndex, b::CartesianIndex)
+    (a[1] == b[1] && a[2] == b[2]) || (a[1] == b[2] && a[2] == b[1])
+end
+
+@inline function _herm_sym_onehot(type, x::AbstractMatrix, start=1, endl=length(x))
+    idxs = CartesianIndices(x)
+    ntuple(Val(endl - start + 1)) do i0
+        Base.@_inline_meta
+        i = start + i0 - 1
+        idx = idxs[i]
+        res = similar(parent(x))
+        for idx2 ∈ CartesianIndices(x)
+            @inbounds res[idx2] = _is_symmed_index(idx, idx2) ? 1 : 0
+        end
+        type(res)
+    end
+end
+
+@inline onehot(x::Hermitian) = _herm_sym_onehot(Hermitian, x)
+@inline onehot(x::Symmetric) = _herm_sym_onehot(Symmetric, x)
+
+@inline onehot(x::Hermitian, start, endl) = _herm_sym_onehot(Hermitian, x, start, endl)
+@inline onehot(x::Symmetric, start, endl) = _herm_sym_onehot(Symmetric, x, start, endl)
+
+
 """
     gradient(::ReverseMode, f, args...)
 
