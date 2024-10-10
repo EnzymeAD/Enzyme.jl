@@ -2000,9 +2000,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
 
         argnum = length(ST.parameters[i].parameters)
 
-        argderivative = if argnum == 0
-            vals[i]
-        elseif ty <: AbstractFloat
+        argderivative = if ty <: AbstractFloat
             dargs = Expr[]
             for (j, arg2) in enumerate(syms)
                 if i == j
@@ -2022,6 +2020,8 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
             end
 
             :($resp[1])
+        elseif argnum == 0
+            vals[i]
         elseif CS == Nothing
             dargs = Expr[]
             for (j, arg2) in enumerate(syms)
