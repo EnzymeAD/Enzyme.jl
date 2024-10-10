@@ -1866,7 +1866,17 @@ function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
     return a.data[start]
 end
 
-@inline function tupstack(x, inshape, outshape)
+@inline function tupstack(data::Tuple{Vararg{<:Array{T}}}, inshape::Tuple{Vararg{Int}}, outshape::Tuple{Vararg{Int}}) where {T}
+	off = prod(inshape)
+	num = prod(outshape)
+	res = Array{T}(undef, inshape..., outshape...)
+	for (i, val) in enumerate(data)
+		Base.unsafe_copyto!(res, off*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
+	end
+	res
+end
+
+@inline function tupstack(x, inshape::Tuple{Vararg{Int}}, outshape::Tuple{Vararg{Int}})
     st = Base.stack(x)
     if length(outshape) == 1
         st
