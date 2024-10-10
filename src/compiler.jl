@@ -9359,4 +9359,92 @@ end
 
 include("compiler/reflection.jl")
 
+@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
+    ir = JuliaContext() do ctx
+        Base.@_inline_meta
+
+        target = Compiler.DefaultCompilerTarget()
+        params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
+        mi = GPUCompiler.methodinstance(fn, Tuple{T, Int})
+        job = CompilerJob(mi, CompilerConfig(target, params; kernel = false))
+        mod, meta = GPUCompiler.codegen(
+            :llvm,
+            job;
+            optimize = false,
+            cleanup = false,
+            validate = false,
+        )
+        copysetfn = meta.entry
+        blk = first(blocks(copysetfn))
+        for inst in collect(instructions(blk))
+            if isa(inst, LLVM.FenceInst)
+                eraseInst(blk, inst)
+            end
+            if isa(inst, LLVM.CallInst)
+                fn = LLVM.called_operand(inst)
+                if isa(fn, LLVM.Function)
+                    if LLVM.name(fn) == "julia.safepoint"
+                        eraseInst(blk, inst)
+                    end
+                end     
+            end
+        end
+        push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
+        ity = convert(LLVMType, Int)
+        jlvaluet = convert(LLVMType, T; allow_boxed=true)
+
+        FT = LLVM.FunctionType(jlvaluet,  LLVMType[jlvaluet, ity, ity])
+        llvm_f = LLVM.Function(mod, "f", FT)
+        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+
+        builder = LLVM.IRBuilder()
+        entry = BasicBlock(llvm_f, "entry")
+        position!(builder, entry)
+        inp, lstart, len = collect(LLVM.Value, parameters(llvm_f))
+
+        alloc = array_alloca!(builder, jlvaluet, len)
+
+        loop = BasicBlock(llvm_f, "loop")
+        exit = BasicBlock(llvm_f, "exit")
+
+        br!(builder, loop)
+
+        position!(builder, loop)
+        idx = phi!(builder, ity)
+
+        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
+        inc = add!(builder, idx, LLVM.ConstantInt(1))
+        push!(LLVM.incoming(idx), (inc, loop))
+        rval = add!(builder, inc, lstart)
+        res = call!(builder, FT, copysetfn, [inp, rval])
+        store!(builder, res, gep!(builder, jlvaluet, alloc, [idx]))
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+
+
+        T_int32 = LLVM.Int32Type()
+
+        gen_FT = LLVM.FunctionType(jlvaluet, [jlvaluet, value_type(alloc), T_int32])
+        inv, _ = get_function!(mod, "jl_f_tuple", gen_FT)
+
+        reinsert_gcmarker!(llvm_f)
+
+        position!(builder, exit)
+        ret!(builder, call!(builder, gen_FT, inv, [LLVM.null(jlvaluet), alloc, trunc!(builder, len, T_int32)]))
+
+        string(mod)
+    end
+    return quote
+        Base.@_inline_meta
+        Base.llvmcall(
+            ($ir, "f"),
+            Tuple{Vararg{T}},
+            Tuple{T, Int, Int},
+            x,
+            startv,
+            lengthv
+        )
+    end
+end
+
+
 end
