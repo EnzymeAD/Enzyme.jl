@@ -9416,7 +9416,7 @@ include("compiler/reflection.jl")
         inc = add!(builder, idx, LLVM.ConstantInt(1))
         push!(LLVM.incoming(idx), (inc, loop))
         rval = add!(builder, inc, lstart)
-        res = call!(builder, FT, copysetfn, [inp, rval])
+        res = call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
         store!(builder, res, gep!(builder, jlvaluet, alloc, [idx]))
         br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
 
