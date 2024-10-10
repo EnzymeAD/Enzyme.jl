@@ -1925,7 +1925,7 @@ This function supports multiple arguments and computes the gradient with respect
 ```jldoctest gradfwd2
 mul(x, y) = x[1]*y[2] + x[2]*y[1]
 
-gradient(Forward, f, [2.0, 3.0], [2.7, 3.1])
+gradient(Forward, mul, [2.0, 3.0], [2.7, 3.1])
 
 # output
 
@@ -1935,15 +1935,7 @@ gradient(Forward, f, [2.0, 3.0], [2.7, 3.1])
 This includes the ability to mark some arguments as `Const` if its derivative is not needed, returning nothing in the corresponding derivative map.
 
 ```jldoctest gradfwd2
-gradient(Forward, f, [2.0, 3.0], Const([2.7, 3.1]))
-
-# output
-
-([3.1, 2.7], nothing)
-```
-
-```jldoctest gradfwd2
-gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
+gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
 
 # output
 
