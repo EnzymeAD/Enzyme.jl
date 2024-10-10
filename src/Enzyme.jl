@@ -1972,7 +1972,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             push!(vals, :($arg.val))
             push!(consts, arg)
         else
-            push!(vals, arg))
+            push!(vals, arg)
             push!(consts, :(Const($arg)))
         end
     end
