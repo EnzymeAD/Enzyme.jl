@@ -1806,6 +1806,8 @@ end
     for (arg, ty) in zip(args, tys)
         if ty <: Enzyme.Const
             push!(exprs, :(nothing))
+        elseif ty <: AbstractFloat
+            push!(exprs, :(nothing))
         elseif ChunkTy == Nothing || ChunkTy == Val{1}
             push!(exprs, :(onehot($arg)))
         else
@@ -2000,6 +2002,26 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
 
         argderivative = if argnum == 0
             vals[i]
+        elseif ty <: AbstractFloat
+            dargs = Expr[]
+            for (j, arg2) in enumerate(syms)
+                if i == j
+                    push!(dargs, :(Duplicated($arg, one($arg))))
+                else
+                    push!(dargs, consts[j])
+                end
+            end
+
+            resp = Symbol("resp_$i")
+            push!(exprs, quote
+                $resp = autodiff($primmode, f, Duplicated, $(dargs...))
+            end)
+            if ReturnPrimal && primal == nothing
+                primal = :($resp[2])
+                primmode = NoPrimal(fm())
+            end
+
+            :($resp[1])
         elseif CS == Nothing
             dargs = Expr[]
             for (j, arg2) in enumerate(syms)
@@ -2028,12 +2050,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                 primmode = NoPrimal(fm())
             end
 
-            deriv = if ty <: AbstractFloat
-                :($resp[1][1])
-            else
-                :(values($resp[1]))
-            end
-            deriv
+            :(values($resp[1]))
         elseif CS == Val{1}
             subderivatives = Expr[]
             for an in 1:argnum
@@ -2055,13 +2072,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                     primmode = NoPrimal(fm())
                 end
 
-                deriv = if ty <: AbstractFloat
-                    :($resp[1][1])
-                else
-                    :($resp[1])
-                end
-
-                push!(subderivatives, deriv)
+                push!(subderivatives, :(values($resp[1])))
             end
             :(($(subderivatives...),))
         else
@@ -2085,13 +2096,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                     primmode = NoPrimal(fm())
                 end
 
-                deriv = if ty <: AbstractFloat
-                    :($resp[1][1])
-                else
-                    :(values($resp[1]))
-                end
-
-                push!(subderivatives, deriv)
+                push!(subderivatives, :(values($resp[1])))
             end
             :(tupleconcat($(subderivatives...)))
         end

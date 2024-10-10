@@ -10,7 +10,6 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 	@test res[2] ≈ [3.0, 2.0]
 
 	res = gradient(Forward, mul_scalar, [2.0, 3.0], [2.7, 3.1]; chunk=Val(1))
-	@show res
     @test res[1] ≈ [3.1, 2.7]
 	@test res[2] ≈ [3.0, 2.0]
 
