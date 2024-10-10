@@ -9397,12 +9397,27 @@ include("compiler/reflection.jl")
         llvm_f = LLVM.Function(mod, "f", FT)
         push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
 
+        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
+        # and also https://github.com/JuliaLang/julia/pull/47076
+        # and also https://github.com/JuliaLang/julia/pull/48620
+        needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
+
         builder = LLVM.IRBuilder()
         entry = BasicBlock(llvm_f, "entry")
         position!(builder, entry)
         inp, lstart, len = collect(LLVM.Value, parameters(llvm_f))
 
-        alloc = array_alloca!(builder, jlvaluet, len)
+        boxed_count = if sizeof(Int) == sizeof(Int64)
+            emit_box_int64!(builder, len)
+        else
+            emit_box_int32!(builder, len)
+        end
+
+        tag = emit_apply_type!(builder, NTuple, (boxed_count, unsafe_to_llvm(builder, T)))
+
+        obj = emit_allocobj!(builder, tag, len, needs_dynamic_size_workaround)
+
+        alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
 
         loop = BasicBlock(llvm_f, "loop")
         exit = BasicBlock(llvm_f, "exit")
@@ -9418,18 +9433,17 @@ include("compiler/reflection.jl")
         rval = add!(builder, inc, lstart)
         res = call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
         store!(builder, res, gep!(builder, jlvaluet, alloc, [idx]))
+        emit_writebarrier!(builder, get_julia_inner_types(builder, obj, res))
+
         br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
 
 
         T_int32 = LLVM.Int32Type()
 
-        gen_FT = LLVM.FunctionType(jlvaluet, [jlvaluet, value_type(alloc), T_int32])
-        inv, _ = get_function!(mod, "jl_f_tuple", gen_FT)
-
         reinsert_gcmarker!(llvm_f)
 
         position!(builder, exit)
-        ret!(builder, call!(builder, gen_FT, inv, [LLVM.null(jlvaluet), alloc, trunc!(builder, len, T_int32)]))
+        ret!(builder, obj)
 
         string(mod)
     end
