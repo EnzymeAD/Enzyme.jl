@@ -1,5 +1,6 @@
 using Enzyme
 using Test
+using Random
 
 @testset "ABI & Calling convention" begin
 
