@@ -384,6 +384,12 @@ end
 
     push!(seen, prev)
 
+    # For make_zero!(NamedTuple) we want to recurse and zero out
+    # the storage
+    if !Base.ismutabletype(T)
+        return Base.make_zero_immutable!(prev, seen)
+    end
+
     for i = 1:nf
         if isdefined(prev, i)
             xi = getfield(prev, i)

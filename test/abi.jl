@@ -493,6 +493,23 @@ end
     @test dv.y ≈ 0.0
 end
 
+@testset "Make Zero!" begin
+    params = (; q = rand(64), p = rand(64))
+    dparams = make_zero(params)
+    @test all(==(0), dparams.q)
+    @test all(==(0), dparams.p)
+
+    rand!(dparams.q)
+    rand!(dparams.p)
+
+    dparams2 = make_zero!(dparams)
+    @test all(==(0), dparams.q)
+    @test all(==(0), dparams.p)
+
+    @test dparams2 == dparams
+end
+
+
 @testset "Type inference" begin
     x = ones(10)
     @inferred autodiff(Enzyme.Reverse, abssum, Duplicated(x,x))
