@@ -9415,7 +9415,8 @@ include("compiler/reflection.jl")
 
         tag = emit_apply_type!(builder, NTuple, (boxed_count, unsafe_to_llvm(builder, T)))
 
-        obj = emit_allocobj!(builder, tag, len, needs_dynamic_size_workaround)
+        obj = emit_allocobj!(builder, tag, 
+        nuwmul!(builder, len, sizeof(Int)), needs_dynamic_size_workaround)
 
         alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
 
