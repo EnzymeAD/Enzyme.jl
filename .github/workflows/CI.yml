@@ -198,6 +198,7 @@ jobs:
           - ubuntu-latest
         test:
           - DynamicExpressions
+          - Distributions
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
@@ -207,8 +208,8 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Run tests"
         run: |
-            julia --color=yes --project=test/integration -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
-            julia --color=yes --project=test/integration --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}.jl
+            julia --color=yes --project=test/integration/${{ matrix.test }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration/${{ matrix.test }} --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}/runtests.jl
         shell: bash
   docs:
     name: Documentation
