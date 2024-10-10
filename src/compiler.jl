@@ -9359,4 +9359,110 @@ end
 
 include("compiler/reflection.jl")
 
+@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
+    ir = JuliaContext() do ctx
+        Base.@_inline_meta
+
+        target = Compiler.DefaultCompilerTarget()
+        params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
+        mi = GPUCompiler.methodinstance(fn, Tuple{T, Int})
+        job = CompilerJob(mi, CompilerConfig(target, params; kernel = false))
+        mod, meta = GPUCompiler.codegen(
+            :llvm,
+            job;
+            optimize = false,
+            cleanup = false,
+            validate = false,
+        )
+        copysetfn = meta.entry
+        blk = first(blocks(copysetfn))
+        for inst in collect(instructions(blk))
+            if isa(inst, LLVM.FenceInst)
+                eraseInst(blk, inst)
+            end
+            if isa(inst, LLVM.CallInst)
+                fn = LLVM.called_operand(inst)
+                if isa(fn, LLVM.Function)
+                    if LLVM.name(fn) == "julia.safepoint"
+                        eraseInst(blk, inst)
+                    end
+                end     
+            end
+        end
+        push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
+        ity = convert(LLVMType, Int)
+        jlvaluet = convert(LLVMType, T; allow_boxed=true)
+
+        FT = LLVM.FunctionType(jlvaluet,  LLVMType[jlvaluet, ity, ity])
+        llvm_f = LLVM.Function(mod, "f", FT)
+        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+
+        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
+        # and also https://github.com/JuliaLang/julia/pull/47076
+        # and also https://github.com/JuliaLang/julia/pull/48620
+        needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
+
+        builder = LLVM.IRBuilder()
+        entry = BasicBlock(llvm_f, "entry")
+        position!(builder, entry)
+        inp, lstart, len = collect(LLVM.Value, parameters(llvm_f))
+
+        boxed_count = if sizeof(Int) == sizeof(Int64)
+            emit_box_int64!(builder, len)
+        else
+            emit_box_int32!(builder, len)
+        end
+
+        tag = emit_apply_type!(builder, NTuple, (boxed_count, unsafe_to_llvm(builder, T)))
+
+        fullsize = nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
+        obj = emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
+
+        T_int8 = LLVM.Int8Type()
+        LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
+
+        alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+
+        loop = BasicBlock(llvm_f, "loop")
+        exit = BasicBlock(llvm_f, "exit")
+
+        br!(builder, loop)
+
+        position!(builder, loop)
+        idx = phi!(builder, ity)
+
+        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
+        inc = add!(builder, idx, LLVM.ConstantInt(1))
+        push!(LLVM.incoming(idx), (inc, loop))
+        rval = add!(builder, inc, lstart)
+        res = call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
+        store!(builder, res, gep!(builder, jlvaluet, alloc, [idx]))
+        emit_writebarrier!(builder, get_julia_inner_types(builder, obj, res))
+
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+
+
+        T_int32 = LLVM.Int32Type()
+
+        reinsert_gcmarker!(llvm_f)
+
+        position!(builder, exit)
+        ret!(builder, obj)
+
+        string(mod)
+    end
+    return quote
+        Base.@_inline_meta
+        Base.llvmcall(
+            ($ir, "f"),
+            Tuple{Vararg{T}},
+            Tuple{T, Int, Int},
+            x,
+            startv,
+            lengthv
+        )
+    end
+end
+
+
 end
