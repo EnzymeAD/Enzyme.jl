@@ -137,9 +137,28 @@ function get_offsets(@nospecialize(T::Type))
     return results
 end
 
-function to_fullmd(@nospecialize(T::Type))
+function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
     mds = LLVM.Metadata[]
-    for (sT, sO) in get_offsets(T)
+    offs = get_offsets(T)
+
+    minoff = -1
+    for (sT, sO) in offs
+        if sO >= offset
+            if sO == offset
+                minoff = sO
+            end
+        else
+            minoff = max(minoff, sO)
+        end
+    end
+
+    for (sT, sO) in offs
+        if sO != minoff && (sO < offset)
+            continue
+        end
+        if sO >= lim + offset
+            continue
+        end
         if sT == API.DT_Pointer
             push!(mds, LLVM.MDString("Pointer"))
         elseif sT == API.DT_Integer
@@ -155,7 +174,7 @@ function to_fullmd(@nospecialize(T::Type))
         else
             @assert false
         end
-        push!(mds, LLVM.Metadata(LLVM.ConstantInt(sO)))
+        push!(mds, LLVM.Metadata(LLVM.ConstantInt(max(0, sO - offset))))
     end
     return LLVM.MDNode(mds)
 end
@@ -334,12 +353,17 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = fieldtype(T, f)
-        subtree = copy(typetree(subT, ctx, dl, seen))
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
+            if !allocatedinline(subT)
+                subtree = TypeTree(API.DT_Pointer, offset, ctx)
+                merge!(tt, subtree)
+            end
             # FIXME: Handle union
             continue
         end
+        
+        subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path
         if allocatedinline(subT)

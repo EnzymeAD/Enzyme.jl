@@ -300,6 +300,20 @@ using Test
     # returns: sret, const/ghost, !deserve_retbox
 end
 
+unstable_load(x) = Base.inferencebarrier(x)[1]
+
+@testset "Any Return" begin
+    x = [2.7]
+    dx = [0.0]
+    Enzyme.autodiff(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
+    @test dx ≈ [1.0] 
+
+    x = [2.7]
+    dx = [0.0]
+    Enzyme.autodiff_deferred(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
+    @test dx ≈ [1.0] 
+end
+
 @testset "Mutable Struct ABI" begin
     mutable struct MStruct
         val::Float32
@@ -464,6 +478,19 @@ mulsin(x) = sin(x[1] * x[2])
     @test !Enzyme.within_autodiff()
     @test_broken Enzyme.autodiff(ForwardWithPrimal, Enzyme.within_autodiff)[1]
     @test Enzyme.autodiff(ForwardWithPrimal, () -> Enzyme.within_autodiff())[1]
+end
+
+mutable struct ConstVal
+    x::Float64
+    const y::Float64
+end
+
+@testset "Make Zero" begin
+    v = ConstVal(2.0, 3.0)
+    dv = make_zero(v)
+    @test dv isa ConstVal
+    @test dv.x ≈ 0.0
+    @test dv.y ≈ 0.0
 end
 
 @testset "Type inference" begin
