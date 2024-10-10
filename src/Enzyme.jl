@@ -1794,28 +1794,27 @@ end
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
-@generated function create_shadows(chunk::ChunkTy, x, args::Vararg{Any,N}) where {ChunkTy, N}
-    if N == 0
-        if ChunkTy == Nothing
-            return quote
-                Base.@_inline_meta
-                (onehot(x),)
-            end
-        elseif ChunkTy == Val{1}
-            return quote
-                Base.@_inline_meta
-                (onehot(x),)
-            end
+@generated function create_shadows(chunk::ChunkTy, x::X, vargs::Vararg{Any,N}) where {ChunkTy, X, N}
+    args =  Union{Symbol,Expr}[:x]
+    tys =  Type[X]
+    for i in 1:N
+        push!(args, :(vargs[$i]))
+        push!(tys, vargs[i])
+    end
+
+    exprs = Union{Symbol,Expr}[]
+    for (arg, ty) in zip(args, tys)
+        if ty <: Enzyme.Const
+            push!(exprs, :(nothing))
+        elseif ChunkTy == Nothing || ChunkTy == Val{1}
+            push!(exprs, :(onehot($arg)))
         else
-            return quote
-                Base.@_inline_meta
-                (chunkedonehot(x, Val(chunk)),)
-            end
+            push!(exprs, :(chunkedonehot($arg, chunk)))
         end
-    else
-        return quote
-            error("Unsupported create_shadows of multiple arguments")
-        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(exprs...),)
     end
 end
 
@@ -1919,7 +1918,7 @@ grad = gradient(Forward, f, [2.0, 3.0, 4.0])
 ([3.0 2.0 0.0; 0.0 1.0 1.0],)
 ```
 
-This function supports multiple arguments and computed the jacobian of each
+This function supports multiple arguments and computes the gradient with respect to each
 
 ```jldoctest gradfwd2
 mul(x, y) = x[1]*y[2] + x[2]*y[1]
@@ -1956,7 +1955,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
     args::Vararg{Any,N};
     chunk::CS = nothing,
     shadows::ST = create_shadows(chunk, x, args...),
-) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,CS,ST}
+) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,CS,ST, ty_0, N}
 
     syms = Union{Symbol,Expr}[:x]
     shads = Union{Symbol,Expr}[:(shadows[1])]
@@ -1979,23 +1978,6 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
         push!(consts, :($arg isa Const ? $arg : Const($arg)))
     end
 
-    if length(shadows[1]) == 0
-        derivs = Expr[]
-        for arg in syms
-            push!(derivs, :($arg isa Const ? nothing : $arg))
-        end 
-        return if ReturnPrimal
-            return quote
-                Base.@_inline_meta
-                (; derivs = ($(derivs...),), val = $fval($(vals...)))
-            end
-        else
-            return quote
-                Base.@_inline_meta
-                ($(derivs...),)
-            end
-        end
-    end
     if CS == Val{0}
         return quote
             Base.@_inline_meta
@@ -2005,20 +1987,22 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
 
     exprs = Expr[]
     primal = nothing
-    derivatives = Expr[]
+    derivatives = Union{Symbol,Expr}[]
 
     primmode = :(fm)
-    for (i, (arg, ty)) in enumerate(zip(sym, tys))
-        if ty isa Const
+    for (i, (arg, ty)) in enumerate(zip(syms, tys))
+        if ty <: Const
             push!(derivatives, :(nothing))
             continue
         end
 
-        argnum = length(ST.parameters[i])
+        argnum = length(ST.parameters[i].parameters)
 
-        argderivative = if CS == Nothing
+        argderivative = if argnum == 0
+            vals[i]
+        elseif CS == Nothing
             dargs = Expr[]
-            for (j, arg2) in enumerate(sym)
+            for (j, arg2) in enumerate(syms)
                 if i == j
                     push!(dargs, :(BatchDuplicated($arg, $(shads[i]))))
                 else
@@ -2037,7 +2021,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
 
             resp = Symbol("resp_$i")
             push!(exprs, quote
-                $resp = autodiff($primmode, $df, BatchDuplicated, $(dargs...,))
+                $resp = autodiff($primmode, $df, BatchDuplicated, $(dargs...))
             end)
             if ReturnPrimal && primal == nothing
                 primal = :($resp[2])
@@ -2054,7 +2038,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
             subderivatives = Expr[]
             for an in 1:argnum
                 dargs = Expr[]
-                for (j, arg2) in enumerate(sym)
+                for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(Duplicated($arg, $(shads[i])[$an])))
                     else
@@ -2062,9 +2046,9 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                     end
                 end
 
-                resp = Symbol("resp_$i_$an")
+                resp = Symbol("resp_$i"*"_"*string(an))
                 push!(exprs, quote
-                    $resp = autodiff($primmode, f, Duplicated, $(dargs...,))
+                    $resp = autodiff($primmode, f, Duplicated, $(dargs...))
                 end)
                 if ReturnPrimal && primal == nothing
                     primal = :($resp[2])
@@ -2079,12 +2063,12 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
 
                 push!(subderivatives, deriv)
             end
-            :(($subderivatives...,))
+            :(($(subderivatives...),))
         else
             subderivatives = Expr[]
             for an in 1:argnum
                 dargs = Expr[]
-                for (j, arg2) in enumerate(sym)
+                for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(BatchDuplicated($arg, $(shads[i])[$an])))
                     else
@@ -2092,9 +2076,9 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                     end
                 end
 
-                resp = Symbol("resp_$i_$an")
+                resp = Symbol("resp_$i"*"_"*string(an))
                 push!(exprs, quote
-                    $resp = autodiff($primmode, f, BatchDuplicated, $(dargs...,))
+                    $resp = autodiff($primmode, f, BatchDuplicated, $(dargs...))
                 end)
                 if ReturnPrimal && primal == nothing
                     primal = :($resp[2])
@@ -2104,7 +2088,7 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
                 deriv = if ty <: AbstractFloat
                     :($resp[1][1])
                 else
-                    :($resp[1])
+                    :(values($resp[1]))
                 end
 
                 push!(subderivatives, deriv)
@@ -2119,13 +2103,16 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
             push!(exprs, :($tmp = $argderivative))
             if ty <: AbstractArray
                 if argnum > 0
-                    if $tmp[1] isa AbstractArray
-                        inshape = :(size($(consts[1])))
-                        outshape = :(size($tmp[1]))
-                        # st : outshape x total inputs
-                        :(tupstack($tmp, $outshape, inshape))
-                    else
-                        :(TupleArray($tmp, size($arg)))
+                    quote
+                        if $tmp[1] isa AbstractArray
+                            inshape = size($(vals[1]))
+                            outshape = size($tmp[1])
+                            # st : outshape x total inputs
+                            tupstack($tmp, outshape, inshape)
+                        else
+                            TupleArray($tmp, size($arg))
+                        end
+                    end
                 else
                     :(TupleArray($tmp, size($arg)))
                 end
@@ -2142,9 +2129,9 @@ gradient(Forward, f, Const([2.0, 3.0]), [2.7, 3.1])
     end
 
     result = if ReturnPrimal
-        (; derivs = ($(derivatives...),), val = $primal)
+        :((; derivs = ($(derivatives...),), val = $primal))
     else
-        ($(derivatives...),)
+        :(($(derivatives...),))
     end
 
     return quote

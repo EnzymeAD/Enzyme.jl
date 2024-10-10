@@ -16,15 +16,6 @@ using InlineStrings
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
 
-# symbol is \simeq
-# this is basically a more flexible version of ≈
-(≃)(a, b) = (≈)(a, b)
-(≃)(a::Tuple, b::Tuple) = all(xy -> xy[1] ≃ xy[2], zip(a,b))
-function (≃)(a::AbstractArray{<:Tuple}, b::AbstractArray{<:Tuple})
-    size(a) == size(b) || return false
-    all(xy -> xy[1] ≃ xy[2], zip(a,b))
-end
-
 function isapproxfn(fn, args...; kwargs...)
     isapprox(args...; kwargs...)
 end

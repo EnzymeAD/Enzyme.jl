@@ -10,7 +10,8 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 	@test res[2] ≈ [3.0, 2.0]
 
 	res = gradient(Forward, mul_scalar, [2.0, 3.0], [2.7, 3.1]; chunk=Val(1))
-	@test res[1] ≈ [3.1, 2.7]
+	@show res
+    @test res[1] ≈ [3.1, 2.7]
 	@test res[2] ≈ [3.0, 2.0]
 
 	res = gradient(Forward, mul_scalar, [2.0, 3.0], [2.7, 3.1]; chunk=Val(2))
@@ -18,17 +19,17 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 	@test res[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], [2.7, 3.1])
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], [2.7, 3.1]; chunk=Val(1))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], [2.7, 3.1]; chunk=Val(2))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
@@ -47,17 +48,17 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 	@test res[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, Const([2.0, 3.0]), [2.7, 3.1])
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] == nothing
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(1))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] == nothing
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
 	res = gradient(ForwardWithPrimal, mul_scalar, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(2))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] == nothing
 	@test res.derivs[2] ≈ [3.0, 2.0]
 
@@ -75,24 +76,106 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 	@test res[2] == nothing
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], Const([2.7, 3.1]))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] == nothing
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(1))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] == nothing
 
 	res = gradient(ForwardWithPrimal, mul_scalar, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(2))
-	@test res.primal[1] ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
+	@test res.val ≈ mul_scalar([2.0, 3.0], [2.7, 3.1])
 	@test res.derivs[1] ≈ [3.1, 2.7]
 	@test res.derivs[2] == nothing
 
+
+
 	res = gradient(Forward, mul_vector, [2.0, 3.0], [2.7, 3.1])
-	@show res
-	@test res[1] ≈ [3.1 2.7; 0.0 0.0]
-	@test res[2] ≈ [0.0 0.0; 3.0 2.0]
+	@test res[1] ≈ [3.1 0.0; 0.0 2.7]
+	@test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(Forward, mul_vector, [2.0, 3.0], [2.7, 3.1]; chunk=Val(1))
+    @test res[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(Forward, mul_vector, [2.0, 3.0], [2.7, 3.1]; chunk=Val(2))
+    @test res[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], [2.7, 3.1])
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], [2.7, 3.1]; chunk=Val(1))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], [2.7, 3.1]; chunk=Val(2))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    
+
+    res = gradient(Forward, mul_vector, Const([2.0, 3.0]), [2.7, 3.1])
+    @test res[1] == nothing
+    @test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(Forward, mul_vector, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(1))
+    @test res[1] == nothing
+    @test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(Forward, mul_vector, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(2))
+    @test res[1] == nothing
+    @test res[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, Const([2.0, 3.0]), [2.7, 3.1])
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] == nothing
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(1))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] == nothing
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+    res = gradient(ForwardWithPrimal, mul_vector, Const([2.0, 3.0]), [2.7, 3.1]; chunk=Val(2))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] == nothing
+    @test res.derivs[2] ≈ [0.0 2.0; 3.0 0.0]
+
+
+    res = gradient(Forward, mul_vector, [2.0, 3.0], Const([2.7, 3.1]))
+    @test res[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res[2] == nothing
+
+    res = gradient(Forward, mul_vector, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(1))
+    @test res[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res[2] == nothing
+
+    res = gradient(Forward, mul_vector, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(2))
+    @test res[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res[2] == nothing
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], Const([2.7, 3.1]))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] == nothing
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(1))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] == nothing
+
+    res = gradient(ForwardWithPrimal, mul_vector, [2.0, 3.0], Const([2.7, 3.1]); chunk=Val(2))
+    @test res.val ≈ mul_vector([2.0, 3.0], [2.7, 3.1])
+    @test res.derivs[1] ≈ [3.1 0.0; 0.0 2.7]
+    @test res.derivs[2] == nothing
+
 end
 
 # these are used in gradient and jacobian tests
@@ -105,6 +188,15 @@ struct OutStruct
     i1::Float64
     i2::Float64
     i3::Float64
+end
+
+# symbol is \simeq
+# this is basically a more flexible version of ≈
+(≃)(a, b) = (≈)(a, b)
+(≃)(a::Tuple, b::Tuple) = all(xy -> xy[1] ≃ xy[2], zip(a,b))
+function (≃)(a::AbstractArray{<:Tuple}, b::AbstractArray{<:Tuple})
+    size(a) == size(b) || return false
+    all(xy -> xy[1] ≃ xy[2], zip(a,b))
 end
 
 for A ∈ (:InpStruct, :OutStruct)
