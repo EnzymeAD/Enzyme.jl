@@ -503,11 +503,9 @@ end
     rand!(dparams.q)
     rand!(dparams.p)
 
-    dparams2 = make_zero!(dparams)
+    make_zero!(dparams)
     @test all(==(0), dparams.q)
     @test all(==(0), dparams.p)
-
-    @test dparams2 == dparams
 end
 
 

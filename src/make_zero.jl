@@ -387,7 +387,8 @@ end
     # For make_zero!(NamedTuple) we want to recurse and zero out
     # the storage
     if !Base.ismutabletype(T)
-        return make_zero_immutable!(prev, seen)
+        make_zero_immutable!(prev, seen)
+        return nothing
     end
 
     for i = 1:nf
