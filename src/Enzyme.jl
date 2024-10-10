@@ -1984,7 +1984,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
         end
     end
 
-    exprs = Expr[]
+    exprs = Union{Symbol,Expr}[]
     primal = nothing
     derivatives = Union{Symbol,Expr}[]
 
@@ -1998,7 +1998,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
         argnum = length(ST.parameters[i].parameters)
 
         argderivative = if ty <: AbstractFloat
-            dargs = Expr[]
+            dargs = Union{Symbol,Expr}[]
             for (j, arg2) in enumerate(syms)
                 if i == j
                     push!(dargs, :(Duplicated($arg, one($arg))))
@@ -2020,7 +2020,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
         elseif argnum == 0
             vals[i]
         elseif CS == Nothing
-            dargs = Expr[]
+            dargs = Union{Symbol,Expr}[]
             for (j, arg2) in enumerate(syms)
                 if i == j
                     push!(dargs, :(BatchDuplicated($arg, $(shads[i]))))
@@ -2049,9 +2049,9 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
 
             :(values($resp[1]))
         elseif CS == Val{1}
-            subderivatives = Expr[]
+            subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
-                dargs = Expr[]
+                dargs = Union{Symbol,Expr}[]
                 for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(Duplicated($arg, $(shads[i])[$an])))
@@ -2073,9 +2073,9 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             end
             :(($(subderivatives...),))
         else
-            subderivatives = Expr[]
+            subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
-                dargs = Expr[]
+                dargs = Union{Symbol,Expr}[]
                 for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(BatchDuplicated($arg, $(shads[i])[$an])))
