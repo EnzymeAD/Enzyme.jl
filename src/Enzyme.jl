@@ -1965,11 +1965,16 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
         :f
     end
 
-    vals = Expr[]
-    consts = Expr[]
-    for arg in syms
-        push!(vals, :($arg isa Const ? $arg.val : $arg))
-        push!(consts, :($arg isa Const ? $arg : Const($arg)))
+    vals = Union{Symbol,Expr}[]
+    consts = Union{Symbol,Expr}[]
+    for (arg, ty) in zip(syms, tys)
+        if ty <: Const
+            push!(vals, :($arg.val))
+            push!(consts, arg)
+        else
+            push!(vals, arg))
+            push!(consts, :(Const($arg)))
+        end
     end
 
     if CS == Val{0}
