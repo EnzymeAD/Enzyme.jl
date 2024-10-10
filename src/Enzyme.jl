@@ -1929,7 +1929,7 @@ gradient(Forward, mul, [2.0, 3.0], [2.7, 3.1])
 
 # output
 
-([3.1, 2.7],[3.0, 2.0])
+([3.1, 2.7], [3.0, 2.0])
 ```
 
 This includes the ability to mark some arguments as `Const` if its derivative is not needed, returning nothing in the corresponding derivative map.
