@@ -53,7 +53,7 @@ function simplify_kw(@nospecialize specTypes)
     end
 end
 
-import GPUCompiler: NoInlineCallInfo, AlwaysInlineCallInfo
+import GPUCompiler: GPUInterpreter, NoInlineCallInfo, AlwaysInlineCallInfo
 function inlining_handler(meta::EnzymeMeta, interp::GPUInterpreter, @nospecialize(atype), callinfo)
     method_table = Core.Compiler.method_table(interp)
     world = get_inference_world(interp)
