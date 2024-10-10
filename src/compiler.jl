@@ -9418,6 +9418,7 @@ include("compiler/reflection.jl")
         fullsize = nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
         obj = emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
 
+        T_int8 = LLVM.Int8Type()
         LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize)
 
         alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
