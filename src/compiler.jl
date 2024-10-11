@@ -856,6 +856,11 @@ end
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
+"""
+    Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode)
+
+Try to guess the most appropriate [`Annotation`](@ref) for arguments of type `T` passed to [`autodiff`](@ref) with a given `mode`.
+"""
 @inline Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} =
     guess_activity(T, convert(API.CDerivativeMode, mode))
 
