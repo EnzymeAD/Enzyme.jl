@@ -1871,7 +1871,7 @@ end
 	num = prod(outshape)
 	res = Array{T}(undef, inshape..., outshape...)
 	for (i, val) in enumerate(data)
-		Base.unsafe_copyto!(res, off*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
+		Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
 	end
 	res
 end
