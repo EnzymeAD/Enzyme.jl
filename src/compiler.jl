@@ -9422,11 +9422,12 @@ include("compiler/reflection.jl")
         LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
 
         alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+        alloc = pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
 
         loop = BasicBlock(llvm_f, "loop")
         exit = BasicBlock(llvm_f, "exit")
 
-        br!(builder, loop)
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
         position!(builder, loop)
         idx = phi!(builder, ity)
