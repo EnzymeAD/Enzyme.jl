@@ -791,8 +791,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if addr == 13 && hasload && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
-                            if addr == 13 && isa(v, LLVM.LoadInst) && !hasload
-                                return getparent(operands(v)[1], offset, true)
+                            if addr == 13  && !hasload
+                                if isa(v, LLVM.LoadInst)
+                                    return getparent(operands(v)[1], offset, true)
+                                end
                             end
 
                             if addr == 13 && isa(v, LLVM.ConstantExpr)

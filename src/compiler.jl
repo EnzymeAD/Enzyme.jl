@@ -5385,7 +5385,7 @@ function create_abi_wrapper(
                     end
 
                     for shadowv in shadows
-                        c = emit_apply_generic!(builder, [unsafe_to_llvm(B, add_one_in_place), shadowv])
+                        c = emit_apply_generic!(builder, [unsafe_to_llvm(builder, add_one_in_place), shadowv])
                         if get_subprogram(llvm_f) !== nothing
                             metadata(c)[LLVM.MD_dbg] =
                                 DILocation(0, 0, get_subprogram(llvm_f))
