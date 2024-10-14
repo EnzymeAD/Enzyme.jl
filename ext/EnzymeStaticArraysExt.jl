@@ -9,7 +9,7 @@ end
 @inline Base.convert(::Type{StaticArray}, tpa::Enzyme.TupleArray) = convert(SArray, tpa)
 
 @inline function Enzyme.tupstack(rows::Tuple{Vararg{T}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T<:StaticArrays.SArray}
-    reshape(reduce(hcat, map(vec, rows)), Size(inshape..., outshape...))
+    reshape(reduce(hcat, map(vec, rows)), Size(outshape..., inshape...))
 end
 
 @inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}) where {S, T, N, L}
