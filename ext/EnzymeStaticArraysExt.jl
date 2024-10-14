@@ -8,7 +8,7 @@ using Enzyme
 end
 @inline Base.convert(::Type{StaticArray}, tpa::Enzyme.TupleArray) = convert(SArray, tpa)
 
-@inline function Enzyme.tupstack(rows::Tuple{Vararg{T}}, inshape::Tuple{Vararg{Int}}, outshape::Tuple{Vararg{Int}}) where {T<:StaticArrays.SArray}
+@inline function Enzyme.tupstack(rows::Tuple{Vararg{T}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T<:StaticArrays.SArray}
     reshape(reduce(hcat, map(vec, rows)), Size(inshape..., outshape...))
 end
 
