@@ -1869,7 +1869,6 @@ end
 @inline function tupstack(data::Tuple{Vararg{<:Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
 	num = prod(outshape)
 	res = Array{T}(undef, inshape..., outshape...)
-	res = 50123 * ones(inshape..., outshape...)
 	for (i, val) in enumerate(data)
 		Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
 	end
