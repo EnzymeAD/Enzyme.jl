@@ -27,9 +27,8 @@ using StaticArrays
 
     x = @SArray [5.0 0.0 6.0]
     dx = Enzyme.gradient(Forward, prod, x)[1]
-    @test dx[1] ≈ 0
-    @test dx[2] ≈ 30
-    @test dx[3] ≈ 0
+    @test dx isa SArray
+    @test dx ≈ [0 30 0]
 
     f0 = x -> sum(2*x)
     f1 = x -> @SVector Float64[x[2], 2*x[2]]
@@ -50,7 +49,7 @@ using StaticArrays
 
     @inferred gradient(Forward, f0, x)
     dx = gradient(Forward, f0, x)[1]
-    @test dx isa SVector
+    @test dx isa SMatrix
     @test dx == fill(2.0, (2,2))
     @test gradient(Forward, f1, x)[1] isa SArray
     @test gradient(Forward, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
