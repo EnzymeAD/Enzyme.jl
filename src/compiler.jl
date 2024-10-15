@@ -9389,7 +9389,15 @@ include("compiler/reflection.jl")
                 end     
             end
         end
-        push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
+        hasNoRet = any(
+            map(
+                k -> kind(k) == kind(EnumAttribute("noreturn")),
+                collect(function_attributes(copysetfn)),
+            ),
+        )
+        if !hasNoRet
+            push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
+        end
         ity = convert(LLVMType, Int)
         jlvaluet = convert(LLVMType, T; allow_boxed=true)
 
@@ -9437,8 +9445,11 @@ include("compiler/reflection.jl")
         push!(LLVM.incoming(idx), (inc, loop))
         rval = add!(builder, inc, lstart)
         res = call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
-        store!(builder, res, gep!(builder, jlvaluet, alloc, [idx]))
-        emit_writebarrier!(builder, get_julia_inner_types(builder, obj, res))
+        if !hasNoRet
+            gidx = gep!(builder, jlvaluet, alloc, [idx])
+            store!(builder, res, gidx)
+            emit_writebarrier!(builder, get_julia_inner_types(builder, obj, res))
+        end
 
         br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
 
