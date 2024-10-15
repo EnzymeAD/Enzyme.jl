@@ -1,5 +1,5 @@
 using Enzyme, Test
-
+using LinearAlgebra
 
 mul_scalar(x, y) = x[1]*y[2] + x[2]*y[1]
 mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
