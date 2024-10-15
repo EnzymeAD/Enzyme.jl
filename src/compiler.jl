@@ -9395,6 +9395,7 @@ include("compiler/reflection.jl")
                 collect(function_attributes(copysetfn)),
             ),
         )
+        @assert !hasNoRet
         if !hasNoRet
             push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
         end
