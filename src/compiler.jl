@@ -5384,10 +5384,8 @@ function create_abi_wrapper(
                         end
                     end
 
-                    cf = nested_codegen!(Mode, mod, add_one_in_place, Tuple{Any}, world)
-                    push!(function_attributes(cf), EnumAttribute("alwaysinline", 0))
                     for shadowv in shadows
-                        c = call!(builder, LLVM.function_type(cf), cf, [shadowv])
+                        c = emit_apply_generic!(builder, [unsafe_to_llvm(builder, add_one_in_place), shadowv])
                         if get_subprogram(llvm_f) !== nothing
                             metadata(c)[LLVM.MD_dbg] =
                                 DILocation(0, 0, get_subprogram(llvm_f))
