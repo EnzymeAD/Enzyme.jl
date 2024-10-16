@@ -465,8 +465,8 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                 
                 LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
                 LLVM.API.LLVMDeleteFunction(initfn)
-                API.LLVMDeleteGlobal(opv)
-                API.LLVMDeleteGlobal(fn_got)
+                LLVM.API.LLVMDeleteGlobal(opv)
+                LLVM.API.LLVMDeleteGlobal(fn_got)
 
                 replace_uses!(inst, newf)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
