@@ -794,7 +794,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
                                     v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
-                                    @assert o2 == LLVM.ConstantInt(offty, LLVM.ConstantInt(0))
+                                    @assert o2 == LLVM.ConstantInt(offty, 0)
                                     return v2, offset, true
                                 end
                                 if isa(v, LLVM.CallInst)
