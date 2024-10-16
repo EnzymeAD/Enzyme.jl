@@ -373,11 +373,21 @@ function check_ir!(job, errors, mod::LLVM.Module)
         eraseInst(mod, f)
     end
     rewrite_ccalls!(mod)
+        
+    del = LLVM.Function[]
     for f in collect(functions(mod))
-        check_ir!(job, errors, imported, f)
+        if in(f, del)
+            continue
+        end
+        check_ir!(job, errors, imported, f, del)
     end
+    
+    del = LLVM.Function[]
     for f in collect(functions(mod))
-        check_ir!(job, errors, imported, f)
+        if in(f, del)
+            continue
+        end
+        check_ir!(job, errors, imported, f, col)
     end
 
     return errors
@@ -401,7 +411,7 @@ function unwrap_ptr_casts(val::LLVM.Value)
     end
 end
 
-function check_ir!(job, errors, imported, f::LLVM.Function)
+function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
     calls = []
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -443,9 +453,6 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                 initfn = unwrap_ptr_casts(LLVM.initializer(fn_got))
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]::LLVM.GlobalVariable
-                if initfn == f
-                    continue
-                end
 
                 if startswith(fname, "jl_") || startswith(fname, "ijl_")
                 else
@@ -479,9 +486,11 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                 
                 if !baduse
                     LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
+                    delete!(col, initfn)
                     LLVM.API.LLVMDeleteFunction(initfn)
                     LLVM.API.LLVMDeleteGlobal(opv)
                     LLVM.API.LLVMDeleteGlobal(fn_got)
+                    push!(deletedfns, initfn)
                 end
 
             elseif isInline
