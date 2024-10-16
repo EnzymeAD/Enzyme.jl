@@ -197,6 +197,8 @@ const nofreefns = Set{String}((
     "jl_array_ptr_copy",
     "ijl_array_copy",
     "jl_array_copy",
+    "ijl_genericmemory_copy_slice",
+    "jl_genericmemory_copy_slice",
     "ijl_get_nth_field_checked",
     "ijl_get_nth_field_checked",
     "jl_array_del_end",
@@ -3825,6 +3827,8 @@ function annotate!(mod, mode)
         "ijl_alloc_array_3d",
         "jl_array_copy",
         "ijl_array_copy",
+        "jl_genericmemory_copy_slice",
+        "ijl_genericmemory_copy_slice",
         "jl_idtable_rehash",
         "ijl_idtable_rehash",
         "jl_f_tuple",
@@ -3854,6 +3858,8 @@ function annotate!(mod, mode)
                 boxfn in (
                     "jl_array_copy",
                     "ijl_array_copy",
+                    "jl_genericmemory_copy_slice",
+                    "ijl_genericmemory_copy_slice",
                     "jl_idtable_rehash",
                     "ijl_idtable_rehash",
                 )
@@ -3876,6 +3882,8 @@ function annotate!(mod, mode)
                         boxfn in (
                             "jl_array_copy",
                             "ijl_array_copy",
+                            "jl_genericmemory_copy_slice",
+                            "ijl_genericmemory_copy_slice",
                             "jl_idtable_rehash",
                             "ijl_idtable_rehash",
                         )
@@ -3916,6 +3924,8 @@ function annotate!(mod, mode)
                     boxfn in (
                         "jl_array_copy",
                         "ijl_array_copy",
+                        "jl_genericmemory_copy_slice",
+                        "ijl_genericmemory_copy_slice",
                         "jl_idtable_rehash",
                         "ijl_idtable_rehash",
                     )
@@ -4250,6 +4260,30 @@ function enzyme!(
         ),
         "ijl_array_copy" => @cfunction(
             inout_rule,
+            UInt8,
+            (
+                Cint,
+                API.CTypeTreeRef,
+                Ptr{API.CTypeTreeRef},
+                Ptr{API.IntList},
+                Csize_t,
+                LLVM.API.LLVMValueRef,
+            )
+        ),
+        "jl_genericmemory_copy_slice" => @cfunction(
+            inoutcopyslice_rule,
+            UInt8,
+            (
+                Cint,
+                API.CTypeTreeRef,
+                Ptr{API.CTypeTreeRef},
+                Ptr{API.IntList},
+                Csize_t,
+                LLVM.API.LLVMValueRef,
+            )
+        ),
+        "ijl_genericmemory_copy_slice" => @cfunction(
+            inoutcopyslice_rule,
             UInt8,
             (
                 Cint,
