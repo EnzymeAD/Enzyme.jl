@@ -777,7 +777,7 @@ function get_memorytype_elsz(B, ty)
 end
 
 function get_memory_elsz(B, array)
-    ty = emit_typeof!(B, array)
+    ty = emit_jltypeof!(B, array)
 	return emit_memorytype_elsz!(B, ty)
 end
 

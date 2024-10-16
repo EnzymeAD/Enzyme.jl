@@ -576,11 +576,14 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     dl = string(LLVM.datalayout(mod))
 	tt0 = string(tt)
-    API.EnzymeTypeTreeLookupEq(tt, 1, dl)
-	tt1 = string(tt)
 	# memory stores the data pointer after a length
 	if memory
+    	API.EnzymeTypeTreeLookupEq(tt, 2*sizeof(Int), dl)
+		tt1 = string(tt)
 		API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, sizeof(Int), sizeof(Int), 0)
+	else
+    	API.EnzymeTypeTreeLookupEq(tt, sizeof(Int), dl)
+		tt1 = string(tt)
 	end
 	tt2 = string(tt)
     data0!(tt)
