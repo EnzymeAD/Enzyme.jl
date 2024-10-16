@@ -432,7 +432,6 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                             push!(todo, u)
                             continue
                         end
-                        @show u
                     end
                     if FT !== nothing
                         break
@@ -463,13 +462,25 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                     throw(AssertionError(msg))
                 end
                 
-                LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
-                LLVM.API.LLVMDeleteFunction(initfn)
-                LLVM.API.LLVMDeleteGlobal(opv)
-                LLVM.API.LLVMDeleteGlobal(fn_got)
-
                 replace_uses!(inst, newf)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
+               
+                baduse = false
+                for u in LLVM.uses(fn_got)
+                    u = LLVM.user(u)
+                    if isa(u, LLVM.StoreInst)
+                        continue
+                    end
+                    baduse = true
+                end
+                
+                if !baduse
+                    LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
+                    LLVM.API.LLVMDeleteFunction(initfn)
+                    LLVM.API.LLVMDeleteGlobal(opv)
+                    LLVM.API.LLVMDeleteGlobal(fn_got)
+                end
+
             elseif isInline
                 md = metadata(inst)
                 if haskey(md, LLVM.MD_tbaa)
