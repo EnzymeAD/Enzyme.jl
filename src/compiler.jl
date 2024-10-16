@@ -3337,6 +3337,8 @@ function annotate!(mod, mode)
         "ijl_box_float64",
         "ijl_box_int32",
         "ijl_box_int64",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
         "jl_alloc_array_1d",
         "jl_alloc_array_2d",
         "jl_alloc_array_3d",
@@ -3347,6 +3349,8 @@ function annotate!(mod, mode)
         "ijl_array_copy",
         "jl_genericmemory_copy_slice",
         "ijl_genericmemory_copy_slice",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
         "jl_idtable_rehash",
         "ijl_idtable_rehash",
         "jl_f_tuple",
@@ -7029,7 +7033,11 @@ function GPUCompiler.codegen(
                                nm == "ijl_alloc_array_2d" ||
                                nm == "jl_alloc_array_2d" ||
                                nm == "ijl_alloc_array_3d" ||
-                               nm == "jl_alloc_array_3d"
+                               nm == "jl_alloc_array_3d" ||
+                               nm == "ijl_new_array" ||
+                               nm == "jl_new_array" ||
+                               nm == "jl_alloc_genericmemory" ||
+                               nm == "ijl_alloc_genericmemory"
                                 continue
                             end
                             if is_readonly(called)

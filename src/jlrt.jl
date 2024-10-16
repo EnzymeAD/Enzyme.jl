@@ -822,6 +822,43 @@ function get_array_len(B, array)
     return LLVM.load!(B, sizeT, v)
 end
 
+function get_memory_len(B, array)
+    if isa(array, LLVM.CallInst)
+        fn = LLVM.called_operand(array)
+        nm = ""
+        if isa(fn, LLVM.Function)
+            nm = LLVM.name(fn)
+        end
+
+        for (fname, num) in (
+            ("jl_alloc_genericmemory", 1),
+            ("ijl_alloc_genericmemory", 1),
+        )
+            if nm == fname
+                res = operands(array)[2]
+                for i = 2:num
+                    res = mul!(B, res, operands(array)[1+i])
+                end
+                return res
+            end
+        end
+    end
+    ST = get_memory_struct()
+    array = LLVM.pointercast!(
+        B,
+        array,
+        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
+    )
+    v = inbounds_gep!(
+        B,
+        ST,
+        array,
+        LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(0))],
+    )
+    sizeT = LLVM.IntType(8 * sizeof(Csize_t))
+    return LLVM.load!(B, sizeT, v)
+end
+
 function get_array_nrows(B, array)
     ST = get_array_struct()
     array = LLVM.pointercast!(

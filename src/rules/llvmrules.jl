@@ -575,7 +575,14 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     dl = string(LLVM.datalayout(mod))
+	tt0 = string(tt)
     API.EnzymeTypeTreeLookupEq(tt, 1, dl)
+	tt1 = string(tt)
+	# memory stores the data pointer after a length
+	if memory
+		API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, sizeof(Int), sizeof(Int), 0)
+	end
+	tt2 = string(tt)
     data0!(tt)
     ct = API.EnzymeTypeTreeInner0(tt)
 
@@ -587,7 +594,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
         emit_error(
             B,
             orig,
-            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt),
+            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(tt0) * " " * string(tt1) * " " * string(tt2) * " " * string(orig) * " " * string(abs_typeof(orig)),
         )
         return nothing
     end
