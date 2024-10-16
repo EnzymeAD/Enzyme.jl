@@ -440,6 +440,11 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                 end
                 @assert FT !== nothing
                 newf, _ = get_function!(mod, String(fname), FT)
+
+                initfn = unwrap_ptr_casts(LLVM.initializer(fn_got))
+                loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
+                opv = operands(loadfn)[1]::LLVM.GlobalVariable
+
                 if startswith(fname, "jl_") || startswith(fname, "ijl_")
                 else
                     @assert "unsupported jl got"
@@ -452,9 +457,17 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                         println(io, "fname=", fname)
                         println(io, "FT=", FT)
                         println(io, "fn_got=", fn_got)
+                        println(io, "init=", string(initfn))
+                        println(io, "opv=", string(opv))
                     end
                     throw(AssertionError(msg))
                 end
+                
+                LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
+                LLVM.API.LLVMDeleteFunction(initfn)
+                API.LLVMDeleteGlobal(opv)
+                API.LLVMDeleteGlobal(fn_got)
+
                 replace_uses!(inst, newf)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
             elseif isInline

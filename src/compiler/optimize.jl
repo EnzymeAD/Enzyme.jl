@@ -1074,12 +1074,13 @@ function nodecayed_phis!(mod::LLVM.Module)
                             nphi = inbounds_gep!(nb, gent, nphi, [LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(1))])
                             nphi = load!(nb, pjlt, nphi)
 
+                            GTy = LLVM.FunctionType(jlt, LLVM.LLVMType[jlt, pjlt])
                             gcloaded, _ = get_function!(
                                 mod,
                                 "julia.gc_loaded",
-                                LLVM.FunctionType(jlt, LLVM.LLVMType[jlt, pjlt])
+                                GTy
                             )
-                            nphi = call!(n, gcloaded, LLVM.Value[base_obj, nphi])
+                            nphi = call!(nb, GTy, gcloaded, LLVM.Value[base_obj, nphi])
                         end
                     else
                         nphi = addrspacecast!(nb, nphi, ty)
