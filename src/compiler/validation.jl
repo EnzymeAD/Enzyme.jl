@@ -381,13 +381,19 @@ function check_ir!(job, errors, mod::LLVM.Module)
         end
         check_ir!(job, errors, imported, f, del)
     end
+    for d in del
+        LLVM.API.LLVMDeleteFunction(d)
+    end
     
     del = LLVM.Function[]
     for f in collect(functions(mod))
         if in(f, del)
             continue
         end
-        check_ir!(job, errors, imported, f, col)
+        check_ir!(job, errors, imported, f, del)
+    end
+    for d in del
+        LLVM.API.LLVMDeleteFunction(d)
     end
 
     return errors
@@ -485,12 +491,10 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 end
                 
                 if !baduse
+                    push!(deletedfns, initfn)
                     LLVM.initializer!(fn_got, LLVM.null(value_type(initfn)))
-                    delete!(col, initfn)
-                    LLVM.API.LLVMDeleteFunction(initfn)
                     LLVM.API.LLVMDeleteGlobal(opv)
                     LLVM.API.LLVMDeleteGlobal(fn_got)
-                    push!(deletedfns, initfn)
                 end
 
             elseif isInline
