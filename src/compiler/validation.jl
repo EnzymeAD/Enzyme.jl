@@ -443,6 +443,9 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
                 initfn = unwrap_ptr_casts(LLVM.initializer(fn_got))
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]::LLVM.GlobalVariable
+                if initfn == f
+                    continue
+                end
 
                 if startswith(fname, "jl_") || startswith(fname, "ijl_")
                 else
