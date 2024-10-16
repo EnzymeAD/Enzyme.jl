@@ -285,7 +285,9 @@ end
 
 function val_from_byref_if_mixed(B::LLVM.IRBuilder, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))
     legal, TT, _ = abs_typeof(oval)
-    @assert legal
+    if !legal
+        throw(AssertionError("Could not determine type of value within jl_newstructt arg: $(string(oval))"))
+    end
     world = enzyme_extract_world(LLVM.parent(position(B)))
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
