@@ -3,7 +3,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://enzyme.mit.edu/julia/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://enzyme.mit.edu/julia/dev)
 [![Build Status](https://github.com/EnzymeAD/Enzyme.jl/workflows/CI/badge.svg)](https://github.com/EnzymeAD/Enzyme.jl/actions)
-[![Coverage](https://codecov.io/gh/EnzymeAD/Enzyme.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/EnzymeAD/Enzyme.jl)
+[![Coverage](https://codecov.io/gh/EnzymeAD/Enzyme.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/EnzymeAD/Enzyme.jl)
 
 This is a package containing the Julia bindings for [Enzyme](https://github.com/EnzymeAD/enzyme). This is very much a work in progress and bug reports/discussion is greatly appreciated!
 
