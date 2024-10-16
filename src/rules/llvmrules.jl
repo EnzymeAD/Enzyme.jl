@@ -700,6 +700,8 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 			extract_value!(B, shadowsrc, i - 1)
 		end
 		evdst = if width == 1
+			shadowdst
+		else
 			extract_value!(B, shadowdst, i - 1)
 		end
 
