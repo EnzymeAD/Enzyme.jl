@@ -432,7 +432,6 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
             if match_ !== nothing
-                println(string(mod))
                 fname = match_[1]
                 FT = nothing
                 todo = LLVM.Instruction[inst]
