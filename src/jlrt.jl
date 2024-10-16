@@ -762,7 +762,7 @@ function emit_layout_of_type!(B, ty)
 	return layout
 end
 
-function get_memorytype_elsz(B, ty)
+function emit_memorytype_elsz!(B, ty)
 	legal, JTy = absint(ty)
 	if legal
 		res = unsafe_load(reinterpret(Ptr{UInt32}, JTy.layout))
