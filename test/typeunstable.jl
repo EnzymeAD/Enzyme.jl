@@ -41,15 +41,9 @@ function tovectorpair!(res, x, y)
 end
 
 @testset "Reverse Unstable newstructt" begin
-	@show Enzyme.autodiff(Reverse, toactivepair, Active(2.7f0), Active(3.1))
-
-	x = Float32[2.7f0]
-	dx = Float32[0.0f0]
-	y = Float64[3.1]
-	dy = Float64[0.0]
-
-	Enzyme.autodiff(Reverse, toactivepair2, Duplicated(x, dx), Duplicated(y, dy))
-	@show dx, dy
+	res = Enzyme.autodiff(Reverse, toactivepair, Active(2.7f0), Active(3.1))
+	@test res[1][1] ≈ 3.1f0
+	@test res[1][2] ≈ 2.700000047683716
 
 	x = Float32[2.7f0]
 	dx = Float32[0.0f0]
@@ -57,9 +51,8 @@ end
 	dy = Float64[0.0]
 
 	Enzyme.autodiff(Reverse, tovectorpair, Duplicated(x, dx), Duplicated(y, dy))
-	@show dx, dy
-
-
+	@test dx[1] ≈ 3.1f0
+	@test dy[1] ≈ 2.700000047683716
 
 	x = Float32[2.7f0]
 	dx = Float32[0.0f0]
@@ -74,7 +67,11 @@ end
 
 	Enzyme.autodiff(Reverse, toactivepair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
 
-	@show dx, dy, dx2, dy2
+	@test dx[1] ≈ 3.1f0
+	@test dy[1] ≈ 2.700000047683716
+
+	@test dx2[1] ≈ 3.1f0 * 3
+	@test dy2[1] ≈ 2.700000047683716 * 3
 
 
 	x = Float32[2.7f0]
@@ -90,11 +87,18 @@ end
 
 	Enzyme.autodiff(Reverse, tovectorpair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
 
-	@show dx, dy, dx2, dy2
+	@test dx[1] ≈ 3.1f0
+	@test dy[1] ≈ 2.700000047683716
+
+	@test dx2[1] ≈ 3.1f0 * 3
+	@test dy2[1] ≈ 2.700000047683716 * 3
+
 end
 
 @testset "Forward Unstable newstructt" begin
-	res = Enzyme.autodiff(Forward, toactivepair, Duplicated(2.7f0, 2.0), Duplicated(3.1, 3.0))
-	@show res
-	res = Enzyme.autodiff(Forward, toactivepair, BatchDuplicated(2.7f0, (2.0, 5.0)), BatchDuplicated(3.1, (3.0, 7.0)))
+	res = Enzyme.autodiff(Forward, toactivepair, Duplicated(2.7f0, 2.0f0), Duplicated(3.1, 3.0))
+	@test res[1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
+	res = Enzyme.autodiff(Forward, toactivepair, BatchDuplicated(2.7f0, (2.0f0, 5.0f0)), BatchDuplicated(3.1, (3.0, 7.0)))
+	@test res[1][1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
+	@test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1	
 end

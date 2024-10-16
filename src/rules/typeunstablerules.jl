@@ -816,7 +816,7 @@ end
                 new_from_original(gutils, origops[1]),
                 extract_value!(B, shadowsin, idx - 1),
             ]
-            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
             callconv!(tmp, callconv(orig))
             shadowres = insert_value!(B, shadowres, tmp, idx - 1)
         end
@@ -866,9 +866,9 @@ end
         for idx = 1:width
             vals = [
                 new_from_original(gutils, origops[1]),
-                val_from_byref_if_mixed(B, extract_value!(B, shadowsin, idx - 1)),
+                val_from_byref_if_mixed(B, origops[2], extract_value!(B, shadowsin, idx - 1)),
             ]
-            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
             callconv!(tmp, callconv(orig))
             tmp = byref_from_val_if_mixed(B, tmp)
             shadowres = insert_value!(B, shadowres, tmp, idx - 1)
@@ -878,7 +878,7 @@ end
 
     legal, TT, _ = abs_typeof(orig)
     @assert legal
-    world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+    world = enzyme_extract_world(LLVM.parent(position(B)))
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
         unsafe_store!(tapeR, shadowres.ref)
@@ -887,23 +887,38 @@ end
     return false
 end
 
-@generated function runtime_newstructt_rev(::Val{Width}, revres0::RR0, revarg1::RA0, args::Vararg{Any, N}) where {Width, RR0, RA0, N}
+@generated function recursive_tuple(::Val{num}, lhs, rhs) where num
+    exprs = Expr[]
+    for i in 1:num
+        push!(exprs, quote
+            recursive_add(lhs[$i], getfield(rhs, $i), identity, guaranteed_nonactive)
+        end)
+    end
+    return quote
+        Base.@_inline_meta
+        ($(exprs...),)
+    end
+end
+
+@generated function runtime_newstructt_rev(::Val{Width}, revres0::RR0, revarg0::RA0, args::Vararg{Any, N}) where {Width, RR0, RA0, N}
     exprs = Expr[]
     for i in 1:Width
         dres = if i == 1
             :revres0
         else
-            :(args[$(2*(i-1)+1)])
+            :(args[$(2*(i-2)+1)])
         end
         darg = if i == 1
             :revarg0
         else
-            :(args[$(2*(i-1)+1+1)])
+            :(args[$(2*(i-2)+1+1)])
         end
         push!(exprs, quote
             @assert $dres isa Base.RefValue
             if $darg isa Base.RefValue
-                $darg[] = recursive_add($darg[], $dres[], identity, guaranteed_nonactive)
+                tmparg = $darg[]
+                tmpres = $dres[]
+                $darg[] = recursive_tuple(Val(length(tmparg)), tmparg, tmpres)
             else
                 error(
                     "Enzyme Mutability Error: Cannot accumulate in place to immutable value " *
@@ -912,11 +927,12 @@ end
             end
         end)
     end
-    return quote
+    expr = quote
         Base.@_inline_meta
         $(exprs...)
         return nothing
     end
+    return expr
 end
 
 @register_rev function new_structt_rev(B, orig, gutils, tape)
@@ -944,11 +960,9 @@ end
 
     legal, TT, _ = abs_typeof(orig)
     @assert legal
-    world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+    world = enzyme_extract_world(LLVM.parent(position(B)))
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
-        emit_
-
         vals = LLVM.Value[
             unsafe_to_llvm(B, runtime_newstructt_rev),
             unsafe_to_llvm(B, Val(Int(width))),
@@ -960,8 +974,8 @@ end
             push!(vals, shadowsin)
         else
             for i in 1:width  
-                push!(vals, extract_value!(builder, tape, idx - 1))
-                push!(vals, extract_value!(builder, shadowsin, idx - 1))
+                push!(vals, extract_value!(B, tape, i - 1))
+                push!(vals, extract_value!(B, shadowsin, i - 1))
             end
         end
         emit_apply_generic!(B, vals)
