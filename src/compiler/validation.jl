@@ -412,7 +412,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function)
         elseif isa(inst, LLVM.LoadInst)
             
             fn_got = unwrap_ptr_casts(operands(inst)[1])
-            fname = name(fn_got)
+            fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
             if match_ !== nothing
