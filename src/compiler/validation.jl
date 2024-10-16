@@ -496,7 +496,9 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 if !baduse
                     push!(deletedfns, initfn)
                     LLVM.initializer!(fn_got, LLVM.null(value_type(LLVM.initializer(fn_got))))
+                    replace_uses!(opv, LLVM.null(value_type(opv)))
                     LLVM.API.LLVMDeleteGlobal(opv)
+                    replace_uses!(fn_got, LLVM.null(value_type(fn_got)))
                     LLVM.API.LLVMDeleteGlobal(fn_got)
                 end
 
