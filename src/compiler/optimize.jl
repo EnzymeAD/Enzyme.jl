@@ -1074,7 +1074,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             nphi = inbounds_gep!(nb, gent, nphi, [LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(1))])
                             nphi = load!(nb, pjlt, nphi)
 
-                            GTy = LLVM.FunctionType(jlt, LLVM.LLVMType[jlt, pjlt])
+                            GTy = LLVM.FunctionType(LLVM.PointerType(jlt, 13), LLVM.LLVMType[jlt, pjlt])
                             gcloaded, _ = get_function!(
                                 mod,
                                 "julia.gc_loaded",
