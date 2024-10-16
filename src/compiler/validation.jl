@@ -383,28 +383,96 @@ function check_ir!(job, errors, mod::LLVM.Module)
     return errors
 end
 
+
+function unwrap_ptr_casts(val::LLVM.Value)
+    while true
+        is_simple_cast = false
+        is_simple_cast |= isa(val, LLVM.BitCastInst)
+        is_simple_cast |= isa(val, LLVM.AddrSpaceCastInst) || isa(val, LLVM.PtrToIntInst)
+        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMAddrSpaceCast
+        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMIntToPtr
+        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMBitCast
+
+        if !is_simple_cast
+            return val
+        else
+            val = operands(val)[1]
+        end
+    end
+end
+
 function check_ir!(job, errors, imported, f::LLVM.Function)
     calls = []
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
-    for bb in blocks(f), inst in instructions(bb)
+    mod = LLVM.parent(f)
+    for bb in blocks(f), inst in collect(instructions(bb))
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
-        elseif isInline && isa(inst, LLVM.LoadInst)
-            md = metadata(inst)
-            if haskey(md, LLVM.MD_tbaa)
-                modified = LLVM.Metadata(
-                    ccall(
-                        (:EnzymeMakeNonConstTBAA, API.libEnzyme),
-                        LLVM.API.LLVMMetadataRef,
-                        (LLVM.API.LLVMMetadataRef,),
-                        md[LLVM.MD_tbaa],
-                    ),
-                )
-                setindex!(md, modified, LLVM.MD_tbaa)
-            end
-            if haskey(md, LLVM.MD_invariant_load)
-                delete!(md, LLVM.MD_invariant_load)
+        elseif isa(inst, LLVM.LoadInst)
+            
+            fn_got = unwrap_ptr_casts(operands(inst)[1])
+            fname = name(fn_got)
+            match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
+
+            if match_ !== nothing
+                println(string(mod))
+                fname = match_[1]
+                FT = nothing
+                todo = LLVM.Instruction[inst]
+                while length(todo) != 0
+                    v = pop!(todo)
+                    for u in LLVM.uses(v)
+                        u = LLVM.user(u)
+                        if isa(u, LLVM.CallInst)
+                            FT = called_type(u)
+                            break
+                        end
+                        if isa(u, LLVM.BitCastInst)
+                            push!(todo, u)
+                            continue
+                        end
+                        @show u
+                    end
+                    if FT !== nothing
+                        break
+                    end
+                end
+                @assert FT !== nothing
+                newf, _ = get_function!(mod, String(fname), FT)
+                if startswith(fname, "jl_") || startswith(fname, "ijl_")
+                else
+                    @assert "unsupported jl got"
+                    msg = sprint() do io::IO
+                        println(
+                            io,
+                            "Enzyme internal error unsupported got",
+                        )
+                        println(io, "inst=", inst)
+                        println(io, "fname=", fname)
+                        println(io, "FT=", FT)
+                        println(io, "fn_got=", fn_got)
+                    end
+                    throw(AssertionError(msg))
+                end
+                replace_uses!(inst, newf)
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            elseif isInline
+                md = metadata(inst)
+                if haskey(md, LLVM.MD_tbaa)
+                    modified = LLVM.Metadata(
+                        ccall(
+                            (:EnzymeMakeNonConstTBAA, API.libEnzyme),
+                            LLVM.API.LLVMMetadataRef,
+                            (LLVM.API.LLVMMetadataRef,),
+                            md[LLVM.MD_tbaa],
+                        ),
+                    )
+                    setindex!(md, modified, LLVM.MD_tbaa)
+                end
+                if haskey(md, LLVM.MD_invariant_load)
+                    delete!(md, LLVM.MD_invariant_load)
+                end
             end
         end
     end
