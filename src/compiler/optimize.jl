@@ -793,7 +793,20 @@ function nodecayed_phis!(mod::LLVM.Module)
                             end
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
-                                    return getparent(operands(v)[1], offset, true)
+                                    v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
+                                    @assert o2 == LLVM.ConstantInt(offty, 0)
+                                    return v2, offset, true
+                                end
+                                if isa(v, LLVM.CallInst)
+                                    cf = LLVM.called_operand(v)
+                                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
+                                        ld = operands(v)[2]
+                                        if isa(ld, LLVM.LoadInst)
+                                            v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
+                                            @assert o2 == LLVM.ConstantInt(offty, sizeof(Int))
+                                            return v2, offset, true
+                                        end
+                                    end
                                 end
                             end
 
@@ -894,7 +907,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 return v2, offset, skipload
                             end
 
-                            if isa(v, LLVM.GetElementPtrInst) && !hasload
+                            if isa(v, LLVM.GetElementPtrInst)
                                 v2, offset, skipload =
                                     getparent(operands(v)[1], offset, hasload)
                                 offset = nuwadd!(
@@ -1035,9 +1048,40 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                     position!(nb, nonphi)
                     if addr == 13
-                        nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
-                        nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
-                        nphi = load!(nb, ty, nphi)
+                        @static if VERSION < v"1.11-"
+                            nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
+                            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(ty, 11))
+                            nphi = load!(nb, ty, nphi)
+                        else
+                            base_obj = nphi
+
+                            # %value_phi11 = phi {} addrspace(10)* [ %55, %L78 ], [ %54, %L76 ]
+
+                            # %.phi.trans.insert77 = bitcast {} addrspace(10)* %value_phi11 to { i64, {} addrspace(10)** } addrspace(10)*
+                            # %.phi.trans.insert78 = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %.phi.trans.insert77 to { i64, {} addrspace(10)** } addrspace(11)*
+                            # %.phi.trans.insert79 = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %.phi.trans.insert78, i64 0, i32 1
+                            # %.pre80 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %.phi.trans.insert79, align 8, !dbg !532, !tbaa !19, !alias.scope !26, !noalias !29
+
+                            # %154 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %value_phi11, {} addrspace(10)** %.pre80), !dbg !532
+
+                            jlt = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
+                            pjlt = LLVM.PointerType(jlt)
+                            gent = LLVM.StructType([convert(LLVMType, Int), pjlt])
+                            pgent = LLVM.PointerType(LLVM.StructType([convert(LLVMType, Int), pjlt]), 10)
+
+                            nphi = bitcast!(nb, nphi, pgent)
+                            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(gent, 11))
+                            nphi = inbounds_gep!(nb, gent, nphi, [LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(1))])
+                            nphi = load!(nb, pjlt, nphi)
+
+                            GTy = LLVM.FunctionType(LLVM.PointerType(jlt, 13), LLVM.LLVMType[jlt, pjlt])
+                            gcloaded, _ = get_function!(
+                                mod,
+                                "julia.gc_loaded",
+                                GTy
+                            )
+                            nphi = call!(nb, GTy, gcloaded, LLVM.Value[base_obj, nphi])
+                        end
                     else
                         nphi = addrspacecast!(nb, nphi, ty)
                     end

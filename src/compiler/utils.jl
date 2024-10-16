@@ -35,6 +35,11 @@ const ReadOnlyArgMemEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
     (MRI_NoModRef << getLocationPos(Other)),
 )
+const WriteOnlyArgMemEffects = MemoryEffect(
+    (MRI_Mod << getLocationPos(ArgMem)) |
+    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
 const NoEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(ArgMem)) |
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |

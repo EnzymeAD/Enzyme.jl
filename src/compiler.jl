@@ -2965,8 +2965,13 @@ function zero_allocation(
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_no_escaping_allocation"))
     push!(function_attributes(wrapper_f), EnumAttribute("alwaysinline", 0))
     push!(function_attributes(wrapper_f), EnumAttribute("nofree", 0))
-    push!(function_attributes(wrapper_f), EnumAttribute("argmemonly", 0))
-    push!(function_attributes(wrapper_f), EnumAttribute("writeonly", 0))
+
+    if LLVM.version().major <= 15
+        push!(function_attributes(wrapper_f), EnumAttribute("argmemonly", 0))
+        push!(function_attributes(wrapper_f), EnumAttribute("writeonly", 0))
+    else
+        push!(function_attributes(wrapper_f), EnumAttribute("memory", WriteOnlyArgMemEffects.data))
+    end
     push!(function_attributes(wrapper_f), EnumAttribute("willreturn", 0))
     if LLVM.version().major >= 12
         push!(function_attributes(wrapper_f), EnumAttribute("mustprogress", 0))
