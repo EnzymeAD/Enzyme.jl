@@ -114,7 +114,9 @@ end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
 function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T))
-    @assert Core.Compiler.isconstType(T)
+    if !Core.Compiler.isconstType(T)
+        throw(AssertionError("Tried to make instance of non constant type $T"))
+    end
     @assert T <: Type
     return unsafe_to_llvm(B, T.parameters[1])
 end
