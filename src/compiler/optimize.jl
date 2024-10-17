@@ -801,6 +801,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     cf = LLVM.called_operand(v)
                                     if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                                         ld = operands(v)[2]
+                                        while isa(ld, LLVM.BitCastInst) || isa(ld, LLVM.AddrSpaceCastInst)
+                                            ld = operands(ld)[1]
+                                        end
                                         if isa(ld, LLVM.LoadInst)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
                                             @assert o2 == LLVM.ConstantInt(offty, sizeof(Int))
