@@ -625,6 +625,9 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
         while isa(nextInst, LLVM.PHIInst)
             nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(nextInst))
         end
+		if len != nothing
+			nextInst = new_from_original(orig)
+		end
         position!(B0, nextInst)
     end
 
@@ -643,10 +646,15 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 			len = get_memory_len(B0, actualOp)
 		end
 	elseif !fwd
-        len = lookup_value(gutils, len, B)
+        # len = lookup_value(gutils, len, B)
 	end
 
-    length = LLVM.mul!(B0, len, elSize)
+	if memory
+		length = LLVM.mul!(B0, len, elSize)
+	else
+		length = LLVM.mul!(B0, len, elSize)
+	end
+
     isVolatile = LLVM.ConstantInt(LLVM.IntType(1), 0)
 
     # forward pass copy already done by underlying call
