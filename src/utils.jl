@@ -256,7 +256,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
                                 world::Integer=tls_world_age())
-    sig = signature_type_by_tt(ft, tt)
+    sig = GPUCompiler.signature_type_by_tt(ft, tt)
     # @assert Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
 
     mi = ccall(:jl_method_lookup_by_tt, Any,
@@ -267,7 +267,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     # `jl_method_lookup_by_tt` and `jl_method_lookup` can return a unspecialized mi
     if !Base.isdispatchtuple(mi.specTypes)
-        mi = CC.specialize_method(mi.def, sig, mi.sparam_vals)::MethodInstance
+        mi = Core.Compiler.specialize_method(mi.def, sig, mi.sparam_vals)::MethodInstance
     end
 
     return mi
