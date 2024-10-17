@@ -5176,7 +5176,7 @@ function create_abi_wrapper(
             eval = fixup_abi(
                 returnNum + 1,
                 if count_llvm_Sret == 0
-                    makeInstanceOf(builder, sret_types[returnNum+1])
+                    makeInstanceOf(builder, actualRetType)
                 elseif count_llvm_Sret == 1
                     val
                 else
