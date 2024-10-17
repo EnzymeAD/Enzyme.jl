@@ -856,7 +856,7 @@ end
 
     shadowsin = invert_pointer(gutils, origops[2], B)
     if width == 1
-        vals = [new_from_original(gutils, origops[1]), val_from_byref_if_mixed(B, origops[2], shadowsin)]
+        vals = [new_from_original(gutils, origops[1]), val_from_byref_if_mixed(B, gutils, origops[2], shadowsin)]
         shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
         callconv!(shadowres, callconv(orig))
         shadowres = byref_from_val_if_mixed(B, shadowres)
@@ -866,7 +866,7 @@ end
         for idx = 1:width
             vals = [
                 new_from_original(gutils, origops[1]),
-                val_from_byref_if_mixed(B, origops[2], extract_value!(B, shadowsin, idx - 1)),
+                val_from_byref_if_mixed(B, gutils, origops[2], extract_value!(B, shadowsin, idx - 1)),
             ]
             tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
             callconv!(tmp, callconv(orig))

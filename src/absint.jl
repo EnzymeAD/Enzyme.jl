@@ -353,7 +353,7 @@ function abs_typeof(
                 index += 1
                 found = []
                 unionalls = []
-                legal, iterfn, _ = absint(operands(arg)[index])
+                legal, iterfn = absint(operands(arg)[index])
                 index += 1
                 if legal && iterfn == Base.iterate
                     legal0, combfn = absint(operands(arg)[index])
@@ -362,12 +362,13 @@ function abs_typeof(
                         return (true, Type, GPUCompiler.BITS_REF)
                     end
                     resvals = []
-                    while index + 1 != length(operands(arg))
-                        legal, pval, _ = abs_typeof(opearnds(index), partial)
+                    while index != length(operands(arg))
+                        legal, pval, _ = abs_typeof(operands(arg)[index], partial)
                         if !legal
                             break
                         end
                         push!(resvals, pval)
+                        index+=1
                     end
                     if legal0 && legal && combfn == Base.tuple && partial && length(resvals) == 1
                         if resvals[1] <: Vector
