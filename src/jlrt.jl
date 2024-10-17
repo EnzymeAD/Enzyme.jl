@@ -32,7 +32,7 @@ function emit_allocobj!(
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
     else
-        ct = bitcast!(B, ct, T_prjlvalue)
+        ct = bitcast!(B, ct, T_pjlvalue)
     end
 
     if needs_workaround
