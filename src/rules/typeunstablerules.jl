@@ -856,7 +856,7 @@ end
 
     shadowsin = invert_pointer(gutils, origops[2], B)
     if width == 1
-        vals = [new_from_original(gutils, origops[1]), val_from_byref_if_mixed(B, origops[2], shadowsin)]
+        vals = [new_from_original(gutils, origops[1]), val_from_byref_if_mixed(B, gutils, origops[2], shadowsin)]
         shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
         callconv!(shadowres, callconv(orig))
         shadowres = byref_from_val_if_mixed(B, shadowres)
@@ -866,7 +866,7 @@ end
         for idx = 1:width
             vals = [
                 new_from_original(gutils, origops[1]),
-                val_from_byref_if_mixed(B, origops[2], extract_value!(B, shadowsin, idx - 1)),
+                val_from_byref_if_mixed(B, gutils, origops[2], extract_value!(B, shadowsin, idx - 1)),
             ]
             tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
             callconv!(tmp, callconv(orig))
@@ -877,11 +877,15 @@ end
     unsafe_store!(shadowR, shadowres.ref)
 
     legal, TT, _ = abs_typeof(orig)
-    @assert legal
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    act = active_reg_inner(TT, (), world)
-    if act == ActiveState || act == MixedState
+    if !legal
         unsafe_store!(tapeR, shadowres.ref)
+    else
+        @assert legal
+        world = enzyme_extract_world(LLVM.parent(position(B)))
+        act = active_reg_inner(TT, (), world)
+        if act == ActiveState || act == MixedState
+            unsafe_store!(tapeR, shadowres.ref)
+        end
     end
 
     return false
@@ -900,7 +904,7 @@ end
     end
 end
 
-@generated function runtime_newstructt_rev(::Val{Width}, revres0::RR0, revarg0::RA0, args::Vararg{Any, N}) where {Width, RR0, RA0, N}
+@generated function runtime_newstructt_rev(::Val{Width}, origres::Type{OR}, revres0::RR0, revarg0::RA0, args::Vararg{Any, N}) where {Width, OR, RR0, RA0, N}
     exprs = Expr[]
     for i in 1:Width
         dres = if i == 1
@@ -913,19 +917,37 @@ end
         else
             :(args[$(2*(i-2)+1+1)])
         end
-        push!(exprs, quote
-            @assert $dres isa Base.RefValue
-            if $darg isa Base.RefValue
-                tmparg = $darg[]
-                tmpres = $dres[]
-                $darg[] = recursive_tuple(Val(length(tmparg)), tmparg, tmpres)
-            else
-                error(
-                    "Enzyme Mutability Error: Cannot accumulate in place to immutable value " *
-                    string($darg),
-                )
-            end
-        end)
+        if OR == Nothing
+            push!(exprs, quote
+                @assert $dres isa Base.RefValue
+                if $darg isa Base.RefValue
+                    tmparg = $darg[]
+                    tmpres = $dres[]
+                    $darg[] = recursive_tuple(Val(length(tmparg)), tmparg, tmpres)
+                else
+                    error(
+                        "Enzyme Mutability Error: Cannot accumulate in place to immutable value " *
+                        string($darg),
+                    )
+                end
+            end)
+        elseif OR <: Base.RefValue
+        else
+            push!(exprs, quote
+                if $dres isa Base.RefValue
+                    if $darg isa Base.RefValue
+                        tmparg = $darg[]
+                        tmpres = $dres[]
+                        $darg[] = recursive_tuple(Val(length(tmparg)), tmparg, tmpres)
+                    else
+                        error(
+                            "Enzyme Mutability Error: Cannot accumulate in place to immutable value " *
+                            string($darg),
+                        )
+                    end
+                end
+            end)
+        end
     end
     expr = quote
         Base.@_inline_meta
@@ -959,14 +981,27 @@ end
     width = get_width(gutils)
 
     legal, TT, _ = abs_typeof(orig)
-    @assert legal
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    act = active_reg_inner(TT, (), world)
-    if act == ActiveState || act == MixedState
+    torun = false
+    if legal
+        @assert legal
+        world = enzyme_extract_world(LLVM.parent(position(B)))
+        act = active_reg_inner(TT, (), world)
+        torun = act == ActiveState || act == MixedState
+    else
+        torun = true
+    end
+
+    if torun
         vals = LLVM.Value[
             unsafe_to_llvm(B, runtime_newstructt_rev),
             unsafe_to_llvm(B, Val(Int(width))),
         ]
+
+        if legal
+            push!(vals, unsafe_to_llvm(B, Nothing))
+        else
+            push!(vals, lookup_value(gutils, new_from_original(gutils, origops[1]), B))
+        end
 
         shadowsin = lookup_value(gutils, invert_pointer(gutils, origops[2], B), B)
         if width == 1

@@ -348,6 +348,35 @@ function abs_typeof(
                     return (true, res, GPUCompiler.BITS_REF)
                 end
             end
+            
+            if nm == "jl_f__apply_iterate" || nm == "ijl_f__apply_iterate"
+                index += 1
+                found = []
+                unionalls = []
+                legal, iterfn = absint(operands(arg)[index])
+                index += 1
+                if legal && iterfn == Base.iterate
+                    legal0, combfn = absint(operands(arg)[index])
+                    index += 1
+                    if legal0 && combfn == Core.apply_type && partial
+                        return (true, Type, GPUCompiler.BITS_REF)
+                    end
+                    resvals = []
+                    while index != length(operands(arg))
+                        legal, pval, _ = abs_typeof(operands(arg)[index], partial)
+                        if !legal
+                            break
+                        end
+                        push!(resvals, pval)
+                        index+=1
+                    end
+                    if legal0 && legal && combfn == Base.tuple && partial && length(resvals) == 1
+                        if resvals[1] <: Vector
+                            return (true, Tuple{Vararg{eltype(resvals[1])}}, GPUCompiler.BITS_REF)
+                        end
+                    end
+                end
+            end
         end
 
         if nm == "julia.call"

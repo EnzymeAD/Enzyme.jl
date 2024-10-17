@@ -122,6 +122,22 @@ function emit_jl!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     call!(B, FT, fn, [val])
 end
 
+function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::LLVM.Value))::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    ity = LLVM.IntType(8*sizeof(Int))
+    FT = LLVM.FunctionType(ity, [T_prjlvalue, T_prjlvalue])
+    fn, _ = get_function!(mod, "jl_isa", FT)
+    call!(B, FT, fn, [val, val])
+end
+
+function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::Type))::LLVM.Value
+    emit_jl_isa!(B, val, unsafe_to_llvm(B, ty))
+end
+
 function emit_getfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
@@ -283,12 +299,27 @@ function emit_svec!(B::LLVM.IRBuilder, @nospecialize(args))::LLVM.Value
 end
 
 
-function val_from_byref_if_mixed(B::LLVM.IRBuilder, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))
+function load_if_mixed(oval::OT, val::VT) where {OT, VT}
+    if !(oval isa Base.RefValue) && (val isa Base.RefValue)
+        return val[]
+    else
+        return val
+    end
+end
+
+function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))
+    world = enzyme_extract_world(LLVM.parent(position(B)))
     legal, TT, _ = abs_typeof(oval)
     if !legal
-        throw(AssertionError("Could not determine type of value within jl_newstructt arg: $(string(oval))"))
+        legal, TT, _ = abs_typeof(oval, true)
+        if legal
+            act = active_reg_inner(TT, (), world)
+            if act == AnyState
+                return val
+            end
+        end
+        return emit_apply_generic!(B, [unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
     end
-    world = enzyme_extract_world(LLVM.parent(position(B)))
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
         legal2, TT2, _ = abs_typeof(val)
@@ -316,10 +347,27 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, @nospecialize(oval::LLVM.Val
     end
 end
 
+function ref_if_mixed(val::VT) where {VT}
+    if active_reg_inner(Core.Typeof(val), (), nothing, Val(true)) == ActiveState
+        return Ref(val)
+    else
+        return val
+    end
+end
+
 function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))
-    legal, TT, _ = abs_typeof(val)
-    @assert legal
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    legal, TT, _ = abs_typeof(val)
+    if !legal
+        legal, TT, _ = abs_typeof(val, true)
+        act = active_reg_inner(TT, (), world)
+        if act == AnyState
+            return val
+        end
+        if !legal
+            return emit_apply_generic!(B, [unsafe_to_llvm(B, ref_if_mixed), val]) 
+        end
+    end
     act = active_reg_inner(TT, (), world)
 
     if act == ActiveState || act == MixedState
