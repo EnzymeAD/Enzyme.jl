@@ -1000,7 +1000,7 @@ end
         if legal
             push!(vals, unsafe_to_llvm(B, Nothing))
         else
-            push!(vals, lookup_value(gutils, new_from_original(origops[1], B), B))
+            push!(vals, lookup_value(gutils, new_from_original(gutils, origops[1]), B))
         end
 
         shadowsin = lookup_value(gutils, invert_pointer(gutils, origops[2], B), B)
