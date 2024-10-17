@@ -626,7 +626,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
             nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(nextInst))
         end
 		if len != nothing
-			nextInst = new_from_original(orig)
+			nextInst = new_from_original(gutils, orig)
 		end
         position!(B0, nextInst)
     end
