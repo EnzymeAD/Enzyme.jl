@@ -31,7 +31,7 @@ function array_shadow_handler(
 
     nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
 
-    memory = nm == "jl_alloc_genericmemory" || "ijl_alloc_genericmemory"
+    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
