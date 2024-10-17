@@ -816,11 +816,11 @@ end
         augprimal_TT = Tuple{augprimal_tt...}
         kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
         try
-            ami = GPUCompiler.methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
+            ami = my_methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
             @safe_debug "Applying custom augmented_primal rule (kwcall)" TT = augprimal_TT
         catch e
             augprimal_TT = Tuple{typeof(world),typeof(kwfunc),augprimal_TT.parameters...}
-            ami = GPUCompiler.methodinstance(
+            ami = my_methodinstance(
                 typeof(custom_rule_method_error),
                 augprimal_TT,
                 world,
@@ -836,7 +836,7 @@ end
 
         augprimal_TT = Tuple{augprimal_tt...}
         try
-            ami = GPUCompiler.methodinstance(
+            ami = my_methodinstance(
                 Core.Typeof(EnzymeRules.augmented_primal),
                 augprimal_TT,
                 world,
@@ -848,7 +848,7 @@ end
                 typeof(EnzymeRules.augmented_primal),
                 augprimal_TT.parameters...,
             }
-            ami = GPUCompiler.methodinstance(
+            ami = my_methodinstance(
                 typeof(custom_rule_method_error),
                 augprimal_TT,
                 world,
