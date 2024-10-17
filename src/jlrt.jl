@@ -347,7 +347,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils, @nospecialize(oval::
     end
 end
 
-function ref_if_mixed(val::VT) where {OT, VT}
+function ref_if_mixed(val::VT) where {VT}
     if active_reg_inner(Core.Typeof(val), (), nothing, Val(true)) == ActiveState
         return Ref(val)
     else
