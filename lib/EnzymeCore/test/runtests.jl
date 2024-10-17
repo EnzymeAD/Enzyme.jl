@@ -26,3 +26,5 @@ y = @view data[3:end]
 
 @test_throws ErrorException Active(data)
 @test_throws ErrorException Active(d)
+
+include("mode_modification.jl")

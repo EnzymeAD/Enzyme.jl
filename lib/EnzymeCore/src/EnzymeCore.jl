@@ -384,7 +384,7 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
     - [`set_abi`](@ref)
     - [`ReverseSplitModified`](@ref), [`ReverseSplitWidth`](@ref)
 """
-struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,RuntimeActivity,ModifiedBetween,ABI,Holomorphic,ErrIfFuncWritten,ShadowInit} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
+struct ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI,Holomorphic,ErrIfFuncWritten,ShadowInit} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
 
 """
     const ReverseSplitNoPrimal
@@ -577,5 +577,89 @@ function clear_runtime_activity end
 Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
+
+"""
+    split_mode(::ReverseMode)
+
+Turn a [`ReverseMode`](@ref) object into a [`ReverseModeSplit`](@ref) object while preserving as many of the settings as possible.
+
+This function acts as the identity on a [`ReverseModeSplit`](@ref).
+
+See also [`unsplit_mode`](@ref).
+"""
+function split_mode(::ReverseMode{
+    ReturnPrimal,
+    RuntimeActivity,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten
+}) where {
+    ReturnPrimal,
+    RuntimeActivity,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten
+}
+    ReturnShadow = true
+    Width = 0
+    ModifiedBetween = true
+    ShadowInit = false
+    mode_split = ReverseModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        Width,
+        ModifiedBetween,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+        ShadowInit
+    }()
+    return mode_split
+end
+
+split_mode(mode::ReverseModeSplit) = mode
+
+"""
+    unsplit_mode(::ReverseMode)
+
+Turn a [`ReverseModeSplit`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
+
+This function acts as the identity on a [`ReverseMode`](@ref).
+
+See also [`split_mode`](@ref).
+"""
+function unsplit_mode(::ReverseModeSplit{
+    ReturnPrimal,
+    ReturnShadow,
+    RuntimeActivity,
+    Width,
+    ModifiedBetween,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten,
+    ShadowInit
+}) where {
+    ReturnPrimal,
+    ReturnShadow,
+    RuntimeActivity,
+    Width,
+    ModifiedBetween,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten,
+    ShadowInit
+}
+    mode_unsplit = ReverseMode{
+        ReturnPrimal,
+        RuntimeActivity,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten
+    }()
+    return mode_unsplit
+end
+
+unsplit_mode(mode::ReverseMode) = mode
 
 end # module EnzymeCore
