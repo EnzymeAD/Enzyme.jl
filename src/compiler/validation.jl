@@ -457,11 +457,24 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
 
                 initfn = unwrap_ptr_casts(LLVM.initializer(fn_got))
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
-                opv = operands(loadfn)[1]::LLVM.GlobalVariable
+                opv = operands(loadfn)[1]
+                if !isa(opv, LLVM.GlobalVariable)
+                    msg = sprint() do io::IO
+                        println(
+                            io,
+                            "Enzyme internal error unsupported got(load)",
+                        )
+                        println(io, "mod=", string(mod))
+                        println(io, "initfn=", string(initfn))
+                        println(io, "loadfn=", string(loadfn))
+                        println(io, "opv=", string(opv))
+                    end
+                    throw(AssertionError(msg))
+                end
+                opv = opv::LLVM.GlobalVariable
 
                 if startswith(fname, "jl_") || startswith(fname, "ijl_")
                 else
-                    @assert "unsupported jl got"
                     msg = sprint() do io::IO
                         println(
                             io,

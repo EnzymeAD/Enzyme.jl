@@ -1,6 +1,4 @@
 # For julia runtime function emission
-
-declare_allocobj!(mod::LLVM.Module) =
     
 function emit_allocobj!(
     B::LLVM.IRBuilder,
