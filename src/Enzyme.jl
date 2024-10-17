@@ -1866,7 +1866,7 @@ function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
     return a.data[start]
 end
 
-@inline function tupstack(data::Tuple{Vararg{<:Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
+@inline function tupstack(data::Tuple{Vararg{Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
 	num = prod(outshape)
 	res = Array{T}(undef, outshape..., inshape...)
 	for (i, val) in enumerate(data)
