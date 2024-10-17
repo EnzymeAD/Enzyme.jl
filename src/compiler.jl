@@ -197,6 +197,8 @@ const nofreefns = Set{String}((
     "jl_array_ptr_copy",
     "ijl_array_copy",
     "jl_array_copy",
+    "ijl_genericmemory_copy_slice",
+    "jl_genericmemory_copy_slice",
     "ijl_get_nth_field_checked",
     "ijl_get_nth_field_checked",
     "jl_array_del_end",
@@ -1096,367 +1098,6 @@ const JuliaGlobalNameMap = Dict{String,Any}(
 
 include("absint.jl")
 
-function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    legal = true
-    found = []
-    for arg in args
-        slegal, foundv = absint(arg)
-        if slegal
-            push!(found, foundv)
-        else
-            legal = false
-            break
-        end
-    end
-
-    if legal
-        return unsafe_to_llvm(B, Ty{found...})
-    end
-
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-    T_int32 = LLVM.Int32Type()
-
-    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
-    f_apply_type, _ = get_function!(mod, "jl_f_apply_type", generic_FT)
-    Ty = unsafe_to_llvm(B, Ty)
-
-    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-    julia_call, FT = get_function!(
-        mod,
-        "julia.call",
-        LLVM.FunctionType(
-            T_prjlvalue,
-            [LLVM.PointerType(generic_FT), T_prjlvalue];
-            vararg = true,
-        ),
-    )
-    tag = call!(
-        B,
-        FT,
-        julia_call,
-        LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), Ty, args...],
-    )
-    return tag
-end
-
-function emit_tuple!(B, args)::LLVM.Value
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    legal = true
-    found = []
-    for arg in args
-        slegal, foundv = absint(arg)
-        if slegal
-            push!(found, foundv)
-        else
-            legal = false
-            break
-        end
-    end
-
-    if legal
-        return unsafe_to_llvm(B, (found...,))
-    end
-
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-    T_int32 = LLVM.Int32Type()
-
-    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
-    f_apply_type, _ = get_function!(mod, "jl_f_tuple", generic_FT)
-
-    # %5 = call nonnull {}* ({}* ({}*, {}**, i32)*, {}*, ...) @julia.call({}* ({}*, {}**, i32)* @jl_f_apply_type, {}* null, {}* inttoptr (i64 139640605802128 to {}*), {}* %4, {}* inttoptr (i64 139640590432896 to {}*))
-    julia_call, FT = get_function!(
-        mod,
-        "julia.call",
-        LLVM.FunctionType(
-            T_prjlvalue,
-            [LLVM.PointerType(generic_FT), T_prjlvalue];
-            vararg = true,
-        ),
-    )
-    tag = call!(
-        B,
-        FT,
-        julia_call,
-        LLVM.Value[f_apply_type, LLVM.PointerNull(T_prjlvalue), args...],
-    )
-    return tag
-end
-
-function emit_jltypeof!(B::LLVM.IRBuilder, arg::LLVM.Value)::LLVM.Value
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    legal, val, byref = abs_typeof(arg)
-    if legal
-        return unsafe_to_llvm(B, val)
-    end
-
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg = true)
-    fn, _ = get_function!(mod, "jl_typeof", FT)
-    call!(B, FT, fn, [arg])
-end
-
-function emit_methodinstance!(B::LLVM.IRBuilder, func, args)::LLVM.Value
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    world = enzyme_extract_world(fn)
-
-    sizeT = convert(LLVMType, Csize_t)
-    psizeT = LLVM.PointerType(sizeT)
-
-    primalvaltys = LLVM.Value[unsafe_to_llvm(B, Core.Typeof(func))]
-    for a in args
-        push!(primalvaltys, emit_jltypeof!(B, a))
-    end
-
-    meth = only(methods(func))
-    tag = emit_apply_type!(B, Tuple, primalvaltys)
-
-    #    TT = meth.sig
-    #    while TT isa UnionAll
-    #        TT = TT.body
-    #    end
-    #    parms = TT.parameters
-    #
-    #    tosv = primalvaltys
-    #    if length(parms) > 0 && typeof(parms[end]) == Core.TypeofVararg
-    #        tosv = LLVM.Value[tosv[1:length(parms)-1]..., emit_apply_type!(B, Tuple, tosv[length(parms):end])]
-    #    end
-    #    sv = emit_svec!(B, tosv[2:end])
-    #
-
-    meth = unsafe_to_llvm(B, meth)
-
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    worlds, FT = get_function!(
-        mod,
-        "jl_gf_invoke_lookup_worlds",
-        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]),
-    )
-    EB = LLVM.IRBuilder()
-    position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
-    minworld = alloca!(EB, sizeT)
-    maxworld = alloca!(EB, sizeT)
-    store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
-    store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
-    methodmatch = call!(
-        B,
-        FT,
-        worlds,
-        LLVM.Value[
-            tag,
-            unsafe_to_llvm(B, nothing),
-            LLVM.ConstantInt(sizeT, world),
-            minworld,
-            maxworld,
-        ],
-    )
-    # emit_jl!(B, methodmatch)
-    # emit_jl!(B, emit_jltypeof!(B, methodmatch))
-    offset = 1
-    AT = LLVM.ArrayType(T_prjlvalue, offset + 1)
-    methodmatch = addrspacecast!(B, methodmatch, LLVM.PointerType(T_jlvalue, Derived))
-    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(AT, Derived))
-    gep = LLVM.inbounds_gep!(
-        B,
-        AT,
-        methodmatch,
-        LLVM.Value[LLVM.ConstantInt(0), LLVM.ConstantInt(offset)],
-    )
-    sv = LLVM.load!(B, T_prjlvalue, gep)
-
-    fn, FT = get_function!(
-        mod,
-        "jl_specializations_get_linfo",
-        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue]),
-    )
-
-    mi = call!(B, FT, fn, [meth, tag, sv])
-
-    return mi
-end
-
-function emit_writebarrier!(B, T)
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-    func, FT = declare_writebarrier!(mod)
-    return call!(B, FT, func, T)
-end
-
-
-function get_array_struct()
-    @static if VERSION < v"1.11-"
-        # JL_EXTENSION typedef struct {
-        #     JL_DATA_TYPE
-        #     void *data;
-        # #ifdef STORE_ARRAY_LEN (just true new newer versions)
-        # 	size_t length;
-        # #endif
-        #     jl_array_flags_t flags;
-        #     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
-        #     uint32_t offset;  // for 1-d only. does not need to get big.
-        #     size_t nrows;
-        #     union {
-        #         // 1d
-        #         size_t maxsize;
-        #         // Nd
-        #         size_t ncols;
-        #     };
-        #     // other dim sizes go here for ndims > 2
-        #
-        #     // followed by alignment padding and inline data, or owner pointer
-        # } jl_array_t;
-
-        i8 = LLVM.IntType(8)
-        ptrty = LLVM.PointerType(i8, 13)
-        sizeT = LLVM.IntType(8 * sizeof(Csize_t))
-        arrayFlags = LLVM.IntType(16)
-        elsz = LLVM.IntType(16)
-        off = LLVM.IntType(32)
-        nrows = LLVM.IntType(8 * sizeof(Csize_t))
-
-        return LLVM.StructType([ptrty, sizeT, arrayFlags, elsz, off, nrows]; packed = true)
-    else
-        # JL_EXTENSION typedef struct {
-        #     JL_DATA_TYPE
-        #     size_t length;
-        #     void *ptr;
-        #     // followed by padding and inline data, or owner pointer
-        # #ifdef _P64
-        #     // union {
-        #     //     jl_value_t *owner;
-        #     //     T inl[];
-        #     // };
-        # #else
-        #     //
-        #     // jl_value_t *owner;
-        #     // size_t padding[1];
-        #     // T inl[];
-        # #endif
-        # } jl_genericmemory_t;
-        # 
-        # JL_EXTENSION typedef struct {
-        #     JL_DATA_TYPE
-        #     void *ptr_or_offset;
-        #     jl_genericmemory_t *mem;
-        # } jl_genericmemoryref_t;
-        # 
-        # JL_EXTENSION typedef struct {
-        #     JL_DATA_TYPE
-        #     jl_genericmemoryref_t ref;
-        #     size_t dimsize[]; // length for 1-D, otherwise length is mem->length
-        # } jl_array_t;
-        i8 = LLVM.IntType(8)
-        ptrty = LLVM.PointerType(i8, 10)
-        sizeT = LLVM.IntType(8 * sizeof(Csize_t))
-        return LLVM.StructType([ptrty, sizeT]; packed = true)
-    end
-end
-
-function get_array_data(B, array)
-    i8 = LLVM.IntType(8)
-    ptrty = LLVM.PointerType(i8, 13)
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ptrty, LLVM.addrspace(LLVM.value_type(array))),
-    )
-    return LLVM.load!(B, ptrty, array)
-end
-
-function get_array_elsz(B, array)
-    ST = get_array_struct()
-    elsz = LLVM.IntType(16)
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
-    v = inbounds_gep!(
-        B,
-        ST,
-        array,
-        LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(3))],
-    )
-    return LLVM.load!(B, elsz, v)
-end
-
-function get_array_len(B, array)
-    if isa(array, LLVM.CallInst)
-        fn = LLVM.called_operand(array)
-        nm = ""
-        if isa(fn, LLVM.Function)
-            nm = LLVM.name(fn)
-        end
-
-        for (fname, num) in (
-            ("jl_alloc_array_1d", 1),
-            ("ijl_alloc_array_1d", 1),
-            ("jl_alloc_array_2d", 2),
-            ("jl_alloc_array_2d", 2),
-            ("jl_alloc_array_2d", 3),
-            ("jl_alloc_array_2d", 3),
-        )
-            if nm == fname
-                res = operands(array)[2]
-                for i = 2:num
-                    res = mul!(B, res, operands(array)[1+i])
-                end
-                return res
-            end
-        end
-    end
-    ST = get_array_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
-    v = inbounds_gep!(
-        B,
-        ST,
-        array,
-        LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(1))],
-    )
-    sizeT = LLVM.IntType(8 * sizeof(Csize_t))
-    return LLVM.load!(B, sizeT, v)
-end
-
-function get_array_nrows(B, array)
-    ST = get_array_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
-    v = inbounds_gep!(
-        B,
-        ST,
-        array,
-        LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
-    )
-    nrows = LLVM.IntType(8 * sizeof(Csize_t))
-    return LLVM.load!(B, nrows, v)
-end
-
 # Force sret
 struct Return2
     ret1::Any
@@ -1491,128 +1132,7 @@ struct Tape{TapeTy,ShadowTy,ResT}
     shadow_return::ShadowTy
 end
 
-function emit_gc_preserve_begin(B::LLVM.IRBuilder, args = LLVM.Value[])
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-    func, FT = get_function!(
-        mod,
-        "llvm.julia.gc_preserve_begin",
-        LLVM.FunctionType(LLVM.TokenType(), vararg = true),
-    )
-
-    token = call!(B, FT, func, args)
-    return token
-end
-
-function emit_gc_preserve_end(B::LLVM.IRBuilder, token)
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    func, FT = get_function!(
-        mod,
-        "llvm.julia.gc_preserve_end",
-        LLVM.FunctionType(LLVM.VoidType(), [LLVM.TokenType()]),
-    )
-
-    call!(B, FT, func, [token])
-    return
-end
-
-function allocate_sret!(B::LLVM.IRBuilder, N)
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    al = LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
-    return al
-end
-
-function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, N)
-    B = LLVM.IRBuilder()
-    position!(B, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-    allocate_sret!(B, N)
-end
-
 include("make_zero.jl")
-
-function emit_error(B::LLVM.IRBuilder, orig, string, errty = EnzymeRuntimeException)
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    mod = LLVM.parent(fn)
-
-    if !isa(string, LLVM.Value)
-        string = globalstring_ptr!(B, string, "enz_exception")
-    end
-
-    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-
-        vt = LLVM.VoidType()
-        ptr = convert(LLVMType, Ptr{Cvoid})
-
-        exc, _ =
-            get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
-
-        string = ptrtoint!(B, string, ptr)
-
-        call!(B, LLVM.function_type(exc), exc, [string])
-
-        framefn, ft = get_function!(
-            mod,
-            "gpu_report_exception_frame",
-            LLVM.FunctionType(vt, [LLVM.Int32Type(), ptr, ptr, LLVM.Int32Type()]),
-        )
-
-        if orig !== nothing
-            bt = GPUCompiler.backtrace(orig)
-            for (i, frame) in enumerate(bt)
-                idx = ConstantInt(parameters(ft)[1], i)
-                func = globalstring_ptr!(B, String(frame.func), "di_func")
-                func = ptrtoint!(B, func, ptr)
-                file = globalstring_ptr!(B, String(frame.file), "di_file")
-                file = ptrtoint!(B, file, ptr)
-                line = ConstantInt(parameters(ft)[4], frame.line)
-                call!(B, ft, framefn, [idx, func, file, line])
-            end
-        end
-
-        sigfn, sigft = get_function!(
-            mod,
-            "gpu_signal_exception",
-            LLVM.FunctionType(vt, LLVM.LLVMType[]),
-        )
-        call!(B, sigft, sigfn)
-        trap_ft = LLVM.FunctionType(LLVM.VoidType())
-        trap = if haskey(functions(mod), "llvm.trap")
-            functions(mod)["llvm.trap"]
-        else
-            LLVM.Function(mod, "llvm.trap", trap_ft)
-        end
-        call!(B, trap_ft, trap)
-    else
-        err = emit_allocobj!(B, errty)
-        err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-        store!(B, string, err2)
-        emit_jl_throw!(
-            B,
-            addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
-        )
-    end
-
-    # 2. Call error function and insert unreachable
-    LLVM.API.LLVMAddCallSiteAttribute(
-        ct,
-        reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-        EnumAttribute("noreturn"),
-    )
-    if EnzymeMutabilityException != errty
-        LLVM.API.LLVMAddCallSiteAttribute(
-            ct,
-            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-            StringAttribute("enzyme_error"),
-        )
-    end
-    return ct
-end
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
     funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
@@ -3817,6 +3337,8 @@ function annotate!(mod, mode)
         "ijl_box_float64",
         "ijl_box_int32",
         "ijl_box_int64",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
         "jl_alloc_array_1d",
         "jl_alloc_array_2d",
         "jl_alloc_array_3d",
@@ -3825,6 +3347,10 @@ function annotate!(mod, mode)
         "ijl_alloc_array_3d",
         "jl_array_copy",
         "ijl_array_copy",
+        "jl_genericmemory_copy_slice",
+        "ijl_genericmemory_copy_slice",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
         "jl_idtable_rehash",
         "ijl_idtable_rehash",
         "jl_f_tuple",
@@ -3854,6 +3380,8 @@ function annotate!(mod, mode)
                 boxfn in (
                     "jl_array_copy",
                     "ijl_array_copy",
+                    "jl_genericmemory_copy_slice",
+                    "ijl_genericmemory_copy_slice",
                     "jl_idtable_rehash",
                     "ijl_idtable_rehash",
                 )
@@ -3876,6 +3404,8 @@ function annotate!(mod, mode)
                         boxfn in (
                             "jl_array_copy",
                             "ijl_array_copy",
+                            "jl_genericmemory_copy_slice",
+                            "ijl_genericmemory_copy_slice",
                             "jl_idtable_rehash",
                             "ijl_idtable_rehash",
                         )
@@ -3916,6 +3446,8 @@ function annotate!(mod, mode)
                     boxfn in (
                         "jl_array_copy",
                         "ijl_array_copy",
+                        "jl_genericmemory_copy_slice",
+                        "ijl_genericmemory_copy_slice",
                         "jl_idtable_rehash",
                         "ijl_idtable_rehash",
                     )
@@ -4250,6 +3782,30 @@ function enzyme!(
         ),
         "ijl_array_copy" => @cfunction(
             inout_rule,
+            UInt8,
+            (
+                Cint,
+                API.CTypeTreeRef,
+                Ptr{API.CTypeTreeRef},
+                Ptr{API.IntList},
+                Csize_t,
+                LLVM.API.LLVMValueRef,
+            )
+        ),
+        "jl_genericmemory_copy_slice" => @cfunction(
+            inoutcopyslice_rule,
+            UInt8,
+            (
+                Cint,
+                API.CTypeTreeRef,
+                Ptr{API.CTypeTreeRef},
+                Ptr{API.IntList},
+                Csize_t,
+                LLVM.API.LLVMValueRef,
+            )
+        ),
+        "ijl_genericmemory_copy_slice" => @cfunction(
+            inoutcopyslice_rule,
             UInt8,
             (
                 Cint,
@@ -7479,7 +7035,11 @@ function GPUCompiler.codegen(
                                nm == "ijl_alloc_array_2d" ||
                                nm == "jl_alloc_array_2d" ||
                                nm == "ijl_alloc_array_3d" ||
-                               nm == "jl_alloc_array_3d"
+                               nm == "jl_alloc_array_3d" ||
+                               nm == "ijl_new_array" ||
+                               nm == "jl_new_array" ||
+                               nm == "jl_alloc_genericmemory" ||
+                               nm == "ijl_alloc_genericmemory"
                                 continue
                             end
                             if is_readonly(called)

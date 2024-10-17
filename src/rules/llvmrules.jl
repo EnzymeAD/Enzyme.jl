@@ -549,7 +549,10 @@ end
     return false
 end
 
-function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
+# Optionally takes a length if requested
+# If this is a memory, pass memoryptr=<underlying data>
+function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothing, memoryptr=nothing)
+	memory = memoryptr != nothing
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -569,22 +572,16 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         shadowdst = invert_pointer(gutils, orig, B)
     end
 
-    # size_t len = jl_array_len(ary);
-    # size_t elsz = ary->elsize;
-    # memcpy(new_ary->data, ary->data, len * elsz);
-    # JL_EXTENSION typedef struct {
-    # 	JL_DATA_TYPE
-    # 	void *data;
-    # #ifdef STORE_ARRAY_LEN
-    # 	size_t length;
-    # #endif
-    # 	jl_array_flags_t flags;
-    # 	uint16_t elsize;  // element size including alignment (dim 1 memory stride)
-
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     dl = string(LLVM.datalayout(mod))
-    API.EnzymeTypeTreeLookupEq(tt, 1, dl)
+	# memory stores the data pointer after a length
+	if memory
+    	API.EnzymeTypeTreeLookupEq(tt, 2*sizeof(Int), dl)
+		API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, sizeof(Int), sizeof(Int), 0)
+	else
+    	API.EnzymeTypeTreeLookupEq(tt, sizeof(Int), dl)
+	end
     data0!(tt)
     ct = API.EnzymeTypeTreeInner0(tt)
 
@@ -596,7 +593,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         emit_error(
             B,
             orig,
-            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt),
+            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt)* " " * string(orig) * " " * string(abs_typeof(orig)),
         )
         return nothing
     end
@@ -605,14 +602,7 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     ctx = LLVM.context(orig)
     secretty = API.EnzymeConcreteTypeIsFloat(ct)
 
-    off = sizeof(Cstring)
-    if true # STORE_ARRAY_LEN
-        off += sizeof(Csize_t)
-    end
-    #jl_array_flags_t
-    off += 2
-
-    actualOp = new_from_original(gutils, origArg)
+    actualOp = new_from_original(gutils, shadowsrc)
     if fwd
         B0 = B
     elseif typeof(actualOp) <: LLVM.Argument
@@ -631,15 +621,36 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
         while isa(nextInst, LLVM.PHIInst)
             nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(nextInst))
         end
+		if len != nothing
+			nextInst = new_from_original(gutils, orig)
+		end
         position!(B0, nextInst)
     end
 
-    elSize = get_array_elsz(B0, actualOp)
+    elSize = if memory
+		get_memory_elsz(B0, actualOp)
+	else
+		get_array_elsz(B0, actualOp)
+	end
+
     elSize = LLVM.zext!(B0, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
 
-    len = get_array_len(B0, actualOp)
+	if len == nothing
+		if memory
+			len = get_memory_len(B0, actualOp)
+		else
+			len = get_array_len(B0, actualOp)
+		end
+	elseif !fwd
+        # len = lookup_value(gutils, len, B)
+	end
 
-    length = LLVM.mul!(B0, len, elSize)
+	if memory
+		length = LLVM.mul!(B0, len, elSize)
+	else
+		length = LLVM.mul!(B0, len, elSize)
+	end
+
     isVolatile = LLVM.ConstantInt(LLVM.IntType(1), 0)
 
     # forward pass copy already done by underlying call
@@ -649,10 +660,26 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     if !fwd
         shadowdst = lookup_value(gutils, shadowdst, B)
     end
-    shadowsrc = invert_pointer(gutils, origArg, B)
-    if !fwd
-        shadowsrc = lookup_value(gutils, shadowsrc, B)
-    end
+
+
+	lookup_src = true
+
+	if memory
+		if fwd
+			shadowsrc = memoryptr
+			lookup_src = false
+		else
+			shadowsrc = invert_pointer(gutils, shadowsrc, B)
+			if !fwd
+				shadowsrc = lookup_value(gutils, shadowsrc, B)
+			end
+		end
+	else
+		shadowsrc = invert_pointer(gutils, shadowsrc, B)
+		if !fwd
+			shadowsrc = lookup_value(gutils, shadowsrc, B)
+		end
+	end
 
     width = get_width(gutils)
 
@@ -669,68 +696,59 @@ function arraycopy_common(fwd, B, orig, origArg, gutils, shadowdst)
     algn = 0
     i8 = LLVM.IntType(8)
 
-    if width == 1
+	for i = 1:width
 
-        shadowsrc = get_array_data(B, shadowsrc)
-        shadowdst = get_array_data(B, shadowdst)
+		evsrc = if width == 1
+			shadowsrc
+		else
+			extract_value!(B, shadowsrc, i - 1)
+		end
+		evdst = if width == 1
+			shadowdst
+		else
+			extract_value!(B, shadowdst, i - 1)
+		end
 
-        if fwd && secretty != nothing
-            LLVM.memset!(B, shadowdst, LLVM.ConstantInt(i8, 0, false), length, algn)
-        end
+		# src already has done the lookup from the argument
+		shadowsrc0 = if lookup_src
+			if memory
+				get_memory_data(B, evsrc)
+			else
+				get_array_data(B, evsrc)
+			end
+		else
+			evsrc
+		end
 
-        API.sub_transfer(
-            gutils,
-            fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient,
-            secretty,
-            intrinsic,
-            1,
-            1,
-            0,
-            false,
-            shadowdst,
-            false,
-            shadowsrc,
-            length,
-            isVolatile,
-            orig,
-            allowForward,
-            !fwd,
-        ) #=shadowsLookedUp=#
+		shadowdst0 = if memory
+			get_memory_data(B, evdst)
+		else
+			get_array_data(B, evdst)
+		end
 
-    else
-        for i = 1:width
+		if fwd && secretty != nothing
+			LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
+		end
 
-            evsrc = extract_value!(B, shadowsrc, i - 1)
-            evdst = extract_value!(B, shadowdst, i - 1)
-
-            shadowsrc0 = get_array_data(B, evsrc)
-            shadowdst0 = get_array_data(B, evdst)
-
-            if fwd && secretty != nothing
-                LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
-            end
-
-            API.sub_transfer(
-                gutils,
-                fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient,
-                secretty,
-                intrinsic,
-                1,
-                1,
-                0,
-                false,
-                shadowdst0,
-                false,
-                shadowsrc0,
-                length,
-                isVolatile,
-                orig,
-                allowForward,
-                !fwd,
-            ) #=shadowsLookedUp=#
-        end
-
-    end
+		API.sub_transfer(
+			gutils,
+			fwd ? API.DEM_ReverseModePrimal : API.DEM_ReverseModeGradient,
+			secretty,
+			intrinsic,
+			1,
+			1,
+			0,
+			false,
+			shadowdst0,
+			false,
+			shadowsrc0,
+			length,
+			isVolatile,
+			orig,
+			allowForward,
+			!fwd,
+		) #=shadowsLookedUp=#
+	end
 
     return nothing
 end
@@ -746,7 +764,7 @@ end
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
 
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres) #=fwd=#
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres)
     end
 
     return false
@@ -755,7 +773,156 @@ end
 @register_rev function arraycopy_rev(B, orig, gutils, tape)
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing) #=fwd=#
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing)
+    end
+
+    return nothing
+end
+
+@register_fwd function genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
+    ctx = LLVM.context(orig)
+
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+
+    origops = LLVM.operands(orig)
+
+    width = get_width(gutils)
+
+    shadowin = invert_pointer(gutils, origops[1], B)
+    shadowdata = invert_pointer(gutils, origops[2], B)
+    len = new_from_original(gutils, origops[3])
+
+    i8 = LLVM.IntType(8)
+    algn = 0
+
+    if width == 1
+        shadowres = call_samefunc_with_inverted_bundles!(
+            B,
+            gutils,
+            orig,
+            [shadowin, shadowdata, len],
+            [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
+            false,
+        ) #=lookup=#
+
+        # TODO zero based off runtime types, rather than presume floatlike?
+        if is_constant_value(gutils, origops[1])
+            elSize = get_memory_elsz(B, shadowin)
+            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+            length = LLVM.mul!(B, len, elSize)
+            bt = GPUCompiler.backtrace(orig)
+            btstr = sprint() do io
+                print(io, "\nCaused by:")
+                Base.show_backtrace(io, bt)
+            end
+            GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
+            LLVM.memset!(
+                B,
+                shadowdata,
+                LLVM.ConstantInt(i8, 0, false),
+                length,
+                algn,
+            )
+        end
+        if get_runtime_activity(gutils)
+            prev = new_from_original(gutils, orig)
+            shadowres = LLVM.select!(
+                B,
+                LLVM.icmp!(
+                    B,
+                    LLVM.API.LLVMIntNE,
+                    shadowin,
+                    new_from_original(gutils, origops[1]),
+                ),
+                shadowres,
+                prev,
+            )
+            API.moveBefore(prev, shadowres, B)
+        end
+    else
+        shadowres =
+            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            ev = extract_value!(B, shadowin, idx - 1)
+            ev2 = extract_value!(B, shadowdata, idx - 1)
+            callv = call_samefunc_with_inverted_bundles!(
+                B,
+                gutils,
+                orig,
+                [ev, ev2, len],
+                [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
+                false,
+            ) #=lookup=#
+            if is_constant_value(gutils, origops[1])
+                elSize = get_array_elsz(B, ev)
+                elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+                length = LLVM.mul!(B, len, elSize)
+                bt = GPUCompiler.backtrace(orig)
+                btstr = sprint() do io
+                    print(io, "\nCaused by:")
+                    Base.show_backtrace(io, bt)
+                end
+                GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
+                LLVM.memset!(
+                    B,
+                    ev2,
+                    LLVM.ConstantInt(i8, 0, false),
+                    length,
+                    algn,
+                )
+            end
+            if get_runtime_activity(gutils)
+                prev = new_from_original(gutils, orig)
+                callv = LLVM.select!(
+                    B,
+                    LLVM.icmp!(
+                        B,
+                        LLVM.API.LLVMIntNE,
+                        ev,
+                        new_from_original(gutils, origops[1]),
+                    ),
+                    callv,
+                    prev,
+                )
+                if idx == 1
+                    API.moveBefore(prev, callv, B)
+                end
+            end
+            shadowres = insert_value!(B, shadowres, callv, idx - 1)
+        end
+    end
+
+    unsafe_store!(shadowR, shadowres.ref)
+    return false
+end
+
+@register_aug function genericmemory_copy_slice_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+    genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
+
+    origops = LLVM.operands(orig)
+
+    if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
+        shadowres = LLVM.Value(unsafe_load(shadowR))
+
+		len = new_from_original(gutils, origops[3])
+		memoryptr = new_from_original(gutils, origops[2])
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
+    end
+
+    return false
+end
+
+@register_rev function genericmemory_copy_slice_rev(B, orig, gutils, tape)
+    origops = LLVM.operands(orig)
+    if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
+		len = new_from_original(gutils, origops[3])
+		memoryptr = new_from_original(gutils, origops[2])
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
     end
 
     return nothing
@@ -2009,6 +2176,12 @@ end
         @augfunc(arraycopy_augfwd),
         @revfunc(arraycopy_rev),
         @fwdfunc(arraycopy_fwd),
+    )
+    register_handler!(
+        ("jl_genericmemory_copy_slice", "ijl_genericmemory_copy_slice"),
+        @augfunc(genericmemory_copy_slice_augfwd),
+        @revfunc(genericmemory_copy_slice_rev),
+        @fwdfunc(genericmemory_copy_slice_fwd),
     )
     register_handler!(
         ("jl_reshape_array", "ijl_reshape_array"),

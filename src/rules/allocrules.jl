@@ -27,7 +27,11 @@ function array_shadow_handler(
     typ = eltype(typ)
 
     b = LLVM.IRBuilder(B)
-    orig = LLVM.Value(OrigCI)
+    orig = LLVM.Value(OrigCI)::LLVM.CallInst
+
+    nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
+
+    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
@@ -38,7 +42,11 @@ function array_shadow_handler(
 
     anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
 
-    prod = get_array_len(b, anti)
+    prod = if memory
+        get_memory_len(b, anti)
+    else
+        get_array_len(b, anti)
+    end
 
     isunboxed, elsz, al = Base.uniontype_layout(typ)
 
@@ -66,7 +74,11 @@ function array_shadow_handler(
     end
 
     i8 = LLVM.IntType(8)
-    toset = get_array_data(b, anti)
+    toset = if memory
+        get_memory_data(b, anti)
+    else
+        get_array_data(b, anti)
+    end
 
     mcall = LLVM.memset!(b, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
 
@@ -90,64 +102,13 @@ end
 
 @inline function register_alloc_rules()
     register_alloc_handler!(
-        ("jl_alloc_array_1d", "ijl_alloc_array_1d"),
-        @cfunction(
-            array_shadow_handler,
-            LLVM.API.LLVMValueRef,
-            (
-                LLVM.API.LLVMBuilderRef,
-                LLVM.API.LLVMValueRef,
-                Csize_t,
-                Ptr{LLVM.API.LLVMValueRef},
-                API.EnzymeGradientUtilsRef,
-            )
+        (
+         "jl_alloc_array_1d", "ijl_alloc_array_1d",
+         "jl_alloc_array_2d", "ijl_alloc_array_2d",
+         "jl_alloc_array_3d", "ijl_alloc_array_3d",
+         "jl_new_array", "ijl_new_array",
+         "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
         ),
-        @cfunction(
-            null_free_handler,
-            LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
-        )
-    )
-    register_alloc_handler!(
-        ("jl_alloc_array_2d", "ijl_alloc_array_2d"),
-        @cfunction(
-            array_shadow_handler,
-            LLVM.API.LLVMValueRef,
-            (
-                LLVM.API.LLVMBuilderRef,
-                LLVM.API.LLVMValueRef,
-                Csize_t,
-                Ptr{LLVM.API.LLVMValueRef},
-                API.EnzymeGradientUtilsRef,
-            )
-        ),
-        @cfunction(
-            null_free_handler,
-            LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
-        )
-    )
-    register_alloc_handler!(
-        ("jl_alloc_array_3d", "ijl_alloc_array_3d"),
-        @cfunction(
-            array_shadow_handler,
-            LLVM.API.LLVMValueRef,
-            (
-                LLVM.API.LLVMBuilderRef,
-                LLVM.API.LLVMValueRef,
-                Csize_t,
-                Ptr{LLVM.API.LLVMValueRef},
-                API.EnzymeGradientUtilsRef,
-            )
-        ),
-        @cfunction(
-            null_free_handler,
-            LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
-        )
-    )
-    register_alloc_handler!(
-        ("jl_new_array", "ijl_new_array"),
         @cfunction(
             array_shadow_handler,
             LLVM.API.LLVMValueRef,

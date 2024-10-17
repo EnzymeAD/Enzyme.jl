@@ -292,7 +292,9 @@ function abs_typeof(
            nm == "jl_alloc_array_3d" ||
            nm == "ijl_alloc_array_3d" ||
            nm == "jl_new_array" ||
-           nm == "ijl_new_array"
+           nm == "ijl_new_array" ||
+           nm == "jl_alloc_genericmemory" ||
+           nm == "ijl_alloc_genericmemory"
             vals = absint(operands(arg)[1], partial)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
@@ -364,6 +366,17 @@ function abs_typeof(
                 return (legal, RT, GPUCompiler.MUT_REF)
             end
             return (legal, RT, nothing)
+        end
+        @static if VERSION < v"1.11-"
+        else
+            if nm == "jl_genericmemory_copy_slice" || nm == "ijl_genericmemory_copy_slice"
+                legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+                if legal
+                    @assert RT <: Memory
+                    return (legal, RT, GPUCompiler.MUT_REF)
+                end
+                return (legal, RT, nothing)
+            end
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
