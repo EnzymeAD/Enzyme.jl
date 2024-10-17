@@ -632,7 +632,7 @@ function get_memory_struct()
 	ptrty = LLVM.PointerType(i8)
 	sizeT = LLVM.IntType(8 * sizeof(Csize_t))
 
-	return LLVM.StructType([ptrty, sizeT]; packed = true)
+	return LLVM.StructType([sizeT, ptrty]; packed = true)
 end
 
 function get_memory_data(B, array)
