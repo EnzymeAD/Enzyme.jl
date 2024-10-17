@@ -26,9 +26,14 @@ function emit_allocobj!(
         bitcast!(B, pgcstack, T_ppjlvalue),
         [LLVM.ConstantInt(current_task_offset())],
     )
-    ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
-    T_ppint8 = LLVM.PointerType(T_pint8)
-    ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
+
+    @static if VERSION < v"1.11.0-"    
+        ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
+        T_ppint8 = LLVM.PointerType(T_pint8)
+        ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
+    else
+        ct = bitcast!(B, ct, T_prjlvalue)
+    end
 
     if needs_workaround
         T_size_t = convert(LLVM.LLVMType, Int)
