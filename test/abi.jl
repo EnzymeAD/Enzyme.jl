@@ -1,6 +1,15 @@
 using Enzyme
 using Test
 
+retty() = Float64
+
+@testset "Const Return" begin
+    res = Enzyme.autodiff(ForwardWithPrimal, retty, Const)
+    @test res === NamedTuple{(Symbol("1"),), Tuple{Type{Float64}}}((Float64,))
+    res = Enzyme.autodiff(Forward, retty, Const)
+    @test res === ()
+end
+
 @testset "ABI & Calling convention" begin
 
     f(x) = x

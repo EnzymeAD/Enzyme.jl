@@ -5155,11 +5155,13 @@ function create_abi_wrapper(
         count_Sret = 0
         count_llvm_Sret = 0
         if !isghostty(actualRetType)
-            if returnPrimal
-                count_llvm_Sret += 1
-            end
-            if !(rettype <: Const)
-                count_llvm_Sret += 1
+            if !Core.Compiler.isconstType(actualRetType)
+                if returnPrimal
+                    count_llvm_Sret += 1
+                end
+                if !(rettype <: Const)
+                    count_llvm_Sret += 1
+                end
             end
         end
         if !isghostty(literal_rt)
