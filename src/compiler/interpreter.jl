@@ -294,7 +294,7 @@ else
         @boundscheck memoryref(dest, n), memoryref(src, n)
         t1 = Base.@_gc_preserve_begin dest
         t2 = Base.@_gc_preserve_begin src
-        Base.memmove(pointer(dest), pointer(src), n * aligned_sizeof(T))
+        Base.memmove(pointer(dest), pointer(src), n * Base.aligned_sizeof(T))
         Base.@_gc_preserve_end t2
         Base.@_gc_preserve_end t1
         return dest
@@ -342,7 +342,7 @@ function abstract_call_known(
         if f === Base.unsafe_copyto! && length(argtypes) == 4 &&
             widenconst(argtypes[2]) <: Base.MemoryRef &&
             widenconst(argtypes[3]) == widenconst(argtypes[2]) && 
-            allocatedinline(eltype(widenconst(argtypes[2]))) && isbitstype(eltype(widenconst(argtypes[2])))
+            Base.allocatedinline(eltype(widenconst(argtypes[2]))) && Base.isbitstype(eltype(widenconst(argtypes[2])))
 
             arginfo2 = ArgInfo(
                 fargs isa Nothing ? nothing :
