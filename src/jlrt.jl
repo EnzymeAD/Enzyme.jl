@@ -803,10 +803,12 @@ function emit_layout_of_type!(B, ty)
 	@assert !isa(ty, LLVM.Constant)
 	dt = get_datatype_struct()
 	lty = bitcast!(B, ty, LLVM.PointerType(dt, addrspace(value_type(ty))))
-	layoutp = inbounds_gep!(B, dt, ty, 
+	layoutp = inbounds_gep!(B, dt, lty, 
         LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
 	)
-	layout = load!(B, lptr, layoutp)
+	jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
+	layout = load!(B, jlvaluet, layoutp)
+    layout = bitcast!(B, layout, lptr)
 	return layout
 end
 
