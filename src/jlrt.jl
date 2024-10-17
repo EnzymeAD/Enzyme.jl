@@ -747,7 +747,7 @@ end
 function emit_layout_of_type!(B, ty)
 	legal, JTy = absint(ty)
 	ls = get_layout_struct()
-	lptr = LLVM.PointerType(lptr, 10)
+	lptr = LLVM.PointerType(ls, 10)
 	if legal
 		return LLVM.const_inttoptr(LLVM.ConstantInt(Base.reinterpret(UInt, JTy.layout)), lptr)
 	end
