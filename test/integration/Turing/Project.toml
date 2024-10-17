@@ -1,0 +1,21 @@
+[deps]
+AbstractMCMC = "80f14c24-f653-4e6a-9b94-39d6b0f70001"
+AbstractPPL = "7a57a42e-76ec-4ea3-a279-07e840d6d9cf"
+Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+DynamicPPL = "366bfd00-2699-11ea-058f-f148b4cae6d8"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+LogDensityProblems = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
+LogDensityProblemsAD = "996a588d-648d-4e1f-a8f0-a84b347e47b1"
+
+[compat]
+AbstractMCMC = "=5.3.0"
+AbstractPPL = "=0.8.4"
+Bijectors = "=0.13.18"
+Distributions = "=0.25.111"
+DynamicPPL = "=0.28.4"
+FiniteDifferences = "0.12.32"
+LogDensityProblems = "=2.1.1"
+LogDensityProblemsAD = "=1.10.0"
