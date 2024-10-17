@@ -72,7 +72,7 @@ jobs:
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
-      - uses: actions/cache@v4
+      - uses: actions/cache@v2
         env:
           cache-name: cache-artifacts
         with:
@@ -150,7 +150,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/cache@v4
+      - uses: actions/cache@v2
         env:
           cache-name: cache-artifacts
         with:
