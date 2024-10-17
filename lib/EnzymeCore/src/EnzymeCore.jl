@@ -579,31 +579,40 @@ Return a new mode with its [`ABI`](@ref) set to the chosen type.
 function set_abi end
 
 """
-    split_mode(::ReverseMode)
+    split_mode(
+        ::ReverseMode, [::Val{ReturnShadow}, ::Val{Width}, ::Val{ModifiedBetween}, ::Val{ShadowInit}]
+    )
 
 Turn a [`ReverseMode`](@ref) object into a [`ReverseModeSplit`](@ref) object while preserving as many of the settings as possible.
+The rest of the settings can be configured with optional positional arguments of `Val` type.
 
 This function acts as the identity on a [`ReverseModeSplit`](@ref).
 
-See also [`unsplit_mode`](@ref).
+See also [`combined_mode`](@ref).
 """
-function split_mode(::ReverseMode{
+function split_mode(
+    ::ReverseMode{
+        ReturnPrimal,
+        RuntimeActivity,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten
+    },
+    ::Val{ReturnShadow}=Val(true),
+    ::Val{Width}=Val(0),
+    ::Val{ModifiedBetween}=Val(true),
+    ::Val{ShadowInit}=Val(false),
+) where {
     ReturnPrimal,
+    ReturnShadow,
     RuntimeActivity,
+    Width,
+    ModifiedBetween,
     ABI,
     Holomorphic,
-    ErrIfFuncWritten
-}) where {
-    ReturnPrimal,
-    RuntimeActivity,
-    ABI,
-    Holomorphic,
-    ErrIfFuncWritten
+    ErrIfFuncWritten,
+    ShadowInit
 }
-    ReturnShadow = true
-    Width = 0
-    ModifiedBetween = true
-    ShadowInit = false
     mode_split = ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
@@ -618,10 +627,10 @@ function split_mode(::ReverseMode{
     return mode_split
 end
 
-split_mode(mode::ReverseModeSplit) = mode
+split_mode(mode::ReverseModeSplit, args...) = mode
 
 """
-    unsplit_mode(::ReverseMode)
+    combined_mode(::ReverseMode)
 
 Turn a [`ReverseModeSplit`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
 
@@ -629,17 +638,19 @@ This function acts as the identity on a [`ReverseMode`](@ref).
 
 See also [`split_mode`](@ref).
 """
-function unsplit_mode(::ReverseModeSplit{
-    ReturnPrimal,
-    ReturnShadow,
-    RuntimeActivity,
-    Width,
-    ModifiedBetween,
-    ABI,
-    Holomorphic,
-    ErrIfFuncWritten,
-    ShadowInit
-}) where {
+function combined_mode(
+    ::ReverseModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        Width,
+        ModifiedBetween,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+        ShadowInit
+    }
+) where {
     ReturnPrimal,
     ReturnShadow,
     RuntimeActivity,
@@ -660,6 +671,6 @@ function unsplit_mode(::ReverseModeSplit{
     return mode_unsplit
 end
 
-unsplit_mode(mode::ReverseMode) = mode
+combined_mode(mode::ReverseMode) = mode
 
 end # module EnzymeCore
