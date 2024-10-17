@@ -54,13 +54,13 @@ jobs:
             version: '1.11'
             assertions: true
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
@@ -72,7 +72,7 @@ jobs:
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
-      - uses: actions/cache@v1
+      - uses: actions/cache@v2
         env:
           cache-name: cache-artifacts
         with:
@@ -120,10 +120,12 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
-      - uses: codecov/codecov-action@v1
+      - uses: codecov/codecov-action@v4
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           file: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   enzymetestutils:
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
@@ -143,12 +145,12 @@ jobs:
           - x64
         libEnzyme: [packaged]
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/cache@v1
+      - uses: actions/cache@v2
         env:
           cache-name: cache-artifacts
         with:
@@ -180,10 +182,12 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
-      - uses: codecov/codecov-action@v2
+      - uses: codecov/codecov-action@v4
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   integration:
     name: Integration Tests - ${{ matrix.test }}
     runs-on: ${{ matrix.os }}
@@ -200,10 +204,10 @@ jobs:
           - DynamicExpressions
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v1
+      - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Run tests"
         run: |
@@ -214,11 +218,11 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
-      - uses: julia-actions/cache@v1
+      - uses: julia-actions/cache@v2
       - run: |
           julia --project=docs -e '
             using Pkg
