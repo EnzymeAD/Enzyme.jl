@@ -877,7 +877,7 @@ end
     unsafe_store!(shadowR, shadowres.ref)
 
     legal, TT, _ = abs_typeof(orig)
-    if legal
+    if !legal
         unsafe_store!(tapeR, shadowres.ref)
     else
         @assert legal
