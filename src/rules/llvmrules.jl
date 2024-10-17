@@ -761,7 +761,7 @@ end
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
-    arraycopy_slice_fwd(B, orig, gutils, normalR, shadowR)
+    arraycopy_fwd(B, orig, gutils, normalR, shadowR)
 
     origops = LLVM.operands(orig)
 
