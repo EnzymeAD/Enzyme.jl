@@ -347,18 +347,27 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils, @nospecialize(oval::
     end
 end
 
+function ref_if_mixed(val::VT) where {OT, VT}
+    if active_reg_inner(Core.Typeof(val), (), nothing, Val(true)) == ActiveState
+        return Ref(val)
+    else
+        return val
+    end
+end
+
 function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))
     world = enzyme_extract_world(LLVM.parent(position(B)))
     legal, TT, _ = abs_typeof(val)
     if !legal
-        legal, TT, _ = abs_typeof(oval, true)
-        @assert legal
+        legal, TT, _ = abs_typeof(val, true)
         act = active_reg_inner(TT, (), world)
         if act == AnyState
             return val
         end
+        if !legal
+            return emit_apply_generic!(B, [unsafe_to_llvm(B, ref_if_mixed), val]) 
+        end
     end
-    @assert legal
     act = active_reg_inner(TT, (), world)
 
     if act == ActiveState || act == MixedState
