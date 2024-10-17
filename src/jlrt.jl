@@ -284,11 +284,19 @@ end
 
 
 function val_from_byref_if_mixed(B::LLVM.IRBuilder, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))
+    world = enzyme_extract_world(LLVM.parent(position(B)))
     legal, TT, _ = abs_typeof(oval)
     if !legal
+        legal, TT, _ = abs_typeof(oval, true)
+        if legal
+            act = active_reg_inner(TT, (), world)
+            if act == AnyState
+                return val
+            end
+            throw(AssertionError("Could not determine type of value within jl_newstructt arg: $(string(oval)) partial $TT"))
+        end
         throw(AssertionError("Could not determine type of value within jl_newstructt arg: $(string(oval))"))
     end
-    world = enzyme_extract_world(LLVM.parent(position(B)))
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
         legal2, TT2, _ = abs_typeof(val)
@@ -317,9 +325,17 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, @nospecialize(oval::LLVM.Val
 end
 
 function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))
-    legal, TT, _ = abs_typeof(val)
-    @assert legal
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    legal, TT, _ = abs_typeof(val)
+    if !legal
+        legal, TT, _ = abs_typeof(oval, true)
+        @assert legal
+        act = active_reg_inner(TT, (), world)
+        if act == AnyState
+            return val
+        end
+    end
+    @assert legal
     act = active_reg_inner(TT, (), world)
 
     if act == ActiveState || act == MixedState
