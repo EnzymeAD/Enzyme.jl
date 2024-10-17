@@ -10,6 +10,7 @@ using Test
 
     @test split_mode(set_runtime_activity(Reverse)) == set_runtime_activity(ReverseSplitNoPrimal)
     @test split_mode(set_err_if_func_written(Reverse)) == set_err_if_func_written(ReverseSplitNoPrimal)
+    @test split_mode(set_abi(Reverse, InlineABI)) == set_abi(ReverseSplitNoPrimal, InlineABI)
 
     @test split_mode(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false,:ReturnShadow,false,:Width,:ModifiedBetween,EnzymeCore.DefaultABI,false,false,:ShadowInit}()
 
@@ -20,4 +21,5 @@ using Test
 
     @test combined_mode(set_runtime_activity(ReverseSplitNoPrimal)) == set_runtime_activity(Reverse)
     @test combined_mode(set_err_if_func_written(ReverseSplitNoPrimal)) == set_err_if_func_written(Reverse)
+    @test combined_mode(set_abi(ReverseSplitNoPrimal, InlineABI)) == set_abi(Reverse, InlineABI)
 end
