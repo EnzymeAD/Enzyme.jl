@@ -789,7 +789,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if addr == 11 && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
-                            if addr == 13 && hasload && value_type(v) == LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
+                            if addr == 13 && hasload && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
                             if addr == 13  && !hasload
