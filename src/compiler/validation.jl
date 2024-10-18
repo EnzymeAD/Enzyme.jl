@@ -491,7 +491,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 end
                 opv = opv::LLVM.GlobalVariable
 
-                if startswith(fname, "jl_") || startswith(fname, "ijl_")
+                if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
                 else
                     found = nothing
                     for lbb in blocks(initfn), linst in collect(instructions(lbb))
@@ -503,7 +503,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                             continue
                         end
                         if LLVM.name(cv) == "ijl_load_and_lookup"
-                            found = cv
+                            found = linst
                             break
                         end
                     end
@@ -523,10 +523,59 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         throw(AssertionError(msg))
                     end
 
-                    legal1, flib = abs_cstring(operands(found)[1])
-                    @assert legal1
+                    legal1, arg1 = abs_cstring(operands(found)[1])
+                    if legal1
+                    else
+                        arg1 = operands(found)[1]
+
+                        while isa(arg1, ConstantExpr)
+                            if opcode(arg1) == LLVM.API.LLVMAddrSpaceCast ||
+                               opcode(arg1) == LLVM.API.LLVMBitCast ||
+                               opcode(arg1) == LLVM.API.LLVMIntToPtr
+                                arg1 = operands(arg1)[1]
+                            else
+                                break
+                            end
+                        end
+                        if !isa(arg1, LLVM.ConstantInt)
+                            msg = sprint() do io::IO
+                                println(
+                                    io,
+                                    "Enzyme internal error unsupported got(arg1)",
+                                )
+                                println(io, "inst=", inst)
+                                println(io, "fname=", fname)
+                                println(io, "FT=", FT)
+                                println(io, "fn_got=", fn_got)
+                                println(io, "init=", string(initfn))
+                                println(io, "opv=", string(opv))
+                                println(io, "found=", string(found))
+                                println(io, "arg1=", string(arg1))
+                            end
+                            throw(AssertionError(msg))
+                        end
+        
+                        arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
+                    end
+
                     legal2, fname = abs_cstring(operands(found)[2])
-                    @assert legal2
+                    if !legal2
+                        msg = sprint() do io::IO
+                            println(
+                                io,
+                                "Enzyme internal error unsupported got(fname)",
+                            )
+                            println(io, "inst=", inst)
+                            println(io, "fname=", fname)
+                            println(io, "FT=", FT)
+                            println(io, "fn_got=", fn_got)
+                            println(io, "init=", string(initfn))
+                            println(io, "opv=", string(opv))
+                            println(io, "found=", string(found))
+                            println(io, "fname=", string(operands(found)[2]))
+                        end
+                        throw(AssertionError(msg))
+                    end
 
                     hnd = operands(found)[3]
 
@@ -547,17 +596,29 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         end
                         throw(AssertionError(msg))
                     end
-                    res = ccall(
-                        :ijl_load_and_lookup,
-                        Ptr{Cvoid},
-                        (Cstring, Cstring, Ptr{Cvoid}),
-                        flib,
-                        fname,
-                        reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
-                    )
+                    hnd = LLVM.name(hnd)
+                    if arg1 isa AbstractString
+                        res = ccall(
+                            :ijl_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Cstring, Cstring, Ptr{Cvoid}),
+                            arg1,
+                            fname,
+                            reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
+                        )
+                    else
+                        res = ccall(
+                            :ijl_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
+                            arg1,
+                            fname,
+                            reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
+                        )
+                    end
 
                     push!(function_attributes(newf), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, res))))
-                    
+
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
                     # metadata(newf)["enzymejl_flib"] = flib
                     # metadata(newf)["enzymejl_flib"] = flib
