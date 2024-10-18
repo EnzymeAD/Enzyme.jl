@@ -845,7 +845,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             #   [aka a load of the second element of mem]
                                             base_2, off_2, _ = get_base_and_offset(v2)
                                             base_1, off_1, _ = get_base_and_offset(operands(v)[1])
-                                            if base_1 != base_2 || off_1 + 8 != off_2
+                                            if base_1 != base_2 || off_1 != off_2
                                                 msg = sprint() do io::IO
                                                     println(
                                                         io,
