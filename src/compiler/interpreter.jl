@@ -287,6 +287,21 @@ struct AutodiffCallInfo <: CallInfo
     info::CallInfo
 end
 
+@static if VERSION < v"1.11.0-"
+else
+    @inline function myunsafe_copyto!(dest::MemoryRef{T}, src::MemoryRef{T}, n) where {T}
+        Base.@_terminates_globally_notaskstate_meta
+        @boundscheck memoryref(dest, n), memoryref(src, n)
+        t1 = Base.@_gc_preserve_begin dest
+        t2 = Base.@_gc_preserve_begin src
+        Base.memmove(pointer(dest), pointer(src), n * Base.aligned_sizeof(T))
+        Base.@_gc_preserve_end t2
+        Base.@_gc_preserve_end t1
+        return dest
+    end
+end
+
+
 function abstract_call_known(
     interp::EnzymeInterpreter,
     @nospecialize(f),
@@ -318,6 +333,29 @@ function abstract_call_known(
                 Union{},
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
+            )
+        end
+    end
+
+    @static if VERSION < v"1.11.0-"
+    else
+        if f === Base.unsafe_copyto! && length(argtypes) == 4 &&
+            widenconst(argtypes[2]) <: Base.MemoryRef &&
+            widenconst(argtypes[3]) == widenconst(argtypes[2]) && 
+            Base.allocatedinline(eltype(widenconst(argtypes[2]))) && Base.isbitstype(eltype(widenconst(argtypes[2])))
+
+            arginfo2 = ArgInfo(
+                fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.Interpreter.myunsafe_copyto!), fargs[2:end]...],
+                [Core.Const(Enzyme.Compiler.Interpreter.myunsafe_copyto!), argtypes[2:end]...],
+            )
+            return abstract_call_known(
+                interp,
+                Enzyme.Compiler.Interpreter.myunsafe_copyto!,
+                arginfo2,
+                si,
+                sv,
+                max_methods,
             )
         end
     end
