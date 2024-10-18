@@ -823,60 +823,18 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         if isa(ld, LLVM.LoadInst)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
                                             rhs = LLVM.ConstantInt(offty, sizeof(Int))
-                                            if o2 != rhs
-                                                msg = sprint() do io::IO
-                                                    println(
-                                                        io,
-                                                        "Enzyme internal error addr13 load doesn't keep offset 0",
-                                                    )
-                                                    println(io, "mod=", string(LLVM.parent(f)))
-                                                    println(io, "f=", string(f))
-                                                    println(io, "v=", string(v))
-                                                    println(io, "opv[1]=", string(operands(v)[1]))
-                                                    println(io, "opv[2]=", string(operands(v)[2]))
-                                                    println(io, "ld=", string(ld))
-                                                    println(io, "ld_op[1]=", string(operands(ld)[1]))
 
-                                                    println(io, "v2=", string(v2))
-                                                    println(io, "o2=", string(o2))
-                                                    println(io, "hl2=", string(hl2))
-                                                    
-                                                    println(io, "offty=", string(offty))
-                                                    println(io, "rhs=", string(rhs))
-                                                end
-                                                throw(AssertionError(msg))
-                                            end
-
-                                            # We currently only support gc_loaded(mem, ptr) where ptr = (({size_t, {}*}*)mem)->second
-                                            #   [aka a load of the second element of mem]
                                             base_2, off_2, _ = get_base_and_offset(v2)
                                             base_1, off_1, _ = get_base_and_offset(operands(v)[1])
-                                            if base_1 != base_2 || off_1 != off_2
-                                                msg = sprint() do io::IO
-                                                    println(
-                                                        io,
-                                                        "Enzyme internal error addr13 load data isn't offset of mem",
-                                                    )
-                                                    println(io, "f=", string(f))
-                                                    println(io, "v=", string(v))
-                                                    println(io, "opv[1]=", string(operands(v)[1]))
-                                                    println(io, "opv[2]=", string(operands(v)[2]))
-                                                    println(io, "ld=", string(ld))
-                                                    println(io, "ld_op[1]=", string(operands(ld)[1]))
 
-                                                    println(io, "v2=", string(v2))
-                                                    println(io, "o2=", string(o2))
-                                                    println(io, "hl2=", string(hl2))
-
-                                                    println(io, "base_1=", string(base_1))
-                                                    println(io, "base_2=", string(base_2))
-                                                    println(io, "off_1=", string(off_1))
-                                                    println(io, "off_2=", string(off_2))
-                                                end
-                                                throw(AssertionError(msg))
+                                            if o2 == rhs && base_1 == base_2 && off_1 == off_2
+                                                return v2, offset, true
                                             end
 
-                                            return v2, offset, true
+                                            rhs = ptrtoint!(b, offty, operands(v)[1])
+                                            lhs = ptrtoint(b, offty, get_memory_data(B, operands(v)[2]))
+                                            off2 = nuwsub!(b, rhs, lhs)
+                                            return v2, nuwadd!(b, offset, off2), true
                                         end
                                     end
                                 end
@@ -1127,24 +1085,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                         else
                             base_obj = nphi
 
-                            # %value_phi11 = phi {} addrspace(10)* [ %55, %L78 ], [ %54, %L76 ]
-
-                            # %.phi.trans.insert77 = bitcast {} addrspace(10)* %value_phi11 to { i64, {} addrspace(10)** } addrspace(10)*
-                            # %.phi.trans.insert78 = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %.phi.trans.insert77 to { i64, {} addrspace(10)** } addrspace(11)*
-                            # %.phi.trans.insert79 = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %.phi.trans.insert78, i64 0, i32 1
-                            # %.pre80 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %.phi.trans.insert79, align 8, !dbg !532, !tbaa !19, !alias.scope !26, !noalias !29
-
-                            # %154 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %value_phi11, {} addrspace(10)** %.pre80), !dbg !532
-
                             jlt = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
                             pjlt = LLVM.PointerType(jlt)
-                            gent = LLVM.StructType([convert(LLVMType, Int), pjlt])
-                            pgent = LLVM.PointerType(LLVM.StructType([convert(LLVMType, Int), pjlt]), 10)
 
-                            nphi = bitcast!(nb, nphi, pgent)
-                            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(gent, 11))
-                            nphi = inbounds_gep!(nb, gent, nphi, [LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(1))])
-                            nphi = load!(nb, pjlt, nphi)
+                            nphi = get_memory_data(nb, nphi)
+                            nphi = bitcast!(nb, nphi, pjlt)
 
                             GTy = LLVM.FunctionType(LLVM.PointerType(jlt, 13), LLVM.LLVMType[jlt, pjlt])
                             gcloaded, _ = get_function!(
