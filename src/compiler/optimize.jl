@@ -843,9 +843,30 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                                             # We currently only support gc_loaded(mem, ptr) where ptr = (({size_t, {}*}*)mem)->second
                                             #   [aka a load of the second element of mem]
-                                            subv, suboff, _ = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
-                                            @assert v2 == subv
-                                            @assert suboff == LLVM.ConstantInt(offty, 0)
+                                            base_2, off_2, _ = get_base_and_offset(v2)
+                                            base_1, off_1, _ = get_base_and_offset(operands(v)[1])
+                                            if base_1 != base_2 || off_1 + 8 != off_2
+                                                msg = sprint() do io::IO
+                                                    println(
+                                                        io,
+                                                        "Enzyme internal error addr13 load data isn't offset of mem",
+                                                    )
+                                                    println(io, "f=", string(f))
+                                                    println(io, "v=", string(v))
+                                                    println(io, "v2=", string(v2))
+                                                    println(io, "o2=", string(o2))
+                                                    println(io, "hl2=", string(hl2))
+                                                    println(io, "opv[1]=", string(operands(v)[1]))
+                                                    println(io, "opv[2]=", string(operands(v)[2]))
+                                                    println(io, "ld=", string(ld))
+                                                    println(io, "ld_op[1]=", string(operands(ld)[1]))
+                                                    println(io, "base_1=", string(base_1))
+                                                    println(io, "base_2=", string(base_2))
+                                                    println(io, "off_1=", string(off_1))
+                                                    println(io, "off_2=", string(off_2))
+                                                end
+                                                throw(AssertionError(msg))
+                                            end
 
                                             return v2, offset, true
                                         end
