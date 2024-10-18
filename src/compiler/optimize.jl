@@ -783,18 +783,34 @@ function nodecayed_phis!(mod::LLVM.Module)
                         b = IRBuilder()
                         position!(b, terminator(pb))
 
+
                         v0 = v
                         @inline function getparent(v, offset, hasload)
                             if addr == 11 && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
-                            if addr == 13 && hasload && addrspace(value_type(v)) == 10
+                            if addr == 13 && hasload && value_type(v) == LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
                                 return v, offset, hasload
                             end
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
                                     v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
-                                    @assert o2 == LLVM.ConstantInt(offty, 0)
+                                    rhs = LLVM.ConstantInt(offty, 0) 
+                                    if o2 != rhs
+                                        msg = sprint() do io::IO
+                                            println(
+                                                io,
+                                                "Enzyme internal error addr13 load doesn't keep offset 0",
+                                            )
+                                            println(io, "v=", string(v))
+                                            println(io, "v2=", string(v2))
+                                            println(io, "o2=", string(o2))
+                                            println(io, "hl2=", string(hl2))
+                                            println(io, "offty=", string(offty))
+                                            println(io, "rhs=", string(rhs))
+                                        end
+                                        throw(AssertionError(msg))
+                                    end
                                     return v2, offset, true
                                 end
                                 if isa(v, LLVM.CallInst)
@@ -806,7 +822,31 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         end
                                         if isa(ld, LLVM.LoadInst)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
-                                            @assert o2 == LLVM.ConstantInt(offty, sizeof(Int))
+                                            rhs = LLVM.ConstantInt(offty, sizeof(Int))
+                                            if o2 != rhs
+                                                msg = sprint() do io::IO
+                                                    println(
+                                                        io,
+                                                        "Enzyme internal error addr13 load doesn't keep offset 0",
+                                                    )
+                                                    println(io, "mod=", string(LLVM.parent(f)))
+                                                    println(io, "f=", string(f))
+                                                    println(io, "v=", string(v))
+                                                    println(io, "v2=", string(v2))
+                                                    println(io, "o2=", string(o2))
+                                                    println(io, "hl2=", string(hl2))
+                                                    println(io, "offty=", string(offty))
+                                                    println(io, "rhs=", string(rhs))
+                                                end
+                                                throw(AssertionError(msg))
+                                            end
+
+                                            # We currently only support gc_loaded(mem, ptr) where ptr = (({size_t, {}*}*)mem)->second
+                                            #   [aka a load of the second element of mem]
+                                            subv, suboff, _ = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
+                                            @assert v2 == subv
+                                            @assert suboff == LLVM.ConstantInt(offty, 0)
+
                                             return v2, offset, true
                                         end
                                     end
