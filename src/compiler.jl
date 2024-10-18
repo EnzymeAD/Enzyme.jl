@@ -2319,7 +2319,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         world = enzyme_extract_world(fn)
         has, Ty, byref = abs_typeof(V)
         if !has
-            throw(AssertionError("Allocation could not have its type statically determined $(string(V))"))
+            throw(AssertionError("$(string(fn))\n Allocation could not have its type statically determined $(string(V))"))
         end
         rt = active_reg_inner(Ty, (), world)
         if rt == ActiveState || rt == MixedState
