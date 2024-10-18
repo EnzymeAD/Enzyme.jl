@@ -597,7 +597,14 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         throw(AssertionError(msg))
                     end
                     hnd = LLVM.name(hnd)
-                    if arg1 isa AbstractString
+                    # println(string(mod))
+
+                    # TODO we don't restore/lookup now because this fails
+                    # @vchuravy / @gbaraldi this needs help looking at how to get the actual handle and setup
+
+                    if true
+                        res = nothing
+                    elseif arg1 isa AbstractString
                         res = ccall(
                             :ijl_load_and_lookup,
                             Ptr{Cvoid},
@@ -617,8 +624,9 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         )
                     end
 
-                    push!(function_attributes(newf), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, res))))
-
+                    if res !== nothing
+                        push!(function_attributes(newf), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, res))))
+                    end
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
                     # metadata(newf)["enzymejl_flib"] = flib
                     # metadata(newf)["enzymejl_flib"] = flib
