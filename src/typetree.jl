@@ -305,6 +305,42 @@ else
         end
         return tt
     end
+
+    function typetree_inner(
+        ::Type{<:GenericMemoryRef{kind,T}},
+        ctx,
+        dl,
+        seen::TypeTreeTable,
+    ) where {kind,T}
+        offset = 0
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T) && Base.isconcretetype(T)
+            merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
+        merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, 0)
+
+        for f = 2:fieldcount(T)
+            offset = fieldoffset(T, f)
+            subT = fieldtype(T, f)
+            
+            subtree = copy(typetree(subT, ctx, dl, seen))
+
+            # Allocated inline so adjust first path
+            if allocatedinline(subT)
+                shift!(subtree, dl, 0, sizeof(subT), offset)
+            else
+                merge!(subtree, TypeTree(API.DT_Pointer, ctx))
+                only!(subtree, offset)
+            end
+
+            merge!(tt, subtree)
+        end
+        canonicalize!(tt, sizeof(T), dl)
+
+        return tt
+    end
 end
 
 import Base: ismutabletype
