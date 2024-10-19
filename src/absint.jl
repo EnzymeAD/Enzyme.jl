@@ -42,6 +42,9 @@ function absint(arg::LLVM.Value, partial::Bool = false)
         if nm == "julia.pointer_from_objref"
             return absint(operands(arg)[1], partial)
         end
+        if nm == "julia.gc_loaded"
+            return absint(operands(arg)[2], partial)
+        end
         if nm == "jl_typeof" || nm == "ijl_typeof"
             vals = abs_typeof(operands(arg)[1], partial)
             return (vals[1], vals[2])
@@ -254,6 +257,10 @@ function abs_typeof(
 
         if nm == "julia.pointer_from_objref"
             return abs_typeof(operands(arg)[1], partial)
+        end
+
+        if nm == "julia.gc_loaded"
+            return abs_typeof(operands(arg)[2], partial)
         end
 
         for (fname, ty) in (
