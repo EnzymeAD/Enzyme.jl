@@ -447,21 +447,27 @@ end
     i8 = LLVM.IntType(8)
     algn = 0
 
-    if width == 1
-        shadowres = call_samefunc_with_inverted_bundles!(
+    shadowres =
+        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for idx = 1:width
+        ev = if width == 1
+            shadowin
+        else
+            extract_value!(B, shadowin, idx - 1)
+        end
+        
+        callv = call_samefunc_with_inverted_bundles!(
             B,
             gutils,
             orig,
-            [shadowin],
+            [ev],
             [API.VT_Shadow],
             false,
         ) #=lookup=#
-
-        # TODO zero based off runtime types, rather than presume floatlike?
         if is_constant_value(gutils, origops[1])
-            elSize = get_array_elsz(B, shadowin)
+            elSize = get_array_elsz(B, ev)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-            len = get_array_len(B, shadowin)
+            len = get_array_len(B, ev)
             length = LLVM.mul!(B, len, elSize)
             bt = GPUCompiler.backtrace(orig)
             btstr = sprint() do io
@@ -471,7 +477,7 @@ end
             GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             LLVM.memset!(
                 B,
-                get_array_data(B, shadowres),
+                get_array_data(B, callv),
                 LLVM.ConstantInt(i8, 0, false),
                 length,
                 algn,
@@ -479,69 +485,25 @@ end
         end
         if get_runtime_activity(gutils)
             prev = new_from_original(gutils, orig)
-            shadowres = LLVM.select!(
+            callv = LLVM.select!(
                 B,
                 LLVM.icmp!(
                     B,
                     LLVM.API.LLVMIntNE,
-                    shadowin,
+                    ev,
                     new_from_original(gutils, origops[1]),
                 ),
-                shadowres,
+                callv,
                 prev,
             )
-            API.moveBefore(prev, shadowres, B)
+            if idx == 1
+                API.moveBefore(prev, callv, B)
+            end
         end
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            ev = extract_value!(B, shadowin, idx - 1)
-            callv = call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                [ev],
-                [API.VT_Shadow],
-                false,
-            ) #=lookup=#
-            if is_constant_value(gutils, origops[1])
-                elSize = get_array_elsz(B, ev)
-                elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-                len = get_array_len(B, ev)
-                length = LLVM.mul!(B, len, elSize)
-                bt = GPUCompiler.backtrace(orig)
-                btstr = sprint() do io
-                    print(io, "\nCaused by:")
-                    Base.show_backtrace(io, bt)
-                end
-                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
-                LLVM.memset!(
-                    B,
-                    get_array_data(B, callv),
-                    LLVM.ConstantInt(i8, 0, false),
-                    length,
-                    algn,
-                )
-            end
-            if get_runtime_activity(gutils)
-                prev = new_from_original(gutils, orig)
-                callv = LLVM.select!(
-                    B,
-                    LLVM.icmp!(
-                        B,
-                        LLVM.API.LLVMIntNE,
-                        ev,
-                        new_from_original(gutils, origops[1]),
-                    ),
-                    callv,
-                    prev,
-                )
-                if idx == 1
-                    API.moveBefore(prev, callv, B)
-                end
-            end
-            shadowres = insert_value!(B, shadowres, callv, idx - 1)
+        shadowres = if width == 1
+            callv
+        else
+            insert_value!(B, shadowres, callv, idx - 1)
         end
     end
 
