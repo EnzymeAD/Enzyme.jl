@@ -455,7 +455,7 @@ end
         else
             extract_value!(B, shadowin, idx - 1)
         end
-        
+
         callv = call_samefunc_with_inverted_bundles!(
             B,
             gutils,
@@ -772,7 +772,6 @@ end
         else
             extract_value!(B, shadowdata, idx - 1)
         end
-        ev2 = inttoptr!(B, shadowdata, LLVM.PointerType(LLVM.IntType(8)))
         callv = call_samefunc_with_inverted_bundles!(
             B,
             gutils,
