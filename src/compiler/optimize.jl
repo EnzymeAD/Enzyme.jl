@@ -831,8 +831,8 @@ function nodecayed_phis!(mod::LLVM.Module)
                                                 return v2, offset, true
                                             end
 
-                                            rhs = ptrtoint!(b, offty, operands(v)[1])
-                                            lhs = ptrtoint(b, offty, get_memory_data(B, operands(v)[2]))
+                                            rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
+                                            lhs = ptrtoint!(b, operands(v)[2], offty)
                                             off2 = nuwsub!(b, rhs, lhs)
                                             return v2, nuwadd!(b, offset, off2), true
                                         end
