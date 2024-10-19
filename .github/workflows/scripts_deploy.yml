@@ -15,7 +15,7 @@ jobs:
 
       - uses: julia-actions/install-juliaup@v2
         with:
-          channel: 'lts'
+          channel: '1.10'
       - uses: julia-actions/cache@v2
       - run: |
           julia --project=docs -e '
