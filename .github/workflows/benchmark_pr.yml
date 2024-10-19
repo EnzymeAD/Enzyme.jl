@@ -12,10 +12,10 @@ jobs:
 
         steps:
             - uses: actions/checkout@v2
-            - uses: julia-actions/setup-julia@v1
+            - uses: julia-actions/install-juliaup@v2
               with:
-                version: "1"
-            - uses: julia-actions/cache@v1
+                channel: 'lts'
+            - uses: julia-actions/cache@v2
             - name: Extract Package Name from Project.toml
               id: extract-package-name
               run: |
