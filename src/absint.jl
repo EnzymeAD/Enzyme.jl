@@ -267,6 +267,7 @@ function abs_typeof(
 
         if nm == "julia.gc_loaded"
             legal, res, byref = abs_typeof(operands(arg)[2], partial)
+            @show "gcloaded", string(arg), string(operands(arg)[2]), legal, res, byref
             return legal, res, byref
         end
 
@@ -440,8 +441,10 @@ function abs_typeof(
     if isa(arg, LLVM.LoadInst)
         larg, offset, error = get_base_and_offset(operands(arg)[1])
 
+        @show "load", string(arg), string(operands(arg)[1]), string(larg), offset, error
         if !error
             legal, typ, byref = abs_typeof(larg)
+            @show "load abs", string(arg), legal, typ, byref
             if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
@@ -467,7 +470,7 @@ function abs_typeof(
                             fo = fieldoffset(typ, i)
                             if fieldoffset(typ, i) == offset
                                 offset = 0
-                                typ = fieldtype(typ, i)
+                                typ = typed_fieldtype(typ, i)
                                 if !Base.allocatedinline(typ)
                                     if byref != GPUCompiler.BITS_VALUE
                                         legal = false
@@ -478,7 +481,7 @@ function abs_typeof(
                                 break
                             elseif fieldoffset(typ, i) > offset
                                 offset = offset - fieldoffset(typ, lasti)
-                                typ = fieldtype(typ, lasti)
+                                typ = typed_fieldtype(typ, lasti)
                                 @assert Base.isconcretetype(typ)
                                 if !Base.allocatedinline(typ)
                                     legal = false
@@ -493,7 +496,7 @@ function abs_typeof(
                         end
             			if !seen && fieldcount(typ) > 0
             			    offset = offset - fieldoffset(typ, lasti)
-            		            typ = fieldtype(typ, lasti)
+            		            typ = typed_fieldtype(typ, lasti)
             			    @assert Base.isconcretetype(typ)
             			    if !Base.allocatedinline(typ)
             			        legal = false
@@ -509,7 +512,7 @@ function abs_typeof(
                     while legal && should_recurse(typ2, value_type(arg), byref, dl)
                         idx, _ = first_non_ghost(typ2)
                         if idx != -1
-                            typ2 = fieldtype(typ2, idx)
+                            typ2 = typed_fieldtype(typ2, idx)
                             if Base.allocatedinline(typ2)
                                 if byref == GPUCompiler.BITS_VALUE
                                     continue
@@ -529,6 +532,7 @@ function abs_typeof(
                         break
                     end
                     if legal
+                        @show "load final", string(arg), typ2, byref
                         return (true, typ2, byref)
                     end
                 end
@@ -552,7 +556,7 @@ function abs_typeof(
                 @assert Base.isconcretetype(typ)
                 cnt = 0
                 for i = 1:fieldcount(typ)
-                    styp = fieldtype(typ, i)
+                    styp = typed_fieldtype(typ, i)
                     if isghostty(styp)
                         continue
                     end
@@ -577,6 +581,7 @@ function abs_typeof(
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
         typ, byref = enzyme_extract_parm_type(f, idx, false) #=error=#
         if typ !== nothing
+            @show "arg", string(arg), typ, byref
             return (true, typ, byref)
         end
     end

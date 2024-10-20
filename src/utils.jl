@@ -277,3 +277,25 @@ else
 end
 
 export my_methodinstance
+
+
+@static if VERSION < v"1.11-"
+
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+    fieldtype(T, i)
+end
+
+else
+
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+    if T <: GenericMemoryRef && i == 1
+        Ptr{eltype(T)}
+    elseif T <: GenericMemory && i == 2
+        Ptr{eltype(T)}
+    else
+        fieldtype(T, i)
+    end
+end
+
+end
+

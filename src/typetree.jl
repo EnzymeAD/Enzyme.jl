@@ -123,7 +123,7 @@ function get_offsets(@nospecialize(T::Type))
     results = Tuple{API.CConcreteType,Int}[]
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
-        subT = fieldtype(T, f)
+        subT = typed_fieldtype(T, f)
 
         if !allocatedinline(subT) || subT isa UnionAll || subT isa Union || subT == Union{}
             push!(results, (API.DT_Pointer, offset))
@@ -323,7 +323,7 @@ else
 
         for f = 2:fieldcount(AT)
             offset = fieldoffset(AT, f)
-            subT = fieldtype(AT, f)
+            subT = typed_fieldtype(AT, f)
             
             subtree = copy(typetree(subT, ctx, dl, seen))
 
@@ -388,7 +388,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
-        subT = fieldtype(T, f)
+        subT = typed_fieldtype(T, f)
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
             if !allocatedinline(subT)
