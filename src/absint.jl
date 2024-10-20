@@ -267,7 +267,6 @@ function abs_typeof(
 
         if nm == "julia.gc_loaded"
             legal, res, byref = abs_typeof(operands(arg)[2], partial)
-            @show "gcloaded", string(arg), string(operands(arg)[2]), legal, res, byref
             return legal, res, byref
         end
 
@@ -441,10 +440,8 @@ function abs_typeof(
     if isa(arg, LLVM.LoadInst)
         larg, offset, error = get_base_and_offset(operands(arg)[1])
 
-        @show "load", string(arg), string(operands(arg)[1]), string(larg), offset, error
         if !error
             legal, typ, byref = abs_typeof(larg)
-            @show "load abs", string(arg), legal, typ, byref
             if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
                 @static if VERSION < v"1.11-"
                     if typ <: Array && Base.isconcretetype(typ)
@@ -532,7 +529,6 @@ function abs_typeof(
                         break
                     end
                     if legal
-                        @show "load final", string(arg), typ2, byref
                         return (true, typ2, byref)
                     end
                 end
@@ -581,7 +577,6 @@ function abs_typeof(
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
         typ, byref = enzyme_extract_parm_type(f, idx, false) #=error=#
         if typ !== nothing
-            @show "arg", string(arg), typ, byref
             return (true, typ, byref)
         end
     end
