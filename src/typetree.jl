@@ -285,62 +285,6 @@ end
         return tt
     end
 else
-    function typetree_inner(
-        ::Type{<:GenericMemory{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
-        offset = 0
-        tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T) && Base.isconcretetype(T)
-            merge!(tt, TypeTree(API.DT_Pointer, ctx))
-            only!(tt, 0)
-        end
-        merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, sizeof(Csize_t))
-
-        for i = 0:(sizeof(Csize_t)-1)
-            merge!(tt, TypeTree(API.DT_Integer, i, ctx))
-        end
-        return tt
-    end
-
-    function typetree_inner(
-        AT::Type{<:GenericMemoryRef{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
-        offset = 0
-        tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T) && Base.isconcretetype(T)
-            Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
-            only!(tt, 0)
-        end
-        Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, 0)
-
-        for f = 2:fieldcount(AT)
-            offset = fieldoffset(AT, f)
-            subT = typed_fieldtype(AT, f)
-            
-            subtree = copy(typetree(subT, ctx, dl, seen))
-
-            # Allocated inline so adjust first path
-            if allocatedinline(subT)
-                shift!(subtree, dl, 0, sizeof(subT), offset)
-            else
-                Enzyme.merge!(subtree, TypeTree(API.DT_Pointer, ctx))
-                only!(subtree, offset)
-            end
-
-            Enzyme.merge!(tt, subtree)
-        end
-        canonicalize!(tt, sizeof(AT), dl)
-
-        return tt
-    end
 end
 
 import Base: ismutabletype

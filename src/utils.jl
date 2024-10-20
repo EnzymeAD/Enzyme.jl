@@ -288,10 +288,13 @@ end
 else
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
-    if T <: GenericMemoryRef && i == 1
-        Ptr{eltype(T)}
-    elseif T <: GenericMemory && i == 2
-        Ptr{eltype(T)}
+    if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
+        eT = eltype(T)
+        if !allocatedinline(eT) && Base.isconcretetype(eT)
+            Ptr{Ptr{eT}}
+        else
+            Ptr{eT}
+        end
     else
         fieldtype(T, i)
     end
@@ -299,3 +302,4 @@ end
 
 end
 
+export typed_fieldtype
