@@ -266,7 +266,8 @@ function abs_typeof(
         end
 
         if nm == "julia.gc_loaded"
-            return abs_typeof(operands(arg)[2], partial)
+            legal, res, byref = abs_typeof(operands(arg)[2], partial)
+            return legal, res, byref
         end
 
         for (fname, ty) in (
@@ -490,15 +491,15 @@ function abs_typeof(
                                 lasti = i
                             end
                         end
-			if !seen && fieldcount(typ) > 0
-			    offset = offset - fieldoffset(typ, lasti)
-		            typ = fieldtype(typ, lasti)
-			    @assert Base.isconcretetype(typ)
-			    if !Base.allocatedinline(typ)
-			        legal = false
-			    end
-			    seen = true
-			end
+            			if !seen && fieldcount(typ) > 0
+            			    offset = offset - fieldoffset(typ, lasti)
+            		            typ = fieldtype(typ, lasti)
+            			    @assert Base.isconcretetype(typ)
+            			    if !Base.allocatedinline(typ)
+            			        legal = false
+            			    end
+            			    seen = true
+            			end
                         if !seen
                             legal = false
                         end
@@ -509,7 +510,13 @@ function abs_typeof(
                         idx, _ = first_non_ghost(typ2)
                         if idx != -1
                             typ2 = fieldtype(typ2, idx)
-                            if !Base.allocatedinline(typ2)
+                            if Base.allocatedinline(typ2)
+                                if byref == GPUCompiler.BITS_VALUE
+                                    continue
+                                end
+                                legal = false
+                                break
+                            else
                                 if byref != GPUCompiler.BITS_VALUE
                                     legal = false
                                     break

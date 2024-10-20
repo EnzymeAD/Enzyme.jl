@@ -3816,8 +3816,8 @@ function enzyme!(
                 LLVM.API.LLVMValueRef,
             )
         ),
-        "inoutgcloaded_rule" => @cfunction(
-            inoutcopyslice_rule,
+        "julia.gc_loaded" => @cfunction(
+            inoutgcloaded_rule,
             UInt8,
             (
                 Cint,
