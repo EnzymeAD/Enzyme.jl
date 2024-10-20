@@ -22,7 +22,7 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - ~1.11.0-0
+          - '1.11'
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -55,11 +55,11 @@ jobs:
             assertions: true
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/install-juliaup@v2
         if: ${{ ! matrix.assertions }}
         with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+          channel: ${{ matrix.version }}~${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
       - uses: actions/checkout@v4
         if: ${{ matrix.assertions }}
         with:
@@ -72,16 +72,6 @@ jobs:
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
-      - uses: actions/cache@v2
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
       - name: add EnzymeCore
         shell: julia --color=yes --project=. {0}
         run: |
@@ -137,7 +127,7 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - ~1.11.0-0
+          - '1.11'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -146,20 +136,10 @@ jobs:
         libEnzyme: [packaged]
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/install-juliaup@v2
         with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      - uses: actions/cache@v2
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+          channel: ${{ matrix.version }}~${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
         id: setup_testutils
@@ -204,9 +184,9 @@ jobs:
           - DynamicExpressions
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/install-juliaup@v2
         with:
-          version: ${{ matrix.version }}
+          channel: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Run tests"
@@ -219,9 +199,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/install-juliaup@v2
         with:
-          version: '1'
+          channel: '1.10'
       - uses: julia-actions/cache@v2
       - run: |
           julia --project=docs -e '
