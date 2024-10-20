@@ -161,7 +161,13 @@ function absint(arg::LLVM.Value, partial::Bool = false)
 end
 
 function actual_size(@nospecialize(typ2))
-    if typ2 <: Array || typ2 <: AbstractString || typ2 <: Symbol
+    @static if VERSION < v"1.11-"
+        if typ2 <: Array
+            return sizeof(Int)
+        end
+    else
+    end
+    if typ2 <: AbstractString || typ2 <: Symbol
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
