@@ -467,7 +467,7 @@ end
         return Val(AnyState)
     end
 
-    subT = fieldtype(T, f)
+    subT = typed_fieldtype(T, f)
 
     if justActive && !allocatedinline(subT)
         return Val(AnyState)
@@ -2441,7 +2441,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
         if isa(ty, LLVM.StructType)
             i = 1
             for ii = 1:fieldcount(jlty)
-                jlet = fieldtype(jlty, ii)
+                jlet = typed_fieldtype(jlty, ii)
                 if isghostty(jlet) || Core.Compiler.isconstType(jlet)
                     continue
                 end
@@ -3806,6 +3806,18 @@ function enzyme!(
         ),
         "ijl_genericmemory_copy_slice" => @cfunction(
             inoutcopyslice_rule,
+            UInt8,
+            (
+                Cint,
+                API.CTypeTreeRef,
+                Ptr{API.CTypeTreeRef},
+                Ptr{API.IntList},
+                Csize_t,
+                LLVM.API.LLVMValueRef,
+            )
+        ),
+        "julia.gc_loaded" => @cfunction(
+            inoutgcloaded_rule,
             UInt8,
             (
                 Cint,
