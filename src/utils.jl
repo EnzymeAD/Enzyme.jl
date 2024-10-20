@@ -314,6 +314,7 @@ end
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
                                 world::Integer=tls_world_age())
+    sig = GPUCompiler.signature_type_by_tt(ft, tt)
     if Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
         return GPUCompiler.methodinstance(ft, tt, world)
     else
