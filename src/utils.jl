@@ -258,7 +258,7 @@ const prevmethodinstance = GPUCompiler.generic_methodinstance
 
 function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
     @nospecialize
-    @assert CC.isType(ft) && CC.isType(tt)
+    @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     ft = ft.parameters[1]
     tt = tt.parameters[1]
 
@@ -277,7 +277,7 @@ function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
     # look up the method and code instance
     mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
                (Any, Any, Any), match.method, match.spec_types, match.sparams)
-    ci = CC.retrieve_code_info(mi, world)
+    ci = Core.Compiler.retrieve_code_info(mi, world)
 
     # prepare a new code info
     new_ci = copy(ci)
@@ -297,9 +297,9 @@ function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
     new_ci.slotflags = UInt8[0x00 for i = 1:3]
 
     # return the method instance
-    push!(new_ci.code, CC.ReturnNode(mi))
+    push!(new_ci.code, Core.Compiler.ReturnNode(mi))
     push!(new_ci.ssaflags, 0x00)
-    push!(new_ci.linetable, @LineInfoNode(methodinstance))
+    push!(new_ci.linetable, GPUCompiler.@LineInfoNode(methodinstance))
     push!(new_ci.codelocs, 1)
     new_ci.ssavaluetypes += 1
 
