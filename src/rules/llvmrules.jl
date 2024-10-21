@@ -628,13 +628,11 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 
 	if memory
 		if fwd
-			shadowsrc = inttoptr!(B, memoryptr, LLVM.PointerType(LLVM.IntType(8)))
 			lookup_src = false
+		    shadowsrc = invert_pointer(gutils, memoryptr, B)
 		else
-			shadowsrc = invert_pointer(gutils, shadowsrc, B)
-			if !fwd
-				shadowsrc = lookup_value(gutils, shadowsrc, B)
-			end
+		    shadowsrc = invert_pointer(gutils, shadowsrc, B)
+            shadowsrc = lookup_value(gutils, shadowsrc, B)
 		end
 	else
 		shadowsrc = invert_pointer(gutils, shadowsrc, B)
@@ -674,12 +672,13 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 		# src already has done the lookup from the argument
 		shadowsrc0 = if lookup_src
 			if memory
+                # TODO this may not be at the same offset as the start of the copy, e.g. get_memory_data(src) != memoryptr
 				get_memory_data(B, evsrc)
 			else
 				get_array_data(B, evsrc)
 			end
 		else
-			evsrc
+			inttoptr!(B, evsrc, LLVM.PointerType(LLVM.IntType(8)))
 		end
 
 		shadowdst0 = if memory
@@ -792,7 +791,7 @@ end
             GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
             LLVM.memset!(
                 B,
-                ev2,
+                inttoptr!(B, ev2, LLVM.PointerType(LLVM.IntType(8))),
                 LLVM.ConstantInt(i8, 0, false),
                 length,
                 algn,
