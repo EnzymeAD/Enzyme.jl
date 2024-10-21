@@ -570,7 +570,7 @@ end
 
     x = randn(3)
     dx = zero(x)
-    run(trf, x)
+    undefsret(trf, x)
     autodiff(Reverse, undefsret, Active, Const(trf), Duplicated(x, dx))
 end
 
