@@ -3816,30 +3816,6 @@ function enzyme!(
                 LLVM.API.LLVMValueRef,
             )
         ),
-        "julia.gc_loaded" => @cfunction(
-            inoutgcloaded_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "julia.pointer_from_objref" => @cfunction(
-            inout_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
         "jl_inactive_inout" => @cfunction(
             inout_rule,
             UInt8,
