@@ -837,7 +837,7 @@ end
         shadowres = LLVM.Value(unsafe_load(shadowR))
 
 		len = new_from_original(gutils, origops[3])
-		memoryptr = new_from_original(gutils, origops[2])
+		memoryptr = origops[2]
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
     end
 
@@ -848,7 +848,7 @@ end
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
 		len = new_from_original(gutils, origops[3])
-		memoryptr = new_from_original(gutils, origops[2])
+		memoryptr = origops[2]
         arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
     end
 
