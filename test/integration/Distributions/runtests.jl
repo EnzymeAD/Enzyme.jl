@@ -22,9 +22,8 @@ given function f and argument x.
 function test_grad(f, x; rtol=1e-6, atol=1e-6)
     @nospecialize
     finitediff = collect(FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x)[1])
-    # TODO(mhauru) The Val(1) works around https://github.com/EnzymeAD/Enzyme.jl/issues/1807
     @test(
-        reshape(collect(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(f), x, Val(1))), size(finitediff)) ≈ finitediff,
+        reshape(collect(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(f), x)), size(finitediff)) ≈ finitediff,
         rtol = rtol,
         atol = atol
     )
