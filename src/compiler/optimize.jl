@@ -2413,7 +2413,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
                     kind(attr) == kind(StringAttribute("enzyme_sret")) ||
                     kind(attr) == kind(StringAttribute("enzyme_sret_v"))
                 ) for attr in attrs
-            )
+               ) && any_jltypes(sret_ty(fn, idx))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
