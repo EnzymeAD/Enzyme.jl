@@ -1677,10 +1677,12 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         seenfn = false
                         todo = LLVM.Instruction[]
-                        for u2 in LLVM.uses(ops[i])
+                        if isa(ops[i], LLVM.AllocaInst)
+			for u2 in LLVM.uses(ops[i])
                             un2 = LLVM.user(u2)
                             push!(todo, un2)
                         end
+			end
                         while length(todo) > 0
                             un2 = pop!(todo)
                             if isa(un2, LLVM.BitCastInst)
