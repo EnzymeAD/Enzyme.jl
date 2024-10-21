@@ -253,24 +253,73 @@ export codegen_world_age
 
 if VERSION >= v"1.11.0-DEV.1552"
 
+
+const prevmethodinstance = GPUCompiler.generic_methodinstance
+
+function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
+    @nospecialize
+    @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
+    ft = ft.parameters[1]
+    tt = tt.parameters[1]
+
+    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :ft, :tt), Core.svec())
+
+    # look up the method match
+    method_error = :(throw(MethodError(ft, tt, $world)))
+    sig = Tuple{ft, tt.parameters...}
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
+                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
+                  sig, #=mt=# nothing, world, min_world, max_world)
+    match === nothing && return stub(world, source, method_error)
+
+    # look up the method and code instance
+    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
+               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+    ci = Core.Compiler.retrieve_code_info(mi, world)
+
+    # prepare a new code info
+    new_ci = copy(ci)
+    empty!(new_ci.code)
+    empty!(new_ci.codelocs)
+    empty!(new_ci.linetable)
+    empty!(new_ci.ssaflags)
+    new_ci.ssavaluetypes = 0
+
+    # propagate edge metadata
+    new_ci.min_world = min_world[]
+    new_ci.max_world = max_world[]
+    new_ci.edges = MethodInstance[mi]
+
+    # prepare the slots
+    new_ci.slotnames = Symbol[Symbol("#self#"), :ft, :tt]
+    new_ci.slotflags = UInt8[0x00 for i = 1:3]
+
+    # return the method instance
+    push!(new_ci.code, Core.Compiler.ReturnNode(mi))
+    push!(new_ci.ssaflags, 0x00)
+    push!(new_ci.linetable, GPUCompiler.@LineInfoNode(methodinstance))
+    push!(new_ci.codelocs, 1)
+    new_ci.ssavaluetypes += 1
+
+    return new_ci
+end
+
+@eval function prevmethodinstance(ft, tt)
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, methodinstance_generator))
+end
+
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
                                 world::Integer=tls_world_age())
     sig = GPUCompiler.signature_type_by_tt(ft, tt)
-    # @assert Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
-
-    mi = ccall(:jl_method_lookup_by_tt, Any,
-               (Any, Csize_t, Any),
-               sig, world, #=method_table=# nothing)
-    mi === nothing && throw(MethodError(ft, tt, world))
-    mi = mi::MethodInstance
-
-    # `jl_method_lookup_by_tt` and `jl_method_lookup` can return a unspecialized mi
-    if !Base.isdispatchtuple(mi.specTypes)
-        mi = Core.Compiler.specialize_method(mi.def, sig, mi.sparam_vals)::MethodInstance
+    if Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
+        return GPUCompiler.methodinstance(ft, tt, world)
+    else
+        return prevmethodinstance(ft, tt, world)
     end
-
-    return mi
 end
 else
     import GPUCompiler: methodinstance as my_methodinstance

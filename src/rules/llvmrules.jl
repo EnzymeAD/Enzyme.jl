@@ -628,13 +628,11 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 
 	if memory
 		if fwd
-			shadowsrc = inttoptr!(B, memoryptr, LLVM.PointerType(LLVM.IntType(8)))
 			lookup_src = false
+		    shadowsrc = invert_pointer(gutils, memoryptr, B)
 		else
-			shadowsrc = invert_pointer(gutils, shadowsrc, B)
-			if !fwd
-				shadowsrc = lookup_value(gutils, shadowsrc, B)
-			end
+		    shadowsrc = invert_pointer(gutils, shadowsrc, B)
+            shadowsrc = lookup_value(gutils, shadowsrc, B)
 		end
 	else
 		shadowsrc = invert_pointer(gutils, shadowsrc, B)
@@ -674,12 +672,13 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 		# src already has done the lookup from the argument
 		shadowsrc0 = if lookup_src
 			if memory
+                # TODO this may not be at the same offset as the start of the copy, e.g. get_memory_data(src) != memoryptr
 				get_memory_data(B, evsrc)
 			else
 				get_array_data(B, evsrc)
 			end
 		else
-			evsrc
+			inttoptr!(B, evsrc, LLVM.PointerType(LLVM.IntType(8)))
 		end
 
 		shadowdst0 = if memory
@@ -781,7 +780,7 @@ end
             false,
         ) #=lookup=#
         if is_constant_value(gutils, origops[1])
-            elSize = get_array_elsz(B, ev)
+            elSize = get_memory_elsz(B, ev)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             length = LLVM.mul!(B, len, elSize)
             bt = GPUCompiler.backtrace(orig)
@@ -792,7 +791,7 @@ end
             GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
             LLVM.memset!(
                 B,
-                ev2,
+                inttoptr!(B, ev2, LLVM.PointerType(LLVM.IntType(8))),
                 LLVM.ConstantInt(i8, 0, false),
                 length,
                 algn,
@@ -838,7 +837,7 @@ end
         shadowres = LLVM.Value(unsafe_load(shadowR))
 
 		len = new_from_original(gutils, origops[3])
-		memoryptr = new_from_original(gutils, origops[2])
+		memoryptr = origops[2]
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
     end
 
@@ -849,7 +848,7 @@ end
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
 		len = new_from_original(gutils, origops[3])
-		memoryptr = new_from_original(gutils, origops[2])
+		memoryptr = origops[2]
         arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
     end
 
