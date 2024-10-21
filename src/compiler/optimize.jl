@@ -1666,11 +1666,15 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if !isa(ops[i], LLVM.AllocaInst)
+                        if !isa(ops[i], LLVM.AllocaInst) && !isa(ops[i], LLVM.UndefValue) && !isa(ops[i], LLVM.PoisonValue)
                             illegalUse = true
                             break
                         end
-                        eltype = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        eltype = if isa(ops[i], LLVM.AllocaInst)
+                            LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        else
+                            LLVM.eltype(value_type(ops[i]))
+                        end
                         seenfn = false
                         todo = LLVM.Instruction[]
                         for u2 in LLVM.uses(ops[i])
@@ -1680,6 +1684,14 @@ function propagate_returned!(mod::LLVM.Module)
                         while length(todo) > 0
                             un2 = pop!(todo)
                             if isa(un2, LLVM.BitCastInst)
+                                push!(torem, un2)
+                                for u3 in LLVM.uses(un2)
+                                    un3 = LLVM.user(u3)
+                                    push!(todo, un3)
+                                end
+                                continue
+                            end
+                            if isa(un2, LLVM.GetElementPtrInst)
                                 push!(torem, un2)
                                 for u3 in LLVM.uses(un2)
                                     un3 = LLVM.user(u3)
@@ -1758,13 +1770,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if isa(ops[i], LLVM.UndefValue)
+                        if isa(ops[i], LLVM.UndefValue) || isa(ops[i], LLVM.PoisonValue)
                             continue
-                        end
-                        @static if LLVM.version() >= v"12"
-                            if isa(ops[i], LLVM.PoisonValue)
-                                continue
-                            end
                         end
                         if ops[i] == arg
                             continue
@@ -1892,6 +1899,34 @@ function propagate_returned!(mod::LLVM.Module)
                 for u in LLVM.uses(fn)
                     un = LLVM.user(u)
                     push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                end
+                args = collect(parameters(fn))
+                for tr in toremove
+                    todo = Tuple{LLVM.Instruction, LLVM.Value}[]
+                    for opv in LLVM.uses(args[tr])
+                        u = LLVM.user(opv)
+                        push!(todo, (u, args[tr]))
+                    end
+                    toerase = LLVM.Instruction[]
+                    while length(todo) != 0
+                        cur, cval = pop!(todo)
+                        if isa(cur, LLVM.StoreInst)
+                            if operands(cur)[2] == cval
+                                LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                                continue
+                            end
+                        end
+                        if isa(cur, LLVM.GetElementPtrInst) ||
+                           isa(cur, LLVM.BitCastInst) ||
+                           isa(cur, LLVM.AddrSpaceCastInst)
+                            for opv in LLVM.uses(cur)
+                                u = LLVM.user(opv)
+                                push!(todo, (u, cur))
+                            end
+                            continue
+                        end
+                        throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
+                    end
                 end
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
