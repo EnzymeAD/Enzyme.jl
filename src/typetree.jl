@@ -123,7 +123,7 @@ function get_offsets(@nospecialize(T::Type))
     results = Tuple{API.CConcreteType,Int}[]
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
-        subT = fieldtype(T, f)
+        subT = typed_fieldtype(T, f)
 
         if !allocatedinline(subT) || subT isa UnionAll || subT isa Union || subT == Union{}
             push!(results, (API.DT_Pointer, offset))
@@ -305,6 +305,42 @@ else
         end
         return tt
     end
+
+    function typetree_inner(
+        AT::Type{<:GenericMemoryRef{kind,T}},
+        ctx,
+        dl,
+        seen::TypeTreeTable,
+    ) where {kind,T}
+        offset = 0
+        tt = copy(typetree(T, ctx, dl, seen))
+        if !allocatedinline(T) && Base.isconcretetype(T)
+            Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
+            only!(tt, 0)
+        end
+        Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, 0)
+
+        for f = 2:fieldcount(AT)
+            offset = fieldoffset(AT, f)
+            subT = typed_fieldtype(AT, f)
+            
+            subtree = copy(typetree(subT, ctx, dl, seen))
+
+            # Allocated inline so adjust first path
+            if allocatedinline(subT)
+                shift!(subtree, dl, 0, sizeof(subT), offset)
+            else
+                Enzyme.merge!(subtree, TypeTree(API.DT_Pointer, ctx))
+                only!(subtree, offset)
+            end
+
+            Enzyme.merge!(tt, subtree)
+        end
+        canonicalize!(tt, sizeof(AT), dl)
+
+        return tt
+    end
 end
 
 import Base: ismutabletype
@@ -352,7 +388,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
-        subT = fieldtype(T, f)
+        subT = typed_fieldtype(T, f)
 
         if subT isa UnionAll || subT isa Union || subT == Union{}
             if !allocatedinline(subT)

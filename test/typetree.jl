@@ -74,6 +74,11 @@ end
               "{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, [-1,9]:Integer, [-1,10]:Integer, [-1,11]:Integer, [-1,12]:Integer, [-1,13]:Integer, [-1,14]:Integer, [-1,15]:Integer, [-1,16]:Float@double}"
         @test tt(Sibling2{Sibling2{LList2{Tuple{Float32,Float64}}}}) ==
               "{[0]:Pointer, [0,0]:Pointer, [0,8]:Float@float, [0,16]:Float@double, [8]:Integer, [16]:Pointer, [16,0]:Pointer, [16,8]:Float@float, [16,16]:Float@double, [24]:Integer, [32]:Pointer, [32,0]:Pointer, [32,8]:Float@float, [32,16]:Float@double, [40]:Integer, [48]:Pointer, [48,0]:Pointer, [48,8]:Float@float, [48,16]:Float@double}"
+
+        @static if VERSION < v"1.11-"
+        else
+            @test tt(MemoryRef{Float32}) == "{[-1]:Pointer, [0,-1]:Float@float, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer, [8,8,-1]:Float@float}"
+        end
     else
         @test tt(UnionMember) == "{[0]:Float@float, [4]:Pointer, [8]:Integer}"
         @test tt(LList2{Float64}) == "{[0]:Pointer, [4]:Float@double}"

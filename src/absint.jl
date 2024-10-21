@@ -42,6 +42,9 @@ function absint(arg::LLVM.Value, partial::Bool = false)
         if nm == "julia.pointer_from_objref"
             return absint(operands(arg)[1], partial)
         end
+        if nm == "julia.gc_loaded"
+            return absint(operands(arg)[2], partial)
+        end
         if nm == "jl_typeof" || nm == "ijl_typeof"
             vals = abs_typeof(operands(arg)[1], partial)
             return (vals[1], vals[2])
@@ -158,7 +161,13 @@ function absint(arg::LLVM.Value, partial::Bool = false)
 end
 
 function actual_size(@nospecialize(typ2))
-    if typ2 <: Array || typ2 <: AbstractString || typ2 <: Symbol
+    @static if VERSION < v"1.11-"
+        if typ2 <: Array
+            return sizeof(Int)
+        end
+    else
+    end
+    if typ2 <: AbstractString || typ2 <: Symbol
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
@@ -254,6 +263,11 @@ function abs_typeof(
 
         if nm == "julia.pointer_from_objref"
             return abs_typeof(operands(arg)[1], partial)
+        end
+
+        if nm == "julia.gc_loaded"
+            legal, res, byref = abs_typeof(operands(arg)[2], partial)
+            return legal, res, byref
         end
 
         for (fname, ty) in (
@@ -453,7 +467,7 @@ function abs_typeof(
                             fo = fieldoffset(typ, i)
                             if fieldoffset(typ, i) == offset
                                 offset = 0
-                                typ = fieldtype(typ, i)
+                                typ = typed_fieldtype(typ, i)
                                 if !Base.allocatedinline(typ)
                                     if byref != GPUCompiler.BITS_VALUE
                                         legal = false
@@ -464,7 +478,7 @@ function abs_typeof(
                                 break
                             elseif fieldoffset(typ, i) > offset
                                 offset = offset - fieldoffset(typ, lasti)
-                                typ = fieldtype(typ, lasti)
+                                typ = typed_fieldtype(typ, lasti)
                                 @assert Base.isconcretetype(typ)
                                 if !Base.allocatedinline(typ)
                                     legal = false
@@ -477,15 +491,15 @@ function abs_typeof(
                                 lasti = i
                             end
                         end
-			if !seen && fieldcount(typ) > 0
-			    offset = offset - fieldoffset(typ, lasti)
-		            typ = fieldtype(typ, lasti)
-			    @assert Base.isconcretetype(typ)
-			    if !Base.allocatedinline(typ)
-			        legal = false
-			    end
-			    seen = true
-			end
+            			if !seen && fieldcount(typ) > 0
+            			    offset = offset - fieldoffset(typ, lasti)
+            		            typ = typed_fieldtype(typ, lasti)
+            			    @assert Base.isconcretetype(typ)
+            			    if !Base.allocatedinline(typ)
+            			        legal = false
+            			    end
+            			    seen = true
+            			end
                         if !seen
                             legal = false
                         end
@@ -495,8 +509,14 @@ function abs_typeof(
                     while legal && should_recurse(typ2, value_type(arg), byref, dl)
                         idx, _ = first_non_ghost(typ2)
                         if idx != -1
-                            typ2 = fieldtype(typ2, idx)
-                            if !Base.allocatedinline(typ2)
+                            typ2 = typed_fieldtype(typ2, idx)
+                            if Base.allocatedinline(typ2)
+                                if byref == GPUCompiler.BITS_VALUE
+                                    continue
+                                end
+                                legal = false
+                                break
+                            else
                                 if byref != GPUCompiler.BITS_VALUE
                                     legal = false
                                     break
@@ -532,7 +552,7 @@ function abs_typeof(
                 @assert Base.isconcretetype(typ)
                 cnt = 0
                 for i = 1:fieldcount(typ)
-                    styp = fieldtype(typ, i)
+                    styp = typed_fieldtype(typ, i)
                     if isghostty(styp)
                         continue
                     end
