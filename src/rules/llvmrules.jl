@@ -781,7 +781,7 @@ end
             false,
         ) #=lookup=#
         if is_constant_value(gutils, origops[1])
-            elSize = get_array_elsz(B, ev)
+            elSize = get_memory_elsz(B, ev)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             length = LLVM.mul!(B, len, elSize)
             bt = GPUCompiler.backtrace(orig)
