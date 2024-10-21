@@ -278,6 +278,12 @@ end
 
 export my_methodinstance
 
+# returns the inner type of an sret/enzyme_sret/enzyme_sret_v
+function sret_ty(fn::LLVM.Function, idx::Int)
+    return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
+end
+
+export sret_ty
 
 @static if VERSION < v"1.11-"
 
