@@ -302,7 +302,8 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(product_distribution([Normal()]), [0.3]),
         TestCase(
             product_distribution([Normal(), Uniform()]), [-0.4, 0.3];
-            runtime_activity=Both),
+            runtime_activity=Both
+        ),
 
         #
         # Matrix-variate
