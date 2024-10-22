@@ -469,7 +469,7 @@ end
 
     subT = typed_fieldtype(T, f)
 
-    if justActive && !allocatedinline(subT)
+    if justActive && ismutabletype(subT)
         return Val(AnyState)
     end
 
