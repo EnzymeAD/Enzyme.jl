@@ -353,6 +353,7 @@ end
     end
 else
     function combine_mul_add_tm!(pm, tm)
+@static if VERSION < v"1.12.0-DEV.1390"
         function combine_mul_add(mod)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -365,6 +366,7 @@ else
             return true
         end
         add!(pm, ModulePass("CombineMulAdd", combine_mul_add))
+end
     end
 end
 
