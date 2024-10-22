@@ -73,6 +73,7 @@ end
 
 include("abi.jl")
 include("typetree.jl")
+include("optimize.jl")
 
 include("rules.jl")
 include("rrules.jl")
