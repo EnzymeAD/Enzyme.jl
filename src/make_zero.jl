@@ -1,4 +1,3 @@
-
 @inline function EnzymeCore.make_zero(x::FT)::FT where {FT<:AbstractFloat}
     return Base.zero(x)
 end
@@ -178,7 +177,9 @@ end
     prev::NamedTuple{A,RT},
     ::Val{copy_if_inactive} = Val(false),
 )::NamedTuple{A,RT} where {copy_if_inactive,A,RT}
-    return NamedTuple{A,RT}(EnzymeCore.make_zero(RT, seen, RT(prev), Val(copy_if_inactive)))
+    prevtup = RT(prev)
+    TT = Core.Typeof(prevtup)  # RT can be abstract
+    return NamedTuple{A,RT}(EnzymeCore.make_zero(TT, seen, prevtup, Val(copy_if_inactive)))
 end
 
 @inline function EnzymeCore.make_zero(
@@ -191,10 +192,9 @@ end
         return seen[prev]
     end
     prev2 = prev.contents
-    res = Core.Box(
-        EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive)),
-    )
+    res = Core.Box()
     seen[prev] = res
+    res.contents = EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive))
     return res
 end
 
@@ -213,7 +213,6 @@ end
     @assert !Base.isabstracttype(RT)
     @assert Base.isconcretetype(RT)
     nf = fieldcount(RT)
-
     if ismutable(prev)
         y = ccall(:jl_new_struct_uninit, Any, (Any,), RT)::RT
         seen[prev] = y
@@ -231,13 +230,10 @@ end
         end
         return y
     end
-
     if nf == 0
-        # Unclear what types might end up here rather than in specialized methods or
-        # guaranteed_const_nongen, but as a last-ditch attempt try falling back to Base.zero
-        return Base.zero(prev)::RT
+        # nothing to do, assume inactive
+        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
-
     flds = Vector{Any}(undef, nf)
     for i = 1:nf
         if isdefined(prev, i)
@@ -255,22 +251,27 @@ end
 end
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T<:AbstractFloat,S}
-    zero(T)
+    return zero(T)
 end
 
 function make_zero_immutable!(
     prev::Complex{T},
     seen::S,
 )::Complex{T} where {T<:AbstractFloat,S}
-    zero(Complex{T})
+    return zero(Complex{T})
 end
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
+    if guaranteed_const_nongen(T, nothing)
+        return prev  # unreachable from make_zero!
+    end
     ntuple(Val(length(T.parameters))) do i
         Base.@_inline_meta
         p = prev[i]
         SBT = Core.Typeof(p)
-        if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+        if guaranteed_const_nongen(SBT, nothing)
+            p  # covered by several tests even if not shown in coverage
+        elseif !ismutabletype(SBT)
             make_zero_immutable!(p, seen)
         else
             EnzymeCore.make_zero!(p, seen)
@@ -280,11 +281,16 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
 end
 
 function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} where {a,b,S}
+    if guaranteed_const_nongen(NamedTuple{a,b}, nothing)
+        return prev  # unreachable from make_zero!
+    end
     NamedTuple{a,b}(ntuple(Val(length(b.parameters))) do i
         Base.@_inline_meta
         p = prev[a[i]]
         SBT = Core.Typeof(p)
-        if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+        if guaranteed_const_nongen(SBT, nothing)
+            p  # covered by several tests even if not shown in coverage
+        elseif !ismutabletype(SBT)
             make_zero_immutable!(p, seen)
         else
             EnzymeCore.make_zero!(p, seen)
@@ -296,21 +302,20 @@ end
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
     if guaranteed_const_nongen(T, nothing)
-        return prev  # Note: unreachable from make_zero!
+        return prev  # unreachable from make_zero!
     end
-    @assert !ismutable(prev)
-
-    RT = Core.Typeof(prev)
-    @assert !Base.isabstracttype(RT)
-    @assert Base.isconcretetype(RT)
-    nf = fieldcount(RT)
-
+    @assert !ismutabletype(T)
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+    nf = fieldcount(T)
     flds = Vector{Any}(undef, nf)
     for i = 1:nf
         if isdefined(prev, i)
             xi = getfield(prev, i)
             ST = Core.Typeof(xi)
-            flds[i] = if active_reg_inner(ST, (), nothing, Val(true)) == ActiveState #=justActive=#
+            flds[i] = if guaranteed_const_nongen(ST, nothing)
+                xi
+            elseif !ismutabletype(ST)
                 make_zero_immutable!(xi, seen)
             else
                 EnzymeCore.make_zero!(xi, seen)
@@ -321,39 +326,63 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
             break
         end
     end
-    ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::T
+    return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Base.RefValue{T},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     prev[] = zero(T)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Base.RefValue{Complex{T}},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     prev[] = zero(Complex{T})
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Array{T,N},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,N,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     fill!(prev, zero(T))
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Array{Complex{T},N},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,N,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     fill!(prev, zero(Complex{T}))
-    nothing
+    return nothing
 end
 
 @static if VERSION < v"1.11-"
@@ -362,16 +391,28 @@ else
     prev::GenericMemory{kind, T},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,kind,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     fill!(prev, zero(T))
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::GenericMemory{kind, Complex{T}},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,kind,ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
     fill!(prev, zero(Complex{T}))
-    nothing
+    return nothing
 end
 end
 
@@ -379,90 +420,88 @@ end
     prev::Base.RefValue{T},
 )::Nothing where {T<:AbstractFloat}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Base.RefValue{Complex{T}},
 )::Nothing where {T<:AbstractFloat}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::Array{Complex{T},N},
 )::Nothing where {T<:AbstractFloat,N}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
     if guaranteed_const_nongen(T, nothing)
-        return
+        return nothing
     end
     if prev in seen
-        return
+        return nothing
     end
     push!(seen, prev)
-
     for I in eachindex(prev)
         if isassigned(prev, I)
             pv = prev[I]
             SBT = Core.Typeof(pv)
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+            if guaranteed_const_nongen(SBT, nothing)
+                continue
+            elseif !ismutabletype(SBT)
                 @inbounds prev[I] = make_zero_immutable!(pv, seen)
-                nothing
             else
                 EnzymeCore.make_zero!(pv, seen)
-                nothing
             end
         end
     end
-    nothing
+    return nothing
 end
 
 @static if VERSION < v"1.11-"
 else
 @inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T})::Nothing where {T<:AbstractFloat,kind}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(
     prev::GenericMemory{kind, Complex{T}},
 )::Nothing where {T<:AbstractFloat, kind}
     EnzymeCore.make_zero!(prev, nothing)
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
     if guaranteed_const_nongen(T, nothing)
-        return
+        return nothing
     end
     if prev in seen
-        return
+        return nothing
     end
     push!(seen, prev)
-
     for I in eachindex(prev)
         if isassigned(prev, I)
             pv = prev[I]
             SBT = Core.Typeof(pv)
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+            if guaranteed_const_nongen(SBT, nothing)
+                continue
+            elseif !ismutabletype(SBT)
                 @inbounds prev[I] = make_zero_immutable!(pv, seen)
-                nothing
             else
                 EnzymeCore.make_zero!(pv, seen)
-                nothing
             end
         end
     end
-    nothing
+    return nothing
 end
 end
 
@@ -472,87 +511,77 @@ end
     seen::ST,
 )::Nothing where {T,ST}
     if guaranteed_const_nongen(T, nothing)
-        return
+        return nothing
     end
     if prev in seen
-        return
+        return nothing
     end
     push!(seen, prev)
-
     pv = prev[]
     SBT = Core.Typeof(pv)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+    if guaranteed_const_nongen(SBT, nothing)
+        return nothing
+    elseif !ismutabletype(SBT)
         prev[] = make_zero_immutable!(pv, seen)
-        nothing
     else
         EnzymeCore.make_zero!(pv, seen)
-        nothing
     end
-    nothing
+    return nothing
 end
 
 @inline function EnzymeCore.make_zero!(prev::Core.Box, seen::ST)::Nothing where {ST}
-    pv = prev.contents
-    T = Core.Typeof(pv)
-    if guaranteed_const_nongen(T, nothing)
-        return
-    end
     if prev in seen
-        return
+        return nothing
     end
     push!(seen, prev)
+    pv = prev.contents
     SBT = Core.Typeof(pv)
-    if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+    if guaranteed_const_nongen(SBT, nothing)
+        return nothing
+    elseif !ismutabletype(SBT)
         prev.contents = make_zero_immutable!(pv, seen)
-        nothing
     else
         EnzymeCore.make_zero!(pv, seen)
-        nothing
     end
-    nothing
+    return nothing
 end
 
-@inline function EnzymeCore.make_zero!(
-    prev::T,
-    seen::S = Base.IdSet{Any}(),
-)::Nothing where {T,S}
+@inline function EnzymeCore.make_zero!(prev::T, seen::S)::Nothing where {T,S}
     if guaranteed_const_nongen(T, nothing)
-        return
+        return nothing
     end
     if prev in seen
-        return
+        return nothing
     end
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
     nf = fieldcount(T)
-
-
     if nf == 0
-        error("cannot zero $T in-place: it is apparently differentiable but has no fields")
+        return nothing
     end
-
     push!(seen, prev)
-
     for i = 1:nf
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
-            if guaranteed_const_nongen(SBT, nothing)
+            activitystate = active_reg_inner(SBT, (), nothing)
+            if activitystate == AnyState  # guaranteed_const
                 continue
-            end
-            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+            elseif ismutabletype(T) && !ismutabletype(SBT)
                 yi = make_zero_immutable!(xi, seen)
                 if Base.isconst(T, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i-1, yi)
                 else
                     setfield!(prev, i, yi)
                 end
-                nothing
-            else
+            elseif activitystate == DupState
                 EnzymeCore.make_zero!(xi, seen)
-                nothing
+            else
+                throw(ArgumentError("$xi of type $SBT cannot be zeroed in-place"))
             end
         end
     end
-    return
+    return nothing
 end
+
+@inline EnzymeCore.make_zero!(prev) = EnzymeCore.make_zero!(prev, Base.IdSet())
