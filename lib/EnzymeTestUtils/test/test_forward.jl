@@ -132,7 +132,7 @@ end
 			 x = Hermitian(randn(T, 5, 5))
 
 			 atol = rtol = sqrt(eps(real(T)))
-			 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol, runtime_activity=(Tret <: Const))
+			 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
 		 end
 	end
 
