@@ -1084,7 +1084,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if all(x -> ogbc(x[1]) == ogbc(nvs[1][1]), nvs)
                         bc = ogbc(nvs[1][1])
                         if value_type(bc) != value_type(nphi)
-                            bc = bitcast!(nb, nvs[1][1], value_type(nphi))
+                            bc = bitcast!(nb, bc, value_type(nphi))
                         end
                         replace_uses!(nphi, bc)
                         LLVM.API.LLVMInstructionEraseFromParent(nphi)
