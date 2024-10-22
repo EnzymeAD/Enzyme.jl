@@ -217,6 +217,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(LogUniform(0.1, 0.9), 0.75),
         TestCase(LogUniform(0.15, 7.8), 7.1),
         TestCase(LogUniform(2.0, 3.0), 2.1),
+        # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1620
         TestCase(NoncentralBeta(1.1, 1.1, 1.2), 0.8; broken=Both), # foreigncall (Rmath.dnbeta).
         TestCase(NoncentralChisq(2, 3.0), 10.0; broken=Both), # foreigncall (Rmath.dnchisq).
         TestCase(NoncentralF(2, 3, 1.1), 4.1; broken=Both), # foreigncall (Rmath.dnf).
@@ -237,6 +238,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(Rayleigh(0.5), 0.6),
         TestCase(Rayleigh(0.9), 1.1),
         TestCase(Rayleigh(0.55), 0.63),
+        # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1620
         TestCase(Rician(0.5, 1.0), 2.1; broken=Both),  # foreigncall (Rmath.dnchisq).
         TestCase(Semicircle(1.0), 0.9),
         TestCase(Semicircle(5.1), 5.05),
