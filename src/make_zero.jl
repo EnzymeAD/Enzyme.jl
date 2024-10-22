@@ -198,7 +198,7 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
 end
 
 function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} where {a,b,S}
-    NamedTuple{a,b}(ntuple(Val(length(T.parameters))) do i
+    NamedTuple{a,b}(ntuple(Val(length(a))) do i
         Base.@_inline_meta
         make_zero_immutable!(prev[a[i]], seen)
     end)
@@ -383,6 +383,13 @@ end
     end
 
     push!(seen, prev)
+
+    # For make_zero!(NamedTuple) we want to recurse and zero out
+    # the storage
+    if !Base.ismutabletype(T)
+        make_zero_immutable!(prev, seen)
+        return nothing
+    end
 
     for i = 1:nf
         if isdefined(prev, i)

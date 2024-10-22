@@ -1,5 +1,6 @@
 using Enzyme
 using Test
+using Random
 
 retty() = Float64
 
@@ -501,6 +502,21 @@ end
     @test dv.x ≈ 0.0
     @test dv.y ≈ 0.0
 end
+
+@testset "Make Zero!" begin
+    params = (; q = rand(64), p = rand(64))
+    dparams = make_zero(params)
+    @test all(==(0), dparams.q)
+    @test all(==(0), dparams.p)
+
+    rand!(dparams.q)
+    rand!(dparams.p)
+
+    make_zero!(dparams)
+    @test all(==(0), dparams.q)
+    @test all(==(0), dparams.p)
+end
+
 
 @testset "Type inference" begin
     x = ones(10)
