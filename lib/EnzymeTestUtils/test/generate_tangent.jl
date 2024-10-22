@@ -42,30 +42,6 @@ using Quaternions
         @test y.a != x.a
     end
 
-    @testset "zero_tangent" begin
-        @test zero_tangent(1) == 1
-        @test zero_tangent(true) == true
-        @test zero_tangent(false) == false
-        @test zero_tangent(:foo) === :foo
-        @test zero_tangent("bar") === "bar"
-        @testset for T in (
-            Float32, Float64, ComplexF32, ComplexF64, QuaternionF32, QuaternionF64
-        )
-            x = randn(T)
-            @test zero_tangent(x) === zero(T)
-            y = randn(T, 5)
-            @test zero_tangent(y) == zero(y)
-            @test zero_tangent(y) isa typeof(y)
-        end
-        x = TestStruct(TestStruct(:foo, TestStruct(1, 3.0f0 + 1im)), [4.0, 5.0])
-        y = zero_tangent(x)
-        @test y.x.x == :foo
-        @test y.x.a.x == 1
-        @test y.x.a.a === zero(ComplexF32)
-        @test y.a isa Vector{Float64}
-        @test y.a == zero(x.a)
-    end
-
     @testset "auto_activity" begin
         @test EnzymeTestUtils.auto_activity((1.0, Const)) === Const(1.0)
         @test EnzymeTestUtils.auto_activity((1.0, Active)) === Active(1.0)
