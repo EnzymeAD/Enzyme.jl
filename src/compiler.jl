@@ -3207,7 +3207,20 @@ function annotate!(mod, mode)
     )
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            if LLVM.version().major <= 15
+                push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            else
+                push!(function_attributes(fn), 
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_Ref << getLocationPos(ArgMem)) |
+                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    )
+                )
+            end
             for u in LLVM.uses(fn)
                 c = LLVM.user(u)
                 if !isa(c, LLVM.CallInst)
