@@ -227,6 +227,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(Normal(0.5, 1.0), 0.05),
         TestCase(Normal(0.0, 1.5), -0.1),
         TestCase(Normal(-0.1, 0.9), -0.3),
+        # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1603
         # foreigncall -- https://github.com/JuliaMath/SpecialFunctions.jl/blob/be1fa06fee58ec019a28fb0cd2b847ca83a5af9a/src/bessel.jl#L265
         TestCase(NormalInverseGaussian(0.0, 1.0, 0.2, 0.1), 0.1; broken=Both),
         TestCase(Pareto(1.0, 1.0), 3.5),
