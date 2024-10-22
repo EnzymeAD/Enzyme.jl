@@ -247,6 +247,7 @@ let # overload `inlining_policy`
             argtypes::Vector{Any},
         )
     end
+    @static if isdefined(Core.Compiler, :inlining_policy)
     @eval function Core.Compiler.inlining_policy($(sigs_ex.args...))
         if info isa NoInlineCallInfo
             if info.kind === :primitive
@@ -265,6 +266,27 @@ let # overload `inlining_policy`
             return src
         end
         return @invoke Core.Compiler.inlining_policy($(args_ex.args...))
+    end
+    else
+    @eval function Core.Compiler.src_inlining_policy($(sigs_ex.args...))
+        if info isa NoInlineCallInfo
+            if info.kind === :primitive
+                @safe_debug "Blocking inlining for primitive func" info.tt
+            elseif info.kind === :inactive
+                @safe_debug "Blocking inlining due to inactive rule" info.tt
+            elseif info.kind === :frule
+                @safe_debug "Blocking inlining due to frule" info.tt
+            else
+                @assert info.kind === :rrule
+                @safe_debug "Blocking inlining due to rrule" info.tt
+            end
+            return nothing
+        elseif info isa AlwaysInlineCallInfo
+            @safe_debug "Forcing inlining for primitive func" info.tt
+            return src
+        end
+        return @invoke Core.Compiler.src_inlining_policy($(args_ex.args...))
+    end
     end
 end
 
