@@ -327,7 +327,6 @@ end
 
 export my_methodinstance
 
-
 @static if VERSION < v"1.11-"
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
@@ -352,3 +351,11 @@ end
 end
 
 export typed_fieldtype
+
+# returns the inner type of an sret/enzyme_sret/enzyme_sret_v
+function sret_ty(fn::LLVM.Function, idx::Int)
+    return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
+end
+
+export sret_ty
+

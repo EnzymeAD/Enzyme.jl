@@ -1684,20 +1684,34 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if !isa(ops[i], LLVM.AllocaInst)
+                        if !isa(ops[i], LLVM.AllocaInst) && !isa(ops[i], LLVM.UndefValue) && !isa(ops[i], LLVM.PoisonValue)
                             illegalUse = true
                             break
                         end
-                        eltype = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        eltype = if isa(ops[i], LLVM.AllocaInst)
+                            LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        else
+                            LLVM.eltype(value_type(ops[i]))
+                        end
                         seenfn = false
                         todo = LLVM.Instruction[]
-                        for u2 in LLVM.uses(ops[i])
+                        if isa(ops[i], LLVM.AllocaInst)
+			for u2 in LLVM.uses(ops[i])
                             un2 = LLVM.user(u2)
                             push!(todo, un2)
                         end
+			end
                         while length(todo) > 0
                             un2 = pop!(todo)
                             if isa(un2, LLVM.BitCastInst)
+                                push!(torem, un2)
+                                for u3 in LLVM.uses(un2)
+                                    un3 = LLVM.user(u3)
+                                    push!(todo, un3)
+                                end
+                                continue
+                            end
+                            if isa(un2, LLVM.GetElementPtrInst)
                                 push!(torem, un2)
                                 for u3 in LLVM.uses(un2)
                                     un3 = LLVM.user(u3)
@@ -1776,13 +1790,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if isa(ops[i], LLVM.UndefValue)
+                        if isa(ops[i], LLVM.UndefValue) || isa(ops[i], LLVM.PoisonValue)
                             continue
-                        end
-                        @static if LLVM.version() >= v"12"
-                            if isa(ops[i], LLVM.PoisonValue)
-                                continue
-                            end
                         end
                         if ops[i] == arg
                             continue
@@ -1911,6 +1920,7 @@ function propagate_returned!(mod::LLVM.Module)
                     un = LLVM.user(u)
                     push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
                 end
+                delete_writes_into_removed_args(fn, toremove)
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
                 )
@@ -1953,6 +1963,39 @@ function propagate_returned!(mod::LLVM.Module)
         end
     end
 end
+
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
+    args = collect(parameters(fn))
+    for tr in toremove
+        tr = tr + 1
+        todorep = Tuple{LLVM.Instruction, LLVM.Value}[]
+        for opv in LLVM.uses(args[tr])
+            u = LLVM.user(opv)
+            push!(todorep, (u, args[tr]))
+        end
+        toerase = LLVM.Instruction[]
+        while length(todorep) != 0
+            cur, cval = pop!(todorep)
+            if isa(cur, LLVM.StoreInst)
+                if operands(cur)[2] == cval
+                    LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                    continue
+                end
+            end
+            if isa(cur, LLVM.GetElementPtrInst) ||
+               isa(cur, LLVM.BitCastInst) ||
+               isa(cur, LLVM.AddrSpaceCastInst)
+                for opv in LLVM.uses(cur)
+                    u = LLVM.user(opv)
+                    push!(todorep, (u, cur))
+                end
+                continue
+            end
+            throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
+        end
+    end
+end
+
 function detect_writeonly!(mod::LLVM.Module)
     for f in functions(mod)
         if isempty(LLVM.blocks(f))
@@ -2376,7 +2419,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
                     kind(attr) == kind(StringAttribute("enzyme_sret")) ||
                     kind(attr) == kind(StringAttribute("enzyme_sret_v"))
                 ) for attr in attrs
-            )
+               ) && any_jltypes(sret_ty(fn, idx))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
