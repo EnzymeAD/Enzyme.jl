@@ -1,4 +1,4 @@
-using Enzyme, LinearAlgebra
+using Enzyme, LinearAlgebra, Test
 
 function gcloaded_fixup(dest, src)
     N = size(src)
@@ -39,5 +39,8 @@ end
 	    Const(dest),
 	    Const(H),
 	)[1]
-    @test dest ≈ [4.0 1.0; 1.0 4.0]
+    @test dest ≈ [4.0 2.0; 2.0 5.0]
+    dest = Matrix{Float64}(undef, 2, 2)
+    gcloaded_fixup(dest, H)
+    @test dest ≈ [4.0 2.0; 2.0 5.0]
 end
