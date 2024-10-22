@@ -247,7 +247,7 @@ let # overload `inlining_policy`
             argtypes::Vector{Any},
         )
     end
-    @static isdefined(Core.Compiler, :inlining_policy)
+    @static if isdefined(Core.Compiler, :inlining_policy)
     @eval function Core.Compiler.inlining_policy($(sigs_ex.args...))
         if info isa NoInlineCallInfo
             if info.kind === :primitive
