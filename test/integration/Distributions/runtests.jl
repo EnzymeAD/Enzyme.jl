@@ -217,16 +217,17 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(LogUniform(0.1, 0.9), 0.75),
         TestCase(LogUniform(0.15, 7.8), 7.1),
         TestCase(LogUniform(2.0, 3.0), 2.1),
-        # TestCase(NoncentralBeta(1.1, 1.1, 1.2), 0.8), # foreigncall (Rmath.dnbeta).
-        # TestCase(NoncentralChisq(2, 3.0), 10.0), # foreigncall (Rmath.dnchisq).
-        # TestCase(NoncentralF(2, 3, 1.1), 4.1), # foreigncall (Rmath.dnf).
-        # TestCase(NoncentralT(1.3, 1.1), 0.1), # foreigncall (Rmath.dnt).
+        TestCase(NoncentralBeta(1.1, 1.1, 1.2), 0.8; broken=Both), # foreigncall (Rmath.dnbeta).
+        TestCase(NoncentralChisq(2, 3.0), 10.0; broken=Both), # foreigncall (Rmath.dnchisq).
+        TestCase(NoncentralF(2, 3, 1.1), 4.1; broken=Both), # foreigncall (Rmath.dnf).
+        TestCase(NoncentralT(1.3, 1.1), 0.1; broken=Both), # foreigncall (Rmath.dnt).
         TestCase(Normal(), 0.1),
         TestCase(Normal(0.0, 1.0), 1.0),
         TestCase(Normal(0.5, 1.0), 0.05),
         TestCase(Normal(0.0, 1.5), -0.1),
         TestCase(Normal(-0.1, 0.9), -0.3),
-        # TestCase(NormalInverseGaussian(0.0, 1.0, 0.2, 0.1), 0.1), # foreigncall -- https://github.com/JuliaMath/SpecialFunctions.jl/blob/be1fa06fee58ec019a28fb0cd2b847ca83a5af9a/src/bessel.jl#L265
+        # foreigncall -- https://github.com/JuliaMath/SpecialFunctions.jl/blob/be1fa06fee58ec019a28fb0cd2b847ca83a5af9a/src/bessel.jl#L265
+        TestCase(NormalInverseGaussian(0.0, 1.0, 0.2, 0.1), 0.1; broken=Both),
         TestCase(Pareto(1.0, 1.0), 3.5),
         TestCase(Pareto(1.1, 0.9), 3.1),
         TestCase(Pareto(1.0, 1.0), 1.4),
@@ -236,7 +237,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(Rayleigh(0.5), 0.6),
         TestCase(Rayleigh(0.9), 1.1),
         TestCase(Rayleigh(0.55), 0.63),
-        # TestCase(Rician(0.5, 1.0), 2.1), # foreigncall (Rmath.dnchisq). Not implemented anywhere.
+        TestCase(Rician(0.5, 1.0), 2.1; broken=Both),  # foreigncall (Rmath.dnchisq).
         TestCase(Semicircle(1.0), 0.9),
         TestCase(Semicircle(5.1), 5.05),
         TestCase(Semicircle(0.5), -0.1),
@@ -343,9 +344,10 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         ),
         TestCase(LKJ(5, 1.1), rand(rng, LKJ(5, 1.1)); broken=Both),
 
-        # 
+        #
         # Miscellaneous others
         #
+
         TestCase(
             (a, b, x) -> logpdf(InverseGamma(a, b), x), (1.5, 1.4, 0.4);
             name="InverseGamma", splat=true
