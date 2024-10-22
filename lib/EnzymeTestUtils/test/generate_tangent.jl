@@ -1,6 +1,6 @@
 using Test
 using EnzymeTestUtils
-using EnzymeTestUtils: rand_tangent, zero_tangent
+using EnzymeTestUtils: rand_tangent
 using Enzyme
 using Quaternions
 
