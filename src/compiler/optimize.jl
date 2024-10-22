@@ -1902,34 +1902,7 @@ function propagate_returned!(mod::LLVM.Module)
                     un = LLVM.user(u)
                     push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
                 end
-                args = collect(parameters(fn))
-                for tr in toremove
-                    todo = Tuple{LLVM.Instruction, LLVM.Value}[]
-                    for opv in LLVM.uses(args[tr])
-                        u = LLVM.user(opv)
-                        push!(todo, (u, args[tr]))
-                    end
-                    toerase = LLVM.Instruction[]
-                    while length(todo) != 0
-                        cur, cval = pop!(todo)
-                        if isa(cur, LLVM.StoreInst)
-                            if operands(cur)[2] == cval
-                                LLVM.API.LLVMInstructionEraseFromParent(nphi)
-                                continue
-                            end
-                        end
-                        if isa(cur, LLVM.GetElementPtrInst) ||
-                           isa(cur, LLVM.BitCastInst) ||
-                           isa(cur, LLVM.AddrSpaceCastInst)
-                            for opv in LLVM.uses(cur)
-                                u = LLVM.user(opv)
-                                push!(todo, (u, cur))
-                            end
-                            continue
-                        end
-                        throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
-                    end
-                end
+                delete_writes_into_removed_args(fn, toremove)
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
                 )
@@ -1972,6 +1945,39 @@ function propagate_returned!(mod::LLVM.Module)
         end
     end
 end
+
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
+    args = collect(parameters(fn))
+    for tr in toremove
+        tr = tr + 1
+        todorep = Tuple{LLVM.Instruction, LLVM.Value}[]
+        for opv in LLVM.uses(args[tr])
+            u = LLVM.user(opv)
+            push!(todorep, (u, args[tr]))
+        end
+        toerase = LLVM.Instruction[]
+        while length(todorep) != 0
+            cur, cval = pop!(todorep)
+            if isa(cur, LLVM.StoreInst)
+                if operands(cur)[2] == cval
+                    LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                    continue
+                end
+            end
+            if isa(cur, LLVM.GetElementPtrInst) ||
+               isa(cur, LLVM.BitCastInst) ||
+               isa(cur, LLVM.AddrSpaceCastInst)
+                for opv in LLVM.uses(cur)
+                    u = LLVM.user(opv)
+                    push!(todorep, (u, cur))
+                end
+                continue
+            end
+            throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
+        end
+    end
+end
+
 function detect_writeonly!(mod::LLVM.Module)
     for f in functions(mod)
         if isempty(LLVM.blocks(f))
