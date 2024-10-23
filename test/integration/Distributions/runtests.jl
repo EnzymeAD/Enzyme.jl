@@ -76,12 +76,6 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
         FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
     )
 
-    """
-    A function for reshaping the output of Enzyme.gradient to match the shape of the
-    output of FiniteDifferences.grad.
-    """
-    shape_grad(x) = reshape(collect(x), size(finitediff))
-
     f_mode = if (case.runtime_activity === Both || case.runtime_activity === Forward)
         Enzyme.set_runtime_activity(Enzyme.Forward)
     else
@@ -95,13 +89,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
 
     if case.broken === Both || case.broken === Forward
         @test_broken(
-            shape_grad(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            shape_grad(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
@@ -109,13 +103,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
 
     if case.broken === Both || case.broken === Reverse
         @test_broken(
-            shape_grad(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            shape_grad(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
