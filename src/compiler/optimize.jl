@@ -353,6 +353,7 @@ end
     end
 else
     function combine_mul_add_tm!(pm, tm)
+@static if VERSION < v"1.12.0-DEV.1390"
         function combine_mul_add(mod)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -365,6 +366,7 @@ else
             return true
         end
         add!(pm, ModulePass("CombineMulAdd", combine_mul_add))
+end
     end
 end
 
@@ -783,6 +785,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         b = IRBuilder()
                         position!(b, terminator(pb))
 
+
                         v0 = v
                         @inline function getparent(v, offset, hasload)
                             if addr == 11 && addrspace(value_type(v)) == 10
@@ -794,17 +797,47 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
                                     v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
-                                    @assert o2 == LLVM.ConstantInt(offty, 0)
+                                    rhs = LLVM.ConstantInt(offty, 0) 
+                                    if o2 != rhs
+                                        msg = sprint() do io::IO
+                                            println(
+                                                io,
+                                                "Enzyme internal error addr13 load doesn't keep offset 0",
+                                            )
+                                            println(io, "v=", string(v))
+                                            println(io, "v2=", string(v2))
+                                            println(io, "o2=", string(o2))
+                                            println(io, "hl2=", string(hl2))
+                                            println(io, "offty=", string(offty))
+                                            println(io, "rhs=", string(rhs))
+                                        end
+                                        throw(AssertionError(msg))
+                                    end
                                     return v2, offset, true
                                 end
                                 if isa(v, LLVM.CallInst)
                                     cf = LLVM.called_operand(v)
                                     if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                                         ld = operands(v)[2]
+                                        while isa(ld, LLVM.BitCastInst) || isa(ld, LLVM.AddrSpaceCastInst)
+                                            ld = operands(ld)[1]
+                                        end
                                         if isa(ld, LLVM.LoadInst)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
-                                            @assert o2 == LLVM.ConstantInt(offty, sizeof(Int))
-                                            return v2, offset, true
+                                            rhs = LLVM.ConstantInt(offty, sizeof(Int))
+
+                                            base_2, off_2, _ = get_base_and_offset(v2)
+                                            base_1, off_1, _ = get_base_and_offset(operands(v)[1])
+
+                                            if o2 == rhs && base_1 == base_2 && off_1 == off_2
+                                                return operands(v)[1], offset, true
+                                            end
+
+                                            rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
+                                            lhs = ptrtoint!(b, operands(v)[2], offty)
+                                            off2 = nuwsub!(b, lhs, rhs)
+                                            add = nuwadd!(b, offset, off2)
+                                            return operands(v)[1], add, true
                                         end
                                     end
                                 end
@@ -875,8 +908,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                             end
 
                             if isa(v, LLVM.BitCastInst)
+                                preop = operands(v)[1]
+                                while isa(preop, LLVM.BitCastInst)
+                                    preop = operands(preop)[1]
+                                end
                                 v2, offset, skipload =
-                                    getparent(operands(v)[1], offset, hasload)
+                                    getparent(preop, offset, hasload)
                                 v2 = bitcast!(
                                     b,
                                     v2,
@@ -1029,7 +1066,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     end
 
                     nb = IRBuilder()
-                    position!(nb, inst)
+                    position!(nb, nonphi)
 
                     offset = goffsets[inst]
                     append!(LLVM.incoming(offset), offsets)
@@ -1038,15 +1075,26 @@ function nodecayed_phis!(mod::LLVM.Module)
                     end
 
                     nphi = nextvs[inst]
-                    if !all(x -> x[1] == nvs[1][1], nvs)
-                        append!(LLVM.incoming(nphi), nvs)
-                    else
-                        replace_uses!(nphi, nvs[1][1])
-                        LLVM.API.LLVMInstructionEraseFromParent(nphi)
-                        nphi = nvs[1][1]
+
+                    function ogbc(x)
+                        while isa(x, LLVM.BitCastInst)
+                            x = operands(x)[1]
+                        end
+                        return x
                     end
 
-                    position!(nb, nonphi)
+                    if all(x -> ogbc(x[1]) == ogbc(nvs[1][1]), nvs)
+                        bc = ogbc(nvs[1][1])
+                        if value_type(bc) != value_type(nphi)
+                            bc = bitcast!(nb, bc, value_type(nphi))
+                        end
+                        replace_uses!(nphi, bc)
+                        LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                        nphi = bc
+                    else
+                        append!(LLVM.incoming(nphi), nvs)
+                    end
+
                     if addr == 13
                         @static if VERSION < v"1.11-"
                             nphi = bitcast!(nb, nphi, LLVM.PointerType(ty, 10))
@@ -1055,24 +1103,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                         else
                             base_obj = nphi
 
-                            # %value_phi11 = phi {} addrspace(10)* [ %55, %L78 ], [ %54, %L76 ]
-
-                            # %.phi.trans.insert77 = bitcast {} addrspace(10)* %value_phi11 to { i64, {} addrspace(10)** } addrspace(10)*
-                            # %.phi.trans.insert78 = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %.phi.trans.insert77 to { i64, {} addrspace(10)** } addrspace(11)*
-                            # %.phi.trans.insert79 = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %.phi.trans.insert78, i64 0, i32 1
-                            # %.pre80 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %.phi.trans.insert79, align 8, !dbg !532, !tbaa !19, !alias.scope !26, !noalias !29
-
-                            # %154 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %value_phi11, {} addrspace(10)** %.pre80), !dbg !532
-
                             jlt = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10)
                             pjlt = LLVM.PointerType(jlt)
-                            gent = LLVM.StructType([convert(LLVMType, Int), pjlt])
-                            pgent = LLVM.PointerType(LLVM.StructType([convert(LLVMType, Int), pjlt]), 10)
 
-                            nphi = bitcast!(nb, nphi, pgent)
-                            nphi = addrspacecast!(nb, nphi, LLVM.PointerType(gent, 11))
-                            nphi = inbounds_gep!(nb, gent, nphi, [LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(1))])
-                            nphi = load!(nb, pjlt, nphi)
+                            nphi = get_memory_data(nb, nphi)
+                            nphi = bitcast!(nb, nphi, pjlt)
 
                             GTy = LLVM.FunctionType(LLVM.PointerType(jlt, 13), LLVM.LLVMType[jlt, pjlt])
                             gcloaded, _ = get_function!(
@@ -1649,20 +1684,34 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if !isa(ops[i], LLVM.AllocaInst)
+                        if !isa(ops[i], LLVM.AllocaInst) && !isa(ops[i], LLVM.UndefValue) && !isa(ops[i], LLVM.PoisonValue)
                             illegalUse = true
                             break
                         end
-                        eltype = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        eltype = if isa(ops[i], LLVM.AllocaInst)
+                            LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
+                        else
+                            LLVM.eltype(value_type(ops[i]))
+                        end
                         seenfn = false
                         todo = LLVM.Instruction[]
-                        for u2 in LLVM.uses(ops[i])
+                        if isa(ops[i], LLVM.AllocaInst)
+			for u2 in LLVM.uses(ops[i])
                             un2 = LLVM.user(u2)
                             push!(todo, un2)
                         end
+			end
                         while length(todo) > 0
                             un2 = pop!(todo)
                             if isa(un2, LLVM.BitCastInst)
+                                push!(torem, un2)
+                                for u3 in LLVM.uses(un2)
+                                    un3 = LLVM.user(u3)
+                                    push!(todo, un3)
+                                end
+                                continue
+                            end
+                            if isa(un2, LLVM.GetElementPtrInst)
                                 push!(torem, un2)
                                 for u3 in LLVM.uses(un2)
                                     un3 = LLVM.user(u3)
@@ -1741,13 +1790,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if isa(ops[i], LLVM.UndefValue)
+                        if isa(ops[i], LLVM.UndefValue) || isa(ops[i], LLVM.PoisonValue)
                             continue
-                        end
-                        @static if LLVM.version() >= v"12"
-                            if isa(ops[i], LLVM.PoisonValue)
-                                continue
-                            end
                         end
                         if ops[i] == arg
                             continue
@@ -1876,6 +1920,7 @@ function propagate_returned!(mod::LLVM.Module)
                     un = LLVM.user(u)
                     push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
                 end
+                delete_writes_into_removed_args(fn, toremove)
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
                 )
@@ -1918,6 +1963,39 @@ function propagate_returned!(mod::LLVM.Module)
         end
     end
 end
+
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
+    args = collect(parameters(fn))
+    for tr in toremove
+        tr = tr + 1
+        todorep = Tuple{LLVM.Instruction, LLVM.Value}[]
+        for opv in LLVM.uses(args[tr])
+            u = LLVM.user(opv)
+            push!(todorep, (u, args[tr]))
+        end
+        toerase = LLVM.Instruction[]
+        while length(todorep) != 0
+            cur, cval = pop!(todorep)
+            if isa(cur, LLVM.StoreInst)
+                if operands(cur)[2] == cval
+                    LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                    continue
+                end
+            end
+            if isa(cur, LLVM.GetElementPtrInst) ||
+               isa(cur, LLVM.BitCastInst) ||
+               isa(cur, LLVM.AddrSpaceCastInst)
+                for opv in LLVM.uses(cur)
+                    u = LLVM.user(opv)
+                    push!(todorep, (u, cur))
+                end
+                continue
+            end
+            throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
+        end
+    end
+end
+
 function detect_writeonly!(mod::LLVM.Module)
     for f in functions(mod)
         if isempty(LLVM.blocks(f))
@@ -2341,7 +2419,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm)
                     kind(attr) == kind(StringAttribute("enzyme_sret")) ||
                     kind(attr) == kind(StringAttribute("enzyme_sret_v"))
                 ) for attr in attrs
-            )
+               ) && any_jltypes(sret_ty(fn, idx))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)

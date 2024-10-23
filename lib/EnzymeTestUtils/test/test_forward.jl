@@ -90,7 +90,8 @@ end
                         x = TestStruct(randn(T, 5), randn(T))
                     end
                     atol = rtol = sqrt(eps(real(T)))
-                    test_forward(fun, Tret, (x, Tx); atol, rtol)
+                    runtime_activity = TT <: TestStruct && (Tret <: Const)
+                    test_forward(fun, Tret, (x, Tx); atol, rtol, runtime_activity)
                 end
             end
         end

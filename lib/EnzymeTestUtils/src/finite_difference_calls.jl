@@ -29,13 +29,13 @@ function _fd_forward(fdm, f, rettype, y, activities)
     # vectorize inputs and outputs of function
     f_vec = first ∘ to_vec ∘ Base.splat(f_sig_args) ∘ from_vec_in
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
-        all(ignores) && return zero_tangent(y)
+        all(ignores) && return Enzyme.make_zero(y)
         sig_arg_dval_vec, _ = to_vec(ẋs[.!ignores])
         ret_deval_vec = FiniteDifferences.jvp(fdm, f_vec,
                                               (sig_arg_val_vec, sig_arg_dval_vec))
         return from_vec_out(ret_deval_vec)
     elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
-        all(ignores) && return (var"1"=zero_tangent(y),)
+        all(ignores) && return (var"1"=Enzyme.make_zero(y),)
         ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             sig_args_dvals_vec, _ = to_vec(sig_args_dvals)
             ret_dval_vec = FiniteDifferences.jvp(fdm, f_vec,
@@ -67,13 +67,13 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
     xs = map(x -> x.val, activities)
     ignores = map(a -> a isa Const, activities)
     f_sig_args = _wrap_reverse_function(active_return, f, xs, ignores)
-    all(ignores) && return map(zero_tangent, xs)
+    all(ignores) && return map(Enzyme.make_zero, xs)
     ignores = collect(ignores)
     is_batch = _any_batch_duplicated(map(typeof, activities)...)
     batch_size = is_batch ? _batch_size(map(typeof, activities)...) : 1
     x̄s = map(collect(activities)) do a
         if a isa Union{Const,Active}
-            dval = ntuple(_ -> zero_tangent(a.val), batch_size)
+            dval = ntuple(_ -> Enzyme.make_zero(a.val), batch_size)
             return is_batch ? dval : dval[1]
         else
             return a.dval
@@ -178,7 +178,7 @@ function _wrap_reverse_function(active_return, f, xs, ignores)
         # zero, if the input and output alias.
         if active_return
             for k in keys(zeros)
-                zeros[k] = zero_tangent(k)
+                zeros[k] = Enzyme.make_zero(k)
             end
         end
 

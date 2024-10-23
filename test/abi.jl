@@ -544,6 +544,36 @@ end
     @inferred hvp_and_gradient!(zeros(2), zeros(2), mulsin, [2.0, 3.0], [5.0, 2.7])
 end
 
+function ulogistic(x)
+    return x > 36 ? one(x) : 1 / (one(x) + 1/x)
+end
+
+@noinline function u_transform_tuple(x)
+    yfirst = ulogistic(@inbounds x[1])
+    yfirst, 2
+end
+
+
+@noinline function mytransform(ts, x)
+    yfirst = ulogistic(@inbounds x[1])
+    yrest, _ = u_transform_tuple(x)
+    (yfirst, yrest)
+end
+
+function undefsret(trf, x)
+    p =  mytransform(trf, x)
+    return 1/(p[2])
+end
+
+@testset "Undef sret" begin
+    trf = 0.1
+
+    x = randn(3)
+    dx = zero(x)
+    undefsret(trf, x)
+    autodiff(Reverse, undefsret, Active, Const(trf), Duplicated(x, dx))
+end
+
 struct ByRefStruct
     x::Vector{Float64}
     v::Vector{Float64}
