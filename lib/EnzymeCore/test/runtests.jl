@@ -5,4 +5,7 @@ using EnzymeCore
     @testset "Miscellaneous" begin
         include("misc.jl")
     end
+    @testset "Mode modification" begin
+        include("mode_modification.jl")
+    end
 end
