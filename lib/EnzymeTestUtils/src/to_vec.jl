@@ -133,6 +133,7 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:GenericMemory}
     end
     return x_vec, Memory_from_vec
 end
+end
 
 function to_vec(x::Tuple, seen_vecs::AliasDict)
     x_vec, from_vec = to_vec(collect(x), seen_vecs)
