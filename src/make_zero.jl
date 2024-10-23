@@ -352,7 +352,7 @@ else
 end
 
 @inline function EnzymeCore.make_zero!(
-    prev::Array{GenericMemory, Complex{T}},
+    prev::GenericMemory{kind, Complex{T}},
     seen::ST,
 )::Nothing where {T<:AbstractFloat,kind,ST}
     fill!(prev, zero(Complex{T}))
