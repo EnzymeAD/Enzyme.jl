@@ -2,8 +2,6 @@ module InternalRules
 
 using Enzyme
 using Enzyme.EnzymeRules
-using EnzymeTestUtils
-using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
 using Test
@@ -155,6 +153,7 @@ function tr_solv(A, B, uplo, trans, diag, idx)
 end
 
 
+using FiniteDifferences
 @testset "Reverse triangular solve" begin
 	A = [0.7550523937508613 0.7979976952197996 0.29318222271218364; 0.4416768066117529 0.4335305304334933 0.8895389673238051; 0.07752980210005678 0.05978245503334367 0.4504482683752542]
 	B = [0.10527381151977078 0.5450388247476627 0.3179106723232359 0.43919576779182357 0.20974326586875847; 0.7551160501548224 0.049772782182839426 0.09284926395551141 0.07862188927391855 0.17346407477062986; 0.6258040138863172 0.5928022963567454 0.24251650865340169 0.6626410383247967 0.32752198021506784]
@@ -576,6 +575,7 @@ end
     @test Enzyme.gradient(Reverse, chol_upper, x)[1] ≈ [0.05270807565639728, 0.0, 0.0, 0.0, 0.9999999999999999, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 end
  
+using EnzymeTestUtils
 @testset "Linear solve for triangular matrices" begin
     @testset for T in (UpperTriangular, LowerTriangular, UnitUpperTriangular, UnitLowerTriangular),
         TE in (Float64, ComplexF64), sizeB in ((3,), (3, 3))

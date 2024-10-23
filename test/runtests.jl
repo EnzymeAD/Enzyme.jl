@@ -73,6 +73,7 @@ end
 
 include("abi.jl")
 include("typetree.jl")
+include("optimize.jl")
 
 include("rules.jl")
 include("rrules.jl")
@@ -134,6 +135,17 @@ end
     @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg_inner(Tuple, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
     @test Enzyme.Compiler.active_reg_inner(Tuple{A,A} where A, (), nothing, #=justactive=#Val(false), #=unionsret=#Val(false), #=abstractismixed=#Val(true)) == Enzyme.Compiler.MixedState
+
+    # issue #1935
+    struct Incomplete
+        x::Float64
+        y
+        Incomplete(x) = new(x)
+        # incomplete constructor & non-bitstype field => !Base.allocatedinline(Incomplete)
+    end
+    @test Enzyme.Compiler.active_reg_inner(Tuple{Incomplete}, (), nothing, #=justActive=#Val(false)) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg_inner(Tuple{Incomplete}, (), nothing, #=justActive=#Val(true)) == Enzyme.Compiler.ActiveState
+
     world = codegen_world_age(typeof(f0), Tuple{Float64})
     thunk_a = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     thunk_b = Enzyme.Compiler.thunk(Val(world), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
@@ -160,7 +172,13 @@ end
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     res = forward(Const(mul2), d)
+
+    @static if VERSION < v"1.11-"
     @test typeof(res[1]) == Tuple{Float64, Float64}
+    else
+    @test typeof(res[1]) == NamedTuple{(Symbol("1"),Symbol("2"),Symbol("3"),Symbol("4"),Symbol("5"),Symbol("6")), Tuple{Any, Core.LLVMPtr{UInt8, 0}, Any, Core.LLVMPtr{Any, 0}, Float64, Float64}}
+    end
+
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0

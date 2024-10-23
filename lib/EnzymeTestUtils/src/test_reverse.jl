@@ -92,12 +92,12 @@ function test_reverse(
         y = fcopy(args_copy...; deepcopy(fkwargs)...)
         # generate tangent for output
         if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
-            ȳ = ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)
+            ȳ = ret_activity <: Const ? Enzyme.make_zero(y) : rand_tangent(rng, y)
         else
             batch_size = _batch_size(ret_activity, map(typeof, activities)...)
             ks = ntuple(Symbol ∘ string, batch_size)
             ȳ = ntuple(batch_size) do _
-                return ret_activity <: Const ? zero_tangent(y) : rand_tangent(y)
+                return ret_activity <: Const ? Enzyme.make_zero(y) : rand_tangent(y)
             end
         end
         # call finitedifferences, avoid mutating original arguments

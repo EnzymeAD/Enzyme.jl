@@ -16,6 +16,22 @@ end
     return Base.zero(x)
 end
 
+
+@static if VERSION < v"1.11-"
+else
+@inline function EnzymeCore.make_zero(
+    x::GenericMemory{kind, FT},
+)::GenericMemory{kind, FT} where {FT<:AbstractFloat,kind}
+    return Base.zero(x)
+end
+@inline function EnzymeCore.make_zero(
+    x::GenericMemory{kind, Complex{FT}},
+)::GenericMemory{kind, Complex{FT}} where {FT<:AbstractFloat,kind}
+    return Base.zero(x)
+end
+end
+
+
 @inline function EnzymeCore.make_zero(
     ::Type{Array{FT,N}},
     seen::IdDict,
@@ -41,6 +57,36 @@ end
     newa = Base.zero(prev)
     seen[prev] = newa
     return newa
+end
+
+@static if VERSION < v"1.11-"
+else
+@inline function EnzymeCore.make_zero(
+    ::Type{GenericMemory{kind, FT}},
+    seen::IdDict,
+    prev::GenericMemory{kind, FT},
+    ::Val{copy_if_inactive} = Val(false),
+)::GenericMemory{kind, FT} where {copy_if_inactive,FT<:AbstractFloat,kind}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
+@inline function EnzymeCore.make_zero(
+    ::Type{GenericMemory{kind, Complex{FT}}},
+    seen::IdDict,
+    prev::GenericMemory{kind, Complex{FT}},
+    ::Val{copy_if_inactive} = Val(false),
+)::GenericMemory{kind, Complex{FT}} where {copy_if_inactive,FT<:AbstractFloat,kind}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = Base.zero(prev)
+    seen[prev] = newa
+    return newa
+end
 end
 
 @inline function EnzymeCore.make_zero(
@@ -84,6 +130,34 @@ end
         end
     end
     return newa
+end
+
+@static if VERSION < v"1.11-"
+else
+@inline function EnzymeCore.make_zero(
+    ::Type{RT},
+    seen::IdDict,
+    prev::RT,
+    ::Val{copy_if_inactive} = Val(false),
+)::RT where {copy_if_inactive,RT<:GenericMemory}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    if guaranteed_const_nongen(RT, nothing)
+        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
+    end
+    newa = RT(undef, size(prev))
+    seen[prev] = newa
+    for I in eachindex(prev)
+        if isassigned(prev, I)
+            pv = prev[I]
+            innerty = Core.Typeof(pv)
+            @inbounds newa[I] =
+                EnzymeCore.make_zero(innerty, seen, pv, Val(copy_if_inactive))
+        end
+    end
+    return newa
+end
 end
 
 @inline function EnzymeCore.make_zero(
@@ -267,6 +341,25 @@ end
     nothing
 end
 
+@static if VERSION < v"1.11-"
+else
+@inline function EnzymeCore.make_zero!(
+    prev::GenericMemory{kind, T},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,kind,ST}
+    fill!(prev, zero(T))
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::GenericMemory{kind, Complex{T}},
+    seen::ST,
+)::Nothing where {T<:AbstractFloat,kind,ST}
+    fill!(prev, zero(Complex{T}))
+    nothing
+end
+end
+
 @inline function EnzymeCore.make_zero!(
     prev::Base.RefValue{T},
 )::Nothing where {T<:AbstractFloat}
@@ -317,6 +410,47 @@ end
     end
     nothing
 end
+
+@static if VERSION < v"1.11-"
+else
+@inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T})::Nothing where {T<:AbstractFloat,kind}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(
+    prev::GenericMemory{kind, Complex{T}},
+)::Nothing where {T<:AbstractFloat, kind}
+    EnzymeCore.make_zero!(prev, nothing)
+    nothing
+end
+
+@inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
+    if guaranteed_const_nongen(T, nothing)
+        return
+    end
+    if in(seen, prev)
+        return
+    end
+    push!(seen, prev)
+
+    for I in eachindex(prev)
+        if isassigned(prev, I)
+            pv = prev[I]
+            SBT = Core.Typeof(pv)
+            if active_reg_inner(SBT, (), nothing, Val(true)) == ActiveState #=justActive=#
+                @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                nothing
+            else
+                EnzymeCore.make_zero!(pv, seen)
+                nothing
+            end
+        end
+    end
+    nothing
+end
+end
+
 
 @inline function EnzymeCore.make_zero!(
     prev::Base.RefValue{T},
