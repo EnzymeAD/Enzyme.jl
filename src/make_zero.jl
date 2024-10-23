@@ -66,7 +66,7 @@ else
     seen::IdDict,
     prev::GenericMemory{kind, FT},
     ::Val{copy_if_inactive} = Val(false),
-)::GenericMemory{kind, FT} where {copy_if_inactive,FT<:AbstractFloat,N}
+)::GenericMemory{kind, FT} where {copy_if_inactive,FT<:AbstractFloat,kind}
     if haskey(seen, prev)
         return seen[prev]
     end
@@ -79,7 +79,7 @@ end
     seen::IdDict,
     prev::GenericMemory{kind, Complex{FT}},
     ::Val{copy_if_inactive} = Val(false),
-)::GenericMemory{kind, Complex{FT}} where {copy_if_inactive,FT<:AbstractFloat,N}
+)::GenericMemory{kind, Complex{FT}} where {copy_if_inactive,FT<:AbstractFloat,kind}
     if haskey(seen, prev)
         return seen[prev]
     end
