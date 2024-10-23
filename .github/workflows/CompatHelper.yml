@@ -16,11 +16,10 @@ jobs:
         run : |
           version=$(grep '^julia = ' Project.toml | grep -o '".*"' | cut -d '"' -f2)
           echo "::set-output name=version::$version"
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/install-juliaup@v2
         with:
-          version: ${{ steps.julia_compat.outputs.version }}
-          arch: x64
-          show-versioninfo: true
+          channel: ${{ steps.julia_compat.outputs.version }}
+      - uses: julia-actions/cache@v2
       - name: Pkg.add
         shell: julia --color=yes {0}
         run: |
