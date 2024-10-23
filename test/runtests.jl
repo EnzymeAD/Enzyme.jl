@@ -172,7 +172,13 @@ end
     world = codegen_world_age(typeof(mul2), Tuple{Vector{Float64}})
     forward, pullback = Enzyme.Compiler.thunk(Val(world), Const{typeof(mul2)}, Active, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false), Val(false))
     res = forward(Const(mul2), d)
+
+    @static if VERSION < v"1.11-"
     @test typeof(res[1]) == Tuple{Float64, Float64}
+    else
+    @test typeof(res[1]) == NamedTuple{(Symbol("1"),Symbol("2"),Symbol("3"),Symbol("4"),Symbol("5"),Symbol("6")), Tuple{Any, Core.LLVMPtr{UInt8, 0}, Any, Core.LLVMPtr{Any, 0}, Float64, Float64}}
+    end
+
     pullback(Const(mul2), d, 1.0, res[1])
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
