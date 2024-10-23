@@ -24,4 +24,4 @@ y = @view data[3:end]
 @test_skip @test_throws AssertionError Duplicated(d, y)
 
 @test_throws ErrorException Active(data)
-@test_skip@test_throws ErrorException Active(d)
+@test_skip @test_throws ErrorException Active(d)
