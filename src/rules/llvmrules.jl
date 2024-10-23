@@ -656,6 +656,9 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
     algn = 0
     i8 = LLVM.IntType(8)
 
+    shadowsrcs = LLVM.Value[]
+    shadowdsts = LLVM.Value[]
+
 	for i = 1:width
 
 		evsrc = if width == 1
@@ -690,6 +693,14 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
 		if fwd && secretty != nothing
 			LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
 		end
+
+        push!(shadowsrcs, shadowsrc0)
+        push!(shadowdsts, shadowdst0)
+    end
+
+    for i in 1:width
+        shadowsrc0 = shadowsrcs[i]
+        shadowdst0 = shadowdsts[i]
 
 		API.sub_transfer(
 			gutils,
