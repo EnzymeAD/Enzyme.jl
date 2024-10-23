@@ -657,7 +657,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len=nothin
     i8 = LLVM.IntType(8)
 
     shadowsrcs = LLVM.Value[]
-    shadowdsrs = LLVM.Value[]
+    shadowdsts = LLVM.Value[]
 
 	for i = 1:width
 
