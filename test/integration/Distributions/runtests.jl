@@ -312,12 +312,15 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             ),
             randn(rng, 2, 3),
         ),
+        # TODO In addition to Forward mode being broken the "normal way" for the below one,
+        # Reverse mode also flat out crashes Julia. Hence the commenting out.
+        # See https://github.com/EnzymeAD/Enzyme.jl/issues/2012.
         # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1821
-        TestCase(
-            Wishart(5, _pdmat(randn(rng, 3, 3))),
-            Symmetric(collect(_pdmat(randn(rng, 3, 3))));
-            broken=Forward
-        ),
+        # TestCase(
+        #     Wishart(5, _pdmat(randn(rng, 3, 3))),
+        #     Symmetric(collect(_pdmat(randn(rng, 3, 3))));
+        #     broken=Forward
+        # ),
         TestCase(
             InverseWishart(5, _pdmat(randn(rng, 3, 3))),
             Symmetric(collect(_pdmat(randn(rng, 3, 3))));
