@@ -695,6 +695,7 @@ end
     @test autodiff(Reverse, f8, Active, Active(2.0))[1][1] == 2
     @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1]   == 2
 
+    Enzyme.API.strictAliasing!(false)
     function f9(x)
         y = []
         foreach(i -> push!(y, i^2), [1.0, x, x])
@@ -703,6 +704,7 @@ end
     @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
     @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
 
+    Enzyme.API.strictAliasing!(true)
     f10(x) = hypot(x, 2x)
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
 end
