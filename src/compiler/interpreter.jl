@@ -111,6 +111,11 @@ end
 
 function is_alwaysinline_func(@nospecialize(TT))
     isa(TT, DataType) || return false
+    @static if VERSION ≥ v"1.11-"
+    if TT.parameters[1] == typeof(Core.memoryref)
+        return true
+    end
+    end
     return false
 end
 

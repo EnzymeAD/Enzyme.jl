@@ -1615,8 +1615,8 @@ function julia_error(
                 legal2, obj = absint(cur)
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
-                if legal2 &&
-                   active_reg_inner(TT, (), world) == ActiveState &&
+                if legal2
+                   if active_reg_inner(TT, (), world) == ActiveState &&
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
                     if width == 1
@@ -1634,6 +1634,14 @@ function julia_error(
                         end
                         return shadowres
                     end
+                    end
+
+@static if VERSION < v"1.11-"
+else    
+                    if obj isa Memory && obj == typeof(obj).instance
+                        return make_batched(ncur, prevbb)
+                    end
+end
                 end
 
                 badval = if legal2
@@ -6321,6 +6329,14 @@ function GPUCompiler.codegen(
         end
 
         func = mi.specTypes.parameters[1]
+
+@static if VERSION < v"1.11-"
+else
+        if func == typeof(Core.memoryref)
+            attributes = function_attributes(llvmfn)
+            push!(attributes, EnumAttribute("alwaysinline", 0))
+        end
+end
 
         meth = mi.def
         name = meth.name

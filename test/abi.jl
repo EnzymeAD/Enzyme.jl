@@ -590,5 +590,23 @@ end
 
     Enzyme.autodiff(Forward, byrefs, BatchDuplicated([1.0], ([1.0], [1.0])), BatchDuplicated([1.0], ([1.0], [1.0]) ) )
 end
+    
+function myunique0()
+    return Vector{Float64}(undef, 0)
+end
+@static if VERSION < v"1.11-"
+@testset "Forward mode array construct" begin
+    autodiff(Forward, myunique0, Duplicated)
+end
+else
+function myunique()
+    m = Memory{Float64}.instance
+    return Core.memoryref(m)
+end
+@testset "Forward mode array construct" begin
+    autodiff(Forward, myunique, Duplicated)
+    autodiff(Forward, myunique0, Duplicated)
+end
+end
 
 include("usermixed.jl")
