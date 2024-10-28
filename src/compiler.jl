@@ -467,9 +467,9 @@ end
         return Val(AnyState)
     end
 
-    subT = fieldtype(T, f)
+    subT = typed_fieldtype(T, f)
 
-    if justActive && !allocatedinline(subT)
+    if justActive && ismutabletype(subT)
         return Val(AnyState)
     end
 
@@ -680,7 +680,7 @@ end
     inactivety = if typeof(world) === Nothing
         EnzymeCore.EnzymeRules.inactive_type(T)
     else
-        inmi = GPUCompiler.methodinstance(
+        inmi = my_methodinstance(
             typeof(EnzymeCore.EnzymeRules.inactive_type),
             Tuple{Type{T}},
             world,
@@ -1135,7 +1135,7 @@ end
 include("make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
-    funcspec = GPUCompiler.methodinstance(typeof(f), tt, world)
+    funcspec = my_methodinstance(typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
 
@@ -1615,8 +1615,8 @@ function julia_error(
                 legal2, obj = absint(cur)
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
-                if legal2 &&
-                   active_reg_inner(TT, (), world) == ActiveState &&
+                if legal2
+                   if active_reg_inner(TT, (), world) == ActiveState &&
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
                     if width == 1
@@ -1634,6 +1634,14 @@ function julia_error(
                         end
                         return shadowres
                     end
+                    end
+
+@static if VERSION < v"1.11-"
+else    
+                    if obj isa Memory && obj == typeof(obj).instance
+                        return make_batched(ncur, prevbb)
+                    end
+end
                 end
 
                 badval = if legal2
@@ -1652,10 +1660,8 @@ function julia_error(
             if isa(cur, LLVM.UndefValue)
                 return make_batched(ncur, prevbb)
             end
-            @static if LLVM.version() >= v"12"
-                if isa(cur, LLVM.PoisonValue)
-                    return make_batched(ncur, prevbb)
-                end
+            if isa(cur, LLVM.PoisonValue)
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 return make_batched(ncur, prevbb)
@@ -1792,6 +1798,18 @@ function julia_error(
                         end
                     end
                     return shadowres
+                end
+            end
+           
+            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(cur)[2:end]))
+                lhs = make_replacement(operands(cur)[1], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
+                elseif width != 1 && isa(lhs, LLVM.InsertValueInst) && operands(lhs)[2] == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
                 end
             end
 
@@ -2319,7 +2337,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         world = enzyme_extract_world(fn)
         has, Ty, byref = abs_typeof(V)
         if !has
-            throw(AssertionError("Allocation could not have its type statically determined $(string(V))"))
+            throw(AssertionError("$(string(fn))\n Allocation could not have its type statically determined $(string(V))"))
         end
         rt = active_reg_inner(Ty, (), world)
         if rt == ActiveState || rt == MixedState
@@ -2441,7 +2459,7 @@ function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
         if isa(ty, LLVM.StructType)
             i = 1
             for ii = 1:fieldcount(jlty)
-                jlet = fieldtype(jlty, ii)
+                jlet = typed_fieldtype(jlty, ii)
                 if isghostty(jlet) || Core.Compiler.isconstType(jlet)
                     continue
                 end
@@ -2984,9 +3002,9 @@ Create the methodinstance pair, and lookup the primal return type.
     primal_tt = Tuple{map(eltype, _tt)...}
 
     primal = if world isa Nothing
-        GPUCompiler.methodinstance(F, primal_tt)
+        my_methodinstance(F, primal_tt)
     else
-        GPUCompiler.methodinstance(F, primal_tt, world)
+        my_methodinstance(F, primal_tt, world)
     end
 
     return primal
@@ -3207,7 +3225,20 @@ function annotate!(mod, mode)
     )
         if haskey(fns, fname)
             fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            if LLVM.version().major <= 15
+                push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+            else
+                push!(function_attributes(fn), 
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_Ref << getLocationPos(ArgMem)) |
+                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    )
+                )
+            end
             for u in LLVM.uses(fn)
                 c = LLVM.user(u)
                 if !isa(c, LLVM.CallInst)
@@ -3806,18 +3837,6 @@ function enzyme!(
         ),
         "ijl_genericmemory_copy_slice" => @cfunction(
             inoutcopyslice_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "julia.pointer_from_objref" => @cfunction(
-            inout_rule,
             UInt8,
             (
                 Cint,
@@ -4544,7 +4563,7 @@ function create_abi_wrapper(
             push!(realparms, val)
         elseif T <: BatchDuplicatedFunc
             Func = get_func(T)
-            funcspec = GPUCompiler.methodinstance(Func, Tuple{}, world)
+            funcspec = my_methodinstance(Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = Core.Compiler.typeinf_ext_toplevel(interp, funcspec).rettype
@@ -6321,6 +6340,14 @@ function GPUCompiler.codegen(
 
         func = mi.specTypes.parameters[1]
 
+@static if VERSION < v"1.11-"
+else
+        if func == typeof(Core.memoryref)
+            attributes = function_attributes(llvmfn)
+            push!(attributes, EnumAttribute("alwaysinline", 0))
+        end
+end
+
         meth = mi.def
         name = meth.name
         jlmod = meth.module
@@ -7373,7 +7400,7 @@ function GPUCompiler.codegen(
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = GPUCompiler.methodinstance(fnty, Tuple{JT}, world)
+                funcspec = my_methodinstance(fnty, Tuple{JT}, world)
                 llvmf = nested_codegen!(mode, mod, funcspec, world)
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
@@ -8662,7 +8689,7 @@ include("compiler/reflection.jl")
 
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
-        mi = GPUCompiler.methodinstance(fn, Tuple{T, Int})
+        mi = my_methodinstance(fn, Tuple{T, Int})
         job = CompilerJob(mi, CompilerConfig(target, params; kernel = false))
         mod, meta = GPUCompiler.codegen(
             :llvm,

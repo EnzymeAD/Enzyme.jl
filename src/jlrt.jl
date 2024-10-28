@@ -1,15 +1,5 @@
 # For julia runtime function emission
-
-declare_allocobj!(mod::LLVM.Module) =
-    get_function!(mod, "julia.gc_alloc_obj") do
-        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        T_ppjlvalue = LLVM.PointerType(LLVM.PointerType(T_jlvalue))
-        T_size_t = convert(LLVM.LLVMType, Int)
-
-
-        LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
-    end
+    
 function emit_allocobj!(
     B::LLVM.IRBuilder,
     @nospecialize(tag::LLVM.Value),
@@ -24,6 +14,7 @@ function emit_allocobj!(
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_pjlvalue = LLVM.PointerType(T_jlvalue)
     T_ppjlvalue = LLVM.PointerType(T_pjlvalue)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     T_int8 = LLVM.Int8Type()
     T_pint8 = LLVM.PointerType(T_int8)
@@ -35,12 +26,16 @@ function emit_allocobj!(
         bitcast!(B, pgcstack, T_ppjlvalue),
         [LLVM.ConstantInt(current_task_offset())],
     )
-    ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
-    T_ppint8 = LLVM.PointerType(T_pint8)
-    ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
+
+    @static if VERSION < v"1.11.0-"    
+        ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
+        T_ppint8 = LLVM.PointerType(T_pint8)
+        ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
+    else
+        ct = bitcast!(B, ct, T_pjlvalue)
+    end
 
     if needs_workaround
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
         T_size_t = convert(LLVM.LLVMType, Int)
         # This doesn't allow for optimizations
         alty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
@@ -51,8 +46,15 @@ function emit_allocobj!(
         return call!(B, alty, alloc_obj, [ptls, Size, tag])
     end
 
+    T_size_t = convert(LLVM.LLVMType, Int)
 
-    alloc_obj, alty = declare_allocobj!(mod)
+    @static if VERSION < v"1.11.0-"
+        alty = LLVM.FunctionType(T_prjlvalue, [T_ppjlvalue, T_size_t, T_prjlvalue])
+    else
+        alty = LLVM.FunctionType(T_prjlvalue, [T_pjlvalue, T_size_t, T_prjlvalue])
+    end
+
+    alloc_obj, _ = get_function!(mod, "julia.gc_alloc_obj", alty)
 
     return call!(B, alty, alloc_obj, [ct, Size, tag], name)
 end
@@ -803,10 +805,12 @@ function emit_layout_of_type!(B, ty)
 	@assert !isa(ty, LLVM.Constant)
 	dt = get_datatype_struct()
 	lty = bitcast!(B, ty, LLVM.PointerType(dt, addrspace(value_type(ty))))
-	layoutp = inbounds_gep!(B, dt, ty, 
+	layoutp = inbounds_gep!(B, dt, lty, 
         LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
 	)
-	layout = load!(B, lptr, layoutp)
+	jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
+	layout = load!(B, jlvaluet, layoutp)
+    layout = bitcast!(B, layout, lptr)
 	return layout
 end
 

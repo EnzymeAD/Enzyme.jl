@@ -1,7 +1,7 @@
 name = "EnzymeTestUtils"
 uuid = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 authors = ["Seth Axen <seth@sethaxen.com>", "William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"

@@ -22,7 +22,7 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - ~1.11.0-0
+          - '1.11'
           - 'nightly'
         os:
           - ubuntu-20.04
@@ -137,7 +137,7 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - ~1.11.0-0
+          - '1.11'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -182,6 +182,68 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
+      - uses: codecov/codecov-action@v4
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
+  enzymecore:
+    name: EnzymeCore - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    env:
+      JULIA_PROJECT: "lib/EnzymeCore"
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+          - ~1.11.0-0
+          - 'nightly'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+        libEnzyme: [packaged]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: actions/cache@v2
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ env.cache-name }}-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-
+      - name: setup EnzymeCore
+        shell: julia --color=yes {0}
+        id: setup_testutils
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        run: |
+          using Pkg
+          Pkg.develop([PackageSpec(; path) for path in (".",)])
+          Pkg.instantiate()
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: Run the tests
+        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
+        continue-on-error: ${{ matrix.version == 'nightly' }}
+        id: run_tests
+        shell: julia --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.test("EnzymeCore"; coverage=true)
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
+        with:
+          directories: lib/EnzymeCore/src
       - uses: codecov/codecov-action@v4
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:

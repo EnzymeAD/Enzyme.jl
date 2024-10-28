@@ -25,13 +25,6 @@ function rand_tangent(rng, x)
     return from_vec(v_new)
 end
 
-# differs from Enzyme.make_zero primarily in that reshaped Arrays in the argument will share
-# the same memory in the output.
-function zero_tangent(x)
-    v, from_vec = to_vec(x)
-    return from_vec(zero(v))
-end
-
 auto_activity(arg) = auto_activity(Random.default_rng(), arg)
 function auto_activity(rng, arg::Tuple)
     if length(arg) == 2 && arg[2] isa Type && arg[2] <: Annotation

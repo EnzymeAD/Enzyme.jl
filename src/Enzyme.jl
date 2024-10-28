@@ -1559,7 +1559,7 @@ end
         Base.@_inline_meta
         ntuple(Val(N)) do idx
             Base.@_inline_meta
-            return (i == idx) ? 1.0 : 0.0
+            return (i == idx) ? T(1) : T(0)
         end
     end
 end
@@ -1571,7 +1571,7 @@ end
         Base.@_inline_meta
         ntuple(Val(N)) do idx
             Base.@_inline_meta
-            return (i + start - 1 == idx) ? 1.0 : 0.0
+            return (i + start - 1 == idx) ? T(1) : T(0)
         end
     end
 end

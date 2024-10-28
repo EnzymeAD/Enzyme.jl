@@ -2,6 +2,7 @@
 *.jl.cov
 *.jl.mem
 /Manifest.toml
+lib/EnzymeCore/Manifest.toml
 /Manifest-v*.toml
 /test/Manifest.toml
 /docs/Manifest.toml
