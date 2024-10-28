@@ -318,7 +318,12 @@ end
 else
     @inline function myunsafe_copyto!(dest::MemoryRef{T}, src::MemoryRef{T}, n) where {T}
         Base.@_terminates_globally_notaskstate_meta
-        @boundscheck memoryref(dest, n), memoryref(src, n)
+        if dst.length < n
+            throw(BoundsError(dest, 1:n))
+        end
+        if src.length < n
+            throw(BoundsError(dest, 1:n))
+        end
         t1 = Base.@_gc_preserve_begin dest
         t2 = Base.@_gc_preserve_begin src
         Base.memmove(pointer(dest), pointer(src), n * Base.aligned_sizeof(T))
