@@ -1637,8 +1637,8 @@ function julia_error(
                     end
 
 @static if VERSION < v"1.11-"
-else    
-                    if obj isa Memory && obj == typeof(obj).instance
+else   
+                    if obj isa Memory && obj === typeof(obj).instance
                         return make_batched(ncur, prevbb)
                     end
 end
@@ -6165,6 +6165,8 @@ function GPUCompiler.codegen(
             expectLen += 1
         end
 
+        @show mi, RT, LLVM.name(f)
+
         # Unsupported calling conv
         # also wouldn't have any type info for this [would for earlier args though]
         if mi.specTypes.parameters[end] === Vararg{Any}
@@ -7107,6 +7109,8 @@ end
             end
         end
     end
+
+    mark_type_split!(mod)
 
     if params.run_enzyme
         # Generate the adjoint

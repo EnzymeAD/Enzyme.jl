@@ -146,6 +146,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             return (false, nothing)
         end
         ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
+        @show ptr
         if ptr == C_NULL
             # bt = GPUCompiler.backtrace(arg)
             # btstr = sprint() do io
@@ -155,6 +156,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             return (false, nothing)
         end
         typ = Base.unsafe_pointer_to_objref(ptr)
+        @show typ
         return (true, typ)
     end
     return (false, nothing)

@@ -435,10 +435,72 @@ function unwrap_ptr_casts(val::LLVM.Value)
     end
 end
 
+function mark_type_split!(mod::LLVM.Module)
+    for f in LLVM.functions(mod), bb in blocks(f)
+        inst = LLVM.terminator(bb)
+        @show string(inst)
+        if isa(inst, LLVM.SwitchInst) || (isa(inst, LLVM.BrInst) && LLVM.isconditional(inst))
+            cond = if isa(inst, LLVM.BrInst)
+                LLVM.condition(inst)
+            else
+                operands(inst)[1]
+            end
+            x = cond
+            while true
+                if isa(x, LLVM.BitCastInst) || isa(x, LLVM.AddrSpaceCastInst) || isa(x, LLVM.PtrToIntInst) || isa(x, LLVM.IntToPtrInst)
+                    x = operands(x)[1]
+                    continue
+                end
+                if isa(x, LLVM.AddInst) || isa(x, LLVM.SubInst)
+                    if isa(operands(x)[2], LLVM.ConstantInt)
+                        x = operands(x)[1]
+                        continue
+                    end
+                    if isa(operands(x)[1], LLVM.ConstantInt)
+                        x = operands(x)[2]
+                        continue
+                    end
+                end
+                if isa(x, LLVM.CallInst)
+                    cv = LLVM.called_value(x)
+                    if cv isa LLVM.Function
+                        nm = LLVM.name(cv)
+                        if nm == "julia.pointer_from_objref"
+                            x = operands(x)[1]
+                            continue
+                        end
+                        intr = LLVM.API.LLVMGetIntrinsicID(cv)
+                        @show cv, intr, LLVM.Intrinsic("llvm.fshl").id, (intr == LLVM.Intrinsic("llvm.fshl").id), isa(operands(x)[2], LLVM.ConstantInt)
+                        if intr == LLVM.Intrinsic("llvm.fshl").id
+                            x = operands(x)[1]
+                            @show "post fshl", x
+                            continue
+                        end
+                    end
+                end
+                break
+            end
+            @show string(cond), string(x), string(inst)
+            if isa(x, LLVM.CallInst)
+                cv = LLVM.called_value(x)
+                if cv isa LLVM.Function
+                    nm = LLVM.name(cv)
+                    if nm == "julia.typeof"
+                        metadata(inst)["enzyme_notypeprop"] = MDNode(LLVM.Metadata[])
+                        @show "added", string(inst)
+                    end
+                end
+            end
+            flush(stdout)
+        end
+    end
+end
+
 function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
     calls = []
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
+    println(string(f))
     for bb in blocks(f), inst in collect(instructions(bb))
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
