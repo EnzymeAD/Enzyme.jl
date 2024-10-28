@@ -215,10 +215,10 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     empty!(new_ci.code)
     @static if isdefined(Core, :DebugInfo)
       new_ci.debuginfo = Core.DebugInfo(:none)
+      resize!(new_ci.linetable, 1)                # see note below
     else
       empty!(new_ci.codelocs)
     end
-    resize!(new_ci.linetable, 1)                # see note below
     empty!(new_ci.ssaflags)
     new_ci.ssavaluetypes = 0
     new_ci.min_world = min_world[]
