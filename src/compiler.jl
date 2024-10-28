@@ -1615,8 +1615,8 @@ function julia_error(
                 legal2, obj = absint(cur)
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
-                if legal2 &&
-                   active_reg_inner(TT, (), world) == ActiveState &&
+                if legal2
+                   if active_reg_inner(TT, (), world) == ActiveState &&
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
                     if width == 1
@@ -1634,6 +1634,14 @@ function julia_error(
                         end
                         return shadowres
                     end
+                    end
+
+@static if VERSION < v"1.11-"
+else    
+                    if obj isa Memory && obj == typeof(obj).instance
+                        return make_batched(ncur, prevbb)
+                    end
+end
                 end
 
                 badval = if legal2
@@ -1652,10 +1660,8 @@ function julia_error(
             if isa(cur, LLVM.UndefValue)
                 return make_batched(ncur, prevbb)
             end
-            @static if LLVM.version() >= v"12"
-                if isa(cur, LLVM.PoisonValue)
-                    return make_batched(ncur, prevbb)
-                end
+            if isa(cur, LLVM.PoisonValue)
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 return make_batched(ncur, prevbb)
@@ -1792,6 +1798,18 @@ function julia_error(
                         end
                     end
                     return shadowres
+                end
+            end
+           
+            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(cur)[2:end]))
+                lhs = make_replacement(operands(cur)[1], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
+                elseif width != 1 && isa(lhs, LLVM.InsertValueInst) && operands(lhs)[2] == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
                 end
             end
 
@@ -6321,6 +6339,14 @@ function GPUCompiler.codegen(
         end
 
         func = mi.specTypes.parameters[1]
+
+@static if VERSION < v"1.11-"
+else
+        if func == typeof(Core.memoryref)
+            attributes = function_attributes(llvmfn)
+            push!(attributes, EnumAttribute("alwaysinline", 0))
+        end
+end
 
         meth = mi.def
         name = meth.name
