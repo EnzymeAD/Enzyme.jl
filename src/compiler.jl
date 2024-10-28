@@ -1660,10 +1660,8 @@ end
             if isa(cur, LLVM.UndefValue)
                 return make_batched(ncur, prevbb)
             end
-            @static if LLVM.version() >= v"12"
-                if isa(cur, LLVM.PoisonValue)
-                    return make_batched(ncur, prevbb)
-                end
+            if isa(cur, LLVM.PoisonValue)
+                return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantAggregateZero)
                 return make_batched(ncur, prevbb)
@@ -1800,6 +1798,18 @@ end
                         end
                     end
                     return shadowres
+                end
+            end
+           
+            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(cur)[2:end]))
+                lhs = make_replacement(operands(cur)[1], prevbb)
+                if illegal
+                    return ncur
+                end
+                if lhs == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
+                elseif width != 1 && isa(lhs, LLVM.InsertValueInst) && operands(lhs)[2] == operands(ncur)[1]
+                    return make_batched(ncur, prevbb)
                 end
             end
 
