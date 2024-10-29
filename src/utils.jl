@@ -213,8 +213,12 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     # prepare a new code info
     new_ci = copy(ci)
     empty!(new_ci.code)
-    empty!(new_ci.codelocs)
-    resize!(new_ci.linetable, 1)                # see note below
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
+    end
     empty!(new_ci.ssaflags)
     new_ci.ssavaluetypes = 0
     new_ci.min_world = min_world[]
@@ -232,7 +236,10 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     # return the codegen world age
     push!(new_ci.code, ReturnNode(world))
     push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    push!(new_ci.codelocs, 1)   # see note below
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
     new_ci.ssavaluetypes += 1
 
     # NOTE: we keep the first entry of the original linetable, and use it for location info
