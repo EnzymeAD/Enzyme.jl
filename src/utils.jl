@@ -215,9 +215,9 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     empty!(new_ci.code)
     @static if isdefined(Core, :DebugInfo)
       new_ci.debuginfo = Core.DebugInfo(:none)
-      resize!(new_ci.linetable, 1)                # see note below
     else
       empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
     end
     empty!(new_ci.ssaflags)
     new_ci.ssavaluetypes = 0
