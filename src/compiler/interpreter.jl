@@ -23,7 +23,7 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
-abstract type AbstractEnzymeInterpreter <: AbstractInterpreter
+struct EnzymeInterpreter{T} <: AbstractInterpreter
     @static if HAS_INTEGRATED_CACHE
         token::Any
     else
@@ -43,9 +43,7 @@ abstract type AbstractEnzymeInterpreter <: AbstractInterpreter
     forward_rules::Bool
     reverse_rules::Bool
     deferred_lower::Bool
-end
-
-struct EnzymeInterpreter <: AbstractEnzymeInterpreter
+    handler::T
 end
 
 function EnzymeInterpreter(
@@ -54,7 +52,8 @@ function EnzymeInterpreter(
     world::UInt,
     forward_rules::Bool,
     reverse_rules::Bool,
-    deferred_lower::Bool = true
+    deferred_lower::Bool = true,
+    handler = nothing
 )
     @assert world <= Base.get_world_counter()
 
@@ -79,7 +78,8 @@ function EnzymeInterpreter(
         OptimizationParams(),
         forward_rules,
         reverse_rules,
-        deferred_lower
+        deferred_lower,
+        handler
     )
 end
 
@@ -88,34 +88,35 @@ EnzymeInterpreter(
     mt::Union{Nothing,Core.MethodTable},
     world::UInt,
     mode::API.CDerivativeMode,
-    deferred_lower::Bool = true
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower)
+    deferred_lower::Bool = true,
+    handler = nothing
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, handler)
 
-Core.Compiler.InferenceParams(interp::AbstractEnzymeInterpreter) = interp.inf_params
-Core.Compiler.OptimizationParams(interp::AbstractEnzymeInterpreter) = interp.opt_params
-get_inference_world(interp::AbstractEnzymeInterpreter) = interp.world
-Core.Compiler.get_inference_cache(interp::AbstractEnzymeInterpreter) = interp.local_cache
+Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
+Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
+get_inference_world(interp::EnzymeInterpreter) = interp.world
+Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
 @static if HAS_INTEGRATED_CACHE
-    Core.Compiler.cache_owner(interp::AbstractEnzymeInterpreter) = interp.token
+    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
 else
-    Core.Compiler.code_cache(interp::AbstractEnzymeInterpreter) =
+    Core.Compiler.code_cache(interp::EnzymeInterpreter) =
         WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
-Core.Compiler.lock_mi_inference(::AbstractEnzymeInterpreter, ::MethodInstance) = nothing
-Core.Compiler.unlock_mi_inference(::AbstractEnzymeInterpreter, ::MethodInstance) = nothing
+Core.Compiler.lock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
+Core.Compiler.unlock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
 
-Core.Compiler.may_optimize(::AbstractEnzymeInterpreter) = true
-Core.Compiler.may_compress(::AbstractEnzymeInterpreter) = true
+Core.Compiler.may_optimize(::EnzymeInterpreter) = true
+Core.Compiler.may_compress(::EnzymeInterpreter) = true
 # From @aviatesk:
 #     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
-Core.Compiler.may_discard_trees(::AbstractEnzymeInterpreter) = false
-Core.Compiler.verbose_stmt_info(::AbstractEnzymeInterpreter) = false
+Core.Compiler.may_discard_trees(::EnzymeInterpreter) = false
+Core.Compiler.verbose_stmt_info(::EnzymeInterpreter) = false
 
-Core.Compiler.method_table(interp::AbstractEnzymeInterpreter, sv::InferenceState) =
+Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
 function is_alwaysinline_func(@nospecialize(TT))
@@ -189,7 +190,7 @@ Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
 
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 function Core.Compiler.abstract_call_gf_by_type(
-    interp::AbstractEnzymeInterpreter,
+    interp::EnzymeInterpreter,
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
@@ -238,7 +239,7 @@ end
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
         sigs_ex = :(
-            interp::AbstractEnzymeInterpreter,
+            interp::EnzymeInterpreter,
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt32,
@@ -251,7 +252,7 @@ let # overload `inlining_policy`
         )
     else
         sigs_ex = :(
-            interp::AbstractEnzymeInterpreter,
+            interp::EnzymeInterpreter,
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt8,
@@ -350,7 +351,7 @@ end
 
 
 function abstract_call_known(
-    interp::AbstractEnzymeInterpreter,
+    interp::EnzymeInterpreter,
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
@@ -425,6 +426,9 @@ function abstract_call_known(
                 max_methods,
             )
         end
+    end
+    if handler != nothing
+        return handler(interp, f, arginfo, si, sv, max_methods)
     end
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
