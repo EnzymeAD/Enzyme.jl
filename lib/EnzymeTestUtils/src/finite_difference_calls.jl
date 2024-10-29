@@ -102,7 +102,7 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
         fd = from_vec_in(fd_vec)
     else
         fd = Tuple(zip(map(ȳ, s̄igargs...) do ȳ_extended...
-                           ȳ_extended_vec = multi_tovec(ȳ_extended)
+                           ȳ_extended_vec = multi_tovec(active_return, ȳ_extended)
                            fd_vec = only(FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec,
                                                                 sigargs_vec))
                            return from_vec_in(fd_vec)
