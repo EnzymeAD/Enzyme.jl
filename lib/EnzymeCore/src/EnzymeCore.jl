@@ -7,6 +7,7 @@ export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff
+export needs_primal
 
 function batch_size end
 
