@@ -427,8 +427,8 @@ function abstract_call_known(
             )
         end
     end
-    if handler != nothing
-        return handler(interp, f, arginfo, si, sv, max_methods)
+    if interp.handler != nothing
+        return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
