@@ -236,7 +236,10 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     # return the codegen world age
     push!(new_ci.code, ReturnNode(world))
     push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    push!(new_ci.codelocs, 1)   # see note below
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
     new_ci.ssavaluetypes += 1
 
     # NOTE: we keep the first entry of the original linetable, and use it for location info
