@@ -1563,6 +1563,7 @@ end
         end
     end
 end
+@inline onehot(x::Tuple{}) = ()
 @inline function onehot(x::NTuple{N,T}) where {T,N}
     onehot(NTuple{N,T})
 end
@@ -2141,7 +2142,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                         end
                     end
                 else
-                    :(specialize_output(TupleArray($tmp, size($arg)), $(vals[1])))
+                    tmp
                 end
             else
                 tmp
