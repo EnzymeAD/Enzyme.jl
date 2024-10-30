@@ -1608,14 +1608,12 @@ function julia_error(
 
             legal, TT, byref = abs_typeof(cur, true)
 
-            @show string(cur), legal, TT, byref
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
                 end
 
                 legal2, obj = absint(cur)
-                @show legal2, obj, string(cur)
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
@@ -1649,13 +1647,10 @@ end
 
 @static if VERSION < v"1.11-"
 else   
-                @show string(cur)
                 if isa(cur, LLVM.LoadInst)
                     larg, off = get_base_and_offset(operands(cur)[1])
-                    @show string(cur), string(larg), off
                     if isa(larg, LLVM.LoadInst)
                         legal2, obj = absint(larg)
-                        @show string(cur), string(larg), legal2, obj
                         if legal2 && obj isa Memory && obj == typeof(obj).instance
                             return make_batched(ncur, prevbb)
                         end
@@ -1668,7 +1663,6 @@ end
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
-                @show badval, string(illegalVal)
                 illegalVal = cur
                 illegal = true
                 return make_batched(ncur, prevbb)
@@ -6882,14 +6876,11 @@ end
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
-        @show string(inst), !API.HasFromStack(inst), (isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ), isa(inst, LLVM.LoadInst)
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
              (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
-            @show string(inst), legal, source_typ, byref, codegen_typ
             if legal
                 typ = if codegen_typ isa LLVM.PointerType
                     llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
@@ -6900,17 +6891,23 @@ end
                     elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
                     else
-                        # println(string(mod))
-                        println(string(f))
-                        @show legal, source_typ, byref, llvm_source_typ, codegen_typ, string(inst)
-                        @show enzyme_custom_extract_mi(f)
-                        @assert false
+                        msg = sprint() do io
+                            println(io, "Enzyme illegal state")
+                            println(io, string(f))
+                            println(io, "legal=", legal)
+                            println(io, "source_typ=", source_typ)
+                            println(io, "byref=", byref)
+                            println(io, "llvm_source_typ=", llvm_source_typ)
+                            println(io, "codegen_typ=", codegen_typ)
+                            println(io, "inst=", string(inst))
+                            println(io, enzyme_custom_extract_mi(f))
+                        end
+                        throw(AssertionError(msg))
                     end
                 else
                     source_typ
                 end
 
-                @show source_typ
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(
                         inst,
@@ -6922,7 +6919,6 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(typetree(typ, ctx, dl, seen), ctx)
-                    @show string(inst), typ
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)
@@ -8063,8 +8059,11 @@ end
                 push!(sret_types, Nothing)
             elseif rettype <: Const
             else
-                @show rettype, CC
-                @assert false
+                msg = sprint() do io
+                    println(io, "rettype=", rettype)
+                    println(io, "CC=", CC)
+                end
+                throw(AssertionError(msg))
             end
         end
 

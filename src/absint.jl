@@ -464,13 +464,14 @@ function abs_typeof(
         larg, offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(larg)
 
-        @show string(arg), string(larg), offset, legal, typ, byref
-
         if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
             @static if VERSION < v"1.11-"
                 if typ <: Array && Base.isconcretetype(typ)
                     T = eltype(typ)
                     if offset == 0
+                        if !allocatedinline(T) && Base.isconcretetype(T)
+                            T = Ptr{T}
+                        end
                         return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
                     else
                         return (true, Int, GPUCompiler.BITS_VALUE)
@@ -529,15 +530,11 @@ function abs_typeof(
                     end
                 end
 
-                @show string(arg), legal, typ
-                
                 typ2 = typ
                 while legal && should_recurse(typ2, value_type(arg), byref, dl)
                     idx, _ = first_non_ghost(typ2)
-                    @show typ2, idx, byref
                     if idx != -1
                         typ2 = typed_fieldtype(typ2, idx)
-                        @show "indexed", typ2, idx
                         if Base.allocatedinline(typ2)
                             if byref == GPUCompiler.BITS_VALUE
                                 continue
@@ -557,7 +554,6 @@ function abs_typeof(
                     break
                 end
                 if legal
-                    @show "res", string(arg), legal, typ, byref
                     return (true, typ2, byref)
                 end
             end
@@ -604,7 +600,6 @@ function abs_typeof(
         ops = LLVM.Value[]
         seen = Set{LLVM.PHIInst}()
         legal = true
-        @show string(arg), "phi"
         while length(todo) > 0
             cur = pop!(todo)
             if cur in seen
@@ -614,8 +609,7 @@ function abs_typeof(
             for (v, _) in LLVM.incoming(cur)
                 v2, off = get_base_and_offset(v)
                 if off != 0
-                    if arg in collect(operands(v))
-                        @show "illegal sub", string(v)
+                    if isa(v, LLVM.Instruction) && arg in collect(operands(v))
                         legal = false
                         break
                     end
@@ -623,8 +617,7 @@ function abs_typeof(
                 elseif v2 isa LLVM.PHIInst
                     push!(todo, v2)
                 else
-                    if arg in collect(operands(v2))
-                        @show "illegal sub", string(v2)
+                    if isa(v2, LLVM.Instruction) && arg in collect(operands(v2))
                         legal = false
                         break
                     end
@@ -636,22 +629,18 @@ function abs_typeof(
             resvals = nothing
             for op in ops
                 tmp = abs_typeof(op, partial)
-                @show tmp, string(op), partial, resvals
                 if resvals == nothing
                     resvals = tmp
                 else
                     if tmp[1] == false || resvals[1] == false
-                        @show "bad"
                         resvals = (false, nothing, nothing)
                         break
                     elseif tmp[2] == resvals[2] && ( tmp[3] == resvals[3] || ( in(tmp3[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF)) && in(resvals[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF))) )
 
                         continue
                     elseif partial
-                        @show "bad2"
                         resvals = (true, Union{resvals[2], tmp[2]}, GPUCompiler.BITS_REF)
                     else
-                        @show "bad3"
                         resvals = (false, nothing, nothing)
                         break
                     end
