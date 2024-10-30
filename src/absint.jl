@@ -244,14 +244,14 @@ end
 
 function abs_typeof(
     arg::LLVM.Value,
-    partial::Bool = false,
+    partial::Bool = false, seenphis=Set{LLVM.PHIInst}()
 )::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
-        return abs_typeof(operands(arg)[1], partial)
+        return abs_typeof(operands(arg)[1], partial, seenphis)
     end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
-            return abs_typeof(operands(arg)[1], partial)
+            return abs_typeof(operands(arg)[1], partial, seenphis)
         end
     end
 
@@ -263,11 +263,11 @@ function abs_typeof(
         end
 
         if nm == "julia.pointer_from_objref"
-            return abs_typeof(operands(arg)[1], partial)
+            return abs_typeof(operands(arg)[1], partial, seenphis)
         end
 
         if nm == "julia.gc_loaded"
-            legal, res, byref = abs_typeof(operands(arg)[2], partial)
+            legal, res, byref = abs_typeof(operands(arg)[2], partial, seenphis)
             return legal, res, byref
         end
 
@@ -343,7 +343,7 @@ function abs_typeof(
                 unionalls = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
-                    slegal, foundv, _ = abs_typeof(sarg, partial)
+                    slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
                     if slegal
                         push!(found, foundv)
                     elseif partial
@@ -378,7 +378,7 @@ function abs_typeof(
                     end
                     resvals = []
                     while index != length(operands(arg))
-                        legal, pval, _ = abs_typeof(operands(arg)[index], partial)
+                        legal, pval, _ = abs_typeof(operands(arg)[index], partial, seenphis)
                         if !legal
                             break
                         end
@@ -404,7 +404,7 @@ function abs_typeof(
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-            legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+            legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
             if legal
                 @assert RT <: Array
                 return (legal, RT, GPUCompiler.MUT_REF)
@@ -414,7 +414,7 @@ function abs_typeof(
         @static if VERSION < v"1.11-"
         else
             if nm == "jl_genericmemory_copy_slice" || nm == "ijl_genericmemory_copy_slice"
-                legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+                legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
                 if legal
                     @assert RT <: Memory
                     return (legal, RT, GPUCompiler.MUT_REF)
@@ -462,7 +462,7 @@ function abs_typeof(
         end
        
         larg, offset = get_base_and_offset(operands(arg)[1])
-        legal, typ, byref = abs_typeof(larg)
+        legal, typ, byref = abs_typeof(larg, false, seenphis)
 
         if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
             @static if VERSION < v"1.11-"
@@ -567,7 +567,7 @@ function abs_typeof(
         indptrs = LLVM.API.LLVMGetIndices(arg)
         numind = LLVM.API.LLVMGetNumIndices(arg)
         offset = Cuint[unsafe_load(indptrs, i) for i = 1:numind]
-        found, typ, byref = abs_typeof(larg, partial)
+        found, typ, byref = abs_typeof(larg, partial, seenphis)
         if !found
             return (false, nothing, nothing)
         end
@@ -596,6 +596,9 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.PHIInst)
+        if arg in seenphis
+            return (false, nothing, nothing)
+        end
         todo = LLVM.PHIInst[arg]
         ops = LLVM.Value[]
         seen = Set{LLVM.PHIInst}()
@@ -627,8 +630,10 @@ function abs_typeof(
         end
         if legal
             resvals = nothing
+            seenphis2 = copy(seenphis)
+            push!(seenphis, arg)
             for op in ops
-                tmp = abs_typeof(op, partial)
+                tmp = abs_typeof(op, partial, seenphis2)
                 if resvals == nothing
                     resvals = tmp
                 else
