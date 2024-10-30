@@ -423,7 +423,7 @@ end
 
 export sret_ty
 
-@inline function compute_rt(interp::AbstractInterpreter, mi::MethodInstance)
+@inline function compute_rt(interp::Core.Compiler.AbstractInterpreter, mi::MethodInstance)
     @static if isdefined(Core.Compiler, :typeinf_type)
         return typeinf_type(interp, mi)
     else
