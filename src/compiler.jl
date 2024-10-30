@@ -1855,6 +1855,14 @@ end
                 push!(created, phi2)
                 return phi2
             end
+            
+            tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, cur))
+            st = API.EnzymeTypeTreeToString(tt)
+            st2 = Base.unsafe_string(st)
+            API.EnzymeStringFree(st)
+            if st2 == "{[-1]:Integer}"
+                return make_batched(ncur, prevbb)
+            end
 
             illegal = true
             illegalVal = cur
@@ -6855,8 +6863,8 @@ end
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
         if !API.HasFromStack(inst) &&
-           isa(inst, LLVM.CallInst) &&
-           (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+           ((isa(inst, LLVM.CallInst) &&
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
@@ -6918,7 +6926,7 @@ end
             if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
-                base, offset, _ = get_base_and_offset(operands(inst)[1])
+                base, offset = get_base_and_offset(operands(inst)[1])
                 legal, jTy, byref = abs_typeof(base)
                 sz =
                     if intr == LLVM.Intrinsic("llvm.memcpy").id ||
@@ -6959,6 +6967,7 @@ end
         if !legal
             continue
         end
+
         if !guaranteed_const_nongen(jTy, world)
             continue
         end
