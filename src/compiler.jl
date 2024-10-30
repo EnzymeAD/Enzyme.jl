@@ -1607,12 +1607,15 @@ function julia_error(
             end
 
             legal, TT, byref = abs_typeof(cur, true)
+
+            @show string(cur), legal, TT, byref
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
                 end
 
                 legal2, obj = absint(cur)
+                @show legal2, obj, string(cur)
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
@@ -1644,11 +1647,28 @@ else
 end
                 end
 
+@static if VERSION < v"1.11-"
+else   
+                @show string(cur)
+                if isa(cur, LLVM.LoadInst)
+                    larg, off = get_base_and_offset(operands(cur)[1])
+                    @show string(cur), string(larg), off
+                    if isa(larg, LLVM.LoadInst)
+                        legal2, obj = absint(larg)
+                        @show string(cur), string(larg), legal2, obj
+                        if legal2 && obj isa Memory && obj == typeof(obj).instance
+                            return make_batched(ncur, prevbb)
+                        end
+                    end
+                end
+end
+
                 badval = if legal2
                     string(obj) * " of type" * " " * string(TT)
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
+                @show badval, string(illegalVal)
                 illegalVal = cur
                 illegal = true
                 return make_batched(ncur, prevbb)
@@ -6862,11 +6882,14 @@ end
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
+        @show string(inst), !API.HasFromStack(inst), (isa(inst, LLVM.CallInst) &&
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ), isa(inst, LLVM.LoadInst)
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
              (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
+            @show string(inst), legal, source_typ, byref, codegen_typ
             if legal
                 typ = if codegen_typ isa LLVM.PointerType
                     llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
@@ -6887,6 +6910,7 @@ end
                     source_typ
                 end
 
+                @show source_typ
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(
                         inst,
@@ -6898,6 +6922,7 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(typetree(typ, ctx, dl, seen), ctx)
+                    @show string(inst), typ
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)
