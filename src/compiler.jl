@@ -6872,7 +6872,7 @@ end
                     llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
                     # pointers are used for multiple kinds of arguments
                     # - literal pointer values
-                    if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                    if byref == GPUCompiler.BITS_VALUE
                         source_typ
                     elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
