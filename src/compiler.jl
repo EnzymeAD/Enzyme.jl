@@ -1132,8 +1132,6 @@ struct Tape{TapeTy,ShadowTy,ResT}
     shadow_return::ShadowTy
 end
 
-include("make_zero.jl")
-
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
     funcspec = my_methodinstance(typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
@@ -7610,6 +7608,7 @@ end
 end
 
 # Recursively return x + f(y), where y is active, otherwise x
+include("recursive_map.jl")
 
 @inline function recursive_add(
     x::T,

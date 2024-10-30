@@ -74,6 +74,7 @@ end
 include("abi.jl")
 include("typetree.jl")
 include("optimize.jl")
+include("recursive_map.jl")
 
 include("rules.jl")
 include("rrules.jl")
