@@ -166,6 +166,9 @@ function actual_size(@nospecialize(typ2))
             return sizeof(Int)
         end
     else
+        if typ2 <: GenericMemory
+            return sizeof(Int)
+        end
     end
     if typ2 <: AbstractString || typ2 <: Symbol
         return sizeof(Int)
@@ -436,9 +439,37 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.LoadInst)
-        larg, offset = get_base_and_offset(operands(arg)[1])
 
-        legal, typ, byref = abs_typeof(larg)
+
+        legal = false
+        typ = nothing
+        byref = GPUCompiler.BITS_VALUE
+
+        if isa(operands(arg)[1], LLVM.ConstantExpr)
+            ce = operands(arg)[1]
+            while isa(ce, ConstantExpr)
+                if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
+                   opcode(ce) == LLVM.API.LLVMBitCast ||
+                   opcode(ce) == LLVM.API.LLVMIntToPtr
+                    ce = operands(ce)[1]
+                else
+                    break
+                end
+            end
+            if isa(ce, LLVM.ConstantInt)
+                ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
+                if ptr != C_NULL
+                    obj = Base.unsafe_pointer_to_objref(ptr)
+                    return (true, Core.Typeof(obj), GPUCompiler.BITS_REF)
+                end
+            end
+        end
+       
+        larg, offset = get_base_and_offset(operands(arg)[1])
+        if !legal
+            legal, typ, byref = abs_typeof(larg)
+        end
+
         if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
             @static if VERSION < v"1.11-"
                 if typ <: Array && Base.isconcretetype(typ)
