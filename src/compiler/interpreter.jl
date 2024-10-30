@@ -57,10 +57,10 @@ function EnzymeInterpreter(
 )
     @assert world <= Base.get_world_counter()
 
-    parms = @static if VERSION < v"1.12"
-        InferenceParams(unoptimize_throw_blocks = false)
-    else
+    parms = @static if VERSION >= v"1.12.0-DEV.1017"
         InferenceParams()
+    else
+        InferenceParams(; unoptimize_throw_blocks=false)
     end
 
     return EnzymeInterpreter(
