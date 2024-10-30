@@ -968,6 +968,7 @@ end
 
     TapeT = Nothing
 
+
     if (
            aug_RT <: EnzymeRules.AugmentedReturn ||
            aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
@@ -996,7 +997,7 @@ end
     else
         TapeT = Any
     end
-
+    
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
@@ -1027,8 +1028,16 @@ end
             rkwfunc = Core.kwfunc(EnzymeRules.reverse)
             if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
                 @safe_debug "Applying custom reverse rule (kwcall)" TT = rev_TT
-                llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+                try
+                    llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
+                    rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+                catch e
+                    rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
+                    llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                    pushfirst!(args, LLVM.ConstantInt(world))
+                    rev_RT = Union{}
+                    applicablefn = false
+                end
             else
                 rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
                 llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
@@ -1039,8 +1048,17 @@ end
         else
             if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
                 @safe_debug "Applying custom reverse rule" TT = rev_TT
-                llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
-                rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+                try
+                    llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
+                    rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+                catch e
+                    rev_TT =
+                        Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}
+                    llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
+                    pushfirst!(args, LLVM.ConstantInt(world))
+                    rev_RT = Union{}
+                    applicablefn = false
+                end
             else
                 rev_TT =
                     Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}
