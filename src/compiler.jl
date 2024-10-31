@@ -6882,7 +6882,7 @@ end
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
-                typ = if codegen_typ isa LLVM.PointerType
+                typ = if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                     llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
                     # pointers are used for multiple kinds of arguments
                     # - literal pointer values
@@ -6918,7 +6918,8 @@ end
                         ),
                     )
                 else
-                    metadata(inst)["enzyme_type"] = to_md(typetree(typ, ctx, dl, seen), ctx)
+                    ec = typetree(typ, ctx, dl, seen)
+                    metadata(inst)["enzyme_type"] = to_md(ec, ctx)
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)
