@@ -5,6 +5,23 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
+    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
+               opcode(ce) == LLVM.API.LLVMBitCast ||
+               opcode(ce) == LLVM.API.LLVMIntToPtr
+                ce = operands(ce)[1]
+            else
+                break
+            end
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            return (true, typ)
+        end
+    end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return absint(operands(arg)[1], partial)
@@ -100,17 +117,6 @@ function absint(arg::LLVM.Value, partial::Bool = false)
                     res = (found...,)
                     return (true, res)
                 end
-            end
-        end
-    end
-    if isa(arg, ConstantExpr)
-        ce = arg
-        if opcode(ce) == LLVM.API.LLVMIntToPtr
-            ce = operands(ce)[1]
-            if isa(ce, LLVM.ConstantInt)
-                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-                typ = Base.unsafe_pointer_to_objref(ptr)
-                return (true, typ)
             end
         end
     end
@@ -439,9 +445,7 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.LoadInst)
-
-
-        if isa(operands(arg)[1], LLVM.ConstantExpr)
+        if isa(operands(arg)[1], LLVM.ConstantExpr) && isa(value_type(arg), LLVM.PointerType) && addrspace(value_type(arg)) == Tracked
             ce = operands(arg)[1]
             while isa(ce, ConstantExpr)
                 if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
@@ -631,7 +635,7 @@ function abs_typeof(
         if legal
             resvals = nothing
             seenphis2 = copy(seenphis)
-            push!(seenphis, arg)
+            push!(seenphis2, arg)
             for op in ops
                 tmp = abs_typeof(op, partial, seenphis2)
                 if resvals == nothing
