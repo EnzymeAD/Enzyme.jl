@@ -255,6 +255,23 @@ function abs_typeof(
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return abs_typeof(operands(arg)[1], partial, seenphis)
     end
+    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
+               opcode(ce) == LLVM.API.LLVMBitCast ||
+               opcode(ce) == LLVM.API.LLVMIntToPtr
+                ce = operands(ce)[1]
+            else
+                break
+            end
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+            val = Base.unsafe_pointer_to_objref(ptr)
+            return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
+        end
+    end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return abs_typeof(operands(arg)[1], partial, seenphis)
