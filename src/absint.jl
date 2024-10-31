@@ -661,7 +661,7 @@ function abs_typeof(
                     if tmp[1] == false || resvals[1] == false
                         resvals = (false, nothing, nothing)
                         break
-                    elseif tmp[2] == resvals[2] && ( tmp[3] == resvals[3] || ( in(tmp3[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF)) && in(resvals[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF))) )
+                    elseif tmp[2] == resvals[2] && ( tmp[3] == resvals[3] || ( in(tmp[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF)) && in(resvals[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF))) )
 
                         continue
                     elseif partial
