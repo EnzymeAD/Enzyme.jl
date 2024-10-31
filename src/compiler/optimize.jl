@@ -627,6 +627,7 @@ function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
+    ctx = LLVM.context(mod)
     for f in functions(mod)
 
         guaranteedInactive = false
@@ -836,15 +837,15 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
                                             only!(pty, -1)
                                             rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
-                                            metadata(rhs)["enzyme_type"] = to_md(pty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             lhs = ptrtoint!(b, operands(v)[2], offty)
-                                            metadata(rhs)["enzyme_type"] = to_md(pty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             off2 = nuwsub!(b, lhs, rhs)
                                             ity = TypeTree(API.DT_Integer, LLVM.context(ld))
                                             only!(ity, -1)
-                                            metadata(off2)["enzyme_type"] = to_md(ity)
+                                            metadata(off2)["enzyme_type"] = to_md(ity, ctx)
                                             add = nuwadd!(b, offset, off2)
-                                            metadata(add)["enzyme_type"] = to_md(ity)
+                                            metadata(add)["enzyme_type"] = to_md(ity, ctx)
                                             return operands(v)[1], add, true
                                         end
                                     end
