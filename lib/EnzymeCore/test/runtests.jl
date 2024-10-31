@@ -8,7 +8,7 @@ using EnzymeCore
         @test EnzymeCore.WithPrimal(ReverseWithPrimal) === ReverseWithPrimal
         @test EnzymeCore.NoPrimal(ReverseWithPrimal) === Reverse
     
-        @test EnzymeCore.WithPrimal(set_runtime_activity(Reverse)) === set_runtime_activity(ReverseWithPrimal)
+        @test EnzymeCore.WithPrimal(set_runtime_activity(Reverse)) === EnzymeCore.set_runtime_activity(ReverseWithPrimal)
     
         @test EnzymeCore.WithPrimal(Forward) === ForwardWithPrimal
         @test EnzymeCore.NoPrimal(Forward) === Forward
