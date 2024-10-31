@@ -309,8 +309,8 @@ end
 # generic handling of mutable structs, arrays, and memory
 @inline _similar(::T) where {T} = ccall(:jl_new_struct_uninit, Any, (Any,), T)::T
 @inline _similar(x::T) where {T<:Arraylike} = similar(x)::T
-@inline _eachindex(xs::T...) where {T} = 1:fieldcount(T)
-@inline _eachindex(xs::Arraylike...) = eachindex(xs...)
+@inline _eachindex(::Vararg{T,M}) where {T,M} = 1:fieldcount(T)
+@inline _eachindex(xs::Vararg{Arraylike,M}) where {M} = eachindex(xs...)
 @inline isinitialized(x, i) = isdefined(x, i)
 Base.@propagate_inbounds isinitialized(x::Arraylike, i) = isassigned(x, i)
 @inline getvalue(x, i) = getfield(x, i)

@@ -40,7 +40,7 @@ end
 @inline function Enzyme.EnzymeCore.isvectortype(
     ::Type{<:Union{SArray{S,T},MArray{S,T}}}
 ) where {S,T}
-    return isbitstype(T) && Enzyme.Compiler.RecursiveMap.isscalartype(T)
+    return isbitstype(T) && Enzyme.EnzymeCore.isscalartype(T)
 end
 
 end

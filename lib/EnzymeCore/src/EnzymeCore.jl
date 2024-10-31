@@ -538,7 +538,7 @@ By default, `isvectortype(T) == true` for `T` such that `isscalartype(T) == true
 A new plain array type, for example a GPU array, may extend this as follows:
 
 ```julia
-@inline EnzymeCore.isvectortype(::Type{<:GPUArray{U}}) where {U} = isscalartype(U)
+@inline EnzymeCore.isvectortype(::Type{<:NewArray{U}}) where {U} = EnzymeCore.isscalartype(U)
 ```
 
 Such a type should implement `Base.zero` and, if mutable, `Base.fill!`. (If this is not

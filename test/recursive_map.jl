@@ -687,4 +687,4 @@ end
 @testset "make_zero" test_make_zero()
 @testset "make_zero!" test_make_zero!()
 
-end  # module RecurisveMapTests
+end  # module RecursiveMapTests
