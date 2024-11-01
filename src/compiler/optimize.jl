@@ -627,6 +627,7 @@ function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
+    ctx = LLVM.context(mod)
     for f in functions(mod)
 
         guaranteedInactive = false
@@ -826,17 +827,25 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
                                             rhs = LLVM.ConstantInt(offty, sizeof(Int))
 
-                                            base_2, off_2, _ = get_base_and_offset(v2)
-                                            base_1, off_1, _ = get_base_and_offset(operands(v)[1])
+                                            base_2, off_2 = get_base_and_offset(v2)
+                                            base_1, off_1 = get_base_and_offset(operands(v)[1])
 
                                             if o2 == rhs && base_1 == base_2 && off_1 == off_2
                                                 return operands(v)[1], offset, true
                                             end
 
+                                            pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
+                                            only!(pty, -1)
                                             rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             lhs = ptrtoint!(b, operands(v)[2], offty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             off2 = nuwsub!(b, lhs, rhs)
+                                            ity = TypeTree(API.DT_Integer, LLVM.context(ld))
+                                            only!(ity, -1)
+                                            metadata(off2)["enzyme_type"] = to_md(ity, ctx)
                                             add = nuwadd!(b, offset, off2)
+                                            metadata(add)["enzyme_type"] = to_md(ity, ctx)
                                             return operands(v)[1], add, true
                                         end
                                     end

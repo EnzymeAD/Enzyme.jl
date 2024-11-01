@@ -254,7 +254,7 @@ function typetree_inner(
     dl,
     seen::TypeTreeTable,
 ) where {T}
-    tt = copy(typetree(T, ctx, dl, seen))
+    tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt

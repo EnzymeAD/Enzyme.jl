@@ -1607,6 +1607,7 @@ function julia_error(
             end
 
             legal, TT, byref = abs_typeof(cur, true)
+
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
@@ -1643,6 +1644,19 @@ else
                     end
 end
                 end
+
+@static if VERSION < v"1.11-"
+else   
+                if isa(cur, LLVM.LoadInst)
+                    larg, off = get_base_and_offset(operands(cur)[1])
+                    if isa(larg, LLVM.LoadInst)
+                        legal2, obj = absint(larg)
+                        if legal2 && obj isa Memory && obj == typeof(obj).instance
+                            return make_batched(ncur, prevbb)
+                        end
+                    end
+                end
+end
 
                 badval = if legal2
                     string(obj) * " of type" * " " * string(TT)
@@ -1854,6 +1868,14 @@ end
                 end
                 push!(created, phi2)
                 return phi2
+            end
+            
+            tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, cur))
+            st = API.EnzymeTypeTreeToString(tt)
+            st2 = Base.unsafe_string(st)
+            API.EnzymeStringFree(st)
+            if st2 == "{[-1]:Integer}"
+                return make_batched(ncur, prevbb)
             end
 
             illegal = true
@@ -6855,41 +6877,49 @@ end
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
 
         if !API.HasFromStack(inst) &&
-           isa(inst, LLVM.CallInst) &&
-           (!isa(fn, LLVM.Function) || isempty(blocks(fn)))
+           ((isa(inst, LLVM.CallInst) &&
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
-                typ = if codegen_typ isa LLVM.PointerType
+                typ = if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                     llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
                     # pointers are used for multiple kinds of arguments
                     # - literal pointer values
-                    if source_typ <: Ptr || source_typ <: Core.LLVMPtr
+                    if byref == GPUCompiler.BITS_VALUE
                         source_typ
                     elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                         Ptr{source_typ}
                     else
-                        # println(string(mod))
-                        println(string(f))
-                        @show legal, source_typ, byref, llvm_source_typ, codegen_typ, string(inst)
-                        @show enzyme_custom_extract_mi(f)
-                        @assert false
+                        msg = sprint() do io
+                            println(io, "Enzyme illegal state")
+                            println(io, string(f))
+                            println(io, "legal=", legal)
+                            println(io, "source_typ=", source_typ)
+                            println(io, "byref=", byref)
+                            println(io, "llvm_source_typ=", llvm_source_typ)
+                            println(io, "codegen_typ=", codegen_typ)
+                            println(io, "inst=", string(inst))
+                            println(io, enzyme_custom_extract_mi(f))
+                        end
+                        throw(AssertionError(msg))
                     end
                 else
                     source_typ
                 end
 
+                ec = typetree(typ, ctx, dl, seen)
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(
                         inst,
                         LLVM.API.LLVMAttributeReturnIndex,
                         StringAttribute(
                             "enzyme_type",
-                            string(typetree(typ, ctx, dl, seen)),
+                            string(ec),
                         ),
                     )
                 else
-                    metadata(inst)["enzyme_type"] = to_md(typetree(typ, ctx, dl, seen), ctx)
+                    metadata(inst)["enzyme_type"] = to_md(ec, ctx)
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)
@@ -6918,7 +6948,7 @@ end
             if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
-                base, offset, _ = get_base_and_offset(operands(inst)[1])
+                base, offset = get_base_and_offset(operands(inst)[1])
                 legal, jTy, byref = abs_typeof(base)
                 sz =
                     if intr == LLVM.Intrinsic("llvm.memcpy").id ||
@@ -6959,6 +6989,7 @@ end
         if !legal
             continue
         end
+
         if !guaranteed_const_nongen(jTy, world)
             continue
         end
@@ -8029,8 +8060,11 @@ end
                 push!(sret_types, Nothing)
             elseif rettype <: Const
             else
-                @show rettype, CC
-                @assert false
+                msg = sprint() do io
+                    println(io, "rettype=", rettype)
+                    println(io, "CC=", CC)
+                end
+                throw(AssertionError(msg))
             end
         end
 
