@@ -6908,17 +6908,17 @@ end
                     source_typ
                 end
 
+                ec = typetree(typ, ctx, dl, seen)
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(
                         inst,
                         LLVM.API.LLVMAttributeReturnIndex,
                         StringAttribute(
                             "enzyme_type",
-                            string(typetree(typ, ctx, dl, seen)),
+                            string(ec),
                         ),
                     )
                 else
-                    ec = typetree(typ, ctx, dl, seen)
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
                 end
             elseif codegen_typ == T_prjlvalue
