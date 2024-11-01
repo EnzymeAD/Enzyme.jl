@@ -58,7 +58,6 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
     x = case.splat ? case.value : (case.value,)
     finitediff = FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
 
-
     f_mode = if (case.runtime_activity === Both || case.runtime_activity === Forward)
         Enzyme.set_runtime_activity(Enzyme.Forward)
     else
@@ -125,7 +124,9 @@ end
     test_cases = TestCase[
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 3),
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 0),
-        sum_b_binv_test_case(Bijectors.CorrBijector(), (3, 3)),
+        # TODO(mhauru) Skip Reverse because of
+        # https://github.com/EnzymeAD/Enzyme.jl/issues/2041
+        sum_b_binv_test_case(Bijectors.CorrBijector(), (3, 3); skip=Reverse),
         # TODO(mhauru) Skip Reverse because of
         # https://github.com/EnzymeAD/Enzyme.jl/issues/2033
         sum_b_binv_test_case(Bijectors.CorrBijector(), (0, 0); skip=Reverse),
