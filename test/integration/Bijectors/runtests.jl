@@ -56,9 +56,8 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
     f = case.func
     # We'll call the function as f(x...), so wrap in a singleton tuple if need be.
     x = case.splat ? case.value : (case.value,)
-    finitediff = collect(
-        FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
-    )
+    finitediff = FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
+
 
     f_mode = if (case.runtime_activity === Both || case.runtime_activity === Forward)
         Enzyme.set_runtime_activity(Enzyme.Forward)
@@ -74,13 +73,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
     if !(case.skip === Forward) && !(case.skip === Both)
         if case.broken === Both || case.broken === Forward
             @test_broken(
-                collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+                Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
         else
             @test(
-                collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+                Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
@@ -90,13 +89,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
     if !(case.skip === Reverse) && !(case.skip === Both)
         if case.broken === Both || case.broken === Reverse
             @test_broken(
-                collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+                Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
         else
             @test(
-                collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+                Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
