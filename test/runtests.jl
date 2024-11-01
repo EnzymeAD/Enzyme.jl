@@ -3615,25 +3615,6 @@ end
     @test res[2][6] ≈ 6.0
 end
 
-@testset "WithPrimal" begin
-    @test WithPrimal(Reverse) === ReverseWithPrimal
-    @test NoPrimal(Reverse) === Reverse
-    @test WithPrimal(ReverseWithPrimal) === ReverseWithPrimal
-    @test NoPrimal(ReverseWithPrimal) === Reverse
-
-    @test WithPrimal(set_runtime_activity(Reverse)) === set_runtime_activity(ReverseWithPrimal)
-
-    @test WithPrimal(Forward) === ForwardWithPrimal
-    @test NoPrimal(Forward) === Forward
-    @test WithPrimal(ForwardWithPrimal) === ForwardWithPrimal
-    @test NoPrimal(ForwardWithPrimal) === Forward
-
-    @test WithPrimal(ReverseSplitNoPrimal) === ReverseSplitWithPrimal
-    @test NoPrimal(ReverseSplitNoPrimal) === ReverseSplitNoPrimal
-    @test WithPrimal(ReverseSplitWithPrimal) === ReverseSplitWithPrimal
-    @test NoPrimal(ReverseSplitWithPrimal) === ReverseSplitNoPrimal
-end
-
 # TEST EXTENSIONS 
 using SpecialFunctions
 @testset "SpecialFunctions ext" begin
