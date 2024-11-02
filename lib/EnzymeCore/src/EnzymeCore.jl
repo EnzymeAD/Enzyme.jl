@@ -504,25 +504,27 @@ function autodiff_deferred_thunk end
     make_zero(prev::T, ::Val{copy_if_inactive}=Val(false))::T
     make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
 
-Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
-what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
+Recursively make a copy of the value `prev` of type `T` in which all differentiable values
+are set to zero. The argument `copy_if_inactive` specifies what to do if the type `T` or any
+of its constituent parts is guaranteed to be inactive: use `prev`s instance (the default) or
+make a copy.
 
-Extending this method for custom types is rarely needed. For new plain array types like GPU
-arrays, extending [`isvectortype`](@ref) is sufficient as long as the array type implements
-`Base.zero`.
+Extending this method for custom types is rarely needed. For new types that shouldn't be
+recursed into, such as a GPU array type, extending [`isvectortype`](@ref) is sufficient as
+long as the type implements `Base.zero`.
 """
 function make_zero end
 
 """
     make_zero!(val::T, seen::IdDict=IdDict())::Nothing
 
-Recursively set a variables differentiable fields to zero. Only applicable for types `T`
+Recursively set a variable's differentiable fields to zero. Only applicable for types `T`
 that are mutable or hold all differentiable values in mutable containers (e.g.,
 `Tuple{Vector{Float64}}`).
 
-Extending this method for custom types is rarely needed. For new plain mutable array types
-like GPU arrays, extending [`isvectortype`](@ref) is sufficient as long as the array type
-implements `Base.zero` and `Base.fill!`.
+Extending this method for custom types is rarely needed. For new mutable types that
+shouldn't be recursed into, such as a GPU array type, extending [`isvectortype`](@ref) is
+sufficient as long as the type implements `Base.zero` and `Base.fill!`.
 """
 function make_zero! end
 
@@ -535,7 +537,7 @@ and [`make_zero!`](@ref) recurse through an object.
 By default, `isvectortype(T) == true` for `T` such that `isscalartype(T) == true` or
 `T <: Union{Array{U},GenericMemory{_,U}}` where `isscalartype(U) == true`.
 
-A new plain array type, for example a GPU array, may extend this as follows:
+A new leaf type, such as example a GPU array type, may extend this as follows:
 
 ```julia
 @inline EnzymeCore.isvectortype(::Type{<:NewArray{U}}) where {U} = EnzymeCore.isscalartype(U)
@@ -564,7 +566,7 @@ function isvectortype end
 Trait defining a subset of [`isvectortype`](@ref) types that should not be considered
 composite, such that even if the type is mutable, [`make_zero!`](@ref) will not try to zero
 values of the type in-place. For example, `BigFloat` is a mutable type but does not support
-in-place mutation through any Julia API, and `isscalartype(BigFloat) == true` ensures that
+in-place mutation through any Julia API; `isscalartype(BigFloat) == true` ensures that
 `make_zero!` will not try to mutate `BigFloat` values.[^BigFloat]
 
 By default, `isscalartype(T) == true` for `T <: AbstractFloat` and

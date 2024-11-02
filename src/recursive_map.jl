@@ -385,8 +385,9 @@ function `f!!` over every differentiable value encountered and updating new muta
 
 This is a wrapper that calls
 `recursive_map([seen,] f!!, (; y, xs), isleaftype, Val(copy_if_inactive))`, but only accepts
-types `T` that are mutable (or, trivially, entirely non-differentiable), and enforces a
-fully in-place update of `y`. See [`recursive_map`](@ref) for details.
+types `T` in which all differentiable values can be updated in-place (including, trivially,
+types that don't contain any differentiable values), and enforces a fully in-place update of
+`y`. See [`recursive_map`](@ref) for details.
 """
 function recursive_map!(f!!::F, y::T, xs::XTup{N,T}, args::Vararg{Any,M}) where {F,N,T,M}
     check_notactive(T)
