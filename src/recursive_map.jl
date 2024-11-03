@@ -1,7 +1,7 @@
 module RecursiveMap
 
 using EnzymeCore: EnzymeCore, isvectortype, isscalartype
-using ..Compiler: ActiveState, active_reg_inner, guaranteed_const_nongen, splatnew
+using ..Compiler: ActiveState, active_reg_inner, guaranteed_const, splatnew
 
 """
     y = recursive_map(
@@ -9,12 +9,14 @@ using ..Compiler: ActiveState, active_reg_inner, guaranteed_const_nongen, splatn
         f,
         xs::NTuple{N,T},
         ::Val{copy_if_inactive}=Val(false),
+        isinactive=guaranteed_const,
     )::T where {T,N,copy_if_inactive}
     newy = recursive_map(
         [seen::IdDict,]
         f,
         (; y, xs)::@NamedTuple{y::T,xs::NTuple{N,T}},
         ::Val{copy_if_inactive}=Val(false),
+        isinactive=guaranteed_const,
     )::T where {T,N,copy_if_inactive}
 
 !!! warning
@@ -27,11 +29,12 @@ from the resulting values `yi = f(x1i, ..., xNi)`.
 
 The trait `EnzymeCore.isvectortype`(@ref) determines which values are considered
 differentiable leaf nodes at which recursion terminates and `f` is invoked. This trait takes
-precedence over being non-differentiable, that is, if a type is both, it's values are passed
-to `f`, not copied/shared according to `copy_if_inactive` (this is for performance reasons
-and should almost never be relevant for behavior, as the two traits should be mutually
-exclusive). See the docstring for [`EnzymeCore.isvectortype`](@ref) and the related
-[`EnzymeCore.isscalartype`](@ref) for more information.
+precedence over being non-differentiable as defined by `isinactive`, that is, if a type is
+both, it's values are passed to `f`, not copied/shared according to `copy_if_inactive` (this
+is for performance reasons and should almost never be relevant for behavior, as the two
+traits should be mutually exclusive). See the docstring for
+[`EnzymeCore.isvectortype`](@ref) and the related [`EnzymeCore.isscalartype`](@ref) for more
+information.
 
 An existing object `y::T` can be passed by replacing the tuple `xs` with a NamedTuple
 `(; y, xs)`, in which case `y` is updated "partially-in-place": any parts of `y` that are
@@ -98,6 +101,9 @@ that the type notionally represents.
   several non-differentiable parts, object identity is tracked across the multiple
   deep-copies such that the object reference graph is reproduced also within the inactive
   parts.)
+
+* `isinactive` (optional): Callable that determines whether a type is non-differentiable and
+  hence treated according to `copy_if_inactive`.
 """
 function recursive_map end
 
@@ -117,14 +123,15 @@ end
 
 ## main entry point
 @inline function recursive_map(
-    f::F, yxs::XTupOrYXTup{N,T}, copy_if_inactive::Val=Val(false)
-) where {F,N,T}
+    f::F,
+    yxs::XTupOrYXTup{N,T},
+    copy_if_inactive::Val=Val(false),
+    isinactive::C=guaranteed_const,
+) where {F,N,T,C}
     # determine whether or not an IdDict is needed for this T
     if isvectortype(T)
         y = recursive_map_leaf(nothing, f, yxs)
-    elseif isbitstype(T) || (
-        guaranteed_const_nongen(T, nothing) && !needscopy(yxs, copy_if_inactive)
-    )
+    elseif isbitstype(T) || (isinactive(T) && !needscopy(yxs, copy_if_inactive))
         y = recursive_map(nothing, f, yxs, copy_if_inactive)
     else
         y = recursive_map(IdDict(), f, yxs, copy_if_inactive)
@@ -138,18 +145,19 @@ end
     f::F,
     yxs::XTupOrYXTup{N,T},
     copy_if_inactive::Val=Val(false),
-) where {F,N,T}
+    isinactive::C=guaranteed_const,
+) where {F,N,T,C}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     xs = xtup(yxs)
-    if (!isvectortype(T)) && guaranteed_const_nongen(T, nothing)
+    if (!isvectortype(T)) && isinactive(T)
         # check `!isvectortype` first for consistency with the above method
         y = maybecopy(seen, yxs, copy_if_inactive)
     elseif isbitstype(T)  # no need to track identity or pass y in this branch
-        y = recursive_map_inner(nothing, f, xs, copy_if_inactive)
+        y = recursive_map_inner(nothing, f, xs, copy_if_inactive, isinactive)
     elseif hascache(seen, xs)
         y = getcached(seen, xs)
     else
-        y = recursive_map_inner(seen, f, yxs, copy_if_inactive)
+        y = recursive_map_inner(seen, f, yxs, copy_if_inactive, isinactive)
     end
     return y::T
 end
@@ -222,19 +230,19 @@ end
 end
 
 @inline function recursive_map_immutable(
-    seen, f::F, yxs::XTupOrYXTup{N,T}, args::Vararg{Any,M}
+    seen, f::F, yxs::XTupOrYXTup{N,T}, copy_if_inactive, args::Vararg{Any,M}
 ) where {F,N,T,M}
     # immutable handler: construct y/newy
     @assert !ismutabletype(T)
     x1, xtail... = xtup(yxs)
     nf = fieldcount(T)
     if nf == 0  # nothing to do; assume inactive
-        y = maybecopy(seen, yxs, args...)
+        y = maybecopy(seen, yxs, copy_if_inactive)
     elseif isdefined(x1, nf)  # fast path when all fields are defined
         check_initialized(xtail, nf)
         fieldtup = ntuple(Val(nf)) do i
             @inline
-            recursive_map_index(i, seen, f, yxs, args...)
+            recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
         end
         y = splatnew(T, fieldtup)
     else
@@ -242,7 +250,7 @@ end
         @inbounds for i in 1:nf
             if isdefined(x1, i)
                 check_initialized(xtail, i)
-                flds[i] = recursive_map_index(i, seen, f, yxs, args...)
+                flds[i] = recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
             else
                 nf = i - 1  # rest of tail must be undefined values
                 break
@@ -455,6 +463,8 @@ end
 end
 
 ### make_zero(!)
+# XXX: you can pass a custom `isinactive` as the last argument to both `make_zero` and
+# `make_zero!`, but it's currently undocumented
 ## entry points, with default handling of leaves
 function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}) where {T,M}
     if EnzymeCore.isvectortype(T)
@@ -470,12 +480,12 @@ function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}) where {T,M}
     return new::T
 end
 
-function EnzymeCore.make_zero!(prev::T) where {T}
+function EnzymeCore.make_zero!(prev::T, args::Vararg{Any,M}) where {T,M}
     @assert !EnzymeCore.isscalartype(T)  # sanity check
     if EnzymeCore.isvectortype(T)  # default implementation
         fill!(prev, false)
     else
-        recursive_map!(make_zero_f!!, prev, (prev,))
+        recursive_map!(make_zero_f!!, prev, (prev,), Val(false), args...)
     end
     return nothing
 end
@@ -487,8 +497,8 @@ function EnzymeCore.make_zero(
     return recursive_map(seen, make_zero_f!!, (prev,), args...)::T
 end
 
-function EnzymeCore.make_zero!(prev, seen::IdDict)
-    recursive_map!(seen, make_zero_f!!, prev, (prev,))
+function EnzymeCore.make_zero!(prev, seen::IdDict, args::Vararg{Any,M}) where {M}
+    recursive_map!(seen, make_zero_f!!, prev, (prev,), Val(false), args...)
     return nothing
 end
 
