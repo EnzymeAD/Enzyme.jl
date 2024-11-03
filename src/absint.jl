@@ -124,7 +124,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, GlobalVariable)
         gname = LLVM.name(arg)
         for (k, v) in JuliaGlobalNameMap
-            if gname == k || gname == "ejl_" * k
+            if gname == "ejl_" * k
                 return (true, v)
             end
         end
@@ -138,14 +138,13 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, LLVM.LoadInst) &&
        value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
         ptr = operands(arg)[1]
-        ce = ptr
-        while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
-               opcode(ce) == LLVM.API.LLVMBitCast ||
-               opcode(ce) == LLVM.API.LLVMIntToPtr
-                ce = operands(ce)[1]
-            else
-                break
+        ce = get_base_and_offset(ptr; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, v)
+                end
             end
         end
         if !isa(ce, LLVM.ConstantInt)
@@ -487,14 +486,13 @@ function abs_typeof(
 
     if isa(arg, LLVM.LoadInst)
         if isa(operands(arg)[1], LLVM.ConstantExpr) && isa(value_type(arg), LLVM.PointerType) && addrspace(value_type(arg)) == Tracked
-            ce = operands(arg)[1]
-            while isa(ce, ConstantExpr)
-                if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
-                   opcode(ce) == LLVM.API.LLVMBitCast ||
-                   opcode(ce) == LLVM.API.LLVMIntToPtr
-                    ce = operands(ce)[1]
-                else
-                    break
+            ce = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
+            if isa(ce, GlobalVariable)
+                gname = LLVM.name(ce)
+                for (k, v) in JuliaGlobalNameMap
+                    if gname == k
+                        return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
+                    end
                 end
             end
             if isa(ce, LLVM.ConstantInt)
