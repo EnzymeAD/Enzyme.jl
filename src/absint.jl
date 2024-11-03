@@ -278,11 +278,17 @@ function abs_typeof(
     end
     if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
         ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
-        ccall(:jl_, Cvoid, (Any,), (string(arg)*" "*string(ce)))
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
+                end
+            end
+        end
         if isa(ce, LLVM.ConstantInt)
             ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
             val = Base.unsafe_pointer_to_objref(ptr)
-            ccall(:jl_, Cvoid, (Any,), (string(val)*" "*string(Core.Typeof(val))))
             return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
         end
     end
@@ -477,26 +483,16 @@ function abs_typeof(
         end
     end
 
-    if isa(arg, LLVM.LoadInst)
-        if isa(operands(arg)[1], LLVM.ConstantExpr) && isa(value_type(arg), LLVM.PointerType) && addrspace(value_type(arg)) == Tracked
-            ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
-            if isa(ce, GlobalVariable)
-                gname = LLVM.name(ce)
-                for (k, v) in JuliaGlobalNameMap
-                    if gname == k
-                        return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
-                    end
-                end
-            end
-            if isa(ce, LLVM.ConstantInt)
-                ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
-                if ptr != C_NULL
-                    obj = Base.unsafe_pointer_to_objref(ptr)
-                    return (true, Core.Typeof(obj), GPUCompiler.BITS_REF)
+    if isa(arg, LLVM.LoadInst) 
+        ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
                 end
             end
         end
-       
         larg, offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(larg, false, seenphis)
 
