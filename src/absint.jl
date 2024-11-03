@@ -175,7 +175,7 @@ function actual_size(@nospecialize(typ2))
             return sum(map(sizeof,fieldtypes(typ2)))
         end
     end
-    if typ2 <: AbstractString || typ2 <: Symbol
+    if typ2 <: AbstractString || typ2 <: Symbol || typ2 <: Core.SimpleVector
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
