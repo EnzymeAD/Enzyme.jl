@@ -122,30 +122,37 @@ else
 end
 
 ## main entry point
-@inline function recursive_map(
+function recursive_map(
     f::F,
     yxs::XTupOrYXTup{N,T},
     copy_if_inactive::Val=Val(false),
     isinactive::C=guaranteed_const,
 ) where {F,N,T,C}
-    # determine whether or not an IdDict is needed for this T
+    # set default argument values; determine whether an IdDict is needed for this T
     if isvectortype(T)
-        y = recursive_map_leaf(nothing, f, yxs)
+        y = _recursive_map_leaf(nothing, f, yxs)
     elseif isbitstype(T) || (isinactive(T) && !needscopy(yxs, copy_if_inactive))
-        y = recursive_map(nothing, f, yxs, copy_if_inactive, isinactive)
+        y = _recursive_map(nothing, f, yxs, copy_if_inactive, isinactive)
     else
-        y = recursive_map(IdDict(), f, yxs, copy_if_inactive, isinactive)
+        y = _recursive_map(IdDict(), f, yxs, copy_if_inactive, isinactive)
     end
     return y::T
 end
 
-## recursive methods
-@inline function recursive_map(
+function recursive_map(
     seen::Union{Nothing,IdDict},
     f::F,
     yxs::XTupOrYXTup{N,T},
     copy_if_inactive::Val=Val(false),
     isinactive::C=guaranteed_const,
+) where {F,N,T,C}
+    # set default argument values
+    return _recursive_map(seen, f, yxs, copy_if_inactive, isinactive)::T
+end
+
+## recursive methods
+@inline function _recursive_map(
+    seen, f::F, yxs::XTupOrYXTup{N,T}, copy_if_inactive, isinactive::C
 ) where {F,N,T,C}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     xs = xtup(yxs)
@@ -153,32 +160,32 @@ end
         # check `!isvectortype` first for consistency with the above method
         y = maybecopy(seen, yxs, copy_if_inactive)
     elseif isbitstype(T)  # no need to track identity or pass y in this branch
-        y = recursive_map_inner(nothing, f, xs, copy_if_inactive, isinactive)
+        y = _recursive_map_inner(nothing, f, xs, copy_if_inactive, isinactive)
     elseif hascache(seen, xs)
         y = getcached(seen, xs)
     else
-        y = recursive_map_inner(seen, f, yxs, copy_if_inactive, isinactive)
+        y = _recursive_map_inner(seen, f, yxs, copy_if_inactive, isinactive)
     end
     return y::T
 end
 
-@inline function recursive_map_inner(
+@inline function _recursive_map_inner(
     seen, f::F, yxs::XTupOrYXTup{N,T}, args::Vararg{Any,M}
 ) where {F,N,T,M}
     # forward to appropriate handler for leaf vs. mutable vs. immutable type
     @assert !isabstracttype(T)
     @assert isconcretetype(T)
     if isvectortype(T)
-        y = recursive_map_leaf(seen, f, yxs)
+        y = _recursive_map_leaf(seen, f, yxs)
     elseif ismutabletype(T)
-        y = recursive_map_mutable(seen, f, yxs, args...)
+        y = _recursive_map_mutable(seen, f, yxs, args...)
     else
-        y = recursive_map_immutable(seen, f, yxs, args...)
+        y = _recursive_map_immutable(seen, f, yxs, args...)
     end
     return y::T
 end
 
-@inline function recursive_map_mutable(
+@inline function _recursive_map_mutable(
     seen, f::F, xs::XTup{N,T}, args::Vararg{Any,M}
 ) where {F,N,T,M}
     # out-of-place mutable handler: construct y
@@ -191,7 +198,7 @@ end
         check_initialized(xtail, 1:nf)
         fieldtup = ntuple(Val(nf)) do i
             @inline
-            recursive_map_index(i, seen, f, xs, args...)
+            _recursive_map_index(i, seen, f, xs, args...)
         end
         y = splatnew(T, fieldtup)
         cache!(seen, y, xs)
@@ -201,7 +208,7 @@ end
         @inbounds for i in _eachindex(y, xs...)
             if isinitialized(x1, i)
                 check_initialized(xtail, i)
-                yi = recursive_map_index(i, seen, f, xs, args...)
+                yi = _recursive_map_index(i, seen, f, xs, args...)
                 setvalue(y, i, yi)
             end
         end
@@ -209,7 +216,7 @@ end
     return y::T
 end
 
-@inline function recursive_map_mutable(
+@inline function _recursive_map_mutable(
     seen, f!!::F, (; y, xs)::YXTup{N,T}, args::Vararg{Any,M}
 ) where {F,N,T,M}
     # in-place mutable handler: set/update values in y
@@ -220,7 +227,7 @@ end
         # handle both structs, arrays, and memory through generic helpers
         if isinitialized(x1, i)
             check_initialized(xtail, i)
-            newyi = recursive_map_index(i, seen, f!!, (; y, xs), args...)
+            newyi = _recursive_map_index(i, seen, f!!, (; y, xs), args...)
             setvalue(y, i, newyi)
         else
             check_initialized((y,), i, false)
@@ -229,7 +236,7 @@ end
     return y::T
 end
 
-@inline function recursive_map_immutable(
+@inline function _recursive_map_immutable(
     seen, f::F, yxs::XTupOrYXTup{N,T}, copy_if_inactive, args::Vararg{Any,M}
 ) where {F,N,T,M}
     # immutable handler: construct y/newy
@@ -242,7 +249,7 @@ end
         check_initialized(xtail, nf)
         fieldtup = ntuple(Val(nf)) do i
             @inline
-            recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
+            _recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
         end
         y = splatnew(T, fieldtup)
     else
@@ -250,7 +257,7 @@ end
         @inbounds for i in 1:nf
             if isdefined(x1, i)
                 check_initialized(xtail, i)
-                flds[i] = recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
+                flds[i] = _recursive_map_index(i, seen, f, yxs, copy_if_inactive, args...)
             else
                 nf = i - 1  # rest of tail must be undefined values
                 break
@@ -261,17 +268,17 @@ end
     return y::T
 end
 
-Base.@propagate_inbounds function recursive_map_index(
+Base.@propagate_inbounds function _recursive_map_index(
     i, seen, f::F, xs::XTup, args::Vararg{Any,M}
 ) where {F,M}
     # out-of-place recursive handler: extract value i from each of the xs; call
     # recursive_map to obtain yi
     xis = getvalues(xs, i)
-    yi = recursive_map(seen, f, xis, args...)
+    yi = _recursive_map(seen, f, xis, args...)
     return yi::Core.Typeof(first(xis))
 end
 
-Base.@propagate_inbounds function recursive_map_index(
+Base.@propagate_inbounds function _recursive_map_index(
     i, seen, f!!::F, (; y, xs)::YXTup, args::Vararg{Any,M}
 ) where {F,M}
     # partially-in-place recursive handler: extract value i from each of the xs and, if
@@ -279,15 +286,15 @@ Base.@propagate_inbounds function recursive_map_index(
     xis = getvalues(xs, i)
     if isinitialized(y, i)
         yi = getvalue(y, i)
-        newyi = recursive_map(seen, f!!, (; y=yi, xs=xis), args...)
+        newyi = _recursive_map(seen, f!!, (; y=yi, xs=xis), args...)
     else
-        newyi = recursive_map(seen, f!!, xis, args...)
+        newyi = _recursive_map(seen, f!!, xis, args...)
     end
     return newyi::Core.Typeof(first(xis))
 end
 
 ## leaf handlers
-function recursive_map_leaf(seen, f::F, xs::XTup{N,T}) where {F,N,T}
+function _recursive_map_leaf(seen, f::F, xs::XTup{N,T}) where {F,N,T}
     # out-of-place
     y = f(xs...)
     if (!isnothing(seen)) && (!isbitstype(T))
@@ -296,7 +303,7 @@ function recursive_map_leaf(seen, f::F, xs::XTup{N,T}) where {F,N,T}
     return y::T
 end
 
-function recursive_map_leaf(seen, f!!::F, (; y, xs)::YXTup{N,T}) where {F,N,T}
+function _recursive_map_leaf(seen, f!!::F, (; y, xs)::YXTup{N,T}) where {F,N,T}
     # partially-in-place
     if isbitstype(T) || isscalartype(T)
         newy = f!!(xs...)
