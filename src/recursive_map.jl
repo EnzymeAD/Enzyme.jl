@@ -1,7 +1,7 @@
 module RecursiveMap
 
 using EnzymeCore: EnzymeCore, isvectortype, isscalartype
-using ..Compiler: ActiveState, active_reg_inner, guaranteed_const, splatnew
+using ..Compiler: ActiveState, guaranteed_const, guaranteed_nonactive, splatnew
 
 """
     y = recursive_map(
@@ -132,9 +132,9 @@ end
     if isvectortype(T)
         y = recursive_map_leaf(nothing, f, yxs)
     elseif isbitstype(T) || (isinactive(T) && !needscopy(yxs, copy_if_inactive))
-        y = recursive_map(nothing, f, yxs, copy_if_inactive)
+        y = recursive_map(nothing, f, yxs, copy_if_inactive, isinactive)
     else
-        y = recursive_map(IdDict(), f, yxs, copy_if_inactive)
+        y = recursive_map(IdDict(), f, yxs, copy_if_inactive, isinactive)
     end
     return y::T
 end
@@ -388,6 +388,7 @@ end
         xs::NTuple{N,T},
         isleaftype=Returns(false),
         ::Val{copy_if_inactive}=Val(false),
+        isinactive=guaranteed_const,
     )::Nothing where {T,N,copy_if_inactive}
 
 !!! warning
@@ -405,7 +406,7 @@ types that don't contain any differentiable values), and enforces a fully in-pla
 `y`. See [`recursive_map`](@ref) for details.
 """
 function recursive_map!(f!!::F, y::T, xs::XTup{N,T}, args::Vararg{Any,M}) where {F,N,T,M}
-    check_notactive(T)
+    check_nonactive(T)
     newy = recursive_map(f!!, (; y, xs), args...)
     @assert newy === y
     return nothing
@@ -414,7 +415,7 @@ end
 function recursive_map!(
     seen::IdDict, f!!::F, y::T, xs::XTup{N,T}, args::Vararg{Any,M}
 ) where {F,N,T,M}
-    check_notactive(T)
+    check_nonactive(T)
     newy = recursive_map(seen, f!!, (; y, xs), args...)
     @assert newy === y
     return nothing
@@ -439,9 +440,9 @@ end
     return nothing
 end
 
-@inline function check_notactive(::Type{T}) where {T}
-    if active_reg_inner(T, (), nothing, Val(true)) == ActiveState  # justActive
-        throw_notactive()
+@inline function check_nonactive(::Type{T}) where {T}
+    if !guaranteed_nonactive(T)
+        throw_nonactive()
     end
     return nothing
 end
@@ -457,7 +458,7 @@ end
     throw(ArgumentError(msg))
 end
 
-@noinline function throw_notactive()
+@noinline function throw_nonactive()
     msg = "recursive_map! called on objects containing immutable differentiable elements"
     throw(ArgumentError(msg))
 end
