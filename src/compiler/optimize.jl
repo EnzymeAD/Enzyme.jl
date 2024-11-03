@@ -1836,7 +1836,7 @@ function propagate_returned!(mod::LLVM.Module)
                         LLVM.replace_uses!(arg, val)
                     end
                 end
-                # sese if there are no users of the value (excluding recursive/return)
+                # see if there are no users of the value (excluding recursive/return)
                 baduse = false
                 for u in LLVM.uses(arg)
                     u = LLVM.user(u)
@@ -1923,13 +1923,14 @@ function propagate_returned!(mod::LLVM.Module)
             end
         end
         for (fn, keepret, toremove) in tofinalize
-            try
-                todo = LLVM.CallInst[]
-                for u in LLVM.uses(fn)
-                    un = LLVM.user(u)
-                    push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
-                end
-                delete_writes_into_removed_args(fn, toremove)
+            todo = LLVM.CallInst[]
+            for u in LLVM.uses(fn)
+                un = LLVM.user(u)
+                push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+            end
+            delete_writes_into_removed_args(fn, toremove)
+            nm = LLVM.name(fn)
+            #try
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
                 )
@@ -1946,9 +1947,9 @@ function propagate_returned!(mod::LLVM.Module)
                 end
                 eraseInst(mod, fn)
                 changed = true
-            catch
-                break
-            end
+            # catch e
+            #    break
+            #end
         end
         if !changed
             break
@@ -1999,6 +2000,23 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
                     push!(todorep, (u, cur))
                 end
                 continue
+            end
+            if isa(cur, LLVM.CallInst)
+                cf = LLVM.called_operand(cur)
+                if cf == fn
+                    baduse = false
+                    for (i, v) in enumerate(operands(cur))
+                        if i-1 in toremove
+                            continue
+                        end
+                        if v == cval
+                            baduse = true
+                        end
+                    end
+                    if !baduse
+                        continue
+                    end
+                end
             end
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
