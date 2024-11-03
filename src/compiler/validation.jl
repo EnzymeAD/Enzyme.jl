@@ -417,24 +417,6 @@ function check_ir!(job, errors, mod::LLVM.Module)
     return errors
 end
 
-
-function unwrap_ptr_casts(val::LLVM.Value)
-    while true
-        is_simple_cast = false
-        is_simple_cast |= isa(val, LLVM.BitCastInst)
-        is_simple_cast |= isa(val, LLVM.AddrSpaceCastInst) || isa(val, LLVM.PtrToIntInst)
-        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMAddrSpaceCast
-        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMIntToPtr
-        is_simple_cast |= isa(val, LLVM.ConstantExpr) && opcode(val) == LLVM.API.LLVMBitCast
-
-        if !is_simple_cast
-            return val
-        else
-            val = operands(val)[1]
-        end
-    end
-end
-
 function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
     calls = []
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
@@ -445,7 +427,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
             # remove illegal invariant.load and jtbaa_const invariants
         elseif isa(inst, LLVM.LoadInst)
             
-            fn_got = unwrap_ptr_casts(operands(inst)[1])
+            fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
             fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
@@ -473,7 +455,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 @assert FT !== nothing
                 newf, _ = get_function!(mod, String(fname), FT)
 
-                initfn = unwrap_ptr_casts(LLVM.initializer(fn_got))
+                initfn, _ = get_base_and_offset(LLVM.initializer(fn_got); offsetAllowed=false, inttoptr=false)
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]
                 if !isa(opv, LLVM.GlobalVariable)
@@ -902,10 +884,27 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             fname = ops[2]
 
             if isa(flib, LLVM.LoadInst)
-                op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(flib, 0))
-                while isa(op, LLVM.ConstantExpr)
-                    op = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(op, 0))
+                op, _ = get_base_and_offset(operands(flib)[1]; offsetAllowed=false, inttoptr=true)
+                
+                if isa(op, LLVM.LoadInst)
+                    pop, _ = get_base_and_offset(operands(op)[1]; offsetAllowed=false, inttoptr=true)
+
+                    if isa(pop, LLVM.GlobalVariable)
+                        zop, _ = get_base_and_offset(LLVM.initializer(pop); offsetAllowed=false, inttoptr=true)
+                
+                        rep = zop
+                        PT = value_type(rep)
+                        if isa(PT, LLVM.PointerType)
+                            rep = LLVM.const_inttoptr(rep, LLVM.PointerType(eltype(PT)))
+                            rep = LLVM.const_addrspacecast(rep, PT)
+                            replace_uses!(pop, rep)
+                            LLVM.API.LLVMInstructionEraseFromParent(pop)
+                        end
+
+                        op = zop
+                    end
                 end
+                        
                 if isa(op, ConstantInt)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + 8)
                     ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
@@ -923,6 +922,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             if isa(fname, LLVM.GlobalVariable)
                 fname = LLVM.initializer(fname)
             end
+
             if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray)) &&
                eltype(value_type(fname)) == LLVM.IntType(8)
                 fname = String(map((x) -> convert(UInt8, x), collect(fname)[1:(end-1)]))
@@ -1017,6 +1017,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         fname,
                     )
                 end
+                
                 replaceWith =
                     LLVM.ConstantInt(LLVM.IntType(8 * sizeof(Int)), reinterpret(UInt, res))
                 for u in LLVM.uses(inst)

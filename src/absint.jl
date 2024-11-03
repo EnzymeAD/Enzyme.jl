@@ -222,10 +222,24 @@ function should_recurse(@nospecialize(typ2), arg_t, byref, dl)
     end
 end
 
-function get_base_and_offset(larg::LLVM.Value)::Tuple{LLVM.Value, Int}
+function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=false)::Tuple{LLVM.Value, Int}
     offset = 0
     while true
-        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst)
+        if isa(larg, LLVM.ConstantExpr)
+            if opcode(larg) == LLVM.API.LLVMBitCast || opcode(larg) == LLVM.API.LLVMAddrSpaceCast || opcode(larg) == LLVM.API.LLVMPtrToInt
+                larg = operands(larg)[1]
+                continue
+            end
+            if inttoptr && opcode(larg) == LLVM.API.LLVMIntToPtr
+                larg = operands(larg)[1]
+                continue
+            end
+        end
+        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst) || isa(larg, LLVM.IntToPtrInst)
+            larg = operands(larg)[1]
+            continue
+        end
+        if inttoptr && isa(larg, LLVM.PtrToIntInst)
             larg = operands(larg)[1]
             continue
         end
@@ -235,10 +249,18 @@ function get_base_and_offset(larg::LLVM.Value)::Tuple{LLVM.Value, Int}
             position!(b, larg)
             offty = LLVM.IntType(8 * sizeof(Int))
             offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
-            @assert isa(offset2, LLVM.ConstantInt)
-            offset += convert(Int, offset2)
-            larg = operands(larg)[1]
-            continue
+            if isa(offset2, LLVM.ConstantInt)
+                val = convert(Int, offset2)
+                if offsetAllowed || val == 0
+                    offset += val
+                    larg = operands(larg)[1]
+                    continue
+                else
+                    break
+                end
+            else
+                break
+            end
         end
         if isa(larg, LLVM.Argument)
             break

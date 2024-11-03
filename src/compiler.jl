@@ -3349,6 +3349,7 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
         end
     end
 
