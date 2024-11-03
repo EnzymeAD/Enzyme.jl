@@ -423,6 +423,7 @@ const inactiveglobs = Set{String}((
     "jl_boxed_uint8_cache",
     "ijl_boxed_int8_cache",
     "jl_boxed_int8_cache",
+    "jl_nothing",
 ))
 
 @enum ActivityState begin
@@ -1104,6 +1105,38 @@ struct Return2
     ret2::Any
 end
 
+function force_recompute!(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.LoadInst)
+            has_loaded = false
+            for u in LLVM.uses(inst)
+                v = LLVM.user(u)
+                if isa(v, LLVM.CallInst)
+                    cf = LLVM.called_operand(v)
+                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
+                        has_loaded = true
+                        break
+                    end
+                end
+                if isa(v, LLVM.BitCastInst)
+                    for u2 in LLVM.uses(v)
+                        v2 = LLVM.user(u2)
+                        if isa(v2, LLVM.CallInst)
+                            cf = LLVM.called_operand(v2)
+                            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
+                                has_loaded = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if has_loaded
+                metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
+            end
+        end
+    end
+end
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
@@ -3317,6 +3350,7 @@ function annotate!(mod, mode)
         if haskey(fns, fname)
             fn = fns[fname]
             push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
         end
     end
 
@@ -3382,6 +3416,23 @@ function annotate!(mod, mode)
         "julia.gc_alloc_obj",
         "jl_gc_alloc_typed",
         "ijl_gc_alloc_typed",
+    )
+        if haskey(fns, boxfn)
+            fn = fns[boxfn]
+            LLVM.API.LLVMRemoveEnumAttributeAtIndex(
+                fn,
+                reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+                kind(EnumAttribute("allockind")),
+            )
+            push!(function_attributes(fn), no_escaping_alloc)
+            push!(function_attributes(fn), LLVM.EnumAttribute("allockind", (AllocFnKind(AFKE_Alloc) | AllocFnKind(AFKE_Uninitialized)).data))
+        end
+    end
+
+    for boxfn in (
+        "julia.gc_alloc_obj",
+        "jl_gc_alloc_typed",
+        "ijl_gc_alloc_typed",
         "jl_box_float32",
         "jl_box_float64",
         "jl_box_int32",
@@ -3417,24 +3468,39 @@ function annotate!(mod, mode)
             fn = fns[boxfn]
             push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
             push!(function_attributes(fn), no_escaping_alloc)
+            push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
+            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+            push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
             accattr = if LLVM.version().major <= 15
                 LLVM.EnumAttribute("inaccessiblememonly")
             else
-                EnumAttribute(
-                    "memory",
-                    MemoryEffect(
-                        (MRI_NoModRef << getLocationPos(ArgMem)) |
-                        (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                        (MRI_NoModRef << getLocationPos(Other)),
-                    ).data,
-                )
+                if boxfn in (
+                    "jl_genericmemory_copy_slice",
+                    "ijl_genericmemory_copy_slice",)
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_Ref << getLocationPos(ArgMem)) |
+                            (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    )
+                else 
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_NoModRef << getLocationPos(ArgMem)) |
+                            (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    )
+                end
             end
             if !(
                 boxfn in (
                     "jl_array_copy",
                     "ijl_array_copy",
-                    "jl_genericmemory_copy_slice",
-                    "ijl_genericmemory_copy_slice",
                     "jl_idtable_rehash",
                     "ijl_idtable_rehash",
                 )
@@ -3457,8 +3523,6 @@ function annotate!(mod, mode)
                         boxfn in (
                             "jl_array_copy",
                             "ijl_array_copy",
-                            "jl_genericmemory_copy_slice",
-                            "ijl_genericmemory_copy_slice",
                             "jl_idtable_rehash",
                             "ijl_idtable_rehash",
                         )
@@ -3476,10 +3540,8 @@ function annotate!(mod, mode)
                 if !isa(cf, LLVM.Function)
                     continue
                 end
-                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
-                    continue
-                end
-                if operands(c)[1] != fn
+                if !(cf == fn ||
+                     ((LLVM.name(cf) == "julia.call" || LLVM.name(cf) != "julia.call2") && operands(c)[1] == fn))
                     continue
                 end
                 LLVM.API.LLVMAddCallSiteAttribute(
@@ -3499,31 +3561,17 @@ function annotate!(mod, mode)
                     boxfn in (
                         "jl_array_copy",
                         "ijl_array_copy",
-                        "jl_genericmemory_copy_slice",
-                        "ijl_genericmemory_copy_slice",
                         "jl_idtable_rehash",
                         "ijl_idtable_rehash",
                     )
                 )
-                    attr = if LLVM.version().major <= 15
-                        LLVM.EnumAttribute("inaccessiblememonly")
-                    else
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_NoModRef << getLocationPos(ArgMem)) |
-                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
-                    end
                     LLVM.API.LLVMAddCallSiteAttribute(
                         c,
                         reinterpret(
                             LLVM.API.LLVMAttributeIndex,
                             LLVM.API.LLVMAttributeFunctionIndex,
                         ),
-                        attr,
+                        accattr,
                     )
                 end
             end
@@ -6920,6 +6968,16 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
+            
+@static if VERSION < v"1.11-"
+else    
+                    legal2, obj = absint(inst)
+                    if legal2 obj isa Memory && obj == typeof(obj).instance
+                        metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
+                    end
+end
+
+
                 end
             elseif codegen_typ == T_prjlvalue
                 if isa(inst, LLVM.CallInst)
@@ -7152,6 +7210,7 @@ end
     if params.run_enzyme
         # Generate the adjoint
         memcpy_alloca_to_loadstore(mod)
+        force_recompute!(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,

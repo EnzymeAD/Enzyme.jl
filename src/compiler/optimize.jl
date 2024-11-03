@@ -716,7 +716,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                         while length(addrtodo) != 0
                             v = pop!(addrtodo)
-                            base = get_base_object(v)
+                            base, _ = get_base_and_offset(v; offsetAllowed=false)
                             if in(base, seen)
                                 continue
                             end
