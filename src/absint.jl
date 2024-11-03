@@ -138,7 +138,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, LLVM.LoadInst) &&
        value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
         ptr = operands(arg)[1]
-        ce = get_base_and_offset(ptr; offsetAllowed=false, inttoptr=true)
+        ce, _ = get_base_and_offset(ptr; offsetAllowed=false, inttoptr=true)
         if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
             for (k, v) in JuliaGlobalNameMap
@@ -277,19 +277,12 @@ function abs_typeof(
         return abs_typeof(operands(arg)[1], partial, seenphis)
     end
     if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
-        ce = arg
-        while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
-               opcode(ce) == LLVM.API.LLVMBitCast ||
-               opcode(ce) == LLVM.API.LLVMIntToPtr
-                ce = operands(ce)[1]
-            else
-                break
-            end
-        end
+        ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
+        ccall(:jl_, Cvoid, (Any,), (string(arg)*" "*string(ce)))
         if isa(ce, LLVM.ConstantInt)
             ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
             val = Base.unsafe_pointer_to_objref(ptr)
+            ccall(:jl_, Cvoid, (Any,), (string(val)*" "*string(Core.Typeof(val))))
             return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
         end
     end
@@ -486,7 +479,7 @@ function abs_typeof(
 
     if isa(arg, LLVM.LoadInst)
         if isa(operands(arg)[1], LLVM.ConstantExpr) && isa(value_type(arg), LLVM.PointerType) && addrspace(value_type(arg)) == Tracked
-            ce = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
+            ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
             if isa(ce, GlobalVariable)
                 gname = LLVM.name(ce)
                 for (k, v) in JuliaGlobalNameMap

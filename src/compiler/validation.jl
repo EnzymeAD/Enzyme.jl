@@ -508,17 +508,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                     legal1, arg1 = abs_cstring(operands(found)[1])
                     if legal1
                     else
-                        arg1 = operands(found)[1]
-
-                        while isa(arg1, ConstantExpr)
-                            if opcode(arg1) == LLVM.API.LLVMAddrSpaceCast ||
-                               opcode(arg1) == LLVM.API.LLVMBitCast ||
-                               opcode(arg1) == LLVM.API.LLVMIntToPtr
-                                arg1 = operands(arg1)[1]
-                            else
-                                break
-                            end
-                        end
+                        arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed=false, inttoptr=true)
                         if !isa(arg1, LLVM.ConstantInt)
                             msg = sprint() do io::IO
                                 println(
@@ -756,17 +746,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            arg1 = operands(inst)[1]
-
-            while isa(arg1, ConstantExpr)
-                if opcode(arg1) == LLVM.API.LLVMAddrSpaceCast ||
-                   opcode(arg1) == LLVM.API.LLVMBitCast ||
-                   opcode(arg1) == LLVM.API.LLVMIntToPtr
-                    arg1 = operands(arg1)[1]
-                else
-                    break
-                end
-            end
+            arg1, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=true)
             if isa(arg1, LLVM.ConstantInt)
                 arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
                 legal2, fname = abs_cstring(operands(inst)[2])
