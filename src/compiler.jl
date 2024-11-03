@@ -1104,6 +1104,38 @@ struct Return2
     ret2::Any
 end
 
+function force_recompute!(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.LoadInst)
+            has_loaded = false
+            for u in LLVM.uses(inst)
+                v = LLVM.user(u)
+                if isa(v, LLVM.CallInst)
+                    cf = LLVM.called_operand(v)
+                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
+                        has_loaded = true
+                        break
+                    end
+                end
+                if isa(v, LLVM.BitCastInst)
+                    for u2 in LLVM.uses(v)
+                        v2 = LLVM.user(u2)
+                        if isa(v2, LLVM.CallInst)
+                            cf = LLVM.called_operand(v2)
+                            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
+                                has_loaded = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if has_loaded
+                metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
+            end
+        end
+    end
+end
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
@@ -7176,6 +7208,7 @@ end
     if params.run_enzyme
         # Generate the adjoint
         memcpy_alloca_to_loadstore(mod)
+        force_recompute!(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,

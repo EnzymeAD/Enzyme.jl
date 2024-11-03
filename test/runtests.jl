@@ -176,7 +176,7 @@ end
     @static if VERSION < v"1.11-"
     @test typeof(res[1]) == Tuple{Float64, Float64}
     else
-    @test typeof(res[1]) == NamedTuple{(Symbol("1"),Symbol("2"),Symbol("3"),Symbol("4")), Tuple{Any, Core.LLVMPtr{UInt8, 0}, Float64, Float64}}
+    @test typeof(res[1]) == NamedTuple{(Symbol("1"),Symbol("2"),Symbol("3")), Tuple{Any, Float64, Float64}}
     end
 
     pullback(Const(mul2), d, 1.0, res[1])
