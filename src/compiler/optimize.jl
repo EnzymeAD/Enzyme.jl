@@ -2818,6 +2818,18 @@ function post_optimze!(mod, tm, machine = true)
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
+    for g in collect(globals(mod))
+        if startswith(LLVM.name(g), "ccall")
+            hasuse = false
+            for u in LLVM.uses(g)
+                hasuse = true
+                break
+            end
+            if !hasuse
+                eraseInst(mod, g)
+            end
+        end
+    end
     out_error = Ref{Cstring}()
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
         throw(
