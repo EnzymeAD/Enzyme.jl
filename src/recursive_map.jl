@@ -26,8 +26,12 @@ function `f` over every differentiable value encountered and building a new obje
 from the resulting values `yi = f(x1i, ..., xNi)`.
 
 The trait `EnzymeCore.isvectortype`(@ref) determines which values are considered
-differentiable leaf nodes at which recursion terminates and `f` is invoked. See the
-docstring for that and the related [`EnzymeCore.isscalartype`](@ref) for more information.
+differentiable leaf nodes at which recursion terminates and `f` is invoked. This trait takes
+precedence over being non-differentiable, that is, if a type is both, it's values are passed
+to `f`, not copied/shared according to `copy_if_inactive` (this is for performance reasons
+and should almost never be relevant for behavior, as the two traits should be mutually
+exclusive). See the docstring for [`EnzymeCore.isvectortype`](@ref) and the related
+[`EnzymeCore.isscalartype`](@ref) for more information.
 
 An existing object `y::T` can be passed by replacing the tuple `xs` with a NamedTuple
 `(; y, xs)`, in which case `y` is updated "partially-in-place": any parts of `y` that are
@@ -116,7 +120,9 @@ end
     f::F, yxs::XTupOrYXTup{N,T}, copy_if_inactive::Val=Val(false)
 ) where {F,N,T}
     # determine whether or not an IdDict is needed for this T
-    if isbitstype(T) || (
+    if isvectortype(T)
+        y = recursive_map_leaf(nothing, f, yxs)
+    elseif isbitstype(T) || (
         guaranteed_const_nongen(T, nothing) && !needscopy(yxs, copy_if_inactive)
     )
         y = recursive_map(nothing, f, yxs, copy_if_inactive)
@@ -135,7 +141,8 @@ end
 ) where {F,N,T}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     xs = xtup(yxs)
-    if guaranteed_const_nongen(T, nothing)
+    if (!isvectortype(T)) && guaranteed_const_nongen(T, nothing)
+        # check `!isvectortype` first for consistency with the above method
         y = maybecopy(seen, yxs, copy_if_inactive)
     elseif isbitstype(T)  # no need to track identity or pass y in this branch
         y = recursive_map_inner(nothing, f, xs, copy_if_inactive)
@@ -275,7 +282,7 @@ end
 function recursive_map_leaf(seen, f::F, xs::XTup{N,T}) where {F,N,T}
     # out-of-place
     y = f(xs...)
-    if !isbitstype(T)
+    if (!isnothing(seen)) && (!isbitstype(T))
         cache!(seen, y, xs)
     end
     return y::T
@@ -291,7 +298,7 @@ function recursive_map_leaf(seen, f!!::F, (; y, xs)::YXTup{N,T}) where {F,N,T}
             @assert newy === y
         end
     end
-    if !isbitstype(T)
+    if (!isnothing(seen)) && (!isbitstype(T))
         cache!(seen, newy, xs)
     end
     return newy::T

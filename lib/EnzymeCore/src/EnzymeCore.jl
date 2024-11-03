@@ -556,6 +556,11 @@ directly on their backing arrays, just like how Enzyme treats them when differen
 example, structured matrix wrappers and sparse array types that are backed by `Array` should
 not extend `isvectortype`.
 
+If a vector type `T` is also non-differentiable, `isvectortype` takes precedence, that is,
+`make_zero(!)` will attempt to zero its values rather than share/copy them (out-of-place) or
+skip them (in-place). This is for performance reasons, but should almost never be relevant
+for behavior, as the two traits should be mutually exclusive.
+
 See also [`isscalartype`](@ref).
 """
 function isvectortype end
