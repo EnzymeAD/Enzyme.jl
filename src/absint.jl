@@ -430,7 +430,7 @@ function abs_typeof(
             legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
             if legal
                 if !(RT <: Array)
-                    throw(AssertionError("Inconsistent abstract type inference: $(string(arg)) arg operand as $RT"))
+                    return (false, nothing, nothing)
                 end
                 return (legal, RT, GPUCompiler.MUT_REF)
             end
