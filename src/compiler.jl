@@ -423,6 +423,7 @@ const inactiveglobs = Set{String}((
     "jl_boxed_uint8_cache",
     "ijl_boxed_int8_cache",
     "jl_boxed_int8_cache",
+    "jl_nothing",
 ))
 
 @enum ActivityState begin
