@@ -429,7 +429,9 @@ function abs_typeof(
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
             legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
             if legal
-                @assert RT <: Array
+                if !(RT <: Array)
+                    throw(AssertionError("Inconsistent abstract type inference: $(string(arg)) arg operand as $RT"))
+                end
                 return (legal, RT, GPUCompiler.MUT_REF)
             end
             return (legal, RT, nothing)

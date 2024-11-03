@@ -1,6 +1,29 @@
+
+@enum(AllocFnKindEnum,
+      AFKE_Unknown = 0,
+      AFKE_Alloc = 1,
+      AFKE_Realloc = 2,
+      AFKE_Free = 4,
+      AFKE_Uninitialized = 8,
+      AFKE_Zeroed = 16,
+      AFKE_Aligned = 32,
+)
+
+struct AllocFnKind
+    data::UInt32
+    AllocFnKind() = new(0)
+    AllocFnKind(x::UInt32) = new(x)
+    AllocFnKind(x::AllocFnKindEnum) = new(UInt32(x))
+end
+
+function Base.:|(lhs::AllocFnKind, rhs::AllocFnKind)
+    AllocFnKind(UInt32(lhs.data) | UInt32(rhs.data))
+end
+
 struct MemoryEffect
     data::UInt32
 end
+
 
 @enum(ModRefInfo, MRI_NoModRef = 0, MRI_Ref = 1, MRI_Mod = 2, MRI_ModRef = 3)
 
