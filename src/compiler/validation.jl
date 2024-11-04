@@ -432,7 +432,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
             if match_ !== nothing
-                fname = match_[1]
+                fname = String(match_[1])
                 FT = nothing
                 todo = LLVM.Instruction[inst]
                 while length(todo) != 0
@@ -453,7 +453,6 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                     end
                 end
                 @assert FT !== nothing
-                newf, _ = get_function!(mod, String(fname), FT)
 
                 initfn, _ = get_base_and_offset(LLVM.initializer(fn_got); offsetAllowed=false, inttoptr=false)
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
@@ -474,6 +473,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 opv = opv::LLVM.GlobalVariable
 
                 if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
+                    newf, _ = get_function!(mod, fname, FT)
                 else
                     found = nothing
                     for lbb in blocks(initfn), linst in collect(instructions(lbb))
@@ -549,62 +549,26 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         throw(AssertionError(msg))
                     end
 
-                    hnd = operands(found)[3]
-
-                    if !isa(hnd, LLVM.GlobalVariable)
-                        msg = sprint() do io::IO
-                            println(
-                                io,
-                                "Enzyme internal error unsupported got(hnd)",
-                            )
-                            println(io, "inst=", inst)
-                            println(io, "fname=", fname)
-                            println(io, "FT=", FT)
-                            println(io, "fn_got=", fn_got)
-                            println(io, "init=", string(initfn))
-                            println(io, "opv=", string(opv))
-                            println(io, "found=", string(found))
-                            println(io, "hnd=", string(hnd))
-                        end
-                        throw(AssertionError(msg))
-                    end
-                    hnd = LLVM.name(hnd)
-                    # println(string(mod))
-
-                    # TODO we don't restore/lookup now because this fails
-                    # @vchuravy / @gbaraldi this needs help looking at how to get the actual handle and setup
-
-                    if true
-                        res = nothing
-                    elseif arg1 isa AbstractString
-                        res = ccall(
-                            :ijl_load_and_lookup,
-                            Ptr{Cvoid},
-                            (Cstring, Cstring, Ptr{Cvoid}),
-                            arg1,
-                            fname,
-                            reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
-                        )
+                    fused_name = if arg1 isa AbstractString
+                        "ejlstr\$$fname\$$arg1"
                     else
-                        res = ccall(
-                            :ijl_load_and_lookup,
-                            Ptr{Cvoid},
-                            (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
-                            arg1,
-                            fname,
-                            reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
-                        )
+                        if arg1 == reinterpret(Ptr{Nothing}, UInt(0x3))
+                            fname
+                        else
+                            arg1 = reinterpret(UInt, arg1)
+                            "ejlptr\$$fname\$$arg1"
+                        end
                     end
 
-                    if res !== nothing
-                        push!(function_attributes(newf), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, res))))
-                    end
+                    newf, _ = get_function!(mod, fused_name, FT)
+                    
+                    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
                     # metadata(newf)["enzymejl_flib"] = flib
                     # metadata(newf)["enzymejl_flib"] = flib
 
                 end
-               
+
                 if value_type(newf) != value_type(inst)
                     newf = const_pointercast(newf, value_type(inst))
                 end
@@ -761,7 +725,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
                                 arg1,
                                 fname,
-                                reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
+                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd).ptr),
                             )
                         else
                             res = ccall(
@@ -770,7 +734,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                                 (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
                                 arg1,
                                 fname,
-                                reinterpret(Ptr{Cvoid}, JIT.lookup(nothing, hnd).ptr),
+                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd).ptr),
                             )
                         end
                         replaceWith = LLVM.ConstantInt(
