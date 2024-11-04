@@ -569,8 +569,6 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
 
                 end
 
-                println("post newf\n", string(newf))
-               
                 if value_type(newf) != value_type(inst)
                     newf = const_pointercast(newf, value_type(inst))
                 end

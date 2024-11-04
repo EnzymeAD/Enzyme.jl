@@ -53,7 +53,7 @@ function fix_ptr_lookup(name)
     if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
         _, fname, arg1 = split(name, "\$")
         if startswith(name, "ejlstr\$")
-            ptr = if arg1 in hnd_string_map
+            ptr = if haskey(hnd_string_map, arg1)
                 hnd_string_map[arg1]
             else
                 val = Ref{Ptr{Cvoid}}(C_NULL)
@@ -245,9 +245,6 @@ function get_trampoline(job)
 end
 
 function add!(mod)
-    lljit = jit[].jit
-    jd = LLVM.JITDylib(lljit)
-    tsm = move_to_threadsafe(mod)
     for f in collect(functions(mod))
         ptr = fix_ptr_lookup(LLVM.name(f))
         if ptr === nothing
@@ -259,7 +256,9 @@ function add!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
-    println("add!:\n", string(mod))
+    lljit = jit[].jit
+    jd = LLVM.JITDylib(lljit)
+    tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
     return nothing
 end
