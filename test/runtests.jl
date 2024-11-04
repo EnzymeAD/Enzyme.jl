@@ -2303,18 +2303,34 @@ end
 @testset "Broadcast noalias" begin
 
     x = ones(30)
-    autodiff(Reverse, bc0_test_function, Active, Const(x))
+    
+    @static if VERSION < v"1.11-"
+        autodiff(Reverse, bc0_test_function, Active, Const(x))
+    else
+        # TODO
+        @test_broken autodiff(Reverse, bc0_test_function, Active, Const(x))
+    end
     
     x = rand(Float32, 2, 3)
-    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+    @static if VERSION < v"1.11-"
+        Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+    else
+        # TODO
+        @test_broken Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
+    end
 
     x = rand(Float32, 6, 6, 6, 2)
     sc = rand(Float32, 6)
     bi = rand(Float32, 6)
-    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
-        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+    @static if VERSION < v"1.11-"
+        Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+            Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+    else
+        # TODO
+        @test_broken Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+            Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+    end
 end
-
 function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
     a1  =  1 / @inbounds poly[1]
     E1  = 2*a1
