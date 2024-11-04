@@ -480,7 +480,7 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                         if !isa(linst, LLVM.CallInst)
                             continue
                         end
-                        cv = LLVM.called_value(linst)
+                        cv = LLVM.called_operand(linst)
                         if !isa(cv, LLVM.Function)
                             continue
                         end
