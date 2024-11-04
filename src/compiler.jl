@@ -8344,7 +8344,7 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
     if primal_name === nothing
         primal_ptr = C_NULL
     else
-        primal_addr = JIT.lookup(jitted_mod, primal_name)
+        primal_addr = JIT.lookup(primal_name)
         primal_ptr = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(
