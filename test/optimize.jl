@@ -128,5 +128,5 @@ function mc_f(_not_used)
 end
 
 @testset "Memcopy of constant" begin
-    @show Enzyme.autodiff(Enzyme.Forward, mc_f, Duplicated(2.7, 1.0))[1] ≈ 0.0
+    @test Enzyme.autodiff(Enzyme.Forward, mc_f, Duplicated(2.7, 1.0))[1] ≈ 0.0
 end
