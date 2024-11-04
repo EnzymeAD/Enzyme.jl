@@ -115,3 +115,18 @@ end
         Enzyme.Const(dist)
     )
 end
+
+@noinline function mc_g(i, _not_used)
+    k = (0.25)
+    return (i, k)
+end
+
+function mc_f(_not_used)
+    i = (0.0, 3.9555)
+    t = mc_g(i, _not_used)
+    return t[1][2]
+end
+
+@testset "Memcopy of constant" begin
+    @show Enzyme.autodiff(Enzyme.Forward, mc_f, Duplicated(2.7, 1.0))[1] ≈ 0.0
+end
