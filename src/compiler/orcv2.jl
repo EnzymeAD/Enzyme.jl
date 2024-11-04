@@ -43,15 +43,46 @@ function absolute_symbol_materialization(name, ptr)
     else
         LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
     end
+    @show name, string(name), ptr
     return LLVM.absolute_symbols(Ref(gv))
+end
+
+const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
+
+function fix_ptr_lookup(name)
+    if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
+        _, fname, arg1 = split(name, "\$")
+        if startswith(name, "ejlstr\$")
+            ptr = if arg1 in hnd_string_map
+                hnd_string_map[arg1]
+            else
+                val = Ref{Ptr{Cvoid}}(C_NULL)
+                hnd_string_map[arg1] = val
+                val
+            end
+
+            return ccall(
+                :ijl_load_and_lookup,
+                Ptr{Cvoid},
+                (Cstring, Cstring, Ptr{Cvoid}),
+                arg1,
+                fname,
+                ptr
+            )
+        else
+        end
+    end
+    return nothing
 end
 
 function define_absolute_symbol(jd, name)
     ptr = LLVM.find_symbol(name)
+    @show ptr, name, string(name) 
     if ptr !== C_NULL
         LLVM.define(jd, absolute_symbol_materialization(name, ptr))
         return true
     end
+    @show ptr, jd, name
     return false
 end
 
@@ -173,6 +204,7 @@ function get_trampoline(job)
         # 1. Make the runtime decision about what symbol should implement "foo". Let's call this "foo.rt.impl".
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
+        @show mr, string(mr)
         GPUCompiler.JuliaContext() do ctx
             mod, adjoint_name, primal_name = Compiler._thunk(job)
             func_name = use_primal ? primal_name : adjoint_name
@@ -216,11 +248,23 @@ function add!(mod)
     lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
+    for f in collect(functions(mod))
+        ptr = fix_ptr_lookup(LLVM.name(f))
+        if ptr === nothing
+            continue
+        end
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
+        replace_uses!(f, ptr)
+        Compiler.eraseInst(mod, f)
+    end
+    println("add!:\n", string(mod))
     LLVM.add!(lljit, jd, tsm)
     return nothing
 end
 
-function lookup(_, name)
+function lookup(name)
     LLVM.lookup(jit[].jit, name)
 end
 

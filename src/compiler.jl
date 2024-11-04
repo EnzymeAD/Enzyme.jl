@@ -3129,9 +3129,23 @@ function annotate!(mod, mode)
     inactive = LLVM.StringAttribute("enzyme_inactive", "")
     active = LLVM.StringAttribute("enzyme_active", "")
     no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
-    fns = functions(mod)
 
-    for f in fns
+    funcs = Dict{String, Vector{LLVM.Function}}()
+    for f in functions(mod)
+        fname = LLVM.name(f)
+        for fattr in collect(function_attributes(f))
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzyme_math"
+                    fname = LLVM.value(fattr)
+                    break
+                end
+            end
+        end
+        fname = String(fname)
+        if !haskey(funcs, fname)
+            funcs[fname] = LLVM.Function[]
+        end
+        push!(funcs[String(fname)], f)
         API.EnzymeAttributeKnownFunctions(f.ref)
     end
 
@@ -3144,129 +3158,136 @@ function annotate!(mod, mode)
     end
 
     for fname in inactivefns
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), inactive)
-            push!(function_attributes(fn), no_escaping_alloc)
-            for u in LLVM.uses(fn)
-                c = LLVM.user(u)
-                if !isa(c, LLVM.CallInst)
-                    continue
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), inactive)
+                push!(function_attributes(fn), no_escaping_alloc)
+                for u in LLVM.uses(fn)
+                    c = LLVM.user(u)
+                    if !isa(c, LLVM.CallInst)
+                        continue
+                    end
+                    cf = LLVM.called_operand(c)
+                    if !isa(cf, LLVM.Function)
+                        continue
+                    end
+                    if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                        continue
+                    end
+                    if operands(c)[1] != fn
+                        continue
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        c,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        inactive,
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        c,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        no_escaping_alloc,
+                    )
                 end
-                cf = LLVM.called_operand(c)
-                if !isa(cf, LLVM.Function)
-                    continue
-                end
-                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
-                    continue
-                end
-                if operands(c)[1] != fn
-                    continue
-                end
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    reinterpret(
-                        LLVM.API.LLVMAttributeIndex,
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                    ),
-                    inactive,
-                )
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    reinterpret(
-                        LLVM.API.LLVMAttributeIndex,
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                    ),
-                    no_escaping_alloc,
-                )
             end
         end
     end
 
     for fname in nofreefns
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0))
-            for u in LLVM.uses(fn)
-                c = LLVM.user(u)
-                if !isa(c, LLVM.CallInst)
-                    continue
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.EnumAttribute("nofree", 0))
+                for u in LLVM.uses(fn)
+                    c = LLVM.user(u)
+                    if !isa(c, LLVM.CallInst)
+                        continue
+                    end
+                    cf = LLVM.called_operand(c)
+                    if !isa(cf, LLVM.Function)
+                        continue
+                    end
+                    if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                        continue
+                    end
+                    if operands(c)[1] != fn
+                        continue
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        c,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        LLVM.EnumAttribute("nofree", 0),
+                    )
                 end
-                cf = LLVM.called_operand(c)
-                if !isa(cf, LLVM.Function)
-                    continue
-                end
-                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
-                    continue
-                end
-                if operands(c)[1] != fn
-                    continue
-                end
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    reinterpret(
-                        LLVM.API.LLVMAttributeIndex,
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                    ),
-                    LLVM.EnumAttribute("nofree", 0),
-                )
             end
         end
     end
 
     for fname in activefns
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), active)
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), active)
+            end
         end
     end
 
     for fname in
         ("julia.typeof", "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
-        if haskey(fns, fname)
-            fn = fns[fname]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
-            else
-                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+                else
+                    push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+                end
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
             end
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
     for fname in ("julia.typeof",)
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+            end
         end
     end
 
     for fname in
         ("jl_excstack_state", "ijl_excstack_state", "ijl_field_index", "jl_field_index")
-        if haskey(fns, fname)
-            fn = fns[fname]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
-                push!(function_attributes(fn), LLVM.StringAttribute("inaccessiblememonly"))
-            else
-                push!(
-                    function_attributes(fn),
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                    push!(function_attributes(fn), LLVM.StringAttribute("inaccessiblememonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_NoModRef << getLocationPos(ArgMem)) |
+                                (MRI_Ref << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
             end
         end
     end
 
     for fname in ("jl_types_equal", "ijl_types_equal")
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+            end
         end
     end
 
@@ -3278,79 +3299,82 @@ function annotate!(mod, mode)
         "jl_f__svec_ref",
         "ijl_f__svec_ref",
     )
-        if haskey(fns, fname)
-            fn = fns[fname]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
-            else
-                push!(function_attributes(fn), 
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_Ref << getLocationPos(ArgMem)) |
-                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    )
-                )
-            end
-            for u in LLVM.uses(fn)
-                c = LLVM.user(u)
-                if !isa(c, LLVM.CallInst)
-                    continue
-                end
-                cf = LLVM.called_operand(c)
-                if !isa(cf, LLVM.Function)
-                    continue
-                end
-                if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
-                    continue
-                end
-                if operands(c)[1] != fn
-                    continue
-                end
-                attr = if LLVM.version().major <= 15
-                    LLVM.EnumAttribute("readonly")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
                 else
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_Ref << getLocationPos(ArgMem)) |
-                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
+                    push!(function_attributes(fn), 
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
                     )
                 end
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    reinterpret(
-                        LLVM.API.LLVMAttributeIndex,
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                    ),
-                    attr,
-                )
+                for u in LLVM.uses(fn)
+                    c = LLVM.user(u)
+                    if !isa(c, LLVM.CallInst)
+                        continue
+                    end
+                    cf = LLVM.called_operand(c)
+                    if !isa(cf, LLVM.Function)
+                        continue
+                    end
+                    if LLVM.name(cf) != "julia.call" && LLVM.name(cf) != "julia.call2"
+                        continue
+                    end
+                    if operands(c)[1] != fn
+                        continue
+                    end
+                    attr = if LLVM.version().major <= 15
+                        LLVM.EnumAttribute("readonly")
+                    else
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
+                    end
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        c,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        attr,
+                    )
+                end
             end
         end
     end
 
     for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
-        if haskey(fns, fname)
-            fn = fns[fname]
-            # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
-            else
-                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+                else
+                    push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+                end
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
             end
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
         end
     end
 
     for fname in ("julia.gc_loaded",)
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
-            push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+            end
         end
     end
 
@@ -3393,43 +3417,46 @@ function annotate!(mod, mode)
         "ijl_try_substrtod",
         "jl_try_substrtod",
     )
-        if haskey(fns, fname)
-            fn = fns[fname]
-            push!(function_attributes(fn), no_escaping_alloc)
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), no_escaping_alloc)
+            end
         end
     end
 
 
 
     for fname in ("julia.pointer_from_objref",)
-        if haskey(fns, fname)
-            fn = fns[fname]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
-            else
-                push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readnone"))
+                else
+                    push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
+                end
             end
         end
     end
 
-    for boxfn in (
+    for fname in (
         "julia.gc_alloc_obj",
         "jl_gc_alloc_typed",
         "ijl_gc_alloc_typed",
     )
-        if haskey(fns, boxfn)
-            fn = fns[boxfn]
-            LLVM.API.LLVMRemoveEnumAttributeAtIndex(
-                fn,
-                reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-                kind(EnumAttribute("allockind")),
-            )
-            push!(function_attributes(fn), no_escaping_alloc)
-            push!(function_attributes(fn), LLVM.EnumAttribute("allockind", (AllocFnKind(AFKE_Alloc) | AllocFnKind(AFKE_Uninitialized)).data))
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                LLVM.API.LLVMRemoveEnumAttributeAtIndex(
+                    fn,
+                    reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+                    kind(EnumAttribute("allockind")),
+                )
+                push!(function_attributes(fn), no_escaping_alloc)
+                push!(function_attributes(fn), LLVM.EnumAttribute("allockind", (AllocFnKind(AFKE_Alloc) | AllocFnKind(AFKE_Uninitialized)).data))
+            end
         end
     end
 
-    for boxfn in (
+    for fname in (
         "julia.gc_alloc_obj",
         "jl_gc_alloc_typed",
         "ijl_gc_alloc_typed",
@@ -3464,63 +3491,101 @@ function annotate!(mod, mode)
         "ijl_new_array",
         "jl_new_array",
     )
-        if haskey(fns, boxfn)
-            fn = fns[boxfn]
-            push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
-            push!(function_attributes(fn), no_escaping_alloc)
-            push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
-            push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
-            push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
-            push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
-            accattr = if LLVM.version().major <= 15
-                LLVM.EnumAttribute("inaccessiblememonly")
-            else
-                if boxfn in (
-                    "jl_genericmemory_copy_slice",
-                    "ijl_genericmemory_copy_slice",)
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_Ref << getLocationPos(ArgMem)) |
-                            (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    )
-                else 
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
+                push!(function_attributes(fn), no_escaping_alloc)
+                push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
+                accattr = if LLVM.version().major <= 15
+                    LLVM.EnumAttribute("inaccessiblememonly")
+                else
+                    if fname in (
+                        "jl_genericmemory_copy_slice",
+                        "ijl_genericmemory_copy_slice",)
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
+                    else 
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_NoModRef << getLocationPos(ArgMem)) |
+                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
+                    end
                 end
-            end
-            if !(
-                boxfn in (
-                    "jl_array_copy",
-                    "ijl_array_copy",
-                    "jl_idtable_rehash",
-                    "ijl_idtable_rehash",
+                if !(
+                    fname in (
+                        "jl_array_copy",
+                        "ijl_array_copy",
+                        "jl_idtable_rehash",
+                        "ijl_idtable_rehash",
+                    )
                 )
-            )
-                push!(function_attributes(fn), accattr)
-            end
-            for u in LLVM.uses(fn)
-                c = LLVM.user(u)
-                if !isa(c, LLVM.CallInst)
-                    continue
+                    push!(function_attributes(fn), accattr)
                 end
-                cf = LLVM.called_operand(c)
-                if cf == fn
+                for u in LLVM.uses(fn)
+                    c = LLVM.user(u)
+                    if !isa(c, LLVM.CallInst)
+                        continue
+                    end
+                    cf = LLVM.called_operand(c)
+                    if cf == fn
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            c,
+                            LLVM.API.LLVMAttributeReturnIndex,
+                            LLVM.EnumAttribute("noalias", 0),
+                        )
+                        if !(
+                            fname in (
+                                "jl_array_copy",
+                                "ijl_array_copy",
+                                "jl_idtable_rehash",
+                                "ijl_idtable_rehash",
+                            )
+                        )
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                c,
+                                reinterpret(
+                                    LLVM.API.LLVMAttributeIndex,
+                                    LLVM.API.LLVMAttributeFunctionIndex,
+                                ),
+                                accattr,
+                            )
+                        end
+                    end
+                    if !isa(cf, LLVM.Function)
+                        continue
+                    end
+                    if !(cf == fn ||
+                         ((LLVM.name(cf) == "julia.call" || LLVM.name(cf) != "julia.call2") && operands(c)[1] == fn))
+                        continue
+                    end
                     LLVM.API.LLVMAddCallSiteAttribute(
                         c,
                         LLVM.API.LLVMAttributeReturnIndex,
                         LLVM.EnumAttribute("noalias", 0),
                     )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        c,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        no_escaping_alloc,
+                    )
                     if !(
-                        boxfn in (
+                        fname in (
                             "jl_array_copy",
                             "ijl_array_copy",
                             "jl_idtable_rehash",
@@ -3537,135 +3602,102 @@ function annotate!(mod, mode)
                         )
                     end
                 end
-                if !isa(cf, LLVM.Function)
-                    continue
-                end
-                if !(cf == fn ||
-                     ((LLVM.name(cf) == "julia.call" || LLVM.name(cf) != "julia.call2") && operands(c)[1] == fn))
-                    continue
-                end
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    LLVM.API.LLVMAttributeReturnIndex,
-                    LLVM.EnumAttribute("noalias", 0),
-                )
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    reinterpret(
-                        LLVM.API.LLVMAttributeIndex,
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                    ),
-                    no_escaping_alloc,
-                )
-                if !(
-                    boxfn in (
-                        "jl_array_copy",
-                        "ijl_array_copy",
-                        "jl_idtable_rehash",
-                        "ijl_idtable_rehash",
-                    )
-                )
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        c,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
+            end
+        end
+    end
+
+    for fname in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_NoModRef << getLocationPos(ArgMem)) |
+                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
                         ),
-                        accattr,
                     )
                 end
             end
         end
     end
 
-    for gc in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
-        if haskey(fns, gc)
-            fn = fns[gc]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
-            else
-                push!(
-                    function_attributes(fn),
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                )
-            end
-        end
-    end
-
     # Key of jl_eqtable_get/put is inactive, definitionally
-    for rfn in ("jl_eqtable_get", "ijl_eqtable_get")
-        if haskey(fns, rfn)
-            fn = fns[rfn]
-            push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
-            else
-                push!(
-                    function_attributes(fn),
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_Ref << getLocationPos(ArgMem)) |
-                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                )
+    for fname in ("jl_eqtable_get", "ijl_eqtable_get")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                    push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
             end
         end
     end
     # Key of jl_eqtable_get/put is inactive, definitionally
-    for rfn in ("jl_eqtable_put", "ijl_eqtable_put")
-        if haskey(fns, rfn)
-            fn = fns[rfn]
-            push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
-            push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
-            push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
-            push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
-            else
-                push!(
-                    function_attributes(fn),
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_ModRef << getLocationPos(ArgMem)) |
-                            (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                )
+    for fname in ("jl_eqtable_put", "ijl_eqtable_put")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+                push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
+                push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
+                push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_ModRef << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
             end
         end
     end
 
-    for rfn in ("jl_in_threaded_region_", "jl_in_threaded_region")
-        if haskey(fns, rfn)
-            fn = fns[rfn]
-            if LLVM.version().major <= 15
-                push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
-            else
-                push!(
-                    function_attributes(fn),
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                )
+    for fname in ("jl_in_threaded_region_", "jl_in_threaded_region")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                    push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_NoModRef << getLocationPos(ArgMem)) |
+                                (MRI_Ref << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
             end
         end
     end
@@ -6015,6 +6047,7 @@ function no_type_setting(@nospecialize(specTypes); world = nothing)
     return (false, false)
 end
 
+const DumpPreCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
 function GPUCompiler.codegen(
@@ -6093,6 +6126,9 @@ function GPUCompiler.codegen(
     end
 
     primalf = meta.entry
+    if DumpPreCheck[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end
     check_ir(job, mod)
 
     disableFallback = String[]
@@ -8290,7 +8326,7 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
 
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
-    adjoint_addr = JIT.lookup(jitted_mod, adjoint_name)
+    adjoint_addr = JIT.lookup(adjoint_name)
 
     adjoint_ptr = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
