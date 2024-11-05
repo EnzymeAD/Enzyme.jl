@@ -3453,7 +3453,7 @@ function annotate!(mod, mode)
                 LLVM.API.LLVMRemoveEnumAttributeAtIndex(
                     fn,
                     reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-                    kind(EnumAttribute("allockind")),
+                    kind(EnumAttribute("allockind", AllocFnKind(AFKE_Alloc).data)),
                 )
                 push!(function_attributes(fn), no_escaping_alloc)
                 push!(function_attributes(fn), LLVM.EnumAttribute("allockind", (AllocFnKind(AFKE_Alloc) | AllocFnKind(AFKE_Uninitialized)).data))
