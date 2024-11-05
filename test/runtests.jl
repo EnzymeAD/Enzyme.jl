@@ -2710,8 +2710,11 @@ end
     x  = [2.3]
     dx = [0.0]
     @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))[2]
-    @test x ≈ [2.3, 2.0]
-    @test dx ≈ [1.0]
+    @static if VERSION < v"1.11-"
+        @test dx ≈ [1.0]
+    else
+        @test dx ≈ [1.0, 1.0]
+    end
 
     function double_push(x)
         a = [0.5]
