@@ -556,8 +556,8 @@ function abs_typeof(
                     end
                 end
                 if !seen && typed_fieldcount(typ) > 0
-                    offset = offset - fieldoffset(typ, lasti)
-                        typ = typed_fieldtype(typ, lasti)
+                    offset = offset - typed_fieldoffset(typ, lasti)
+                    typ = typed_fieldtype(typ, lasti)
                     @assert Base.isconcretetype(typ)
                     if !Base.allocatedinline(typ)
                         legal = false
