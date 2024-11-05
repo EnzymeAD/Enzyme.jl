@@ -168,7 +168,7 @@ end
 function actual_size(@nospecialize(typ2))
     @static if VERSION < v"1.11-"
         if typ2 <: Array
-            return sizeof(Int)
+            return sizeof(Ptr{Cvoid}) + 2 + 2 + 4 + 2 * sizeof(Csize_t) + sizeof(Csize_t)
         end
     else
         if typ2 <: GenericMemory
@@ -185,6 +185,11 @@ function actual_size(@nospecialize(typ2))
 end
 
 @inline function first_non_ghost(@nospecialize(typ2))
+    @static if VERSION < v"1.11-"
+        if typ2 <: Array
+            return (1, typed_fieldtype(typ2, 1))
+        end
+    end
     fc = fieldcount(typ2)
     for i in 1:fc
         if i == fc
@@ -496,101 +501,100 @@ function abs_typeof(
         larg, offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(larg, false, seenphis)
 
-        if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
-            @static if VERSION < v"1.11-"
-                if typ <: Array && Base.isconcretetype(typ)
-                    T = eltype(typ)
-                    if offset == 0
-                        if !allocatedinline(T) && Base.isconcretetype(T)
-                            T = Ptr{T}
-                        end
-                        return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
-                    else
-                        return (true, Int, GPUCompiler.BITS_VALUE)
-                    end
-                end
-            end
-            if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
-                
-                byref = GPUCompiler.BITS_VALUE
-                legal = true
+        dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
+        
+        shouldLoad = true
 
-                while offset != 0 && legal
-                    @assert Base.isconcretetype(typ)
-                    seen = false
-                    lasti = 1
-                    for i = 1:fieldcount(typ)
-                        fo = fieldoffset(typ, i)
-                        if fieldoffset(typ, i) == offset
-                            offset = 0
-                            typ = typed_fieldtype(typ, i)
-                            if !Base.allocatedinline(typ)
-                                if byref != GPUCompiler.BITS_VALUE
-                                    legal = false
-                                end
-                                byref = GPUCompiler.MUT_REF
-                            end
-                            seen = true
-                            break
-                        elseif fieldoffset(typ, i) > offset
-                            offset = offset - fieldoffset(typ, lasti)
-                            typ = typed_fieldtype(typ, lasti)
-                            @assert Base.isconcretetype(typ)
-                            if !Base.allocatedinline(typ)
+        if legal && typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
+            ET = eltype(typ)
+            sz = actual_size(ET)
+            offset %= sz
+            byref = GPUCompiler.MUT_REF
+            typ = ET
+            if !Base.allocatedinline(typ)
+                shouldLoad = false
+            end
+        end
+
+        if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
+            if shouldLoad
+                byref = GPUCompiler.BITS_VALUE
+            end
+
+            legal = true
+
+            while offset != 0 && legal
+                @assert Base.isconcretetype(typ)
+                seen = false
+                lasti = 1
+                for i = 1:typed_fieldcount(typ)
+                    fo = typed_fieldoffset(typ, i)
+                    if fo == offset
+                        offset = 0
+                        typ = typed_fieldtype(typ, i)
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
                                 legal = false
                             end
-                            seen = true
-                            break
+                            byref = GPUCompiler.MUT_REF
                         end
-                        
-                        if fo != 0 && fo != fieldoffset(typ, i-1)
-                            lasti = i
-                        end
-                    end
-                    if !seen && fieldcount(typ) > 0
-                        offset = offset - fieldoffset(typ, lasti)
-                            typ = typed_fieldtype(typ, lasti)
+                        seen = true
+                        break
+                    elseif fo > offset
+                        offset = offset - typed_fieldoffset(typ, lasti)
+                        typ = typed_fieldtype(typ, lasti)
                         @assert Base.isconcretetype(typ)
                         if !Base.allocatedinline(typ)
                             legal = false
                         end
                         seen = true
+                        break
                     end
-                    if !seen
+                    
+                    if fo != 0 && fo != typed_fieldoffset(typ, i-1)
+                        lasti = i
+                    end
+                end
+                if !seen && typed_fieldcount(typ) > 0
+                    offset = offset - typed_fieldoffset(typ, lasti)
+                    typ = typed_fieldtype(typ, lasti)
+                    @assert Base.isconcretetype(typ)
+                    if !Base.allocatedinline(typ)
                         legal = false
                     end
+                    seen = true
                 end
-
-                typ2 = typ
-                while legal && should_recurse(typ2, value_type(arg), byref, dl)
-                    idx, _ = first_non_ghost(typ2)
-                    if idx != -1
-                        typ2 = typed_fieldtype(typ2, idx)
-                        if Base.allocatedinline(typ2)
-                            if byref == GPUCompiler.BITS_VALUE
-                                continue
-                            end
-                            legal = false
-                            break
-                        else
-                            if byref != GPUCompiler.BITS_VALUE
-                                legal = false
-                                break
-                            end
-                            byref = GPUCompiler.MUT_REF
-                            continue
-                        end
-                    end
+                if !seen
                     legal = false
-                    break
-                end
-                if legal
-                    return (true, typ2, byref)
                 end
             end
-        elseif legal && typ <: Ptr && Base.isconcretetype(typ)
-            return (true, eltype(typ), GPUCompiler.BITS_VALUE)
+
+            typ2 = typ
+            while legal && should_recurse(typ2, value_type(arg), byref, dl)
+                idx, _ = first_non_ghost(typ2)
+                if idx != -1
+                    typ2 = typed_fieldtype(typ2, idx)
+                    if Base.allocatedinline(typ2)
+                        if byref == GPUCompiler.BITS_VALUE
+                            continue
+                        end
+                        legal = false
+                        break
+                    else
+                        if byref != GPUCompiler.BITS_VALUE
+                            legal = false
+                            break
+                        end
+                        byref = GPUCompiler.MUT_REF
+                        continue
+                    end
+                end
+                legal = false
+                break
+            end
+            if legal
+                return (true, typ2, byref)
+            end
         end
     end
 
