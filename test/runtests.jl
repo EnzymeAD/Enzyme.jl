@@ -82,6 +82,7 @@ include("kwrrules.jl")
 include("internal_rules.jl")
 include("ruleinvalidation.jl")
 include("typeunstable.jl")
+include("absint.jl")
 
 @static if !Sys.iswindows()
     include("blas.jl")

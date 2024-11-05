@@ -501,7 +501,7 @@ function abs_typeof(
                 if typ <: Array && Base.isconcretetype(typ)
                     T = eltype(typ)
                     if offset == 0
-                        if !allocatedinline(T) && Base.isconcretetype(T)
+                        if !allocatedinline(T) && Base.isconcretetype(T) && !(typ <: Array)
                             T = Ptr{T}
                         end
                         return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
