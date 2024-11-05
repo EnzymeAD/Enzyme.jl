@@ -892,7 +892,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 if opcode(v) == LLVM.API.LLVMBitCast
                                     preop = operands(v)[1]
-                                    while isa(preop, LLVM.ConstExpr) && opcode(preop) == LLVM.API.LLVMBitCast
+                                    while isa(preop, LLVM.ConstantExpr) && opcode(preop) == LLVM.API.LLVMBitCast
                                         preop = operands(preop)[1]
                                     end
                                     v2, offset, skipload =
