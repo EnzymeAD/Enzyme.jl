@@ -2312,12 +2312,7 @@ end
     end
     
     x = rand(Float32, 2, 3)
-    @static if VERSION < v"1.11-"
-        Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
-    else
-        # TODO
-        @test_broken Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
-    end
+    Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
 
     x = rand(Float32, 6, 6, 6, 2)
     sc = rand(Float32, 6)
