@@ -2709,11 +2709,17 @@ end
 
     x  = [2.3]
     dx = [0.0]
+    rf = @static if VERSION < v"1.11-"
+        nothing
+    else
+        dx.ref.mem
+    end
     @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))[2]
     @static if VERSION < v"1.11-"
         @test dx ≈ [1.0]
     else
-        @test dx ≈ [1.0, 1.0]
+        @test dx ≈ [0.0, 0.0]
+        @test rf ≈ [1.0,]
     end
 
     function double_push(x)
