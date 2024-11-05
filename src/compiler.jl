@@ -3257,6 +3257,7 @@ function annotate!(mod, mode)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+                push!(parameter_attributes(fn, 1), LLVM.EnumAttribute("nocapture"))
             end
         end
     end
@@ -3498,6 +3499,7 @@ function annotate!(mod, mode)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
+                push!(return_attributes(fn), LLVM.EnumAttribute("nonnull", 0))
                 push!(function_attributes(fn), no_escaping_alloc)
                 push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
                 push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
