@@ -6395,7 +6395,14 @@ function GPUCompiler.codegen(
             if llRT !== nothing &&
                LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
                 @assert !retRemoved
-                rest = typetree(llRT, ctx, dl)
+                rest = if llRT == Ptr{RT}
+                    typeTree = copy(typetree(RT, ctx, dl))
+                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                    only!(typeTree, -1)
+                    typeTree
+                else
+                    typetree(RT, ctx, dl)
+                end
                 push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
             end
         end
