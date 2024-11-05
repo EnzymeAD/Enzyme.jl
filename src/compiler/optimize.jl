@@ -867,7 +867,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                             end
 
-                            if addr == 11 && isa(v, LLVM.ConstantExpr)
+                            if isa(v, LLVM.ConstantExpr)
                                 if opcode(v) == LLVM.API.LLVMAddrSpaceCast
                                     v2 = operands(v)[1]
                                     if addrspace(value_type(v2)) == 10
@@ -890,6 +890,42 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         return v2, offset, hasload
                                     end
                                 end
+                                if opcode(v) == LLVM.API.LLVMBitCast
+                                    preop = operands(v)[1]
+                                    while isa(preop, LLVM.ConstantExpr) && opcode(preop) == LLVM.API.LLVMBitCast
+                                        preop = operands(preop)[1]
+                                    end
+                                    v2, offset, skipload =
+                                        getparent(preop, offset, hasload)
+                                    v2 = const_bitcast(
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                    return v2, offset, skipload
+                                end
+                                
+                                if opcode(v) == LLVM.API.LLVMGetElementPtr
+                                    v2, offset, skipload =
+                                        getparent(operands(v)[1], offset, hasload)
+                                    offset = const_add(
+                                        offset,
+                                        API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
+                                    )
+                                    v2 = const_bitcast(
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                    return v2, offset, skipload
+                                end
+
                             end
 
                             if isa(v, LLVM.AddrSpaceCastInst)
@@ -954,28 +990,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                             end
 
                             if isa(v, LLVM.GetElementPtrInst)
-                                v2, offset, skipload =
-                                    getparent(operands(v)[1], offset, hasload)
-                                offset = nuwadd!(
-                                    b,
-                                    offset,
-                                    API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
-                                )
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
-                            end
-
-                            if isa(v, LLVM.ConstantExpr) &&
-                               opcode(v) == LLVM.API.LLVMGetElementPtr &&
-                               !hasload
                                 v2, offset, skipload =
                                     getparent(operands(v)[1], offset, hasload)
                                 offset = nuwadd!(
