@@ -513,7 +513,7 @@ function abs_typeof(
                 shouldLoad = false
                 offset %= sizeof(Int)
             else
-                sz = actual_size(ET)
+                sz = max(1, actual_size(ET))
                 offset %= sz
             end
         end
