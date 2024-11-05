@@ -6349,7 +6349,7 @@ function GPUCompiler.codegen(
 
                 byref = arg.cc
 
-                rest = typetree(arg.typ, ctx, dl)
+                rest = copy(typetree(arg.typ, ctx, dl))
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
@@ -6993,7 +6993,7 @@ end
 
                 ec = typetree(source_typ, ctx, dl, seen)
                 if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
-                    typeTree = copy(ec)
+                    ec = copy(ec)
                     merge!(ec, TypeTree(API.DT_Pointer, ctx))
                     only!(ec, -1)
                 end
