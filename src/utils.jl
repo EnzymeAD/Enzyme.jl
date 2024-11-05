@@ -336,8 +336,57 @@ export my_methodinstance
 
 @static if VERSION < v"1.11-"
 
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     void *data;
+# #ifdef STORE_ARRAY_LEN (just true new newer versions)
+# 	size_t length;
+# #endif
+#     jl_array_flags_t flags;
+#     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
+#     uint32_t offset;  // for 1-d only. does not need to get big.
+#     size_t nrows;
+#     union {
+#         // 1d
+#         size_t maxsize;
+#         // Nd
+#         size_t ncols;
+#     };
+#     // other dim sizes go here for ndims > 2
+#
+#     // followed by alignment padding and inline data, or owner pointer
+# } jl_array_t;
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
-    fieldtype(T, i)
+    if T <: Array
+        eT = eltype(T)
+        PT = Ptr{eT}
+        return (PT, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)[i]
+    else
+        fieldtype(T, i)
+    end
+end
+
+@inline function typed_fieldcount(@nospecialize(T::Type))
+    if T <: Array
+        return 7
+    else
+        fieldcount(T)
+    end
+end
+
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+    if T <: Array
+        tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
+        sum = 0
+        idx = 1
+        while idx < i
+            sum += sizeof(tys[idx])
+            idx+=1
+        end
+        return sum 
+    else
+        fieldoffset(T, i)
+    end
 end
 
 else
@@ -355,9 +404,19 @@ else
     end
 end
 
+@inline function typed_fieldcount(@nospecialize(T::Type))
+    fieldcount(T)
+end
+
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+    fieldoffset(T, i)
+end
+
 end
 
 export typed_fieldtype
+export typed_fieldcount
+export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
 function sret_ty(fn::LLVM.Function, idx::Int)
