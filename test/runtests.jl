@@ -2322,15 +2322,10 @@ end
     x = rand(Float32, 6, 6, 6, 2)
     sc = rand(Float32, 6)
     bi = rand(Float32, 6)
-    @static if VERSION < v"1.11-"
-        Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
-            Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
-    else
-        # TODO
-        @test_broken Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
-            Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
-    end
+    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
 end
+
 function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
     a1  =  1 / @inbounds poly[1]
     E1  = 2*a1
