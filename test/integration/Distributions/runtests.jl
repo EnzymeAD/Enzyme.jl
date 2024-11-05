@@ -312,15 +312,12 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             ),
             randn(rng, 2, 3),
         ),
-        # TODO In addition to Forward mode being broken the "normal way" for the below one,
-        # Reverse mode also flat out crashes Julia. Hence the commenting out.
-        # See https://github.com/EnzymeAD/Enzyme.jl/issues/2012.
         # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1821
-        # TestCase(
-        #     Wishart(5, _pdmat(randn(rng, 3, 3))),
-        #     Symmetric(collect(_pdmat(randn(rng, 3, 3))));
-        #     broken=Forward
-        # ),
+        TestCase(
+            Wishart(5, _pdmat(randn(rng, 3, 3))),
+            Symmetric(collect(_pdmat(randn(rng, 3, 3))));
+            broken=Forward
+        ),
         TestCase(
             InverseWishart(5, _pdmat(randn(rng, 3, 3))),
             Symmetric(collect(_pdmat(randn(rng, 3, 3))));
@@ -364,11 +361,10 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             ([0.4, 0.6], _pdmat([0.9 0.4; 0.5 1.1]), [0.27, 0.24]);
             name="MvLogitNormal", runtime_activity=Forward, broken=Forward, splat=true,
         ),
-        # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1996
         TestCase(
             (a, b, α, β, x) -> logpdf(truncated(Beta(α, β), a, b), x),
             (0.1, 0.9, 1.1, 1.3, 0.4);
-            name="truncated Beta", splat=true, broken=Reverse
+            name="truncated Beta", splat=true
         ),
         # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1998
         TestCase(
