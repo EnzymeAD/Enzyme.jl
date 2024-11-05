@@ -394,11 +394,7 @@ else
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
         eT = eltype(T)
-        if !allocatedinline(eT) && Base.isconcretetype(eT)
-            Ptr{Ptr{eT}}
-        else
-            Ptr{eT}
-        end
+        Ptr{eT}
     else
         fieldtype(T, i)
     end
