@@ -124,9 +124,7 @@ end
     test_cases = TestCase[
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 3),
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 0),
-        # TODO(mhauru) Skip Reverse because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2041
-        sum_b_binv_test_case(Bijectors.CorrBijector(), (3, 3); skip=Reverse),
+        sum_b_binv_test_case(Bijectors.CorrBijector(), (3, 3)),
         # TODO(mhauru) Skip Reverse because of
         # https://github.com/EnzymeAD/Enzyme.jl/issues/2033
         sum_b_binv_test_case(Bijectors.CorrBijector(), (0, 0); skip=Reverse),
@@ -138,9 +136,7 @@ end
         sum_b_binv_test_case(Bijectors.InvertibleBatchNorm(3), (3, 3)),
         sum_b_binv_test_case(Bijectors.LeakyReLU(0.2), 3),
         sum_b_binv_test_case(Bijectors.Logit(0.1, 0.3), 3),
-        # TODO(mhauru) Skip Reverse because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2034
-        sum_b_binv_test_case(Bijectors.PDBijector(), (3, 3); skip=Reverse),
+        sum_b_binv_test_case(Bijectors.PDBijector(), (3, 3)),
         sum_b_binv_test_case(Bijectors.PDVecBijector(), 3),
         sum_b_binv_test_case(
             Bijectors.Permute([
@@ -153,9 +149,7 @@ end
         # TODO(mhauru) Both modes broken because of
         # https://github.com/EnzymeAD/Enzyme.jl/issues/2035
         sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); broken=Both),
-        # TODO(mhauru) Skip Reverse because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2036
-        sum_b_binv_test_case(Bijectors.RadialLayer(3), 3; skip=Reverse),
+        sum_b_binv_test_case(Bijectors.RadialLayer(3), 3),
         sum_b_binv_test_case(Bijectors.Reshape((2, 3), (3, 2)), (2, 3)),
         sum_b_binv_test_case(Bijectors.Scale(0.2), 3),
         sum_b_binv_test_case(Bijectors.Shift(-0.4), 3),
@@ -185,8 +179,6 @@ end
             name="OrderedBijector",
         ),
 
-        # TODO(mhauru) Skip Reverse because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2029
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
@@ -196,11 +188,8 @@ end
             end,
             randn(rng, 7);
             name="PlanarLayer7",
-            skip=Reverse,
         ),
 
-        # TODO(mhauru) Reverse mode broken because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2030
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
@@ -210,7 +199,6 @@ end
             end,
             randn(rng, 11);
             name="PlanarLayer11",
-            broken=Reverse,
         ),
     ]
 
