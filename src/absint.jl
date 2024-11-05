@@ -507,12 +507,14 @@ function abs_typeof(
 
         if legal && typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
             ET = eltype(typ)
-            sz = actual_size(ET)
-            offset %= sz
             byref = GPUCompiler.MUT_REF
             typ = ET
             if !Base.allocatedinline(typ)
                 shouldLoad = false
+                offset %= sizeof(Int)
+            else
+                sz = actual_size(ET)
+                offset %= sz
             end
         end
 
