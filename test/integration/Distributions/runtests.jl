@@ -366,11 +366,10 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             (0.1, 0.9, 1.1, 1.3, 0.4);
             name="truncated Beta", splat=true
         ),
-        # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1998
         TestCase(
             (a, b, x) -> logpdf(truncated(Normal(), a, b), x),
             (-0.3, 0.3, 0.1);
-            name="allocs Normal", splat=true, broken=Forward
+            name="allocs Normal", splat=true
         ),
         TestCase(
             (a, b, α, β, x) -> logpdf(truncated(Uniform(α, β), a, b), x),
