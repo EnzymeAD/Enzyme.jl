@@ -1686,4 +1686,31 @@ end
 	end
     @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1][1]
 	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
+
+    function whocallsmorethan30args(R)
+        temp = diag(R)     
+         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
+             0. temp[2] 0. 0. 0. 0.; 
+             0. 0. temp[3] 0. 0. 0.; 
+             0. 0. 0. temp[4] 0. 0.; 
+             0. 0. 0. 0. temp[5] 0.; 
+         ]
+
+        return sum(R_inv)
+    end
+
+    R = zeros(6,6)    
+    dR = zeros(6, 6)
+
+    @static if VERSION ≥ v"1.10-"
+        @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    else
+        autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
+    	@test 1.0 ≈ dR[1, 1]
+    	@test 1.0 ≈ dR[2, 2]
+    	@test 1.0 ≈ dR[3, 3]
+    	@test 1.0 ≈ dR[4, 4]
+    	@test 1.0 ≈ dR[5, 5]
+    	@test 0.0 ≈ dR[6, 6]
+    end
 end
