@@ -125,9 +125,7 @@ end
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 3),
         sum_b_binv_test_case(Bijectors.VecCorrBijector(), 0),
         sum_b_binv_test_case(Bijectors.CorrBijector(), (3, 3)),
-        # TODO(mhauru) Skip Reverse because of
-        # https://github.com/EnzymeAD/Enzyme.jl/issues/2033
-        sum_b_binv_test_case(Bijectors.CorrBijector(), (0, 0); skip=Reverse),
+        sum_b_binv_test_case(Bijectors.CorrBijector(), (0, 0)),
         sum_b_binv_test_case(Bijectors.VecCholeskyBijector(:L), 3),
         sum_b_binv_test_case(Bijectors.VecCholeskyBijector(:L), 0),
         sum_b_binv_test_case(Bijectors.VecCholeskyBijector(:U), 3),
