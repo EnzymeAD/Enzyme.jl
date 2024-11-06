@@ -4008,15 +4008,19 @@ function enzyme!(
     logic = Logic()
     TA = TypeAnalysis(logic, rules)
 
-    retT =
-        (!isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)) ?
-        Ptr{actualRetType} : actualRetType
-    retTT =
-        (
-            !isa(actualRetType, Union) &&
+    retTT = if !isa(actualRetType, Union) &&
             actualRetType <: Tuple &&
             in(Any, actualRetType.parameters)
-        ) ? TypeTree() : typetree(retT, ctx, dl, seen)
+        TypeTree()
+    else
+        typeTree = typetree(actualRetType, ctx, dl, seen)
+        if !isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)
+            typeTree = copy(typeTree)
+            merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+            only!(typeTree, -1)
+        end
+        typeTree
+    end
 
     typeInfo = FnTypeInfo(retTT, args_typeInfo, args_known_values)
 
@@ -5569,8 +5573,11 @@ function lower_convention(
                 if RetActivity <: Const
                     metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
-                metadata(sretPtr)["enzyme_type"] =
-                    to_md(typetree(Ptr{actualRetType}, ctx, dl, seen), ctx)
+        
+                typeTree = copy(typetree(actualRetType, ctx, dl, seen))
+                merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                only!(typeTree, -1)
+                metadata(sretPtr)["enzyme_type"] = to_md(typeTree, ctx)
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
@@ -5606,8 +5613,11 @@ function lower_convention(
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
                 ctx = LLVM.context(entry_f)
-                metadata(ptr)["enzyme_type"] =
-                    to_md(typetree(Ptr{arg.typ}, ctx, dl, seen), ctx)
+        
+                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                only!(typeTree, -1)
+                metadata(ptr)["enzyme_type"] = to_md(typeTree, ctx)
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
@@ -5639,11 +5649,14 @@ function lower_convention(
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
                 push!(wrapper_args, wrapparm)
+                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                only!(typeTree, -1)
                 push!(
                     parameter_attributes(wrapper_f, arg.codegen.i - sret - returnRoots),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(Base.RefValue{arg.typ}, ctx, dl, seen)),
+                        string(typeTree),
                     ),
                 )
                 push!(
@@ -6336,7 +6349,7 @@ function GPUCompiler.codegen(
 
                 byref = arg.cc
 
-                rest = typetree(arg.typ, ctx, dl)
+                rest = copy(typetree(arg.typ, ctx, dl))
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
@@ -6382,7 +6395,14 @@ function GPUCompiler.codegen(
             if llRT !== nothing &&
                LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
                 @assert !retRemoved
-                rest = typetree(llRT, ctx, dl)
+                rest = if llRT == Ptr{RT}
+                    typeTree = copy(typetree(RT, ctx, dl))
+                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                    only!(typeTree, -1)
+                    typeTree
+                else
+                    typetree(RT, ctx, dl)
+                end
                 push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
             end
         end
@@ -6972,33 +6992,18 @@ end
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
-                typ = if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
-                    llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
-                    # pointers are used for multiple kinds of arguments
-                    # - literal pointer values
-                    if byref == GPUCompiler.BITS_VALUE
-                        source_typ
-                    elseif byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
-                        Ptr{source_typ}
-                    else
-                        msg = sprint() do io
-                            println(io, "Enzyme illegal state")
-                            println(io, string(f))
-                            println(io, "legal=", legal)
-                            println(io, "source_typ=", source_typ)
-                            println(io, "byref=", byref)
-                            println(io, "llvm_source_typ=", llvm_source_typ)
-                            println(io, "codegen_typ=", codegen_typ)
-                            println(io, "inst=", string(inst))
-                            println(io, enzyme_custom_extract_mi(f))
-                        end
-                        throw(AssertionError(msg))
-                    end
+                if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                 else
+                    @assert byref == GPUCompiler.BITS_VALUE
                     source_typ
                 end
 
-                ec = typetree(typ, ctx, dl, seen)
+                ec = typetree(source_typ, ctx, dl, seen)
+                if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
+                    ec = copy(ec)
+                    merge!(ec, TypeTree(API.DT_Pointer, ctx))
+                    only!(ec, -1)
+                end
                 if isa(inst, LLVM.CallInst)
                     LLVM.API.LLVMAddCallSiteAttribute(
                         inst,
@@ -7010,6 +7015,8 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
+                    metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                    metadata(inst)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
             
 @static if VERSION < v"1.11-"
 else    

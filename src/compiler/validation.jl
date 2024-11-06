@@ -509,7 +509,9 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                     if legal1
                     else
                         arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed=false, inttoptr=true)
-                        if !isa(arg1, LLVM.ConstantInt)
+                        if isa(arg1, LLVM.PointerNull)
+                            arg1 = LLVM.ConstantInt(0)
+                        elseif !isa(arg1, LLVM.ConstantInt)
                             msg = sprint() do io::IO
                                 println(
                                     io,
