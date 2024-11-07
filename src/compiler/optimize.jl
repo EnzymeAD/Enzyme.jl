@@ -1942,7 +1942,7 @@ function propagate_returned!(mod::LLVM.Module)
                 un = LLVM.user(u)
                 push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
             end
-            delete_writes_into_removed_args(fn, toremove)
+            delete_writes_into_removed_args(fn, toremove, keepret)
             nm = LLVM.name(fn)
             #try
                 nfn = LLVM.Function(
@@ -1988,7 +1988,7 @@ function propagate_returned!(mod::LLVM.Module)
     end
 end
 
-function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove, keepret::Bool)
     args = collect(parameters(fn))
     for tr in toremove
         tr = tr + 1
@@ -2032,6 +2032,9 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
                     end
                 end
             end
+            if !keepret && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
+                LLVM.API.LLVMSetOperand(u, 0, LLVM.UndefValue(value_type(cval)))
+	    end
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
     end
