@@ -592,4 +592,19 @@ Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
 
+"""
+    Abstract Reactant Array type. See Reactant.jl for more information
+"""
+abstract type RArray{T<:ReactantPrimitive,N} <: AbstractArray{T,N} end
+@inline Base.eltype(::RArray{T}) where T = T
+@inline Base.eltype(::Type{<:RArray{T}}) where T = T
+
+"""
+    Abstract Reactant Number type. See Reactant.jl for more information
+"""
+abstract type RNumber{T<:ReactantPrimitive} <: Number end
+@inline Base.eltype(::RNumber{T}) where T = T
+@inline Base.eltype(::Type{<:RNumber{T}}) where T = T
+
+
 end # module EnzymeCore

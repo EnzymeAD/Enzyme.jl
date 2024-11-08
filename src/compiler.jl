@@ -517,6 +517,8 @@ end
     end
 end
 
+@inline numbereltype(::Type{<:EnzymeCore.RNumber{T}}) where {T} = T
+@inline ptreltype(::Type{<:EnzymeCore.RArray{T}}) where {T} = T
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
@@ -644,10 +646,21 @@ end
         return ActiveState
     end
 
+    if T <: EnzymeCore.RNumber
+        return active_reg_inner(
+            numbereltype(T),
+            seen,
+            world,
+            Val(justActive),
+            Val(UnionSret),
+            Val(AbstractIsMixed),
+        )
+    end
+
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
        T <: Base.RefValue ||
-       T <: Array ||
+       T <: Array || T <: EnzymeCore.RArray
        is_arrayorvararg_ty(T)
         if justActive
             return AnyState
