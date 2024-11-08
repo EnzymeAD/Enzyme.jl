@@ -592,6 +592,47 @@ Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
 
+
+"""
+    Primitive Type usable within Reactant. See Reactant.jl for more information.
+"""
+@static if isdefined(Core, :BFloat16)
+    const ReactantPrimitive = Union{
+        Bool,
+        Int8,
+        UInt8,
+        Int16,
+        UInt16,
+        Int32,
+        UInt32,
+        Int64,
+        UInt64,
+        Float16,
+        Core.BFloat16,
+        Float32,
+        Float64,
+        Complex{Float32},
+        Complex{Float64},
+    }
+else
+    const ReactantPrimitive = Union{
+        Bool,
+        Int8,
+        UInt8,
+        Int16,
+        UInt16,
+        Int32,
+        UInt32,
+        Int64,
+        UInt64,
+        Float16,
+        Float32,
+        Float64,
+        Complex{Float32},
+        Complex{Float64},
+    }
+end
+
 """
     Abstract Reactant Array type. See Reactant.jl for more information
 """
