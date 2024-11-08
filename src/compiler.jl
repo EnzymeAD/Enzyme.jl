@@ -160,6 +160,8 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
 end
 
 const nofreefns = Set{String}((
+    "ClientGetDevice",
+    "BufferOnCPU",
     "pcre2_match_8",
     "julia.gcroot_flush",
     "pcre2_jit_stack_assign_8",
@@ -311,6 +313,8 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ClientGetDevice",
+    "BufferOnCPU",
     "pcre2_match_data_create_from_pattern_8",
     "ijl_typeassert",
     "jl_typeassert",
@@ -517,6 +521,8 @@ end
     end
 end
 
+@inline numbereltype(::Type{<:EnzymeCore.RNumber{T}}) where {T} = T
+@inline ptreltype(::Type{<:EnzymeCore.RArray{T}}) where {T} = T
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
@@ -644,10 +650,21 @@ end
         return ActiveState
     end
 
+    if T <: EnzymeCore.RNumber
+        return active_reg_inner(
+            numbereltype(T),
+            seen,
+            world,
+            Val(justActive),
+            Val(UnionSret),
+            Val(AbstractIsMixed),
+        )
+    end
+
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
        T <: Base.RefValue ||
-       T <: Array ||
+       T <: Array || T <: EnzymeCore.RArray
        is_arrayorvararg_ty(T)
         if justActive
             return AnyState
@@ -762,7 +779,7 @@ end
     end
 
     # if abstract it must be by reference
-    if Base.isabstracttype(T)
+    if Base.isabstracttype(T) || T == Tuple
         if AbstractIsMixed
             return MixedState
         else
@@ -779,11 +796,11 @@ end
     end
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || (T <: Tuple && T != Tuple) || T isa UnionAll)
+    if !(Base.isconcretetype(T) || T <: Tuple || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
-    nT = if T <: Tuple && T != Tuple && !(T isa UnionAll)
+    nT = if T <: Tuple && !(T isa UnionAll)
         Tuple{(
             ntuple(length(T.parameters)) do i
                 Base.@_inline_meta
@@ -1108,7 +1125,7 @@ struct Return2
 end
 
 function force_recompute!(mod::LLVM.Module)
-    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+    for f in functions(mod), bb in blocks(f), inst in collect(instructions(bb))
         if isa(inst, LLVM.LoadInst)
             has_loaded = false
             for u in LLVM.uses(inst)
@@ -1137,8 +1154,24 @@ function force_recompute!(mod::LLVM.Module)
                 metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
             end
         end
+        if isa(inst, LLVM.CallInst)
+            cf = LLVM.called_operand(inst)
+            if isa(cf, LLVM.Function)
+                if LLVM.name(cf) == "llvm.julia.gc_preserve_begin"
+                    has_use = false
+                    for u2 in LLVM.uses(inst)
+                        has_use = true
+                        break
+                    end
+                    if !has_use
+                        eraseInst(bb, inst)
+                    end
+                end
+            end
+        end
     end
 end
+
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
@@ -3295,12 +3328,25 @@ function annotate!(mod, mode)
     end
 
     for fname in (
+        "UnsafeBufferPointer",
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.StringAttribute("enzyme_math", "__dynamic_cast"))
+                end
+            end
+        end
+    end
+
+    for fname in (
         "jl_f_getfield",
         "ijl_f_getfield",
         "jl_get_nth_field_checked",
         "ijl_get_nth_field_checked",
         "jl_f__svec_ref",
         "ijl_f__svec_ref",
+        "UnsafeBufferPointer"
     )
         if haskey(funcs, fname)
             for fn in funcs[fname]
