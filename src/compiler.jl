@@ -779,7 +779,7 @@ end
     end
 
     # if abstract it must be by reference
-    if Base.isabstracttype(T)
+    if Base.isabstracttype(T) || T == Tuple
         if AbstractIsMixed
             return MixedState
         else
@@ -796,11 +796,11 @@ end
     end
 
     @assert !Base.isabstracttype(T)
-    if !(Base.isconcretetype(T) || (T <: Tuple && T != Tuple) || T isa UnionAll)
+    if !(Base.isconcretetype(T) || T <: Tuple || T isa UnionAll)
         throw(AssertionError("Type $T is not concrete type or concrete tuple"))
     end
 
-    nT = if T <: Tuple && T != Tuple && !(T isa UnionAll)
+    nT = if T <: Tuple && !(T isa UnionAll)
         Tuple{(
             ntuple(length(T.parameters)) do i
                 Base.@_inline_meta
