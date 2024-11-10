@@ -23,7 +23,7 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
-struct EnzymeInterpreter <: AbstractInterpreter
+struct EnzymeInterpreter{T} <: AbstractInterpreter
     @static if HAS_INTEGRATED_CACHE
         token::Any
     else
@@ -40,21 +40,27 @@ struct EnzymeInterpreter <: AbstractInterpreter
     inf_params::InferenceParams
     opt_params::OptimizationParams
 
-    mode::API.CDerivativeMode
+    forward_rules::Bool
+    reverse_rules::Bool
+    deferred_lower::Bool
+    handler::T
 end
 
 function EnzymeInterpreter(
     cache_or_token,
     mt::Union{Nothing,Core.MethodTable},
     world::UInt,
-    mode::API.CDerivativeMode,
+    forward_rules::Bool,
+    reverse_rules::Bool,
+    deferred_lower::Bool = true,
+    handler = nothing
 )
     @assert world <= Base.get_world_counter()
 
-    parms = @static if VERSION < v"1.12"
-        InferenceParams(unoptimize_throw_blocks = false)
-    else
+    parms = @static if VERSION >= v"1.12.0-DEV.1017"
         InferenceParams()
+    else
+        InferenceParams(; unoptimize_throw_blocks=false)
     end
 
     return EnzymeInterpreter(
@@ -70,9 +76,21 @@ function EnzymeInterpreter(
         # parameters for inference and optimization
         parms,
         OptimizationParams(),
-        mode,
+        forward_rules,
+        reverse_rules,
+        deferred_lower,
+        handler
     )
 end
+
+EnzymeInterpreter(
+    cache_or_token,
+    mt::Union{Nothing,Core.MethodTable},
+    world::UInt,
+    mode::API.CDerivativeMode,
+    deferred_lower::Bool = true,
+    handler = nothing
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, handler)
 
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
@@ -98,19 +116,16 @@ Core.Compiler.may_compress(::EnzymeInterpreter) = true
 Core.Compiler.may_discard_trees(::EnzymeInterpreter) = false
 Core.Compiler.verbose_stmt_info(::EnzymeInterpreter) = false
 
-if isdefined(Base.Experimental, Symbol("@overlay"))
-    Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
-        Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
-else
-
-    # On 1.6- CUDA.jl will poison the method table at the end of the world
-    # using GPUCompiler: WorldOverlayMethodTable
-    # Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
-    #     WorldOverlayMethodTable(interp.world)
-end
+Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
+    Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
 function is_alwaysinline_func(@nospecialize(TT))
     isa(TT, DataType) || return false
+    @static if VERSION ≥ v"1.11-"
+    if TT.parameters[1] == typeof(Core.memoryref)
+        return true
+    end
+    end
     return false
 end
 
@@ -201,12 +216,18 @@ function Core.Compiler.abstract_call_gf_by_type(
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
         callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-    elseif interp.mode == API.DEM_ForwardMode
-        if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+    else
+        if interp.forward_rules
+          if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+          end
         end
-    elseif EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-        callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+    
+        if interp.reverse_rules
+            if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+              callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+            end
+        end
     end
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
@@ -313,7 +334,12 @@ end
 else
     @inline function myunsafe_copyto!(dest::MemoryRef{T}, src::MemoryRef{T}, n) where {T}
         Base.@_terminates_globally_notaskstate_meta
-        @boundscheck memoryref(dest, n), memoryref(src, n)
+        # if dest.length < n
+        #     throw(BoundsError(dest, 1:n))
+        # end
+        # if src.length < n
+        #     throw(BoundsError(src, 1:n))
+        # end
         t1 = Base.@_gc_preserve_begin dest
         t2 = Base.@_gc_preserve_begin src
         Base.memmove(pointer(dest), pointer(src), n * Base.aligned_sizeof(T))
@@ -382,7 +408,7 @@ function abstract_call_known(
         end
     end
 
-    if f === Enzyme.autodiff && length(argtypes) >= 4
+    if interp.deferred_lower && f === Enzyme.autodiff && length(argtypes) >= 4
         if widenconst(argtypes[2]) <: Enzyme.Mode &&
            widenconst(argtypes[3]) <: Enzyme.Annotation &&
            widenconst(argtypes[4]) <: Type{<:Enzyme.Annotation}
@@ -400,6 +426,9 @@ function abstract_call_known(
                 max_methods,
             )
         end
+    end
+    if interp.handler != nothing
+        return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,

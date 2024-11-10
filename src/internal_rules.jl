@@ -1303,18 +1303,22 @@ end
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
     func::Const{Colon},
-    ::Type{<:Active},
+    ::Type{RT},
     start::Annotation{<:AbstractFloat},
     step::Annotation{<:AbstractFloat},
     stop::Annotation{<:AbstractFloat},
-)
+) where RT <: Active
 
     if EnzymeRules.needs_primal(config)
         primal = func.val(start.val, step.val, stop.val)
     else
         primal = nothing
     end
-    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+    return EnzymeRules.AugmentedReturn{
+        EnzymeRules.primal_type(config, RT),
+        Nothing,
+        Nothing
+    }(primal, nothing, nothing)
 end
 
 function EnzymeRules.reverse(

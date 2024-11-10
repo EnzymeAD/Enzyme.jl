@@ -213,8 +213,12 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     # prepare a new code info
     new_ci = copy(ci)
     empty!(new_ci.code)
-    empty!(new_ci.codelocs)
-    resize!(new_ci.linetable, 1)                # see note below
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
+    end
     empty!(new_ci.ssaflags)
     new_ci.ssavaluetypes = 0
     new_ci.min_world = min_world[]
@@ -232,7 +236,10 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     # return the codegen world age
     push!(new_ci.code, ReturnNode(world))
     push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    push!(new_ci.codelocs, 1)   # see note below
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
     new_ci.ssavaluetypes += 1
 
     # NOTE: we keep the first entry of the original linetable, and use it for location info
@@ -329,8 +336,57 @@ export my_methodinstance
 
 @static if VERSION < v"1.11-"
 
+# JL_EXTENSION typedef struct {
+#     JL_DATA_TYPE
+#     void *data;
+# #ifdef STORE_ARRAY_LEN (just true new newer versions)
+# 	size_t length;
+# #endif
+#     jl_array_flags_t flags;
+#     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
+#     uint32_t offset;  // for 1-d only. does not need to get big.
+#     size_t nrows;
+#     union {
+#         // 1d
+#         size_t maxsize;
+#         // Nd
+#         size_t ncols;
+#     };
+#     // other dim sizes go here for ndims > 2
+#
+#     // followed by alignment padding and inline data, or owner pointer
+# } jl_array_t;
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
-    fieldtype(T, i)
+    if T <: Array
+        eT = eltype(T)
+        PT = Ptr{eT}
+        return (PT, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)[i]
+    else
+        fieldtype(T, i)
+    end
+end
+
+@inline function typed_fieldcount(@nospecialize(T::Type))
+    if T <: Array
+        return 7
+    else
+        fieldcount(T)
+    end
+end
+
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+    if T <: Array
+        tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
+        sum = 0
+        idx = 1
+        while idx < i
+            sum += sizeof(tys[idx])
+            idx+=1
+        end
+        return sum 
+    else
+        fieldoffset(T, i)
+    end
 end
 
 else
@@ -338,19 +394,25 @@ else
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
         eT = eltype(T)
-        if !allocatedinline(eT) && Base.isconcretetype(eT)
-            Ptr{Ptr{eT}}
-        else
-            Ptr{eT}
-        end
+        Ptr{eT}
     else
         fieldtype(T, i)
     end
 end
 
+@inline function typed_fieldcount(@nospecialize(T::Type))
+    fieldcount(T)
+end
+
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+    fieldoffset(T, i)
+end
+
 end
 
 export typed_fieldtype
+export typed_fieldcount
+export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
 function sret_ty(fn::LLVM.Function, idx::Int)

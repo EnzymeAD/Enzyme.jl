@@ -627,6 +627,7 @@ function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
+    ctx = LLVM.context(mod)
     for f in functions(mod)
 
         guaranteedInactive = false
@@ -715,7 +716,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                         while length(addrtodo) != 0
                             v = pop!(addrtodo)
-                            base = get_base_object(v)
+                            base, _ = get_base_and_offset(v; offsetAllowed=false)
                             if in(base, seen)
                                 continue
                             end
@@ -826,17 +827,25 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
                                             rhs = LLVM.ConstantInt(offty, sizeof(Int))
 
-                                            base_2, off_2, _ = get_base_and_offset(v2)
-                                            base_1, off_1, _ = get_base_and_offset(operands(v)[1])
+                                            base_2, off_2 = get_base_and_offset(v2)
+                                            base_1, off_1 = get_base_and_offset(operands(v)[1])
 
                                             if o2 == rhs && base_1 == base_2 && off_1 == off_2
                                                 return operands(v)[1], offset, true
                                             end
 
+                                            pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
+                                            only!(pty, -1)
                                             rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             lhs = ptrtoint!(b, operands(v)[2], offty)
+                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
                                             off2 = nuwsub!(b, lhs, rhs)
+                                            ity = TypeTree(API.DT_Integer, LLVM.context(ld))
+                                            only!(ity, -1)
+                                            metadata(off2)["enzyme_type"] = to_md(ity, ctx)
                                             add = nuwadd!(b, offset, off2)
+                                            metadata(add)["enzyme_type"] = to_md(ity, ctx)
                                             return operands(v)[1], add, true
                                         end
                                     end
@@ -858,7 +867,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                             end
 
-                            if addr == 11 && isa(v, LLVM.ConstantExpr)
+                            if isa(v, LLVM.ConstantExpr)
                                 if opcode(v) == LLVM.API.LLVMAddrSpaceCast
                                     v2 = operands(v)[1]
                                     if addrspace(value_type(v2)) == 10
@@ -881,6 +890,42 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         return v2, offset, hasload
                                     end
                                 end
+                                if opcode(v) == LLVM.API.LLVMBitCast
+                                    preop = operands(v)[1]
+                                    while isa(preop, LLVM.ConstantExpr) && opcode(preop) == LLVM.API.LLVMBitCast
+                                        preop = operands(preop)[1]
+                                    end
+                                    v2, offset, skipload =
+                                        getparent(preop, offset, hasload)
+                                    v2 = const_bitcast(
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                    return v2, offset, skipload
+                                end
+                                
+                                if opcode(v) == LLVM.API.LLVMGetElementPtr
+                                    v2, offset, skipload =
+                                        getparent(operands(v)[1], offset, hasload)
+                                    offset = const_add(
+                                        offset,
+                                        API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
+                                    )
+                                    v2 = const_bitcast(
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                    return v2, offset, skipload
+                                end
+
                             end
 
                             if isa(v, LLVM.AddrSpaceCastInst)
@@ -945,28 +990,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                             end
 
                             if isa(v, LLVM.GetElementPtrInst)
-                                v2, offset, skipload =
-                                    getparent(operands(v)[1], offset, hasload)
-                                offset = nuwadd!(
-                                    b,
-                                    offset,
-                                    API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
-                                )
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
-                            end
-
-                            if isa(v, LLVM.ConstantExpr) &&
-                               opcode(v) == LLVM.API.LLVMGetElementPtr &&
-                               !hasload
                                 v2, offset, skipload =
                                     getparent(operands(v)[1], offset, hasload)
                                 offset = nuwadd!(
@@ -1827,7 +1850,7 @@ function propagate_returned!(mod::LLVM.Module)
                         LLVM.replace_uses!(arg, val)
                     end
                 end
-                # sese if there are no users of the value (excluding recursive/return)
+                # see if there are no users of the value (excluding recursive/return)
                 baduse = false
                 for u in LLVM.uses(arg)
                     u = LLVM.user(u)
@@ -1914,13 +1937,14 @@ function propagate_returned!(mod::LLVM.Module)
             end
         end
         for (fn, keepret, toremove) in tofinalize
-            try
-                todo = LLVM.CallInst[]
-                for u in LLVM.uses(fn)
-                    un = LLVM.user(u)
-                    push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
-                end
-                delete_writes_into_removed_args(fn, toremove)
+            todo = LLVM.CallInst[]
+            for u in LLVM.uses(fn)
+                un = LLVM.user(u)
+                push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+            end
+            delete_writes_into_removed_args(fn, toremove, keepret)
+            nm = LLVM.name(fn)
+            #try
                 nfn = LLVM.Function(
                     API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
                 )
@@ -1937,9 +1961,9 @@ function propagate_returned!(mod::LLVM.Module)
                 end
                 eraseInst(mod, fn)
                 changed = true
-            catch
-                break
-            end
+            # catch e
+            #    break
+            #end
         end
         if !changed
             break
@@ -1964,7 +1988,7 @@ function propagate_returned!(mod::LLVM.Module)
     end
 end
 
-function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove, keepret::Bool)
     args = collect(parameters(fn))
     for tr in toremove
         tr = tr + 1
@@ -1991,6 +2015,26 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove)
                 end
                 continue
             end
+            if isa(cur, LLVM.CallInst)
+                cf = LLVM.called_operand(cur)
+                if cf == fn
+                    baduse = false
+                    for (i, v) in enumerate(operands(cur))
+                        if i-1 in toremove
+                            continue
+                        end
+                        if v == cval
+                            baduse = true
+                        end
+                    end
+                    if !baduse
+                        continue
+                    end
+                end
+            end
+            if !keepret && LLVM.API.LLVMIsAReturnInst(cur) != C_NULL
+                LLVM.API.LLVMSetOperand(cur, 0, LLVM.UndefValue(value_type(cval)))
+	    end
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
     end
@@ -2790,6 +2834,18 @@ function post_optimze!(mod, tm, machine = true)
     end
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
+    for g in collect(globals(mod))
+        if startswith(LLVM.name(g), "ccall")
+            hasuse = false
+            for u in LLVM.uses(g)
+                hasuse = true
+                break
+            end
+            if !hasuse
+                eraseInst(mod, g)
+            end
+        end
     end
     out_error = Ref{Cstring}()
     if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0

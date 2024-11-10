@@ -46,6 +46,34 @@ function absolute_symbol_materialization(name, ptr)
     return LLVM.absolute_symbols(Ref(gv))
 end
 
+const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
+
+function fix_ptr_lookup(name)
+    if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
+        _, fname, arg1 = split(name, "\$")
+        if startswith(name, "ejlstr\$")
+            ptr = if haskey(hnd_string_map, arg1)
+                hnd_string_map[arg1]
+            else
+                val = Ref{Ptr{Cvoid}}(C_NULL)
+                hnd_string_map[arg1] = val
+                val
+            end
+
+            return ccall(
+                :ijl_load_and_lookup,
+                Ptr{Cvoid},
+                (Cstring, Cstring, Ptr{Cvoid}),
+                arg1,
+                fname,
+                ptr
+            )
+        else
+        end
+    end
+    return nothing
+end
+
 function define_absolute_symbol(jd, name)
     ptr = LLVM.find_symbol(name)
     if ptr !== C_NULL
@@ -213,6 +241,17 @@ function get_trampoline(job)
 end
 
 function add!(mod)
+    for f in collect(functions(mod))
+        ptr = fix_ptr_lookup(LLVM.name(f))
+        if ptr === nothing
+            continue
+        end
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
+        replace_uses!(f, ptr)
+        Compiler.eraseInst(mod, f)
+    end
     lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
@@ -220,7 +259,7 @@ function add!(mod)
     return nothing
 end
 
-function lookup(_, name)
+function lookup(name)
     LLVM.lookup(jit[].jit, name)
 end
 

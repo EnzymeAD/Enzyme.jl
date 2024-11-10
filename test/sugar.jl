@@ -4,6 +4,12 @@ using LinearAlgebra
 mul_scalar(x, y) = x[1]*y[2] + x[2]*y[1]
 mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 
+@testset "Forward Empty Gradient" begin
+    inp = Float64[]
+    res = gradient(Forward, sin, inp)
+    @test res[1] === inp
+end
+
 @testset "Forward Multi-Arg Gradient" begin
 	res = gradient(Forward, mul_scalar, [2.0, 3.0], [2.7, 3.1])
 	@test res[1] ≈ [3.1, 2.7]

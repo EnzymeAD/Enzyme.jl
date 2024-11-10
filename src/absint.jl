@@ -5,6 +5,23 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
+    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+        ce = arg
+        while isa(ce, ConstantExpr)
+            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
+               opcode(ce) == LLVM.API.LLVMBitCast ||
+               opcode(ce) == LLVM.API.LLVMIntToPtr
+                ce = operands(ce)[1]
+            else
+                break
+            end
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            return (true, typ)
+        end
+    end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return absint(operands(arg)[1], partial)
@@ -103,22 +120,11 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
         end
     end
-    if isa(arg, ConstantExpr)
-        ce = arg
-        if opcode(ce) == LLVM.API.LLVMIntToPtr
-            ce = operands(ce)[1]
-            if isa(ce, LLVM.ConstantInt)
-                ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-                typ = Base.unsafe_pointer_to_objref(ptr)
-                return (true, typ)
-            end
-        end
-    end
 
     if isa(arg, GlobalVariable)
         gname = LLVM.name(arg)
         for (k, v) in JuliaGlobalNameMap
-            if gname == k || gname == "ejl_" * k
+            if gname == "ejl_" * k
                 return (true, v)
             end
         end
@@ -132,14 +138,13 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     if isa(arg, LLVM.LoadInst) &&
        value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
         ptr = operands(arg)[1]
-        ce = ptr
-        while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
-               opcode(ce) == LLVM.API.LLVMBitCast ||
-               opcode(ce) == LLVM.API.LLVMIntToPtr
-                ce = operands(ce)[1]
-            else
-                break
+        ce, _ = get_base_and_offset(ptr; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, v)
+                end
             end
         end
         if !isa(ce, LLVM.ConstantInt)
@@ -163,11 +168,14 @@ end
 function actual_size(@nospecialize(typ2))
     @static if VERSION < v"1.11-"
         if typ2 <: Array
-            return sizeof(Int)
+            return sizeof(Ptr{Cvoid}) + 2 + 2 + 4 + 2 * sizeof(Csize_t) + sizeof(Csize_t)
         end
     else
+        if typ2 <: GenericMemory
+            return sum(map(sizeof,fieldtypes(typ2)))
+        end
     end
-    if typ2 <: AbstractString || typ2 <: Symbol
+    if typ2 <: AbstractString || typ2 <: Symbol || typ2 <: Core.SimpleVector
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
@@ -177,6 +185,11 @@ function actual_size(@nospecialize(typ2))
 end
 
 @inline function first_non_ghost(@nospecialize(typ2))
+    @static if VERSION < v"1.11-"
+        if typ2 <: Array
+            return (1, typed_fieldtype(typ2, 1))
+        end
+    end
     fc = fieldcount(typ2)
     for i in 1:fc
         if i == fc
@@ -213,11 +226,24 @@ function should_recurse(@nospecialize(typ2), arg_t, byref, dl)
     end
 end
 
-function get_base_and_offset(larg::LLVM.Value)::Tuple{LLVM.Value, Int, Bool}
+function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=false)::Tuple{LLVM.Value, Int}
     offset = 0
-    error = false
     while true
-        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst)
+        if isa(larg, LLVM.ConstantExpr)
+            if opcode(larg) == LLVM.API.LLVMBitCast || opcode(larg) == LLVM.API.LLVMAddrSpaceCast || opcode(larg) == LLVM.API.LLVMPtrToInt
+                larg = operands(larg)[1]
+                continue
+            end
+            if inttoptr && opcode(larg) == LLVM.API.LLVMIntToPtr
+                larg = operands(larg)[1]
+                continue
+            end
+        end
+        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst) || isa(larg, LLVM.IntToPtrInst)
+            larg = operands(larg)[1]
+            continue
+        end
+        if inttoptr && isa(larg, LLVM.PtrToIntInst)
             larg = operands(larg)[1]
             continue
         end
@@ -227,30 +253,53 @@ function get_base_and_offset(larg::LLVM.Value)::Tuple{LLVM.Value, Int, Bool}
             position!(b, larg)
             offty = LLVM.IntType(8 * sizeof(Int))
             offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
-            @assert isa(offset2, LLVM.ConstantInt)
-            offset += convert(Int, offset2)
-            larg = operands(larg)[1]
-            continue
+            if isa(offset2, LLVM.ConstantInt)
+                val = convert(Int, offset2)
+                if offsetAllowed || val == 0
+                    offset += val
+                    larg = operands(larg)[1]
+                    continue
+                else
+                    break
+                end
+            else
+                break
+            end
         end
         if isa(larg, LLVM.Argument)
             break
         end
-        error = true
         break
     end
-    return larg, offset, error
+    return larg, offset
 end
 
 function abs_typeof(
     arg::LLVM.Value,
-    partial::Bool = false,
+    partial::Bool = false, seenphis=Set{LLVM.PHIInst}()
 )::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
-        return abs_typeof(operands(arg)[1], partial)
+        return abs_typeof(operands(arg)[1], partial, seenphis)
+    end
+    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+        ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
+                end
+            end
+        end
+        if isa(ce, LLVM.ConstantInt)
+            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+            val = Base.unsafe_pointer_to_objref(ptr)
+            return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
+        end
     end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
-            return abs_typeof(operands(arg)[1], partial)
+            return abs_typeof(operands(arg)[1], partial, seenphis)
         end
     end
 
@@ -262,11 +311,11 @@ function abs_typeof(
         end
 
         if nm == "julia.pointer_from_objref"
-            return abs_typeof(operands(arg)[1], partial)
+            return abs_typeof(operands(arg)[1], partial, seenphis)
         end
 
         if nm == "julia.gc_loaded"
-            legal, res, byref = abs_typeof(operands(arg)[2], partial)
+            legal, res, byref = abs_typeof(operands(arg)[2], partial, seenphis)
             return legal, res, byref
         end
 
@@ -342,7 +391,7 @@ function abs_typeof(
                 unionalls = []
                 legal = true
                 for sarg in operands(arg)[index:end-1]
-                    slegal, foundv, _ = abs_typeof(sarg, partial)
+                    slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
                     if slegal
                         push!(found, foundv)
                     elseif partial
@@ -377,7 +426,7 @@ function abs_typeof(
                     end
                     resvals = []
                     while index != length(operands(arg))
-                        legal, pval, _ = abs_typeof(operands(arg)[index], partial)
+                        legal, pval, _ = abs_typeof(operands(arg)[index], partial, seenphis)
                         if !legal
                             break
                         end
@@ -403,9 +452,11 @@ function abs_typeof(
         end
 
         if nm == "jl_array_copy" || nm == "ijl_array_copy"
-            legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+            legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
             if legal
-                @assert RT <: Array
+                if !(RT <: Array)
+                    return (false, nothing, nothing)
+                end
                 return (legal, RT, GPUCompiler.MUT_REF)
             end
             return (legal, RT, nothing)
@@ -413,7 +464,7 @@ function abs_typeof(
         @static if VERSION < v"1.11-"
         else
             if nm == "jl_genericmemory_copy_slice" || nm == "ijl_genericmemory_copy_slice"
-                legal, RT, _ = abs_typeof(operands(arg)[1], partial)
+                legal, RT, _ = abs_typeof(operands(arg)[1], partial, seenphis)
                 if legal
                     @assert RT <: Memory
                     return (legal, RT, GPUCompiler.MUT_REF)
@@ -437,103 +488,114 @@ function abs_typeof(
         end
     end
 
-    if isa(arg, LLVM.LoadInst)
-        larg, offset, error = get_base_and_offset(operands(arg)[1])
-
-        if !error
-            legal, typ, byref = abs_typeof(larg)
-            if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
-                @static if VERSION < v"1.11-"
-                    if typ <: Array && Base.isconcretetype(typ)
-                        T = eltype(typ)
-                        if offset == 0
-                            return (true, Ptr{T}, GPUCompiler.BITS_VALUE)
-                        else
-                            return (true, Int, GPUCompiler.BITS_VALUE)
-                        end
-                    end
+    if isa(arg, LLVM.LoadInst) 
+        ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
                 end
-                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                    dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
-                    
-                    byref = GPUCompiler.BITS_VALUE
-                    legal = true
+            end
+        end
+        larg, offset = get_base_and_offset(operands(arg)[1])
+        legal, typ, byref = abs_typeof(larg, false, seenphis)
 
-                    while offset != 0 && legal
-                        @assert Base.isconcretetype(typ)
-                        seen = false
-                        lasti = 1
-                        for i = 1:fieldcount(typ)
-                            fo = fieldoffset(typ, i)
-                            if fieldoffset(typ, i) == offset
-                                offset = 0
-                                typ = typed_fieldtype(typ, i)
-                                if !Base.allocatedinline(typ)
-                                    if byref != GPUCompiler.BITS_VALUE
-                                        legal = false
-                                    end
-                                    byref = GPUCompiler.MUT_REF
-                                end
-                                seen = true
-                                break
-                            elseif fieldoffset(typ, i) > offset
-                                offset = offset - fieldoffset(typ, lasti)
-                                typ = typed_fieldtype(typ, lasti)
-                                @assert Base.isconcretetype(typ)
-                                if !Base.allocatedinline(typ)
-                                    legal = false
-                                end
-                                seen = true
-                                break
+        dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
+        
+        shouldLoad = true
+
+        if legal && typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
+            ET = eltype(typ)
+            byref = GPUCompiler.MUT_REF
+            typ = ET
+            if !Base.allocatedinline(typ)
+                shouldLoad = false
+                offset %= sizeof(Int)
+            else
+                sz = max(1, actual_size(ET))
+                offset %= sz
+            end
+        end
+
+        if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
+            if shouldLoad
+                byref = GPUCompiler.BITS_VALUE
+            end
+
+            legal = true
+
+            while offset != 0 && legal
+                @assert Base.isconcretetype(typ)
+                seen = false
+                lasti = 1
+                for i = 1:typed_fieldcount(typ)
+                    fo = typed_fieldoffset(typ, i)
+                    if fo == offset
+                        offset = 0
+                        typ = typed_fieldtype(typ, i)
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
                             end
-                            
-                            if fo != 0 && fo != fieldoffset(typ, i-1)
-                                lasti = i
-                            end
+                            byref = GPUCompiler.MUT_REF
                         end
-            			if !seen && fieldcount(typ) > 0
-            			    offset = offset - fieldoffset(typ, lasti)
-            		            typ = typed_fieldtype(typ, lasti)
-            			    @assert Base.isconcretetype(typ)
-            			    if !Base.allocatedinline(typ)
-            			        legal = false
-            			    end
-            			    seen = true
-            			end
-                        if !seen
+                        seen = true
+                        break
+                    elseif fo > offset
+                        offset = offset - typed_fieldoffset(typ, lasti)
+                        typ = typed_fieldtype(typ, lasti)
+                        @assert Base.isconcretetype(typ)
+                        if !Base.allocatedinline(typ)
                             legal = false
                         end
+                        seen = true
+                        break
                     end
                     
-                    typ2 = typ
-                    while legal && should_recurse(typ2, value_type(arg), byref, dl)
-                        idx, _ = first_non_ghost(typ2)
-                        if idx != -1
-                            typ2 = typed_fieldtype(typ2, idx)
-                            if Base.allocatedinline(typ2)
-                                if byref == GPUCompiler.BITS_VALUE
-                                    continue
-                                end
-                                legal = false
-                                break
-                            else
-                                if byref != GPUCompiler.BITS_VALUE
-                                    legal = false
-                                    break
-                                end
-                                byref = GPUCompiler.MUT_REF
-                                continue
-                            end
+                    if fo != 0 && fo != typed_fieldoffset(typ, i-1)
+                        lasti = i
+                    end
+                end
+                if !seen && typed_fieldcount(typ) > 0
+                    offset = offset - typed_fieldoffset(typ, lasti)
+                    typ = typed_fieldtype(typ, lasti)
+                    @assert Base.isconcretetype(typ)
+                    if !Base.allocatedinline(typ)
+                        legal = false
+                    end
+                    seen = true
+                end
+                if !seen
+                    legal = false
+                end
+            end
+
+            typ2 = typ
+            while legal && should_recurse(typ2, value_type(arg), byref, dl)
+                idx, _ = first_non_ghost(typ2)
+                if idx != -1
+                    typ2 = typed_fieldtype(typ2, idx)
+                    if Base.allocatedinline(typ2)
+                        if byref == GPUCompiler.BITS_VALUE
+                            continue
                         end
                         legal = false
                         break
-                    end
-                    if legal
-                        return (true, typ2, byref)
+                    else
+                        if byref != GPUCompiler.BITS_VALUE
+                            legal = false
+                            break
+                        end
+                        byref = GPUCompiler.MUT_REF
+                        continue
                     end
                 end
-            elseif legal && typ <: Ptr && Base.isconcretetype(typ)
-                return (true, eltype(typ), GPUCompiler.BITS_VALUE)
+                legal = false
+                break
+            end
+            if legal
+                return (true, typ2, byref)
             end
         end
     end
@@ -543,7 +605,7 @@ function abs_typeof(
         indptrs = LLVM.API.LLVMGetIndices(arg)
         numind = LLVM.API.LLVMGetNumIndices(arg)
         offset = Cuint[unsafe_load(indptrs, i) for i = 1:numind]
-        found, typ, byref = abs_typeof(larg, partial)
+        found, typ, byref = abs_typeof(larg, partial, seenphis)
         if !found
             return (false, nothing, nothing)
         end
@@ -571,6 +633,67 @@ function abs_typeof(
         end
     end
 
+    if isa(arg, LLVM.PHIInst)
+        if arg in seenphis
+            return (false, nothing, nothing)
+        end
+        todo = LLVM.PHIInst[arg]
+        ops = LLVM.Value[]
+        seen = Set{LLVM.PHIInst}()
+        legal = true
+        while length(todo) > 0
+            cur = pop!(todo)
+            if cur in seen
+                continue
+            end
+            push!(seen, cur)
+            for (v, _) in LLVM.incoming(cur)
+                v2, off = get_base_and_offset(v)
+                if off != 0
+                    if isa(v, LLVM.Instruction) && arg in collect(operands(v))
+                        legal = false
+                        break
+                    end
+                    push!(ops, v)
+                elseif v2 isa LLVM.PHIInst
+                    push!(todo, v2)
+                else
+                    if isa(v2, LLVM.Instruction) && arg in collect(operands(v2))
+                        legal = false
+                        break
+                    end
+                    push!(ops, v2)
+                end
+            end
+        end
+        if legal
+            resvals = nothing
+            seenphis2 = copy(seenphis)
+            push!(seenphis2, arg)
+            for op in ops
+                tmp = abs_typeof(op, partial, seenphis2)
+                if resvals == nothing
+                    resvals = tmp
+                else
+                    if tmp[1] == false || resvals[1] == false
+                        resvals = (false, nothing, nothing)
+                        break
+                    elseif tmp[2] == resvals[2] && ( tmp[3] == resvals[3] || ( in(tmp[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF)) && in(resvals[3],(GPUCompiler.BITS_REF, GPUCompiler.MUT_REF))) )
+
+                        continue
+                    elseif partial
+                        resvals = (true, Union{resvals[2], tmp[2]}, GPUCompiler.BITS_REF)
+                    else
+                        resvals = (false, nothing, nothing)
+                        break
+                    end
+                end
+            end
+            if resvals != nothing
+                return resvals
+            end
+        end
+    end
 
     if isa(arg, LLVM.Argument)
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
