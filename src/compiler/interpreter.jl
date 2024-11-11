@@ -349,42 +349,88 @@ else
     end
 end
 
-@inline function axes_eq(val, A)
-	return val == axes(A)
+@generated function lindex(idx::BC2, dest, src) where BC2
+    if BC2 <: Base.CartesianIndices
+        nloops = BC2.parameters[1]
+        exprs = Expr[]
+        tot = :true
+        idxs = Symbol[]
+        lims = Symbol[]
+        for i in 1:nloops
+            sym = Symbol("lim_$i")
+            push!(lims, sym)
+            sidx = Symbol("idx_$i")
+            push!(idxs, sidx)
+            push!(exprs, quote
+                $sym = idx.indices[$i].stop
+            end)
+            if tot == :true
+                tot = quote $sym != 0 end
+            else
+                tot = quote $tot && ($sym != 0) end
+            end
+        end
+
+        loops = quote
+            @inbounds dest[$(idxs...)] = @inbounds src[$(idxs...)]
+        end
+
+        # for (sidx, lim) in zip(reverse(idxs), reverse(lims))
+        for (sidx, lim) in zip(idxs, lims)
+            loops = quote
+                let $sidx = 0
+                    @inbounds while true
+                        $sidx += 1
+                        $loops
+                        if $sidx == $lim
+                            break
+                        end
+                        $(Expr(:loopinfo, Symbol("julia.simdloop"), nothing))  # Mark loop as SIMD loop
+                    end
+                end
+            end
+        end
+
+        return quote
+            Base.@_inline_meta
+            $(exprs...)
+            if $tot
+                $loops
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            @inbounds @simd for I in idx
+                dest[I] = src[I]
+            end
+        end
+    end
 end
 
 # Override Base.copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}) with
 #  a form which provides better analysis of loop indices
 @inline function override_bc_copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{Nothing})
-	axdest = axes(dest)
-	axbc = axes(bc)
-    axdest == axbc || throwdm(axdest, axbc)
+	axdest = Base.axes(dest)
+	axbc = Base.axes(bc)
+    axdest == axbc || Base.Broadcast.throwdm(axdest, axbc)
 
-    if bc isa (NTuple{N, <:AbstractArray} where N)
-    	lbc = length(bc)
-    	if lbc > 0
-	        A = bc.args[1]
-	        if axdest == axes(A)
-	        	if lbc == 1 && bc.f === identity
-	            	unsafe_copyto!(dest, A)
-	            	return dest
-                elseif all(Base.Fix1(axes_eq, axdest), args[2:end])
-	                @inbounds @simd for I in eachindex(A)
-				        dest[I] = bc.f(A[I], map(Base.Fix2(getindex, I), args)...)
-				    end
-	            end
-	        end
-	    end
+    if bc.args isa Tuple{AbstractArray}
+        A = bc.args[1]
+        if axdest == Base.axes(A)
+            if lbc == 1 && bc.f === identity
+                Base.copyto!(dest, A)
+                return dest
+            end
+        end
     end
 
-    # This is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
-    bc′ = preprocess(dest, bc)
-    @inbounds @simd for I in eachindex(bc′)
-        dest[I] = bc′[I]
-    end
+    # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
+    src = Base.Broadcast.preprocess(dest, bc)
+    idx = Base.eachindex(src)
+    Enzyme.Compiler.Interpreter.lindex(idx, dest, src)
     return dest
 end
-
 
 function abstract_call_known(
     interp::EnzymeInterpreter,
@@ -421,12 +467,12 @@ function abstract_call_known(
         end
     end
         
-    @show f, argtypes
-    if f === Base.unsafe_copyto! && length(argtypes) == 3
-        @show f, arginfo, si, sv
-        if widenconst(argtypes[2]) <: AbstractArray &&
+    if f === Base.copyto! && length(argtypes) == 3
+        # Ideally we just override uses of the AbstractArray base class, but
+        # I don't know how to override the method in base, without accidentally overridding
+        # it for say CuArray or other users. For safety, we only override for Array
+        if widenconst(argtypes[2]) <: Array &&
            widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
-            @show fargs, argtypes
         
             arginfo2 = ArgInfo(
                 fargs isa Nothing ? nothing :
