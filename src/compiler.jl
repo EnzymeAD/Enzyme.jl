@@ -3704,6 +3704,16 @@ function annotate!(mod, mode)
             end
         end
     end
+    
+    for fname in ("jl_reshape_array", "ijl_reshape_array")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("readonly"))
+                push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("nocapture"))
+            end
+        end
+    end
+    
     # Key of jl_eqtable_get/put is inactive, definitionally
     for fname in ("jl_eqtable_put", "ijl_eqtable_put")
         if haskey(funcs, fname)
