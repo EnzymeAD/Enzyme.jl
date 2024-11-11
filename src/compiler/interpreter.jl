@@ -349,6 +349,42 @@ else
     end
 end
 
+@inline function axes_eq(val, A)
+	return val == axes(A)
+end
+
+# Override Base.copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}) with
+#  a form which provides better analysis of loop indices
+@inline function override_bc_copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{Nothing})
+	axdest = axes(dest)
+	axbc = axes(bc)
+    axdest == axbc || throwdm(axdest, axbc)
+
+    if bc isa (NTuple{N, <:AbstractArray} where N)
+    	lbc = length(bc)
+    	if lbc > 0
+	        A = bc.args[1]
+	        if axdest == axes(A)
+	        	if lbc == 1 && bc.f === identity
+	            	unsafe_copyto!(dest, A)
+	            	return dest
+                elseif all(Base.Fix1(axes_eq, axdest), args[2:end])
+	                @inbounds @simd for I in eachindex(A)
+				        dest[I] = bc.f(A[I], map(Base.Fix2(getindex, I), args)...)
+				    end
+	            end
+	        end
+	    end
+    end
+
+    # This is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
+    bc′ = preprocess(dest, bc)
+    @inbounds @simd for I in eachindex(bc′)
+        dest[I] = bc′[I]
+    end
+    return dest
+end
+
 
 function abstract_call_known(
     interp::EnzymeInterpreter,
@@ -381,6 +417,29 @@ function abstract_call_known(
                 Union{},
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
+            )
+        end
+    end
+        
+    @show f, argtypes
+    if f === Base.unsafe_copyto! && length(argtypes) == 3
+        @show f, arginfo, si, sv
+        if widenconst(argtypes[2]) <: AbstractArray &&
+           widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
+            @show fargs, argtypes
+        
+            arginfo2 = ArgInfo(
+                fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
+                [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
+            )
+            return abstract_call_known(
+                interp,
+                Enzyme.Compiler.Interpreter.override_bc_copyto!,
+                arginfo2,
+                si,
+                sv,
+                max_methods,
             )
         end
     end
