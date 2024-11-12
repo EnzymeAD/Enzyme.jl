@@ -71,8 +71,8 @@ end
 # Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
 # Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
 
-# include("abi.jl")
-# include("typetree.jl")
+include("abi.jl")
+include("typetree.jl")
 include("optimize.jl")
 
 include("rules.jl")

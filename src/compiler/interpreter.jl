@@ -681,16 +681,24 @@ end
     end
 end
 
+
+Base.@propagate_inbounds overload_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
+Base.@propagate_inbounds overload_broadcast_getindex(::Ref{Type{T}}, I) where {T} = T
+# Tuples are statically known to be singleton or vector-like
+Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
+Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
+Base.@propagate_inbounds overload_broadcast_getindex(A, I) = A[I]
+
 @inline function override_bc_materialize(bc)
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
     ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
     dest = similar(bc, ElType)
-
     if all(isa_array_or_number, bc.args) && same_sized(bc.args)
         @inbounds @simd for I in 1:length(bc)
-            dest[I] = Base.Broadcast._broadcast_getindex(bc, Base.CartesianIndex(I))
+            val = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+            dest[I] = val
         end
     else
         Base.copyto!(dest, bc)
