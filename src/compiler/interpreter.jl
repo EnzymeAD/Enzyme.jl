@@ -785,7 +785,7 @@ function abstract_call_known(
         
     if f === Base.materialize && length(argtypes) == 2
         bcty = widenconst(argtypes[2])
-        if bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters)
+        if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters)
             fnty = bcty.parameters[3]
             eltys = map(num_or_eltype, bcty.parameters[4].parameters)
             retty = Core.Compiler._return_type(interp, Tuple{fnty, eltys...})
