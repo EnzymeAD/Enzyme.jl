@@ -43,6 +43,7 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     forward_rules::Bool
     reverse_rules::Bool
     deferred_lower::Bool
+    broadcast_rewrite::Bool
     handler::T
 end
 
@@ -53,6 +54,7 @@ function EnzymeInterpreter(
     forward_rules::Bool,
     reverse_rules::Bool,
     deferred_lower::Bool = true,
+    broadcast_rewrite::Bool = true,
     handler = nothing
 )
     @assert world <= Base.get_world_counter()
@@ -79,6 +81,7 @@ function EnzymeInterpreter(
         forward_rules,
         reverse_rules,
         deferred_lower,
+        broadcast_rewrite,
         handler
     )
 end
@@ -89,8 +92,9 @@ EnzymeInterpreter(
     world::UInt,
     mode::API.CDerivativeMode,
     deferred_lower::Bool = true,
+    broadcast_rewrite::Bool = true,
     handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, handler)
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
 
 Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
 Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
@@ -782,51 +786,53 @@ function abstract_call_known(
             )
         end
     end
-        
-    if f === Base.materialize && length(argtypes) == 2
-        bcty = widenconst(argtypes[2])
-        if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters)
-            fnty = bcty.parameters[3]
-            eltys = map(num_or_eltype, bcty.parameters[4].parameters)
-            retty = Core.Compiler._return_type(interp, Tuple{fnty, eltys...})
-            if Base.isconcretetype(retty)
+    
+    if interp.broadcast_rewrite
+        if f === Base.materialize && length(argtypes) == 2
+            bcty = widenconst(argtypes[2])
+            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters)
+                fnty = bcty.parameters[3]
+                eltys = map(num_or_eltype, bcty.parameters[4].parameters)
+                retty = Core.Compiler._return_type(interp, Tuple{fnty, eltys...})
+                if Base.isconcretetype(retty)
+                    arginfo2 = ArgInfo(
+                        fargs isa Nothing ? nothing :
+                        [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
+                        [Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]...],
+                    )
+                    return abstract_call_known(
+                        interp,
+                        Enzyme.Compiler.Interpreter.override_bc_materialize,
+                        arginfo2,
+                        si,
+                        sv,
+                        max_methods,
+                    )
+                end
+            end
+        end
+
+        if f === Base.copyto! && length(argtypes) == 3
+            # Ideally we just override uses of the AbstractArray base class, but
+            # I don't know how to override the method in base, without accidentally overridding
+            # it for say CuArray or other users. For safety, we only override for Array
+            if widenconst(argtypes[2]) <: Array &&
+               widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
+            
                 arginfo2 = ArgInfo(
                     fargs isa Nothing ? nothing :
-                    [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
-                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]...],
+                    [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
                 )
                 return abstract_call_known(
                     interp,
-                    Enzyme.Compiler.Interpreter.override_bc_materialize,
+                    Enzyme.Compiler.Interpreter.override_bc_copyto!,
                     arginfo2,
                     si,
                     sv,
                     max_methods,
                 )
             end
-        end
-    end
-
-    if f === Base.copyto! && length(argtypes) == 3
-        # Ideally we just override uses of the AbstractArray base class, but
-        # I don't know how to override the method in base, without accidentally overridding
-        # it for say CuArray or other users. For safety, we only override for Array
-        if widenconst(argtypes[2]) <: Array &&
-           widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
-        
-            arginfo2 = ArgInfo(
-                fargs isa Nothing ? nothing :
-                [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
-                [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
-            )
-            return abstract_call_known(
-                interp,
-                Enzyme.Compiler.Interpreter.override_bc_copyto!,
-                arginfo2,
-                si,
-                sv,
-                max_methods,
-            )
         end
     end
 
