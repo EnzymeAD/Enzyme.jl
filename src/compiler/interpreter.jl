@@ -654,7 +654,7 @@ end
 @generated function same_sized(x::Tuple)
     result = :true
     prev = nothing
-    for i in 2:length(x.parameters)
+    for i in 1:length(x.parameters)
         if x.parameters[i] <: Number
             continue
         end
