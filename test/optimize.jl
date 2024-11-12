@@ -1,6 +1,18 @@
 using Enzyme, LinearAlgebra, Test
 using Random, Statistics
 
+# check that our broadcast interpreter fix is correct for scalars
+function bcast_sum(A)
+    s = 0.0
+    for i in 1:3
+        s += abs2.(A[i])
+    end
+    return s
+end
+@testset "Broadcast interpreter" begin
+    @test autodiff(Forward, bcast_sum, Duplicated([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]))[1] ≈ 28.0
+end
+
 function gcloaded_fixup(dest, src)
     N = size(src)
     dat = src.data
