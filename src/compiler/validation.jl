@@ -946,9 +946,9 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
-                try
+                res = try
                     if fn == "jl_lazy_load_and_lookup"
-                        res = ccall(
+                        ccall(
                             :jl_lazy_load_and_lookup,
                             Ptr{Cvoid},
                             (Any, Cstring),
@@ -956,7 +956,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                             fname,
                         )
                     else
-                        res = ccall(
+                        ccall(
                             :ijl_lazy_load_and_lookup,
                             Ptr{Cvoid},
                             (Any, Cstring),
@@ -965,6 +965,10 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                         )
                     end
                 catch
+                    nothing
+                end
+
+                if res == nothing
                     continue
                 end
                 
