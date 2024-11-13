@@ -946,22 +946,26 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
-                if fn == "jl_lazy_load_and_lookup"
-                    res = ccall(
-                        :jl_lazy_load_and_lookup,
-                        Ptr{Cvoid},
-                        (Any, Cstring),
-                        flib,
-                        fname,
-                    )
-                else
-                    res = ccall(
-                        :ijl_lazy_load_and_lookup,
-                        Ptr{Cvoid},
-                        (Any, Cstring),
-                        flib,
-                        fname,
-                    )
+                try
+                    if fn == "jl_lazy_load_and_lookup"
+                        res = ccall(
+                            :jl_lazy_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Any, Cstring),
+                            flib,
+                            fname,
+                        )
+                    else
+                        res = ccall(
+                            :ijl_lazy_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Any, Cstring),
+                            flib,
+                            fname,
+                        )
+                    end
+                catch
+                    continue
                 end
                 
                 replaceWith =
