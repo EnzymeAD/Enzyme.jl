@@ -7480,6 +7480,10 @@ end
                         function_attributes(wrapper_f),
                         StringAttribute("implements", llname),
                     )
+                    push!(
+                        function_attributes(wrapper_f),
+			StringAttribute("implements2", n * pf)
+                    )
                 end
             end
         end
@@ -7585,6 +7589,10 @@ end
                     push!(
                         function_attributes(wrapper_f),
                         StringAttribute("implements", llname),
+                    )
+                    push!(
+                        function_attributes(wrapper_f),
+			StringAttribute("implements2", n * pf)
                     )
                 end
             end
