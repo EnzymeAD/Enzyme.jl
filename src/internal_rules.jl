@@ -123,7 +123,6 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
 @inline EnzymeRules.inactive_type(v::Type{Char}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
-@inline EnzymeRules.inactive_type(v::Type{Function}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
