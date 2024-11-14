@@ -494,12 +494,31 @@ mutable struct ConstVal
     const y::Float64
 end
 
+struct WithIO{F}
+    v::Vector{Float64}
+    callback::F
+    function WithIO(v, io)
+        callback() = println(io, "hello")
+        return new{typeof(callback)}(v, callback)
+    end
+end
+
 @testset "Make Zero" begin
     v = ConstVal(2.0, 3.0)
     dv = make_zero(v)
     @test dv isa ConstVal
     @test dv.x ≈ 0.0
     @test dv.y ≈ 0.0
+
+    f = WithIO([1.0, 2.0], stdout)
+    df = @test_nowarn try
+        # catch errors to get failed test instead of "exception outside of a @test"
+        make_zero(f)
+    catch e
+        showerror(stderr, e)
+    end
+    @test df.v == [0.0, 0.0]
+    @test df.callback === f.callback
 end
 
 @testset "Type inference" begin
