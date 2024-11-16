@@ -1139,6 +1139,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 GTy
                             )
                             nphi = call!(nb, GTy, gcloaded, LLVM.Value[base_obj, nphi])
+                            if value_type(nphi) != ty
+                                nphi = bitcast!(nb, nphi, ty)
+                            end
                         end
                     else
                         nphi = addrspacecast!(nb, nphi, ty)
