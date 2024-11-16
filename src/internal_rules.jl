@@ -129,6 +129,7 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodMatch}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:IO} = true
 
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
