@@ -946,88 +946,94 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
-                if fn == "jl_lazy_load_and_lookup"
-                    res = ccall(
-                        :jl_lazy_load_and_lookup,
-                        Ptr{Cvoid},
-                        (Any, Cstring),
-                        flib,
-                        fname,
-                    )
-                else
-                    res = ccall(
-                        :ijl_lazy_load_and_lookup,
-                        Ptr{Cvoid},
-                        (Any, Cstring),
-                        flib,
-                        fname,
-                    )
-                end
-                
-                replaceWith =
-                    LLVM.ConstantInt(LLVM.IntType(8 * sizeof(Int)), reinterpret(UInt, res))
-                for u in LLVM.uses(inst)
-                    st = LLVM.user(u)
-                    if isa(st, LLVM.StoreInst) &&
-                       LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
-                        ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
-                        for u in LLVM.uses(ptr)
-                            ld = LLVM.user(u)
-                            if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder()
-                                position!(b, ld)
-                                for u in LLVM.uses(ld)
-                                    u = LLVM.user(u)
-                                    if isa(u, LLVM.CallInst)
-                                        push!(calls, u)
-                                    end
-                                end
-                                replace_uses!(
-                                    ld,
-                                    LLVM.inttoptr!(b, replaceWith, value_type(inst)),
-                                )
-                            end
-                        end
-                    end
-                end
-
-                b = IRBuilder()
-                position!(b, inst)
-                replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
-                for u in LLVM.uses(inst)
-                    u = LLVM.user(u)
-                    if isa(u, LLVM.CallInst)
-                        push!(calls, u)
-                    end
-                    if isa(u, LLVM.PHIInst)
-                        if all(
-                            x -> first(x) == inst || first(x) == replacement,
-                            LLVM.incoming(u),
+                res = try
+                    if fn == "jl_lazy_load_and_lookup"
+                        ccall(
+                            :jl_lazy_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Any, Cstring),
+                            flib,
+                            fname,
                         )
+                    else
+                        ccall(
+                            :ijl_lazy_load_and_lookup,
+                            Ptr{Cvoid},
+                            (Any, Cstring),
+                            flib,
+                            fname,
+                        )
+                    end
+                catch
+                    nothing
+                end
 
-                            for u in LLVM.uses(u)
-                                u = LLVM.user(u)
-                                if isa(u, LLVM.CallInst)
-                                    push!(calls, u)
-                                end
-                                if isa(u, LLVM.BitCastInst)
-                                    for u1 in LLVM.uses(u)
-                                        u1 = LLVM.user(u1)
-                                        if isa(u1, LLVM.CallInst)
-                                            push!(calls, u1)
+                if res != nothing
+                    replaceWith =
+                        LLVM.ConstantInt(LLVM.IntType(8 * sizeof(Int)), reinterpret(UInt, res))
+                    for u in LLVM.uses(inst)
+                        st = LLVM.user(u)
+                        if isa(st, LLVM.StoreInst) &&
+                           LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                            ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
+                            for u in LLVM.uses(ptr)
+                                ld = LLVM.user(u)
+                                if isa(ld, LLVM.LoadInst)
+                                    b = IRBuilder()
+                                    position!(b, ld)
+                                    for u in LLVM.uses(ld)
+                                        u = LLVM.user(u)
+                                        if isa(u, LLVM.CallInst)
+                                            push!(calls, u)
                                         end
                                     end
                                     replace_uses!(
-                                        u,
-                                        LLVM.inttoptr!(b, replaceWith, value_type(u)),
+                                        ld,
+                                        LLVM.inttoptr!(b, replaceWith, value_type(inst)),
                                     )
                                 end
                             end
                         end
                     end
+    
+                    b = IRBuilder()
+                    position!(b, inst)
+                    replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
+                    for u in LLVM.uses(inst)
+                        u = LLVM.user(u)
+                        if isa(u, LLVM.CallInst)
+                            push!(calls, u)
+                        end
+                        if isa(u, LLVM.PHIInst)
+                            if all(
+                                x -> first(x) == inst || first(x) == replacement,
+                                LLVM.incoming(u),
+                            )
+    
+                                for u in LLVM.uses(u)
+                                    u = LLVM.user(u)
+                                    if isa(u, LLVM.CallInst)
+                                        push!(calls, u)
+                                    end
+                                    if isa(u, LLVM.BitCastInst)
+                                        for u1 in LLVM.uses(u)
+                                            u1 = LLVM.user(u1)
+                                            if isa(u1, LLVM.CallInst)
+                                                push!(calls, u1)
+                                            end
+                                        end
+                                        replace_uses!(
+                                            u,
+                                            LLVM.inttoptr!(b, replaceWith, value_type(u)),
+                                        )
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    replace_uses!(inst, replacement)
+                    LLVM.API.LLVMInstructionEraseFromParent(inst)
                 end
-                replace_uses!(inst, replacement)
-                LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
         elseif fn == "julia.call" || fn == "julia.call2"
             dest = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 0))
