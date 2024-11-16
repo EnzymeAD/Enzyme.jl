@@ -82,7 +82,7 @@ end
     out = BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.0)))
     in = BatchDuplicated(Ref(2.0), (Ref(0.0), Ref(0.0)))
     # TODO: Not yet supported: Enzyme custom rule of batch size=2, and active return EnzymeCore.Active{Float64}
-    @test_throws EnzymeRuntimeException Enzyme.autodiff(Enzyme.Reverse, fip_2, out, in)
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Enzyme.Reverse, fip_2, out, in)
     @test_broken in.dvals[1][] ≈ 104.0
     @test_broken in.dvals[1][] ≈ 42.0
 end
