@@ -734,6 +734,14 @@ end
         are_activities_compatible(Tret, Tret, Tv) || continue
         test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
+
+    # Test with a const output and active α and β
+    (_,_,_,dα, dβ), = autodiff(Reverse, LinearAlgebra.mul!, Const, Const(C), Const(M), Const(v), Active(α), Active(β))
+    @test dα ≈ 0
+    @test dβ ≈ 0
+
+
+
 end
 
 @testset "SparseArrays spmatmat reverse rule" begin
@@ -754,6 +762,12 @@ end
         are_activities_compatible(Tret, Tv) || continue
         test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
+
+    # Test with a const output and active α and β
+    (_,_,_,dα, dβ), = autodiff(Reverse, LinearAlgebra.mul!, Const, Const(C), Const(M), Const(v), Active(α), Active(β))
+    @test dα ≈ 0
+    @test dβ ≈ 0
+
 end
 
 end # InternalRules
