@@ -2037,7 +2037,8 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove, keepret::B
             end
             if !keepret && LLVM.API.LLVMIsAReturnInst(cur) != C_NULL
                 LLVM.API.LLVMSetOperand(cur, 0, LLVM.UndefValue(value_type(cval)))
-	    end
+                continue
+	        end
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
     end
