@@ -585,7 +585,8 @@ f(x) = x*x
 ) where {
     FA<:Annotation,
     A<:Annotation,
-} where {ReturnPrimal,RABI<:ABI,Nargs,ErrIfFuncWritten,RuntimeActivity}
+    ReturnPrimal,RABI<:Union{FFIABI, InlineABI, NonGenABI},Nargs,ErrIfFuncWritten,RuntimeActivity
+}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
