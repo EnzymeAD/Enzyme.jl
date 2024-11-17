@@ -846,8 +846,33 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
         end
     else
         # C is constant so there is no gradient information to compute
-        dα = zero(α.val)
-        dβ = zero(β.val)
+
+        dα = if !isa(α, Const)
+            if N == 1
+                zero(α.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(α.val)
+                end
+            end
+        else
+            nothing
+        end
+
+
+        dβ = if !isa(β, Const)
+            if N == 1
+                zero(β.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(β.val)
+                end
+            end
+        else
+            nothing
+        end
     end
    
     return (nothing, nothing, nothing, dα, dβ)
