@@ -32,10 +32,12 @@ function inout_rule(
         if (direction & API.DOWN) != 0
             ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
-            if GPUCompiler.deserves_retbox(typ)
-                typ = Ptr{typ}
-            end
             rest = typetree(typ, ctx, dl)
+            if GPUCompiler.deserves_retbox(typ)
+                rest = copy(rest)
+                merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                only!(rest, -1)
+            end
             changed, legal = API.EnzymeCheckedMergeTypeTree(ret, rest)
             @assert legal
         end
@@ -72,10 +74,12 @@ function inoutcopyslice_rule(
         if (direction & API.DOWN) != 0
             ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
-            if GPUCompiler.deserves_retbox(typ)
-                typ = Ptr{typ}
-            end
             rest = typetree(typ, ctx, dl)
+            if GPUCompiler.deserves_retbox(typ)
+                rest = copy(rest)
+                merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                only!(rest, -1)
+            end
             changed, legal = API.EnzymeCheckedMergeTypeTree(ret, rest)
             @assert legal
         end
@@ -112,10 +116,12 @@ function inoutgcloaded_rule(
         if (direction & API.DOWN) != 0
             ctx = LLVM.context(inst)
             dl = string(LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst)))))
-            if GPUCompiler.deserves_retbox(typ)
-                typ = Ptr{typ}
-            end
             rest = typetree(typ, ctx, dl)
+            if GPUCompiler.deserves_retbox(typ)
+                rest = copy(rest)
+                merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                only!(rest, -1)
+            end
             changed, legal = API.EnzymeCheckedMergeTypeTree(ret, rest)
             @assert legal
         end

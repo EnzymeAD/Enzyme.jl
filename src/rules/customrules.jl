@@ -1179,6 +1179,10 @@ end
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
+            if width != 1
+                emit_error(B, orig, "Not yet supported: Enzyme custom rule of batch size=$width, and active return $RT")
+                return tapeV
+            end
 
             llty = convert(LLVMType, RT)
 

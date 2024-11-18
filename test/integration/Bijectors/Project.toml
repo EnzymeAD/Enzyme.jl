@@ -1,0 +1,9 @@
+[deps]
+Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
+
+[compat]
+Bijectors = "=0.13.16"
+FiniteDifferences = "0.12.32"
+StableRNGs = "1.0.2"

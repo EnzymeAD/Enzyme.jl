@@ -254,7 +254,11 @@ function typetree_inner(
     dl,
     seen::TypeTreeTable,
 ) where {T}
-    tt = copy(typetree(T, ctx, dl, seen))
+    tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
+    if !allocatedinline(T) && Base.isconcretetype(T)
+        merge!(tt, TypeTree(API.DT_Pointer, ctx))
+        only!(tt, 0)
+    end
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
     return tt
@@ -264,13 +268,8 @@ end
     function typetree_inner(::Type{<:Array{T}}, ctx, dl, seen::TypeTreeTable) where {T}
         offset = 0
 
-        tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T) && Base.isconcretetype(T)
-            merge!(tt, TypeTree(API.DT_Pointer, ctx))
-            only!(tt, 0)
-        end
-        merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, offset)
+        tt = copy(typetree(Ptr{T}, ctx, dl, seen))
+        shift!(tt, dl, 0, sizeof(Int), offset)
 
         offset += sizeof(Ptr{Cvoid})
 
@@ -291,14 +290,8 @@ else
         dl,
         seen::TypeTreeTable,
     ) where {kind,T}
-        offset = 0
-        tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T) && Base.isconcretetype(T)
-            merge!(tt, TypeTree(API.DT_Pointer, ctx))
-            only!(tt, 0)
-        end
-        merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, sizeof(Csize_t))
+        tt = copy(typetree(Ptr{T}, ctx, dl, seen))
+        shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
 
         for i = 0:(sizeof(Csize_t)-1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
@@ -312,14 +305,8 @@ else
         dl,
         seen::TypeTreeTable,
     ) where {kind,T}
-        offset = 0
-        tt = copy(typetree(T, ctx, dl, seen))
-        if !allocatedinline(T) && Base.isconcretetype(T)
-            Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
-            only!(tt, 0)
-        end
-        Enzyme.merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, 0)
+        tt = copy(typetree(Ptr{T}, ctx, dl, seen))
+        shift!(tt, dl, 0, sizeof(Int), 0)
 
         for f = 2:fieldcount(AT)
             offset = fieldoffset(AT, f)

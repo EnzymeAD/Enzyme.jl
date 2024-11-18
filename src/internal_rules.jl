@@ -123,13 +123,13 @@ Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = no
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
 @inline EnzymeRules.inactive_type(v::Type{Char}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
-@inline EnzymeRules.inactive_type(v::Type{Function}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodMatch}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:IO} = true
 
 # Note all of these forward mode definitions do not support runtime activity as
 # the do not keep the primal if shadow(x.y) == primal(x.y)
@@ -843,6 +843,35 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
             else
                 dCs[i] .*= β.val
             end
+        end
+    else
+        # C is constant so there is no gradient information to compute
+
+        dα = if !isa(α, Const)
+            if N == 1
+                zero(α.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(α.val)
+                end
+            end
+        else
+            nothing
+        end
+
+
+        dβ = if !isa(β, Const)
+            if N == 1
+                zero(β.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(β.val)
+                end
+            end
+        else
+            nothing
         end
     end
    
