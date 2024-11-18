@@ -107,6 +107,8 @@ struct Field{LX}
 end
 
 @testset "Mixed Unstable Return" begin	
+	grid = 1.0
+	data = 2.0
 	f1 = Field{Center}(grid, data)
 	f2 = Field{Center}(grid, data)
 	f3 = Field{Center}(grid, data)
