@@ -107,6 +107,11 @@ struct Field{LX}
 end
 
 @testset "Mixed Unstable Return" begin	
+	f1 = Field{Center}(grid, data)
+	f2 = Field{Center}(grid, data)
+	f3 = Field{Center}(grid, data)
+	f4 = Field{Center}(grid, data)
+	f5 = Field{Nothing}(grid, data)
 	thing = (f1, f2, f3, f4, f5)
 	dthing = Enzyme.make_zero(thing)
 
