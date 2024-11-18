@@ -4491,12 +4491,17 @@ function create_abi_wrapper(
                     push!(sret_types, AnonymousStruct(NTuple{width,literal_rt}))
                 end
             elseif rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
+                rty = if Base.isconcretetype(literal_rt)
+                    Base.RefValue{literal_rt}
+                else
+                    (Base.RefValue{T} where T <: literal_rt)
+                end
                 if width == 1
-                    push!(sret_types, Base.RefValue{literal_rt})
+                    push!(sret_types, rty)
                 else
                     push!(
                         sret_types,
-                        AnonymousStruct(NTuple{width,Base.RefValue{literal_rt}}),
+                        AnonymousStruct(NTuple{width,rty}),
                     )
                 end
             end
@@ -4633,6 +4638,7 @@ function create_abi_wrapper(
         convty = convert(LLVMType, T′; allow_boxed = true)
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
+            @assert Base.isconcretetype(T′)
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, params[i], al)
@@ -4692,6 +4698,7 @@ function create_abi_wrapper(
             parmsi = params[i]
 
             if T <: BatchMixedDuplicated
+                @assert Base.isconcretetype(T′)
                 if GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{T′}})
                     njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
                     parmsi = bitcast!(
@@ -4812,26 +4819,37 @@ function create_abi_wrapper(
                         for idx = 1:width
                             pv =
                                 (width == 1) ? eval : extract_value!(builder, eval, idx - 1)
-                            al0 =
+                            irt = eltype(rettype)
+                            ires = if Base.isconcretetype(irt)
                                 al = emit_allocobj!(
                                     builder,
                                     Base.RefValue{eltype(rettype)},
                                     "batchmixedret",
                                 )
-                            llty = value_type(pv)
-                            al = bitcast!(
-                                builder,
-                                al,
-                                LLVM.PointerType(llty, addrspace(value_type(al))),
-                            )
-                            store!(builder, pv, al)
-                            emit_writebarrier!(
-                                builder,
-                                get_julia_inner_types(builder, al0, pv),
-                            )
+                                al0 = al
+                                llty = value_type(pv)
+                                al = bitcast!(
+                                    builder,
+                                    al,
+                                    LLVM.PointerType(llty, addrspace(value_type(al))),
+                                )
+                                store!(builder, pv, al)
+                                emit_writebarrier!(
+                                    builder,
+                                    get_julia_inner_types(builder, al0, pv),
+                                )
+                                al0
+                            else
+                                # emit_allocobj!(
+                                #     builder,
+                                #     emit_apply_type!(builder, Base.RefValue, [emit_jltypeof!(builder, pv)]),
+                                #     "batchmixedret",
+                                # )
+                                pv
+                            end
                             ival =
-                                (width == 1) ? al0 :
-                                insert_value!(builder, ival, al0, idx - 1)
+                                (width == 1) ? ires :
+                                insert_value!(builder, ival, ires, idx - 1)
                         end
                         eval = ival
                     end
@@ -8223,11 +8241,21 @@ end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
                 push!(sret_types, jlRT)
             elseif rettype <: MixedDuplicated
-                push!(sret_types, Base.RefValue{jlRT})
+                rty = if Base.isconcretetype(jlRT)
+                    Base.RefValue{jlRT}
+                else
+                    (Base.RefValue{T} where T <: jlRT)
+                end
+                push!(sret_types, rty)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
                 push!(sret_types, AnonymousStruct(NTuple{width,jlRT}))
             elseif rettype <: BatchMixedDuplicated
-                push!(sret_types, AnonymousStruct(NTuple{width,Base.RefValue{jlRT}}))
+                rty = if Base.isconcretetype(jlRT)
+                    Base.RefValue{jlRT}
+                else
+                    (Base.RefValue{T} where T <: jlRT)
+                end
+                push!(sret_types, AnonymousStruct(NTuple{width,rty}))
             elseif CC <: AugmentedForwardThunk
                 push!(sret_types, Nothing)
             elseif rettype <: Const
@@ -8362,6 +8390,7 @@ end
         fn = LLVM.name(llvm_f)
 
         @assert length(types) == length(ccexprs)
+
 
         if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
             return quote
