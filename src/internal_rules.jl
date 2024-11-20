@@ -733,7 +733,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
                                       func::Const{typeof(LinearAlgebra.mul!)},
                                       ::Type{RT}, 
                                       C::Annotation{<:StridedVecOrMat},
-                                      A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                                      A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
                                       B::Annotation{<:StridedVecOrMat},
                                       α::Annotation{<:Number},
                                       β::Annotation{<:Number}
@@ -761,7 +761,10 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
                 && !(typeof(C) <: Const)
                 ) ? copy(A.val) : nothing
     
-    # cache_B = ( EnzymeRules.overwritten(config)[6]) ? copy(B.val) : nothing
+    cache_B = ( EnzymeRules.overwritten(config)[6] 
+                && !(typeof(A) <: Const) 
+                && !(typeof(C) <: Const)
+               ) ? copy(B.val) : nothing
 
     if !isa(α, Const)
         cache_α = A.val*B.val
@@ -769,7 +772,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
         cache_α = nothing
     end
     
-    cache = (cache_C, cache_A, cache_α)
+    cache = (cache_C, cache_A, cache_B, cache_α)
 
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
@@ -778,16 +781,16 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
                              func::Const{typeof(LinearAlgebra.mul!)},
                              ::Type{RT}, cache,
                              C::Annotation{<:StridedVecOrMat},
-                             A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                             A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
                              B::Annotation{<:StridedVecOrMat},
                              α::Annotation{<:Number},
                              β::Annotation{<:Number}
                              ) where {RT}
 
-    cache_C, cache_A, cache_α = cache
+    cache_C, cache_A, cache_B, cache_α = cache
     Cval = !isnothing(cache_C) ? cache_C : C.val
     Aval = !isnothing(cache_A) ? cache_A : A.val
-    # Bval = !isnothing(cache_B) ? cache_B : B.val
+    Bval = !isnothing(cache_B) ? cache_B : B.val
 
     N = EnzymeRules.width(config)
     if !isa(C, Const)
@@ -821,13 +824,28 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
         end
 
         for i in 1:N
-            # This rule is incorrect since you need to project dA to have the same
-            # sparsity pattern as A.
-            # if !isa(A, Const)
-            #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-            #     #dA .+= α*dC*B'
-            #     mul!(dA, dC, Bval', α.val, true)
-            # end
+            if !isa(A, Const)
+                if N==1
+                    dCss = (dCs,)
+                else
+                    dCss = dCs
+                end
+
+                # TODO fix so that we don't materialize the full matrix
+                # You need to be careful so that dA sparsity pattern does not change. Otherwise 
+                # you will get incorrect gradients. So for now we do the slow and bad way of accumulating
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
+                dC = dCss[i]
+                dAtmp = dC*Bval'
+                dAtmp .*= α.val
+                # Now accumulate to preserve the correct sparsity pattern
+                I, J, _ = SparseArrays.findnz(dA)
+                for i in eachindex(I, J)
+                    Ii, Ji = I[i], J[i]
+                    dA[Ii, Ji] += dAtmp[Ii, Ji]
+                end
+                # mul!(dA, dCs, Bval', α.val, true)
+            end
 
             if !isa(B, Const)
                 #dB .+= α*A'*dC

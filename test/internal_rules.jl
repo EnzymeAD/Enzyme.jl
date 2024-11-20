@@ -721,17 +721,18 @@ end
     α = 2.0
     β = 1.0
 
-    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
         Tα in (Const, Active), Tβ in (Const, Active)
 
-        are_activities_compatible(Tret, Tret, Tv, Tα, Tβ) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+        are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
 
     end
 
 
-    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
-        are_activities_compatible(Tret, Tret, Tv) || continue
+    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
+        Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+        are_activities_compatible(Tret, Tret, TM, Tv) || continue
         test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 
@@ -740,6 +741,16 @@ end
     @test dα ≈ 0
     @test dβ ≈ 0
 
+
+    A = sprand(6, 6, 0.2, k->ones(k))
+    dA = Enzyme.make_zero(A)
+    B = collect(1:6)
+    dB = Enzyme.make_zero(B)
+    C = zeros(6)
+    dC = ones(6)
+
+
+    autodiff(Reverse, mul!, Const, Duplicated(C, dC), Duplicated(A, dA), Duplicated(B, dB))
 
 
 end
@@ -751,15 +762,18 @@ end
     α = 2.0
     β = 1.0
 
-    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
         Tα in (Const, Active), Tβ in (Const, Active)
 
-        are_activities_compatible(Tret, Tv, Tα, Tβ) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (α, Tα), (β, Tβ))
+        are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
+        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+
     end
 
-    for Tret in (Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
-        are_activities_compatible(Tret, Tv) || continue
+
+    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
+        Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+        are_activities_compatible(Tret, Tret, TM, Tv) || continue
         test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
     end
 
