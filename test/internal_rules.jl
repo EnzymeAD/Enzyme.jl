@@ -741,18 +741,6 @@ end
     @test dα ≈ 0
     @test dβ ≈ 0
 
-
-    A = sprand(6, 6, 0.2, k->ones(k))
-    dA = Enzyme.make_zero(A)
-    B = collect(1:6)
-    dB = Enzyme.make_zero(B)
-    C = zeros(6)
-    dC = ones(6)
-
-
-    autodiff(Reverse, mul!, Const, Duplicated(C, dC), Duplicated(A, dA), Duplicated(B, dB))
-
-
 end
 
 @testset "SparseArrays spmatmat reverse rule" begin

@@ -825,24 +825,20 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
 
         for i in 1:N
             if !isa(A, Const)
-                if N==1
-                    dCss = (dCs,)
-                else
-                    dCss = dCs
-                end
-
-                # TODO fix so that we don't materialize the full matrix
+                # dA .+= αdC*B'
                 # You need to be careful so that dA sparsity pattern does not change. Otherwise 
                 # you will get incorrect gradients. So for now we do the slow and bad way of accumulating
-                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-                dC = dCss[i]
-                dAtmp = dC*Bval'
-                dAtmp .*= α.val
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[i]
+                dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[i]
                 # Now accumulate to preserve the correct sparsity pattern
                 I, J, _ = SparseArrays.findnz(dA)
-                for i in eachindex(I, J)
-                    Ii, Ji = I[i], J[i]
-                    dA[Ii, Ji] += dAtmp[Ii, Ji]
+                for k in eachindex(I, J)
+                    Ik, Jk = I[k], J[k]
+                    tmp = zero(eltype(dA))
+                    for ti in axes(dC,2)
+                        tmp += dC[Ik, ti]*Bval[Jk, ti]
+                    end
+                    dA[Ik, Jk] += α.val*tmp
                 end
                 # mul!(dA, dCs, Bval', α.val, true)
             end
