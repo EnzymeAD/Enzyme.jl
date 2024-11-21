@@ -363,6 +363,8 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         eltype(A)
     end
 
+    @show rt, FTy, tt, A
+
     if A <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             forward, adjoint = autodiff_thunk(
@@ -484,6 +486,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
     ) #=ShadowInit=#
+    @show thunk
 
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt))
@@ -523,17 +526,14 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
     args::Vararg{Annotation,Nargs},
 ) where {FA<:Annotation,CMode<:Mode,Nargs}
     tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
-    rt = if mode isa ReverseMode
-        Compiler.primal_return_type(
-            mode,
-            Val(codegen_world_age(eltype(FA), tt)),
-            eltype(FA),
-            tt,
-        )
-    else
-        Core.Compiler.return_type(f.val, tt)
-    end
+    rt = Compiler.primal_return_type(
+        mode,
+        Val(codegen_world_age(eltype(FA), tt)),
+        eltype(FA),
+        tt,
+    )
     A = guess_activity(rt, mode)
+    @show rt, A, tt, FA
     autodiff(mode, f, A, args...)
 end
 
@@ -694,6 +694,7 @@ code, as well as high-order differentiation.
         end
     end
 
+    @show rmode, FA, A, args, rt
 
     ModifiedBetweenT = falses_from_args(Nargs + 1)
     ModifiedBetween = Val(ModifiedBetweenT)
@@ -769,6 +770,9 @@ code, as well as high-order differentiation.
 
     thunk =
         Compiler.CombinedAdjointThunk{Ptr{Cvoid},FA,A2,tt′,width,ReturnPrimal}(adjoint_ptr)
+
+    @show thunk
+
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt))
     elseif A <: Duplicated ||
@@ -787,7 +791,7 @@ Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compil
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    ::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    fmode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -835,7 +839,7 @@ code, as well as high-order differentiation.
     world = codegen_world_age(Core.Typeof(f.val), tt)
 
     if RT isa UnionAll
-        rt = Core.Compiler.return_type(f.val, tt)
+        rt = Compiler.primal_return_type(fmode, Val(world), FA, tt)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -2232,7 +2236,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
 ```
 """
 @inline function jacobian(
-    ::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    rmode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
     f::F,
     x::X;
     n_outs::OutType = nothing,
@@ -2286,14 +2290,14 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         XT = Core.Typeof(x)
         MD = Compiler.active_reg_inner(XT, (), nothing, Val(true)) == Compiler.ActiveState #=justActive=#
         tt = Tuple{XT}
-        rt = if f isa Const
-            Core.Compiler.return_type(f.val, tt)
+        FRT  = if f isa Const
+            Core.Typeof(f.val)
         else
-            Core.Compiler.return_type(f, tt)
+            Core.Typeof(f)
         end
+        rt = Compiler.primal_return_type(rmode, Val(codegen_world_age(FRT, tt)), FA, tt)
 
         ModifiedBetweenT = (false, false)
-        FRT = Core.Typeof(f)
         FA = Const{FRT}
 
         if chunk == Val(1) || chunk == nothing

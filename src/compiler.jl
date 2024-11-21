@@ -3117,14 +3117,35 @@ end
             false,
         )
     else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
+        # Enzyme.Compiler.GLOBAL_REV_CACHE
+        GPUCompiler.CodeCache()
     end
 
     interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
-    res = Core.Compiler._return_type(interp, Tuple{FT,TT.parameters...})
+    # res = Core.Compiler._return_type(interp, Tuple{FT,TT.parameters...})
+    @show FT, TT, world, mode
+    @show interp.deferred_lower
+
+    rt = Union{}
+    seen = false
+    for match in Core.Compiler._methods_by_ftype(Tuple{FT, TT.parameters...}, -1, world)::Vector
+        match = match::Core.Compiler.MethodMatch
+        @show match, match.method, match.spec_types, match.sparams
+        ty = Core.Compiler.typeinf_type(interp, match.method, match.spec_types, match.sparams)
+        @show ty
+        seen = true
+        if ty === nothing 
+            rt = Any
+            break
+        end
+        rt = Core.Compiler.tmerge(rt, ty)
+        rt === Any && break
+    end
+    ccall(:jl_, Any, (Any,), (rt, seen))
+
     return quote
         Base.@_inline_meta
-        $res
+        $rt
     end
 end
 
@@ -3142,7 +3163,7 @@ end
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=always_inline=#
             EnzymeCompilerParams,
-            false,
+            true,
         )
     else
         Enzyme.Compiler.GLOBAL_FWD_CACHE
@@ -8379,6 +8400,12 @@ end
             r = load!(builder, eltype(value_type(callparams[1])), callparams[1])
         end
 
+        ccall(:jl_, Any, (Any,), (CC, rettype))
+
+        if CC <: PrimalErrorThunk && eltype(rettype) == Union{}
+            emit_error(builder, nothing, "The primal was expected to error, but oddly did not...")
+        end
+        
         if T_ret != T_void
             ret!(builder, r)
         else
@@ -8388,6 +8415,8 @@ end
 
         ir = string(mod)
         fn = LLVM.name(llvm_f)
+        
+        ccall(:jl_, Any, (Any,), ir)
 
         @assert length(types) == length(ccexprs)
 
