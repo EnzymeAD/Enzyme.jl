@@ -503,28 +503,103 @@ function autodiff_thunk end
 function autodiff_deferred_thunk end
 
 """
+    make_zero(prev::T, ::Val{copy_if_inactive}=Val(false))::T
     make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
 
-Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
-what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
+Recursively make a copy of the value `prev` of type `T` in which all differentiable values
+are set to zero. The argument `copy_if_inactive` specifies what to do if the type `T` or any
+of its constituent parts is guaranteed to be inactive: use `prev`s instance (the default) or
+make a copy.
+
+Extending this method for custom types is rarely needed. For new types that shouldn't be
+recursed into, such as a GPU array type, extending [`isvectortype`](@ref) is sufficient as
+long as the type implements `Base.zero`.
 """
 function make_zero end
 
 """
-    make_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+    make_zero!(val::T, seen::IdDict=IdDict())::Nothing
 
-Recursively set a variables differentiable fields to zero. Only applicable for mutable types `T`.
+Recursively set a variable's differentiable fields to zero. Only applicable for types `T`
+that are mutable or hold all differentiable values in mutable containers (e.g.,
+`Tuple{Vector{Float64}}`).
+
+Extending this method for custom types is rarely needed. For new mutable types that
+shouldn't be recursed into, such as a GPU array type, extending [`isvectortype`](@ref) is
+sufficient as long as the type implements `Base.zero` and `Base.fill!`.
 """
 function make_zero! end
 
 """
-    make_zero(prev::T)
+    isvectortype(::Type{T})::Bool
 
-Helper function to recursively make zero.
+Trait defining types whose values should be considered leaf nodes when [`make_zero`](@ref)
+and [`make_zero!`](@ref) recurse through an object.
+
+By default, `isvectortype(T) == true` for `T` such that `isscalartype(T) == true` or
+`T <: Union{Array{U},GenericMemory{_,U}}` where `isscalartype(U) == true`.
+
+A new leaf type, such as example a GPU array type, may extend this as follows:
+
+```julia
+@inline EnzymeCore.isvectortype(::Type{<:NewArray{U}}) where {U} = EnzymeCore.isscalartype(U)
+```
+
+Such a type should implement `Base.zero` and, if mutable, `Base.fill!`. (If this is not
+feasible, an alternative is to add methods `EnzymeCore.make_zero(arr::T)::T` and, if
+mutable, `EnzymeCore.make_zero!(arr::T)::Nothing`; such methods will also be picked up by
+recursive calls.)
+
+Such extensions are mostly relevant for the lowest-level of abstraction of memory at which
+vector space operations like addition and scalar multiplication are supported, the
+prototypical case being `Array`. Regular Julia structs with vector space-like semantics
+should normally not extend `isvectorspace`; `make_zero(!)` will recurse into them and act
+directly on their backing arrays, just like how Enzyme treats them when differentiating. For
+example, structured matrix wrappers and sparse array types that are backed by `Array` should
+not extend `isvectortype`.
+
+If a vector type `T` is also non-differentiable, `isvectortype` takes precedence, that is,
+`make_zero(!)` will attempt to zero its values rather than share/copy them (out-of-place) or
+skip them (in-place). This is for performance reasons, but should almost never be relevant
+for behavior, as the two traits should be mutually exclusive.
+
+See also [`isscalartype`](@ref).
 """
-@inline function make_zero(prev::T, ::Val{copy_if_inactive}=Val(false)) where {T, copy_if_inactive}
-    make_zero(Core.Typeof(prev), IdDict(), prev, Val(copy_if_inactive))
-end
+function isvectortype end
+
+"""
+    isscalartype(::Type{T})::Bool
+
+Trait defining a subset of [`isvectortype`](@ref) types that should not be considered
+composite, such that even if the type is mutable, [`make_zero!`](@ref) will not try to zero
+values of the type in-place. For example, `BigFloat` is a mutable type but does not support
+in-place mutation through any Julia API; `isscalartype(BigFloat) == true` ensures that
+`make_zero!` will not try to mutate `BigFloat` values.[^BigFloat]
+
+By default, `isscalartype(T) == true` for `T <: AbstractFloat` and
+`T <: Complex{<:AbstractFloat}`.
+
+A hypothetical new real number type with Enzyme support should in most cases simply subtype
+`AbstractFloat` and inherit the `isscalartype` trait that way. If this is not appropriate,
+the function can be extended as follows:
+
+```julia
+@inline EnzymeCore.isscalartype(::Type{<:NewReal}) = true
+@inline EnzymeCore.isscalartype(::Type{<:Complex{<:NewReal}}) = true
+```
+
+In either case, the type should implement `Base.zero`. (If this is not feasible, an
+alternative is to add a method `EnzymeCore.make_zero(x::T)::T`; such a method will also be
+picked up by recursive calls.)
+
+See also [`isvectortype`](@ref).
+
+[^BigFloat]: Enzyme does not support differentiating `BigFloat` as of this writing; it is
+mentioned here only to illustrate that it would be inappropriate to use traits like
+`ismutable` or `isbitstype` to choose between in-place and out-of-place zeroing,
+demonstrating the need for a dedicated `isscalartype` trait.
+"""
+function isscalartype end
 
 function tape_type end
 

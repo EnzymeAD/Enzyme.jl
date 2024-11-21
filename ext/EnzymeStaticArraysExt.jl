@@ -32,11 +32,15 @@ end
     end
 end
 
-@inline function Enzyme.EnzymeCore.make_zero(x::FT)::FT where {FT<:SArray}
-    return Base.zero(x)
-end
-@inline function Enzyme.EnzymeCore.make_zero(x::FT)::FT where {FT<:MArray}
-    return Base.zero(x)
+# SArrays and MArrays don't need special treatment for `make_zero(!)` to work or be correct,
+# but in case their dedicated `zero` and `fill!` methods are more efficient than
+# `make_zero(!)`s generic recursion, we opt into treating them as leaves when they have
+# isbits eltypes (non-isbits eltypes excluded as the dedicated `zero` and `fill!` methods
+# don't support those).
+@inline function Enzyme.EnzymeCore.isvectortype(
+    ::Type{<:Union{SArray{S,T},MArray{S,T}}}
+) where {S,T}
+    return isbitstype(T) && Enzyme.EnzymeCore.isscalartype(T)
 end
 
 end
