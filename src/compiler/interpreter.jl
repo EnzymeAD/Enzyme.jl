@@ -753,7 +753,7 @@ end
 end
 
 function abstract_call_known(
-    interp::EnzymeInterpreter,
+    @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
@@ -868,6 +868,8 @@ function abstract_call_known(
                 [:(Enzyme.autodiff_deferred), fargs[2:end]...],
                 [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...],
             )
+            ccall(:jl_, Any, (Any,), (f, argtypes, arginfo2, si, typeof(sv)))
+            # throw(AssertionError("wat"))
             return abstract_call_known(
                 interp,
                 Enzyme.autodiff_deferred,
@@ -881,6 +883,7 @@ function abstract_call_known(
     if interp.handler != nothing
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
+    # ccall(:jl_, Any, (Any,), (f, argtypes))
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
         f,
