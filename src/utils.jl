@@ -163,15 +163,17 @@ using Base: _methods_by_ftype
 function _generated_ex(world, source, ex)
     stub = Core.GeneratedFunctionStub(
         identity,
-        Core.svec(:methodinstance, :ft, :tt),
+        Core.svec(:methodinstance, :mode, :ft, :tt),
         Core.svec(),
     )
     stub(world, source, ex)
 end
 
-function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Type)
+function codegen_world_age_generator(world::UInt, source, self, mode::Type, ft::Type, tt::Type)
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
+    @assert mode <: Mode
+    mode = mode()
     ft = ft.parameters[1]
     tt = tt.parameters[1]
 
@@ -185,9 +187,12 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
+    #interp = primal_interp_world(mode, world)
+    #method_table = Core.Compiler.method_table(interp)
+    method_table = nothing
     mthds = Base._methods_by_ftype(
         sig,
-        nothing,
+        method_table,
         -1, #=lim=#
         world,
         false, #=ambig=#
@@ -230,8 +235,8 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     #      underlying C methods -- which GPUCompiler does, so everything Just Works.
 
     # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:3]
+    new_ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
+    new_ci.slotflags = UInt8[0x00 for i = 1:4]
 
     # return the codegen world age
     push!(new_ci.code, ReturnNode(world))
@@ -250,7 +255,7 @@ function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Ty
     return new_ci
 end
 
-@eval function codegen_world_age(ft, tt)
+@eval function codegen_world_age(mode, ft, tt)
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, codegen_world_age_generator))
 end

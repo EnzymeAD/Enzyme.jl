@@ -19,7 +19,7 @@ function get_job(
 
     tt = Tuple{map(eltype, types.parameters)...}
     if world === nothing
-        world = codegen_world_age(Core.Typeof(func), tt)
+        world = codegen_world_age(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt)
     end
 
     primal = fspec(Core.Typeof(func), types, world)

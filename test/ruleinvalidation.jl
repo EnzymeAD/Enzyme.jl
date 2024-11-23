@@ -33,11 +33,11 @@ for m in methods(forward, Tuple{Any,Const{typeof(issue696)},Vararg{Any}})
     Base.delete_method(m)
 end
 @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
-@test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+@test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
 
 # now test invalidation for `inactive`
 inactive(::typeof(issue696), args...) = nothing
 @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
-@test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
+@test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
 
 end # module

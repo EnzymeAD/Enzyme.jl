@@ -268,7 +268,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        world = codegen_world_age(FT, tt)
+        world = codegen_world_age(Forward, FT, tt)
         rt = Compiler.primal_return_type(Forward, Val(world), FT, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
@@ -286,7 +286,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             dupClosure = false
         end
 
-        opt_mi = Val(world)
+        opt_mi = Val(0)
         forward = thunk(
             opt_mi,
             dupClosure ? $dupty : Const{FT},
@@ -454,8 +454,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         
             tt = Tuple{$(ElTypes...)}
 
-            world = codegen_world_age(FT, tt)
-
+            world = codegen_world_age(Reverse, FT, tt)
             rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
@@ -466,7 +465,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             else
                 annotation0
             end
-            opt_mi = Val(world)
+            opt_mi = Val(0)
             forward, adjoint = thunk(
                 opt_mi,
                 dupClosure0 ? $dupty : Const{FT},
@@ -653,7 +652,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 false
             end
             tt = Tuple{$(ElTypes...)}
-            world = codegen_world_age(FT, tt)
+            world = codegen_world_age(Reverse, FT, tt)
             rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
@@ -673,7 +672,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 annotation0
             end
 
-            opt_mi = Val(world)
+            opt_mi = Val(0)
             _, adjoint = thunk(
                 opt_mi,
                 dupClosure0 ? $dupty : Const{FT},
@@ -998,7 +997,7 @@ function fwddiff_with_return(
 
     tt = Enzyme.vaEltypes(tt′)
 
-    world = codegen_world_age(FT, tt)
+    world = codegen_world_age(Forward, FT, tt)
     rt = Compiler.primal_return_type(Forward, Val(world), FT, tt)
     annotation0 = guess_activity(rt, API.DEM_ForwardMode)
 
@@ -1214,9 +1213,8 @@ function augfwd_with_return(
     tt = Enzyme.vaEltypes(tt′)
 
     internal_tape, origRet, initShadow = if f != Base.tuple
-        world = codegen_world_age(FT, tt)
-    
-        rt = Compiler.primal_return_type(Forward, Val(world), FT, tt)
+        world = codegen_world_age(Reverse, FT, tt)
+        rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
         annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         annotation = if width != 1
@@ -1565,7 +1563,7 @@ end
 
             tt = $tt
 
-            world = codegen_world_age(FT, tt)
+            world = codegen_world_age(Reverse, FT, tt)
             rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
             annotation = $annotation

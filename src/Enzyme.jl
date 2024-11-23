@@ -333,7 +333,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(
-    rmode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -361,7 +361,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     FTy = Core.Typeof(f.val)
 
     rt = if A isa UnionAll
-        Compiler.primal_return_type(rmode, Val(codegen_world_age(FTy, tt)), FTy, tt)
+        Compiler.primal_return_type(mode, Val(codegen_world_age(mode, FTy, tt)), FTy, tt)
     else
         eltype(A)
     end
@@ -403,7 +403,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), tt′)
     else
-        Val(codegen_world_age(FTy, tt))
+        Val(0)
     end
 
     if (A <: Active && rt <: Complex) && rt != Union{}
@@ -528,7 +528,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
     tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
     rt = Compiler.primal_return_type(
         mode,
-        Val(codegen_world_age(eltype(FA), tt)),
+        Val(codegen_world_age(mode, eltype(FA), tt)),
         eltype(FA),
         tt,
     )
@@ -577,7 +577,7 @@ f(x) = x*x
 ```
 """
 @inline function autodiff(
-    ::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -626,7 +626,7 @@ f(x) = x*x
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), tt′)
     else
-        Val(codegen_world_age(Core.Typeof(f.val), tt))
+        Val(0)
     end
 
     thunk = Enzyme.Compiler.thunk(
@@ -653,7 +653,7 @@ Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    rmode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -675,12 +675,12 @@ code, as well as high-order differentiation.
     tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
 
     FTy = Core.Typeof(f.val)
-    world = codegen_world_age(FTy, tt)
+    world = codegen_world_age(mode, FTy, tt)
 
     A2 = A
 
     if A isa UnionAll
-        rt = Compiler.primal_return_type(rmode, Val(world), FTy, tt)
+        rt = Compiler.primal_return_type(mode, Val(world), FTy, tt)
         A2 = A{rt}
         if rt == Union{}
             throw(ErrorException("Return type inferred to be Union{}. Giving up."))
@@ -786,7 +786,7 @@ Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compil
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    fmode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -832,10 +832,10 @@ code, as well as high-order differentiation.
     tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
 
     FT = Core.Typeof(f.val)
-    world = codegen_world_age(FT, tt)
+    world = codegen_world_age(mode, FT, tt)
 
     if RT isa UnionAll
-        rt = Compiler.primal_return_type(fmode, Val(world), FT, tt)
+        rt = Compiler.primal_return_type(mode, Val(world), FT, tt)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -914,7 +914,7 @@ result, ∂v, ∂A
 ```
 """
 @inline function autodiff_thunk(
-    rs::ReverseModeSplit{
+    mode::ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
@@ -963,7 +963,7 @@ result, ∂v, ∂A
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), tt′)
     else
-        Val(codegen_world_age(eltype(FA), tt))
+        Val(0)
     end
     Enzyme.Compiler.thunk(
         opt_mi,
@@ -1057,7 +1057,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 ```
 """
 @inline function autodiff_thunk(
-    ::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
     ::Type{FA},
     ::Type{A},
     args::Vararg{Type{<:Annotation},Nargs},
@@ -1093,7 +1093,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), tt′)
     else
-        Val(codegen_world_age(eltype(FA), tt))
+        Val(0)
     end
     results = Enzyme.Compiler.thunk(
         opt_mi,
@@ -1112,7 +1112,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 end
 
 @inline function tape_type(
-    ::ReverseModeSplit{
+    mode::ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
@@ -1161,7 +1161,7 @@ end
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), TT)
     else
-        Val(codegen_world_age(eltype(FA), primal_tt))
+        Val(0)
     end
     nondef = Enzyme.Compiler.thunk(
         opt_mi,
@@ -1193,7 +1193,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
 
 @inline function tape_type(
     parent_job::Union{GPUCompiler.CompilerJob,Nothing},
-    ::ReverseModeSplit{
+    mode::ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
@@ -1239,7 +1239,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
 
     primal_tt = Tuple{map(eltype, args)...}
 
-    world = codegen_world_age(eltype(FA), primal_tt)
+    world = codegen_world_age(mode, eltype(FA), primal_tt)
 
     mi = Compiler.fspec(eltype(FA), TT, world)
 
@@ -1377,7 +1377,7 @@ result, ∂v, ∂A
     TT = Tuple{args...}
 
     primal_tt = Tuple{map(eltype, args)...}
-    world = codegen_world_age(eltype(FA), primal_tt)
+    world = codegen_world_age(mode, eltype(FA), primal_tt)
     rt0 = Compiler.primal_return_type(mode, Val(world), eltype(FA), primal_tt)
 
     rt = Compiler.remove_innerty(A2){rt0}
@@ -2288,7 +2288,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             Core.Typeof(f)
         end
 
-        rt = Compiler.primal_return_type(mode, Val(codegen_world_age(FRT, tt)), FRT, tt)
+        rt = Compiler.primal_return_type(mode, Val(codegen_world_age(mode, FRT, tt)), FRT, tt)
 
         ModifiedBetweenT = (false, false)
         FA = Const{FRT}
