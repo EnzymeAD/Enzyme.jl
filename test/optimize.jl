@@ -144,6 +144,7 @@ end
 end
 
 module RetTypeMod
+    using Enzyme
     struct Stacked
     end
 
@@ -199,8 +200,8 @@ module RetTypeMod
         end
     end
 
-    @testset "Indirect function call return type analysis" begin
-        main()
-    end
+end
 
+@testset "Indirect function call return type analysis" begin
+    RetTypeMod.main()
 end
