@@ -3100,12 +3100,11 @@ Create the methodinstance pair, and lookup the primal return type.
     return primal
 end
 
-@generated function primal_return_type(
+function primal_return_type_world(
     ::ReverseMode,
-    ::Val{world},
-    ::Type{FT},
+    world,
     ::Type{TT},
-) where {world,FT,TT}
+) where {TT}
     mode = Enzyme.API.DEM_ReverseModeCombined
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
@@ -3121,19 +3120,14 @@ end
     end
 
     interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
-    res = Core.Compiler._return_type(interp, Tuple{FT,TT.parameters...})
-    return quote
-        Base.@_inline_meta
-        $res
-    end
+    Core.Compiler._return_type(interp, TT)
 end
 
-@generated function primal_return_type(
+function primal_return_type_world(
     ::ForwardMode,
-    ::Val{world},
-    ::Type{FT},
+    world,
     ::Type{TT},
-) where {world,FT,TT}
+) where {TT}
     mode = Enzyme.API.DEM_ForwardMode
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
@@ -3142,14 +3136,37 @@ end
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=always_inline=#
             EnzymeCompilerParams,
-            false,
+            true,
         )
     else
         Enzyme.Compiler.GLOBAL_FWD_CACHE
     end
 
     interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
-    res = Core.Compiler._return_type(interp, Tuple{FT,TT.parameters...})
+    Core.Compiler._return_type(interp, TT)
+end
+
+@inline primal_return_type_world(
+    ::ReverseModeSplit,
+    world,
+    fw::Type{FT},
+    tt::Type{TT},
+   ) where {FT,TT} = primal_return_type(Reverse, vw, fw, tt)
+
+primal_return_type_world(
+    mode::Mode,
+    world,
+    ::Type{FT},
+    ::Type{TT},
+   ) where {FT,TT} = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
+
+@generated function primal_return_type(
+    mode::Mode,
+    ::Val{world},
+    ::Type{FT},
+    ::Type{TT},
+) where {world,FT,TT}
+    res = primal_return_type_world(mode(), world, FT, TT)
     return quote
         Base.@_inline_meta
         $res

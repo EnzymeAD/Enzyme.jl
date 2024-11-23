@@ -24,7 +24,7 @@ function get_job(
 
     primal = fspec(Core.Typeof(func), types, world)
 
-    rt = Core.Compiler.return_type(func, tt, world)
+    rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing

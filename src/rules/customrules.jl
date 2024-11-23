@@ -527,7 +527,7 @@ end
         if EnzymeRules.isapplicable(kwfunc, TT; world)
             @safe_debug "Applying custom forward rule (kwcall)" TT
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
-            fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
+            fwd_RT = Compiler.primal_return_type_world(Forward, world, Core.Typeof(kwfunc), TT)
         else
             TT = Tuple{typeof(world),typeof(kwfunc),TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
@@ -538,7 +538,7 @@ end
         if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
             @safe_debug "Applying custom forward rule" TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
-            fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+            fwd_RT = Compiler.primal_return_type_world(Forward, world, typeof(EnzymeRules.forward), TT)
         else
             TT = Tuple{typeof(world),typeof(EnzymeRules.forward),TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
@@ -1030,7 +1030,7 @@ end
                 @safe_debug "Applying custom reverse rule (kwcall)" TT = rev_TT
                 try
                     llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+                    rev_RT = Compiler.primal_return_type_world(Reverse, world, Core.Typeof(rkwfunc), rev_TT)
                 catch e
                     rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
                     llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
@@ -1050,7 +1050,7 @@ end
                 @safe_debug "Applying custom reverse rule" TT = rev_TT
                 try
                     llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+                    rev_RT = Compiler.primal_return_type_world(Reverse, world, typeof(EnzymeRules.reverse), rev_TT)
                 catch e
                     rev_TT =
                         Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}

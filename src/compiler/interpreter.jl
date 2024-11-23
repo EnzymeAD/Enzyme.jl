@@ -96,31 +96,31 @@ EnzymeInterpreter(
     handler = nothing
 ) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
 
-Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
-Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
-get_inference_world(interp::EnzymeInterpreter) = interp.world
-Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
+Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
+Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
+get_inference_world(@nospecialize(interp::EnzymeInterpreter)) = interp.world
+Core.Compiler.get_inference_cache(@nospecialize(interp::EnzymeInterpreter)) = interp.local_cache
 @static if HAS_INTEGRATED_CACHE
-    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
+    Core.Compiler.cache_owner(@nospecialize(interp::EnzymeInterpreter)) = interp.token
 else
-    Core.Compiler.code_cache(interp::EnzymeInterpreter) =
+    Core.Compiler.code_cache(@nospecialize(interp::EnzymeInterpreter)) =
         WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
-Core.Compiler.lock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
-Core.Compiler.unlock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
+Core.Compiler.lock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
+Core.Compiler.unlock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
 
-Core.Compiler.may_optimize(::EnzymeInterpreter) = true
-Core.Compiler.may_compress(::EnzymeInterpreter) = true
+Core.Compiler.may_optimize(@nospecialize(::EnzymeInterpreter)) = true
+Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 # From @aviatesk:
 #     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
-Core.Compiler.may_discard_trees(::EnzymeInterpreter) = false
-Core.Compiler.verbose_stmt_info(::EnzymeInterpreter) = false
+Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
+Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
 
-Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
+Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
 function is_alwaysinline_func(@nospecialize(TT))
@@ -194,7 +194,7 @@ Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
 
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 function Core.Compiler.abstract_call_gf_by_type(
-    interp::EnzymeInterpreter,
+    @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
@@ -243,7 +243,7 @@ end
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
         sigs_ex = :(
-            interp::EnzymeInterpreter,
+            @nospecialize(interp::EnzymeInterpreter),
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt32,
@@ -256,7 +256,7 @@ let # overload `inlining_policy`
         )
     else
         sigs_ex = :(
-            interp::EnzymeInterpreter,
+            @nospecialize(interp::EnzymeInterpreter),
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt8,
@@ -753,7 +753,7 @@ end
 end
 
 function abstract_call_known(
-    interp::EnzymeInterpreter,
+    @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
