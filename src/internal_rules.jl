@@ -733,7 +733,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
                                       func::Const{typeof(LinearAlgebra.mul!)},
                                       ::Type{RT}, 
                                       C::Annotation{<:StridedVecOrMat},
-                                      A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                                      A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
                                       B::Annotation{<:StridedVecOrMat},
                                       α::Annotation{<:Number},
                                       β::Annotation{<:Number}
@@ -761,7 +761,10 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
                 && !(typeof(C) <: Const)
                 ) ? copy(A.val) : nothing
     
-    # cache_B = ( EnzymeRules.overwritten(config)[6]) ? copy(B.val) : nothing
+    cache_B = ( EnzymeRules.overwritten(config)[6] 
+                && !(typeof(A) <: Const) 
+                && !(typeof(C) <: Const)
+               ) ? copy(B.val) : nothing
 
     if !isa(α, Const)
         cache_α = A.val*B.val
@@ -769,7 +772,7 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
         cache_α = nothing
     end
     
-    cache = (cache_C, cache_A, cache_α)
+    cache = (cache_C, cache_A, cache_B, cache_α)
 
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
@@ -778,16 +781,16 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
                              func::Const{typeof(LinearAlgebra.mul!)},
                              ::Type{RT}, cache,
                              C::Annotation{<:StridedVecOrMat},
-                             A::Const{<:SparseArrays.SparseMatrixCSCUnion},
+                             A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
                              B::Annotation{<:StridedVecOrMat},
                              α::Annotation{<:Number},
                              β::Annotation{<:Number}
                              ) where {RT}
 
-    cache_C, cache_A, cache_α = cache
+    cache_C, cache_A, cache_B, cache_α = cache
     Cval = !isnothing(cache_C) ? cache_C : C.val
     Aval = !isnothing(cache_A) ? cache_A : A.val
-    # Bval = !isnothing(cache_B) ? cache_B : B.val
+    Bval = !isnothing(cache_B) ? cache_B : B.val
 
     N = EnzymeRules.width(config)
     if !isa(C, Const)
@@ -821,13 +824,24 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
         end
 
         for i in 1:N
-            # This rule is incorrect since you need to project dA to have the same
-            # sparsity pattern as A.
-            # if !isa(A, Const)
-            #     dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[b]
-            #     #dA .+= α*dC*B'
-            #     mul!(dA, dC, Bval', α.val, true)
-            # end
+            if !isa(A, Const)
+                # dA .+= αdC*B'
+                # You need to be careful so that dA sparsity pattern does not change. Otherwise 
+                # you will get incorrect gradients. So for now we do the slow and bad way of accumulating
+                dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[i]
+                dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[i]
+                # Now accumulate to preserve the correct sparsity pattern
+                I, J, _ = SparseArrays.findnz(dA)
+                for k in eachindex(I, J)
+                    Ik, Jk = I[k], J[k]
+                    tmp = zero(eltype(dA))
+                    for ti in axes(dC,2)
+                        tmp += dC[Ik, ti]*Bval[Jk, ti]
+                    end
+                    dA[Ik, Jk] += α.val*tmp
+                end
+                # mul!(dA, dCs, Bval', α.val, true)
+            end
 
             if !isa(B, Const)
                 #dB .+= α*A'*dC
@@ -843,6 +857,35 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
             else
                 dCs[i] .*= β.val
             end
+        end
+    else
+        # C is constant so there is no gradient information to compute
+
+        dα = if !isa(α, Const)
+            if N == 1
+                zero(α.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(α.val)
+                end
+            end
+        else
+            nothing
+        end
+
+
+        dβ = if !isa(β, Const)
+            if N == 1
+                zero(β.val)
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    zero(β.val)
+                end
+            end
+        else
+            nothing
         end
     end
    

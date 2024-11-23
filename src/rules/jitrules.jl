@@ -466,7 +466,6 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             else
                 annotation0
             end
-        
             opt_mi = Val(world)
             forward, adjoint = thunk(
                 opt_mi,
@@ -495,7 +494,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             )
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
-            shadow_return = $shadowretinit
+            shadow_return = if Base.isconcretetype(rt)
+                $shadowretinit
+            else
+                initShadow
+            end
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
                 shadow_return,
@@ -637,12 +640,12 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 
     quote
-        $(active_refs...)
-        args = ($(wrapped...),)
-        $(MakeTypes...)
-
         if f isa typeof(Core.getglobal)
         else
+            $(active_refs...)
+            args = ($(wrapped...),)
+            $(MakeTypes...)
+
             FT = Core.Typeof(f)
             dupClosure0 = if ActivityTup[1]
                 !guaranteed_const(FT)
@@ -652,6 +655,16 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
             tt = Tuple{$(ElTypes...)}
             world = codegen_world_age(FT, tt)
             rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+            annotation = if $Width != 1 && annotation0 <: Duplicated
+                BatchDuplicated{rt,$Width}
+            else
+                annotation0
+            end
+
+            rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
             annotation = if $Width != 1 && annotation0 <: Duplicated
@@ -1491,6 +1504,7 @@ end
                     if vec isa Base.RefValue
                         vecld = vec[]
                         T = Core.Typeof(vecld)
+                        @assert !(vecld isa Base.RefValue)
                         vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), expr)
                     else
                         val = @inbounds vec[idx_in_vec]

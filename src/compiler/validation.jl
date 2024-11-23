@@ -458,6 +458,19 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]
                 if !isa(opv, LLVM.GlobalVariable)
+                    for iv in instructions(last(blocks(initfn)))
+                        if !(isa, LLVM.StoreInst)
+                            continue
+                        end
+                        gv = operands(iv)[2]
+                        if !(isa, LLVM.GlobalVariable)
+                            continue
+                        end
+                        opv = gv
+                        break
+                    end
+                end
+                if !isa(opv, LLVM.GlobalVariable)
                     msg = sprint() do io::IO
                         println(
                             io,
@@ -564,6 +577,9 @@ function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
 
                     newf, _ = get_function!(mod, fused_name, FT)
                     
+                    while isa(newf, LLVM.ConstantExpr)
+                        newf = operands(newf)
+                    end
                     push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
                     # metadata(newf)["enzymejl_flib"] = flib

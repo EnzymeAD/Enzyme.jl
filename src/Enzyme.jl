@@ -688,8 +688,8 @@ code, as well as high-order differentiation.
     else
         @assert A isa DataType
         rt = A
-	if rt == Union{}
-	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
+        if rt == Union{}
+	          throw(ErrorException("Return type inferred to be Union{}. Giving up."))
         end
     end
 

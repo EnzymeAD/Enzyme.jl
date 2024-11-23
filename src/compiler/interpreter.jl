@@ -674,7 +674,7 @@ end
             end
         else
             result = quote
-                result && sz == size(x[$i])
+                $result && sz == size(x[$i])
             end
         end
     end
