@@ -1220,7 +1220,7 @@ function prepare_llvm(mod, job, meta)
         end
         llvmfn = functions(mod)[k_name]
 
-        RT = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+        RT = compute_rt(interp, mi)
 
         _, _, returnRoots = get_return_info(RT)
         returnRoots = returnRoots !== nothing
@@ -4741,7 +4741,7 @@ function create_abi_wrapper(
             funcspec = my_methodinstance(Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
-            Func_RT = Core.Compiler.typeinf_ext_toplevel(interp, funcspec).rettype
+            Func_RT = compute_rt(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
             _, psret, _ = get_return_info(Func_RT)
             args = LLVM.Value[]
@@ -8584,7 +8584,7 @@ end
         Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals),
         Any,
     )
-    rrt = Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+    rrt = compute_rt(interp, mi)
 
     run_enzyme = true
 

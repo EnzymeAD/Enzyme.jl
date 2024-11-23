@@ -2572,7 +2572,9 @@ function optimize!(mod::LLVM.Module, tm)
         add_transform_info!(pm, tm)
 
         propagate_julia_addrsp_tm!(pm, tm)
+@static if VERSION < v"1.12.0-DEV.1390"
         scoped_no_alias_aa!(pm)
+end
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
@@ -2592,7 +2594,9 @@ function optimize!(mod::LLVM.Module, tm)
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
+@static if VERSION < v"1.12.0-DEV.1390"
         scoped_no_alias_aa!(pm)
+end
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cpu_features_tm!(pm, tm)
@@ -2606,7 +2610,9 @@ function optimize!(mod::LLVM.Module, tm)
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
+@static if VERSION < v"1.12.0-DEV.1390"
         scoped_no_alias_aa!(pm)
+end
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cpu_features_tm!(pm, tm)
@@ -2681,7 +2687,9 @@ function optimize!(mod::LLVM.Module, tm)
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
+@static if VERSION < v"1.12.0-DEV.1390"
         scoped_no_alias_aa!(pm)
+end
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cpu_features_tm!(pm, tm)
@@ -2708,7 +2716,9 @@ function addOptimizationPasses!(pm, tm)
     constant_merge!(pm)
 
     propagate_julia_addrsp_tm!(pm, tm)
+@static if VERSION < v"1.12.0-DEV.1390"
     scoped_no_alias_aa!(pm)
+end
     type_based_alias_analysis!(pm)
     basic_alias_analysis!(pm)
     cfgsimplification!(pm)
