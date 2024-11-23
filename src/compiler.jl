@@ -3151,7 +3151,7 @@ end
     world,
     fw::Type{FT},
     tt::Type{TT},
-   ) where {FT,TT} = primal_return_type(Reverse, world, fw, tt)
+   ) where {FT,TT} = primal_return_type_world(Reverse, world, fw, tt)
 
 primal_return_type_world(
     mode::Mode,
