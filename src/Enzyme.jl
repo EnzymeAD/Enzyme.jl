@@ -854,7 +854,7 @@ code, as well as high-order differentiation.
 
     adjoint_ptr = Compiler.deferred_codegen(
         Val(world),
-        FT,
+        Core.Typeof(f),
         Val(tt′),
         Val(rt),
         Val(API.DEM_ForwardMode),
