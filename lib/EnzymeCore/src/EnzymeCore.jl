@@ -598,7 +598,7 @@ Return a new mode with its [`ABI`](@ref) set to the chosen type.
 function set_abi end
 
 """
-    split_mode(
+    Split(
         ::ReverseMode, [::Val{ReturnShadow}, ::Val{Width}, ::Val{ModifiedBetween}, ::Val{ShadowInit}]
     )
 
@@ -607,9 +607,9 @@ The rest of the settings can be configured with optional positional arguments of
 
 This function acts as the identity on a [`ReverseModeSplit`](@ref).
 
-See also [`combined_mode`](@ref).
+See also [`Combined`](@ref).
 """
-function split_mode(
+function Split(
     ::ReverseMode{
         ReturnPrimal,
         RuntimeActivity,
@@ -646,18 +646,18 @@ function split_mode(
     return mode_split
 end
 
-split_mode(mode::ReverseModeSplit, args...) = mode
+Split(mode::ReverseModeSplit, args...) = mode
 
 """
-    combined_mode(::ReverseMode)
+    Combined(::ReverseMode)
 
 Turn a [`ReverseModeSplit`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
 
 This function acts as the identity on a [`ReverseMode`](@ref).
 
-See also [`split_mode`](@ref).
+See also [`Split`](@ref).
 """
-function combined_mode(
+function Combined(
     ::ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
@@ -690,7 +690,7 @@ function combined_mode(
     return mode_unsplit
 end
 
-combined_mode(mode::ReverseMode) = mode
+Combined(mode::ReverseMode) = mode
 
 """
     Primitive Type usable within Reactant. See Reactant.jl for more information.
