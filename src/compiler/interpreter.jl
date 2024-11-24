@@ -214,11 +214,12 @@ function Core.Compiler.abstract_call_gf_by_type(
     callinfo = ret.info
     method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
-    caller = if callinfo.results isa Core.Compiler.MethodLookupResult
+    caller = if callinfo isa Core.Compiler.MethodMatchInfo && callinfo.results isa Core.Compiler.MethodLookupResult
         callinfo.results
     else
         nothing
     end
+
     if is_primitive_func(specTypes)
         callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
     elseif is_alwaysinline_func(specTypes)
