@@ -950,7 +950,7 @@ using .JIT
 
 include("jlrt.jl")
 
-AnyArray(Length::Int) = NamedTuple{ntuple(i -> Symbol(i), Val(Length)),NTuple{Length,Any}}
+AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
 struct EnzymeRuntimeException <: Base.Exception
     msg::Cstring
@@ -1435,7 +1435,7 @@ function julia_sanitize(
                 print(io, "\nCaused by:")
                 Base.show_backtrace(io, bt)
             end
-            stringv *= sprint(io -> Base.show_backtrace(io, bt))
+            stringv *= sprint(Base.Fix2(Base.show_backtrace, bt))
         end
 
         fn, _ = get_function!(mod, "julia.sanitize." * string(ty), FT)
@@ -1883,7 +1883,7 @@ end
                 end
             end
            
-            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(x->isa(x, LLVM.ConstantInt), operands(cur)[2:end]))
+            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end]))
                 lhs = make_replacement(operands(cur)[1], prevbb)
                 if illegal
                     return ncur
@@ -2809,7 +2809,7 @@ function emit_inacterror(B, V, orig)
     mod = LLVM.parent(fn)
 
     bt = GPUCompiler.backtrace(orig)
-    bts = sprint(io -> Base.show_backtrace(io, bt))
+    bts = sprint(Base.Fix2(Base.show_backtrace, bt))
     fmt = globalstring_ptr!(B, "%s:\nBacktrace\n" * bts)
 
     funcT = LLVM.FunctionType(
@@ -3101,8 +3101,8 @@ Create the methodinstance pair, and lookup the primal return type.
 end
 
 function primal_interp_world(
-    ::ReverseMode,
-    world
+    @nospecialize(::ReverseMode),
+    world::UInt
 )
     mode = Enzyme.API.DEM_ReverseModeCombined
 
@@ -3122,8 +3122,8 @@ function primal_interp_world(
 end
 
 function primal_interp_world(
-    ::ForwardMode,
-    world
+    @nospecialize(::ForwardMode),
+    world::UInt
 )
     mode = Enzyme.API.DEM_ForwardMode
 
@@ -3143,35 +3143,131 @@ function primal_interp_world(
 end
 
 @inline primal_interp_world(
-    ::ReverseModeSplit,
-    world) = primal_interp_world(Reverse, world)
+    @nospecialize(::ReverseModeSplit),
+    world::UInt) = primal_interp_world(Reverse, world)
 
 function primal_return_type_world(
-    mode::Mode,
-    world,
-    ::Type{TT},
-) where {TT}
+    @nospecialize(mode::Mode),
+    world::UInt,
+    @nospecialize(TT::Type),
+)
     Core.Compiler._return_type(primal_interp_world(mode, world), TT)
 end
 
-primal_return_type_world(
-    mode::Mode,
-    world,
-    ::Type{FT},
-    ::Type{TT},
-   ) where {FT,TT} = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
+function primal_return_type_world(
+    @nospecialize(mode::Mode),
+    world::UInt,
+    mi::Core.MethodInstance,
+)
+    interp = primal_interp_world(mode, world)
+    something(
+        Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals),
+        Any,
+    )
+end
 
-@generated function primal_return_type(
-    mode::Mode,
-    ::Val{world},
-    ::Type{FT},
-    ::Type{TT},
-) where {world,FT,TT}
-    res = primal_return_type_world(mode(), world, FT, TT)
-    return quote
-        Base.@_inline_meta
-        $res
+primal_return_type_world(
+    @nospecialize(mode::Mode),
+    world::UInt,
+    @nospecialize(FT::Type),
+    @nospecialize(TT::Type),
+   ) = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
+
+function primal_return_type_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
+    @nospecialize
+    @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
+    @assert mode <: Mode
+    mode = mode()
+    ft = ft.parameters[1]
+    tt = tt.parameters[1]
+
+    # validation
+    ft <: Core.Builtin &&
+        error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
+
+    # look up the method
+    method_error = :(throw(MethodError(ft, tt, $world)))
+    sig = Tuple{ft,tt.parameters...}
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
+    #interp = primal_interp_world(mode, world)
+    #method_table = Core.Compiler.method_table(interp)
+    method_table = nothing
+    mthds = Base._methods_by_ftype(
+        sig,
+        method_table,
+        -1, #=lim=#
+        world,
+        false, #=ambig=#
+        min_world,
+        max_world,
+        has_ambig,
+    )
+    stub = Core.GeneratedFunctionStub(
+        identity,
+        Core.svec(:methodinstance, :mode, :ft, :tt),
+        Core.svec(),
+    )
+    mthds === nothing && return stub(world, source, method_error)
+    length(mthds) == 1 || return stub(world, source, method_error)
+
+    # look up the method and code instance
+    mtypes, msp, m = mthds[1]
+    mi = ccall(
+        :jl_specializations_get_linfo,
+        Ref{Core.MethodInstance},
+        (Any, Any, Any),
+        m,
+        mtypes,
+        msp,
+    )
+    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
+
+    # prepare a new code info
+    new_ci = copy(ci)
+    empty!(new_ci.code)
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
     end
+    empty!(new_ci.ssaflags)
+    new_ci.ssavaluetypes = 0
+    new_ci.min_world = min_world[]
+    new_ci.max_world = max_world[]
+    new_ci.edges = Core.MethodInstance[mi]
+    # XXX: setting this edge does not give us proper method invalidation, see
+    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
+    #      invoking `code_llvm` also does the necessary codegen, as does calling the
+    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+
+    # prepare the slots
+    new_ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
+    new_ci.slotflags = UInt8[0x00 for i = 1:4]
+
+    # return the codegen world age
+    res = primal_return_type_world(mode, world, mi)
+    push!(new_ci.code, Core.Compiler.ReturnNode(res))
+    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
+    new_ci.ssavaluetypes += 1
+
+    # NOTE: we keep the first entry of the original linetable, and use it for location info
+    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
+    #       corruption of the back trace), and reusing the target function's info
+    #       has as advantage that we see the name of the kernel in the backtraces.
+
+    return new_ci
+end
+
+@eval @inline function primal_return_type(mode::Mode, ft::Type, tt::Type)
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, primal_return_type_generator))
 end
 
 ##
@@ -8868,8 +8964,8 @@ import GPUCompiler: deferred_codegen_jobs
 @generated function deferred_codegen(
     ::Val{World},
     ::Type{FA},
-    ::Val{TT},
-    ::Val{A},
+    ::Type{A},
+    ::Type{TT},
     ::Val{Mode},
     ::Val{width},
     ::Val{ModifiedBetween},
@@ -8892,90 +8988,154 @@ import GPUCompiler: deferred_codegen_jobs
     ErrIfFuncWritten,
     RuntimeActivity,
 }
-    JuliaContext() do ctx
-        Base.@_inline_meta
-        mi = fspec(eltype(FA), TT, World)
-        target = EnzymeTarget()
+end
 
-        rt2 = if A isa UnionAll
-            params = EnzymeCompilerParams(
-                Tuple{FA,TT.parameters...},
-                Mode,
-                width,
-                remove_innerty(A),
-                true,
-                true,
-                ModifiedBetween,
-                ReturnPrimal,
-                ShadowInit,
-                ExpectedTapeType,
-                FFIABI,
-                ErrIfFuncWritten,
-                RuntimeActivity,
-            ) #=abiwrap=#
-            tmp_job = Compiler.CompilerJob(
-                mi,
-                CompilerConfig(target, params; kernel = false),
-                World,
-            )
+function deferred_generator(world::UInt, source::LineNumberNode, FA::Type, A::Type, TT::Type, Mode::Enzyme.API.CDerivativeMode, Width::Int, ModifiedBetween::(NTuple{N, Bool} where N), ReturnPrimal::Bool, ShadowInit::Bool, ExpectedTapeType::Type, ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+    @nospecialize
+    
+    parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity)
+    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, parmnames...), Core.svec())
 
-            interp = GPUCompiler.get_interpreter(tmp_job)
+    ft = eltype(FA)
+    primal_tt = Tuple{map(eltype, TT.parameters)...}
+    # look up the method match
+    method_error = :(throw(MethodError($ft, $primal_tt, $world)))
+    sig = Tuple{ft, primal_tt.parameters...}
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
+                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
+                  sig, #=mt=# nothing, world, min_world, max_world)
+    match === nothing && return stub(world, source, method_error)
 
-            rrt = something(
-                Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals),
-                Any,
-            )
+    # look up the method and code instance
+    mi = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance},
+               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+ 
+    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
-            # Don't error here but default to nothing return since in cuda context we don't use the device overrides
-            if rrt == Union{}
-                rrt = Nothing
-            end
-
-            if !(A <: Const) && guaranteed_const_nongen(rrt, World)
-                estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-                return quote
-                    error($estr)
-                end
-            end
-            A{rrt}
-        else
-            @assert A isa DataType
-            A
-        end
-
-        params = EnzymeCompilerParams(
-            Tuple{FA,TT.parameters...},
-            Mode,
-            width,
-            rt2,
-            true,
-            true,
-            ModifiedBetween,
-            ReturnPrimal,
-            ShadowInit,
-            ExpectedTapeType,
-            FFIABI,
-            ErrIfFuncWritten,
-            RuntimeActivity,
-        ) #=abiwrap=#
-        job =
-            Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), World)
-
-        addr = get_trampoline(job)
-        id = Base.reinterpret(Int, pointer(addr))
-        deferred_codegen_jobs[id] = job
-
-        quote
-            Base.@_inline_meta
-            ccall(
-                "extern deferred_codegen",
-                llvmcall,
-                Ptr{Cvoid},
-                (Ptr{Cvoid},),
-                $(reinterpret(Ptr{Cvoid}, id)),
-            )
-        end
+    # prepare a new code info
+    new_ci = copy(ci)
+    empty!(new_ci.code)
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
     end
+    empty!(new_ci.ssaflags)
+    new_ci.ssavaluetypes = 0
+    # new_ci.min_world = min_world[]
+    new_ci.min_world = world
+    new_ci.max_world = max_world[]
+    new_ci.edges = Core.MethodInstance[mi]
+    # XXX: setting this edge does not give us proper method invalidation, see
+    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
+    #      invoking `code_llvm` also does the necessary codegen, as does calling the
+    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+        
+    target = EnzymeTarget()
+
+    rt2 = if A isa UnionAll
+        rrt = primal_return_type_world(Mode, world, mi)
+
+        # Don't error here but default to nothing return since in cuda context we don't use the device overrides
+        if rrt == Union{}
+            rrt = Nothing
+        end
+
+        if !(A <: Const) && guaranteed_const_nongen(rrt, world)
+            estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
+            return quote
+                error($estr)
+            end
+        end
+        A{rrt}
+    else
+        @assert A isa DataType
+        A
+    end
+
+    params = EnzymeCompilerParams(
+        Tuple{FA,TT.parameters...},
+        Mode,
+        width,
+        rt2,
+        true,
+        true,
+        ModifiedBetween,
+        ReturnPrimal,
+        ShadowInit,
+        ExpectedTapeType,
+        FFIABI,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+    ) #=abiwrap=#
+    job =
+        Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
+
+    addr = get_trampoline(job)
+    id = Base.reinterpret(Int, pointer(addr))
+    deferred_codegen_jobs[id] = job
+
+    res = quote
+        ccall(
+            "extern deferred_codegen",
+            llvmcall,
+            Ptr{Cvoid},
+            (Ptr{Cvoid},),
+            $(reinterpret(Ptr{Cvoid}, id)),
+        )
+    end
+
+    # prepare the slots
+    new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
+    new_ci.slotflags = UInt8[0x00 for i = 1:length(new_ci.slotnames)]
+
+    # return the codegen world age
+    push!(new_ci.code, res)
+    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
+    new_ci.ssavaluetypes += 1
+
+    # NOTE: we keep the first entry of the original linetable, and use it for location info
+    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
+    #       corruption of the back trace), and reusing the target function's info
+    #       has as advantage that we see the name of the kernel in the backtraces.
+
+    return new_ci
+end
+
+@eval @inline function deferred_codegen(
+    fa::Type{FA},
+    a::Type{A},
+    tt::Type{TT},
+    mode::Val{Mode},
+    width::Val{Width},
+    modifiedbetween::Val{ModifiedBetween},
+    returnprimal::Val{ReturnPrimal},
+    shadowinit::Val{ShadowInit},
+    expectedtapetype::Type{ExpectedTapeType},
+    erriffuncwritten::Val{ErrIfFuncWritten},
+    runtimeactivity::Val{RuntimeActivity},
+) where {
+    FA<:Annotation,
+    A<:Annotation,
+    TT,
+    Mode,
+    Width,
+    ModifiedBetween,
+    ReturnPrimal,
+    ShadowInit,
+    ExpectedTapeType,
+    ErrIfFuncWritten,
+    RuntimeActivity,
+}
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, deferred_generator))
 end
 
 include("compiler/reflection.jl")

@@ -268,8 +268,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
-        world = codegen_world_age(Forward, FT, tt)
-        rt = Compiler.primal_return_type(Forward, Val(world), FT, tt)
+        rt = Compiler.primal_return_type(Forward, FT, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -286,9 +285,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             dupClosure = false
         end
 
-        opt_mi = Val(0)
         forward = thunk(
-            opt_mi,
+            Val(0),
             dupClosure ? $dupty : Const{FT},
             annotation,
             tt′,
@@ -454,8 +452,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
         
             tt = Tuple{$(ElTypes...)}
 
-            world = codegen_world_age(Reverse, FT, tt)
-            rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
             annotationA = if $Width != 1 && annotation0 <: Duplicated
@@ -465,9 +462,8 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             else
                 annotation0
             end
-            opt_mi = Val(0)
             forward, adjoint = thunk(
-                opt_mi,
+                Val(0),
                 dupClosure0 ? $dupty : Const{FT},
                 annotationA,
                 Tuple{$(Types...)},
@@ -652,8 +648,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 false
             end
             tt = Tuple{$(ElTypes...)}
-            world = codegen_world_age(Reverse, FT, tt)
-            rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
             annotation = if $Width != 1 && annotation0 <: Duplicated
@@ -662,19 +657,8 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 annotation0
             end
 
-            rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
-
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-            annotation = if $Width != 1 && annotation0 <: Duplicated
-                BatchDuplicated{rt,$Width}
-            else
-                annotation0
-            end
-
-            opt_mi = Val(0)
             _, adjoint = thunk(
-                opt_mi,
+                Val(0),
                 dupClosure0 ? $dupty : Const{FT},
                 annotation,
                 Tuple{$(Types...)},
@@ -997,8 +981,7 @@ function fwddiff_with_return(
 
     tt = Enzyme.vaEltypes(tt′)
 
-    world = codegen_world_age(Forward, FT, tt)
-    rt = Compiler.primal_return_type(Forward, Val(world), FT, tt)
+    rt = Compiler.primal_return_type(Forward, FT, tt)
     annotation0 = guess_activity(rt, API.DEM_ForwardMode)
 
     annotation = if width != 1
@@ -1129,15 +1112,13 @@ end
 ) where {Ann,Nargs}
     expr = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
-        @inbounds expr[i] = quote
-            @assert !(args[$i] isa Active)
-            if args[$i] isa Const
-                args[$i].val
-            elseif args[$i] isa MixedDuplicated
-                args[$i].dval[]
-            else
-                args[$i].dval
-            end
+        @assert !(args[i] <: Active)
+        @inbounds expr[i] = if args[i] <: Const
+            :(args[$i].val)
+        elseif args[i] <: MixedDuplicated
+            :(args[$i].dval[])
+        else
+            :(args[$i].dval)
         end
     end
     rval = :(($(expr...),))
@@ -1159,15 +1140,13 @@ end
     for w = 1:width
         expr = Vector{Expr}(undef, Nargs)
         for i = 1:Nargs
-            @inbounds expr[i] = quote
-                @assert !(args[$i] isa Active)
-                if args[$i] isa Const
-                    args[$i].val
-                elseif args[$i] isa BatchMixedDuplicated
-                    args[$i].dval[$w][]
-                else
-                    args[$i].dval[$w]
-                end
+            @assert !(args[i] <: Active)
+            @inbounds expr[i] = if args[i] <: Const
+                :(args[$i].val)
+            elseif args[i] <: BatchMixedDuplicated
+                :(args[$i].dval[$w][])
+            else
+                :(args[$i].dval[$w])
             end
         end
         rval = :(($(expr...),))
@@ -1212,8 +1191,7 @@ function augfwd_with_return(
     tt = Enzyme.vaEltypes(tt′)
 
     internal_tape, origRet, initShadow = if f != Base.tuple
-        world = codegen_world_age(Reverse, FT, tt)
-        rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+        rt = Compiler.primal_return_type(Reverse, FT, tt)
         annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
 
         annotation = if width != 1
@@ -1266,22 +1244,22 @@ function augfwd_with_return(
         ) #=erriffuncwritten=#
         forward(fa, args...)
     else
-        annotation = guess_activity(tt, API.DEM_ReverseModePrimal)
+        annotation0 = guess_activity(tt, API.DEM_ReverseModePrimal)
         nothing,
         primal_tuple(args...),
-        annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
+        annotation0 <: Active ? nothing : shadow_tuple(annotation0, Val(width), args...)
     end
 
     resT = typeof(origRet)
 
-    if annotation <: Const
+    if annotation0 <: Const
         shadow_return = nothing
         tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
             internal_tape,
             shadow_return,
         )
         return ReturnType((allSame(Val(width + 1), origRet)..., tape))
-    elseif annotation <: Active
+    elseif annotation0 <: Active
         shadow_return = if width == 1
             Ref(make_zero(origRet))
         else
@@ -1299,7 +1277,7 @@ function augfwd_with_return(
     end
 
     if width == 1
-        if annotation <: MixedDuplicated
+        if annotation0 <: MixedDuplicated
             shadow_return = initShadow
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
@@ -1315,7 +1293,7 @@ function augfwd_with_return(
             return ReturnType((origRet, initShadow, tape))
         end
     else
-        if annotation <: BatchMixedDuplicated
+        if annotation0 <: MixedDuplicated
             shadow_return = initShadow
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
@@ -1453,60 +1431,54 @@ end
 
     nontupexprs = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
-        mid = if width == 1
-            :(tape.shadow_return[][$i])
-        else
-            mexprs = Vector{Expr}(undef, width)
-            for w = 1:width
-                @inbounds mexprs[w] = :(tape.shadow_return[$w][][$i])
-            end
-            quote
-                ($(mexprs...),)
-            end
-        end
-
-        @inbounds nontupexprs[i] = quote
-            if args[$i] isa Active ||
-               args[$i] isa MixedDuplicated ||
-               args[$i] isa BatchMixedDuplicated
-                $mid
+        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated 
+            if width == 1
+                :(tape.shadow_return[][$i])
             else
-                nothing
+                mexprs = Vector{Expr}(undef, width)
+                for w = 1:width
+                    @inbounds mexprs[w] = :(tape.shadow_return[$w][][$i])
+                end
+                quote
+                    ($(mexprs...),)
+                end
             end
+        else
+            :nothing
         end
     end
 
     endexprs = Matrix{Expr}(undef, Nargs, width)
     for i = 1:Nargs
         for w = 1:width
-            @inbounds endexprs[i, w] = quote
-                if args[$i] isa Active ||
-                   args[$i] isa MixedDuplicated ||
-                   args[$i] isa BatchMixedDuplicated
-                    expr = if args[$i] isa Active || f == Base.tuple
-                        if $width == 1
-                            tup[$i]
-                        else
-                            tup[$i][$w]
-                        end
-                    elseif args[$i] isa MixedDuplicated
-                        args[$i].dval[]
+            @inbounds endexprs[i, w] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
+                expr = if args[i] <: Active || f <: typeof(Base.tuple)
+                    if width == 1
+                        :(tup[$i])
                     else
-                        # if args[$i] isa BatchMixedDuplicated
-                        args[$i].dval[$w][]
+                        :(tup[$i][$w])
                     end
+                elseif args[i] <: MixedDuplicated
+                    :(args[$i].dval[])
+                else
+                    :(args[$i].dval[$w][])
+                end
 
+                quote
                     idx_of_vec, idx_in_vec = $(lengths[i])
                     vec = @inbounds shadowargs[idx_of_vec][$w]
                     if vec isa Base.RefValue
                         vecld = vec[]
                         T = Core.Typeof(vecld)
                         @assert !(vecld isa Base.RefValue)
-                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), expr)
+                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), $expr)
                     else
                         val = @inbounds vec[idx_in_vec]
-                        add_into_vec!(Base.inferencebarrier(val), expr, vec, idx_in_vec)
+                        add_into_vec!(Base.inferencebarrier(val), $expr, vec, idx_in_vec)
                     end
+                end
+            else
+                quote
                 end
             end
         end
@@ -1562,8 +1534,7 @@ end
 
             tt = $tt
 
-            world = codegen_world_age(Reverse, FT, tt)
-            rt = Compiler.primal_return_type(Reverse, Val(world), FT, tt)
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
             annotation = $annotation
 
@@ -1572,7 +1543,6 @@ end
             else
                 Const(f)
             end
-            opt_mi = Val(world)
             forward, adjoint = thunk(
                 Val(0),
                 FA,

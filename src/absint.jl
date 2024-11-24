@@ -250,7 +250,7 @@ function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=fals
             continue
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
-           all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+            all(Base.Fix2(isa, LLVM.ConstantInt), operands(larg)[2:end])
             b = LLVM.IRBuilder()
             position!(b, larg)
             offty = LLVM.IntType(8 * sizeof(Int))
@@ -727,7 +727,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(Base.Fix2(isa, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break
@@ -739,7 +739,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	    if isa(ce, LLVM.GlobalVariable)
 	        ce = LLVM.initializer(ce)
 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
+                return (true, String(map(Base.Fix1(convert, UInt8), collect(ce)[1:(end-1)])))
 		    end
 
 	    end

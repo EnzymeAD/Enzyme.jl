@@ -161,6 +161,15 @@ end
     )...}
 end
 
+@inline function vaEltypeof(args::Vararg{Any,N}) where {N}
+    return Tuple{(
+        ntuple(Val(N)) do i
+            Base.@_inline_meta
+            eltype(Core.Typeof(args[i]))
+        end
+    )...}
+end
+
 @inline function vaEltypes(args::Type{Ty}) where {Ty<:Tuple}
     return Tuple{(
         ntuple(Val(length(Ty.parameters))) do i
@@ -356,12 +365,12 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ModifiedBetweenT = falses_from_args(Nargs + 1)
     ModifiedBetween = Val(ModifiedBetweenT)
 
-    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
+    tt = vaEltypeof(args...)
 
     FTy = Core.Typeof(f.val)
 
     rt = if A isa UnionAll
-        Compiler.primal_return_type(mode, Val(codegen_world_age(mode, FTy, tt)), FTy, tt)
+        Compiler.primal_return_type(mode, FTy, tt)
     else
         eltype(A)
     end
@@ -525,10 +534,9 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
     f::FA,
     args::Vararg{Annotation,Nargs},
 ) where {FA<:Annotation,CMode<:Mode,Nargs}
-    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
+    tt = vaEltypeof(args...)
     rt = Compiler.primal_return_type(
         mode,
-        Val(codegen_world_age(mode, eltype(FA), tt)),
         eltype(FA),
         tt,
     )
@@ -621,7 +629,7 @@ f(x) = x*x
 
     ModifiedBetween = Val(falses_from_args(Nargs + 1))
 
-    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
+    tt = vaEltypeof(args...)
 
     opt_mi = if RABI <: NonGenABI
         Compiler.fspec(eltype(FA), tt′)
@@ -672,15 +680,14 @@ code, as well as high-order differentiation.
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
+    tt′ = vaEltypeof(args...)
 
     FTy = Core.Typeof(f.val)
-    world = codegen_world_age(mode, FTy, tt)
 
     A2 = A
 
     if A isa UnionAll
-        rt = Compiler.primal_return_type(mode, Val(world), FTy, tt)
+        rt = Compiler.primal_return_type(mode, FTy, tt)
         A2 = A{rt}
         if rt == Union{}
             throw(ErrorException("Return type inferred to be Union{}. Giving up."))
@@ -752,10 +759,9 @@ code, as well as high-order differentiation.
     end
 
     adjoint_ptr = Compiler.deferred_codegen(
-        Val(world),
         FA,
-        Val(tt′),
-        Val(A),
+        A,
+        tt′,
         Val(API.DEM_ReverseModeCombined),
         Val(width),
         ModifiedBetween,
@@ -829,13 +835,12 @@ code, as well as high-order differentiation.
     else
         A
     end
-    tt = Tuple{map(T -> eltype(Core.Typeof(T)), args)...}
+    tt = vaEltypeof(args...)
 
     FT = Core.Typeof(f.val)
-    world = codegen_world_age(mode, FT, tt)
 
     if RT isa UnionAll
-        rt = Compiler.primal_return_type(mode, Val(world), FT, tt)
+        rt = Compiler.primal_return_type(mode, FT, tt)
         rt = RT{rt}
     else
         @assert RT isa DataType
@@ -853,10 +858,9 @@ code, as well as high-order differentiation.
     ModifiedBetween = Val(falses_from_args(Nargs + 1))
 
     adjoint_ptr = Compiler.deferred_codegen(
-        Val(world),
         Core.Typeof(f),
-        Val(tt′),
-        Val(rt),
+        rt,
+        tt′,
         Val(API.DEM_ForwardMode),
         Val(width),
         ModifiedBetween,
@@ -1239,9 +1243,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
 
     primal_tt = Tuple{map(eltype, args)...}
 
-    world = codegen_world_age(mode, eltype(FA), primal_tt)
-
-    mi = Compiler.fspec(eltype(FA), TT, world)
+    mi = Compiler.fspec(eltype(FA), TT)
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
@@ -1377,16 +1379,14 @@ result, ∂v, ∂A
     TT = Tuple{args...}
 
     primal_tt = Tuple{map(eltype, args)...}
-    world = codegen_world_age(mode, eltype(FA), primal_tt)
-    rt0 = Compiler.primal_return_type(mode, Val(world), eltype(FA), primal_tt)
+    rt0 = Compiler.primal_return_type(mode, eltype(FA), primal_tt)
 
     rt = Compiler.remove_innerty(A2){rt0}
 
     primal_ptr = Compiler.deferred_codegen(
-        Val(world),
         FA,
-        Val(TT),
-        Val(rt),
+        rt,
+        TT,
         Val(API.DEM_ReverseModePrimal),
         Val(width),
         ModifiedBetween,
@@ -1397,10 +1397,9 @@ result, ∂v, ∂A
         Val(RuntimeActivity),
     ) #=ShadowInit=#
     adjoint_ptr = Compiler.deferred_codegen(
-        Val(world),
         FA,
-        Val(TT),
-        Val(rt),
+        rt,
+        TT,
         Val(API.DEM_ReverseModeGradient),
         Val(width),
         ModifiedBetween,
@@ -2288,7 +2287,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             Core.Typeof(f)
         end
 
-        rt = Compiler.primal_return_type(mode, Val(codegen_world_age(mode, FRT, tt)), FRT, tt)
+        rt = Compiler.primal_return_type(mode, FRT, tt)
 
         ModifiedBetweenT = (false, false)
         FA = Const{FRT}

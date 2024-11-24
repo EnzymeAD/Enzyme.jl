@@ -18,13 +18,14 @@ function get_job(
 )
 
     tt = Tuple{map(eltype, types.parameters)...}
-    if world === nothing
-        world = codegen_world_age(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt)
+
+
+    primal, rt = if world isa Nothing
+        fspec(Core.Typeof(func), types), Compiler.primal_return_type(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt)
+    else
+        fspec(Core.Typeof(func), types, world), Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
     end
 
-    primal = fspec(Core.Typeof(func), types, world)
-
-    rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing
@@ -46,11 +47,18 @@ function get_job(
         ErrIfFuncWritten,
         RuntimeActivity,
     )
-    return Compiler.CompilerJob(
-        primal,
-        CompilerConfig(target, params; kernel = false),
-        world,
-    )
+    if world isa Nothing
+        return Compiler.CompilerJob(
+            primal,
+            CompilerConfig(target, params; kernel = false),
+        )
+    else
+        return Compiler.CompilerJob(
+            primal,
+            CompilerConfig(target, params; kernel = false),
+            world,
+        )
+    end
 end
 
 function reflect(
