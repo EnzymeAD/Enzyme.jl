@@ -1024,9 +1024,8 @@ function fwddiff_with_return(
     else
         Const(f)
     end
-    opt_mi = Val(world)
     res = thunk(
-        opt_mi,
+        Val(0),
         FA,
         annotation,
         tt′,
