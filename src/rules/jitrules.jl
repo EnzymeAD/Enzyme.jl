@@ -1268,6 +1268,7 @@ function augfwd_with_return(
         ) #=erriffuncwritten=#
         forward(fa, args...)
     else
+        annotation = guess_activity(tt, API.DEM_ReverseModePrimal)
         nothing,
         primal_tuple(args...),
         annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
