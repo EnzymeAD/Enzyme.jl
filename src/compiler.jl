@@ -8839,7 +8839,7 @@ end
     end
 end
 
-function thunk_generator(world::UInt, source::LineNumberNode, FA::Type, A::Type, TT::Type, Mode::Enzyme.API.CDerivativeMode, Width::Int, ModifiedBetween::(NTuple{N, Bool} where N), ReturnPrimal::Bool, ShadowInit::Bool, ABI::Type, ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
     @nospecialize
     
     parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :abi, :erriffuncwritten, :runtimeactivity)
@@ -8961,36 +8961,7 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-@generated function deferred_codegen(
-    ::Val{World},
-    ::Type{FA},
-    ::Type{A},
-    ::Type{TT},
-    ::Val{Mode},
-    ::Val{width},
-    ::Val{ModifiedBetween},
-    ::Val{ReturnPrimal},
-    ::Val{ShadowInit},
-    ::Type{ExpectedTapeType},
-    ::Val{ErrIfFuncWritten},
-    ::Val{RuntimeActivity},
-) where {
-    World,
-    FA<:Annotation,
-    TT,
-    A,
-    Mode,
-    width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ExpectedTapeType,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-}
-end
-
-function deferred_generator(world::UInt, source::LineNumberNode, FA::Type, A::Type, TT::Type, Mode::Enzyme.API.CDerivativeMode, Width::Int, ModifiedBetween::(NTuple{N, Bool} where N), ReturnPrimal::Bool, ShadowInit::Bool, ExpectedTapeType::Type, ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
     @nospecialize
     
     parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity)
