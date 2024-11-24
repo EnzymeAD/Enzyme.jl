@@ -1171,7 +1171,7 @@ end
             end
         end
         rval = :(($(expr...),))
-        if Ann <: BatchMixedDuplicated
+        if Ann <: BatchMixedDuplicated || Ann <: MixedDuplicated
             rval = :(Ref($rval))
         end
         @inbounds wexpr[w] = rval
@@ -1250,9 +1250,8 @@ function augfwd_with_return(
         else
             Const(f)
         end
-        opt_mi = Val(0)
         forward, adjoint = thunk(
-            opt_mi,
+            Val(0),
             FA,
             annotation,
             tt′,
