@@ -1202,12 +1202,12 @@ end
 
 include("make_zero.jl")
 
-function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, f, tt, world)
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
 
-function prepare_llvm(mod, job, meta)
+function prepare_llvm(mod::LLVM.Module, job, meta)
     interp = GPUCompiler.get_interpreter(job)
     for f in functions(mod)
         attributes = function_attributes(f)
@@ -1250,7 +1250,7 @@ function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
-    world,
+    world::UInt,
 )
     # TODO: Put a cache here index on `mod` and f->tt
 
@@ -2248,7 +2248,7 @@ function store_nonjl_types!(B, startval, p)
     return
 end
 
-function get_julia_inner_types(B, p, startvals...; added = LLVM.API.LLVMValueRef[])
+function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing, LLVM.Value}), @nospecialize(startvals::Vararg{LLVM.Value}); added = LLVM.API.LLVMValueRef[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     vals = LLVM.Value[]
@@ -2327,7 +2327,7 @@ end
 function julia_post_cache_store(
     SI::LLVM.API.LLVMValueRef,
     B::LLVM.API.LLVMBuilderRef,
-    R2,
+    R2::Ptr{UInt64},
 )::Ptr{LLVM.API.LLVMValueRef}
     B = LLVM.IRBuilder(B)
     SI = LLVM.Instruction(SI)
@@ -2445,7 +2445,7 @@ function julia_allocator(
     Count::LLVM.API.LLVMValueRef,
     AlignedSize::LLVM.API.LLVMValueRef,
     IsDefault::UInt8,
-    ZI,
+    ZI::Ptr{LLVM.API.LLVMValueRef},
 )
     B = LLVM.IRBuilder(B)
     Count = LLVM.Value(Count)
@@ -2454,7 +2454,7 @@ function julia_allocator(
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
-function fixup_return(B, retval)
+function fixup_return(B::LLVM.IRBuilder, @nospecialize(retval::LLVM.Value))
     B = LLVM.IRBuilder(B)
 
     func = LLVM.parent(position(B))
@@ -3084,7 +3084,7 @@ Create the methodinstance pair, and lookup the primal return type.
 @inline function fspec(
     @nospecialize(F),
     @nospecialize(TT),
-    world::Union{Integer,Nothing} = nothing,
+    world::Union{UInt,Nothing} = nothing,
 )
     # primal function. Inferred here to get return type
     _tt = (TT.parameters...,)
@@ -4411,15 +4411,15 @@ end
 
 function create_abi_wrapper(
     enzymefn::LLVM.Function,
-    TT,
-    rettype,
-    actualRetType,
+    @nospecialize(TT::Type),
+    @nospecialize(rettype::Type),
+    @nospecialize(actualRetType::Type),
     Mode::API.CDerivativeMode,
     augmented,
-    width,
-    returnPrimal,
-    shadow_init,
-    world,
+    width::Int,
+    returnPrimal::Bool,
+    shadow_init::Bool,
+    world::UInt,
     interp,
 )
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
@@ -4896,7 +4896,7 @@ function create_abi_wrapper(
         metadata(val)[LLVM.MD_dbg] = DILocation(0, 0, get_subprogram(llvm_f))
     end
 
-    @inline function fixup_abi(index, value)
+    @inline function fixup_abi(index, @nospecialize(value::LLVM.Value))
         valty = sret_types[index]
         # Union becoming part of a tuple needs to be adjusted
         # See https://github.com/JuliaLang/julia/blob/81afdbc36b365fcbf3ae25b7451c6cb5798c0c3d/src/cgutils.cpp#L3795C1-L3801C121
@@ -5530,9 +5530,9 @@ function lower_convention(
     mod::LLVM.Module,
     entry_f::LLVM.Function,
     actualRetType::Type,
-    RetActivity,
-    TT,
-    run_enzyme,
+    @nospecialize(RetActivity::Type),
+    @nospecialize(TT::Type),
+    run_enzyme::Bool,
 )
     entry_ft = LLVM.function_type(entry_f)
 
@@ -7931,7 +7931,7 @@ end
 )
 
 
-function jl_set_typeof(v::Ptr{Cvoid}, T)
+function jl_set_typeof(v::Ptr{Cvoid}, @nospecialize(T::Type))
     tag = reinterpret(Ptr{Any}, reinterpret(UInt, v) - 8)
     Base.unsafe_store!(tag, T) # set tag
     return nothing
@@ -8535,7 +8535,7 @@ end
 # JIT
 ##
 
-function _link(job, (mod, adjoint_name, primal_name, TapeType))
+function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType))
     if job.config.params.ABI <: InlineABI
         return CompileResult(
             Val((Symbol(mod), Symbol(adjoint_name))),
@@ -8557,7 +8557,7 @@ function _link(job, (mod, adjoint_name, primal_name, TapeType))
             ),
         )
     end
-    if primal_name === nothing
+    if primal_name isa Nothing
         primal_ptr = C_NULL
     else
         primal_addr = JIT.lookup(primal_name)
@@ -8621,7 +8621,7 @@ const cache_lock = ReentrantLock()
         obj = get(cache, key, nothing)
         if obj === nothing
             asm = _thunk(job)
-            obj = _link(job, asm)
+            obj = _link(job, asm...)
             cache[key] = obj
         end
         obj
@@ -9037,7 +9037,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, FA::Type, A::Ty
     target = EnzymeTarget()
 
     rt2 = if A isa UnionAll
-        rrt = primal_return_type_world(Mode, world, mi)
+        rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
 
         # Don't error here but default to nothing return since in cuda context we don't use the device overrides
         if rrt == Union{}
@@ -9059,7 +9059,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, FA::Type, A::Ty
     params = EnzymeCompilerParams(
         Tuple{FA,TT.parameters...},
         Mode,
-        width,
+        Width,
         rt2,
         true,
         true,

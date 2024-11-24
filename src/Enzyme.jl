@@ -680,7 +680,7 @@ code, as well as high-order differentiation.
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
     end
-    tt′ = vaEltypeof(args...)
+    tt = vaEltypeof(args...)
 
     FTy = Core.Typeof(f.val)
 
