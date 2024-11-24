@@ -1,18 +1,16 @@
 
 function runtime_newtask_fwd(
-    world::Val{World},
     fn::FT1,
     dfn::FT2,
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
     ::Val{width},
-) where {FT1,FT2,World,width,RuntimeActivity}
+) where {FT1,FT2,width,RuntimeActivity}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    opt_mi = world
     forward = thunk(
-        opt_mi,
+        Val(0),
         (ghos ? Const : Duplicated){FT},
         Const,
         Tuple{},
@@ -35,7 +33,6 @@ function runtime_newtask_fwd(
 end
 
 function runtime_newtask_augfwd(
-    world::Val{World},
     fn::FT1,
     dfn::FT2,
     post::Any,
@@ -43,13 +40,12 @@ function runtime_newtask_augfwd(
     runtimeActivity::Val{RuntimeActivity},
     ::Val{width},
     ::Val{ModifiedBetween},
-) where {FT1,FT2,World,width,ModifiedBetween,RuntimeActivity}
+) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    opt_mi = world
     forward, adjoint = thunk(
-        opt_mi,
+        Val(0),
         (ghos ? Const : Duplicated){FT},
         Const,
         Tuple{},
@@ -671,7 +667,6 @@ end
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
-        unsafe_to_llvm(B, Val(world)),
         new_from_original(gutils, ops[1]),
         invert_pointer(gutils, ops[1], B),
         new_from_original(gutils, ops[2]),
@@ -727,7 +722,6 @@ end
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),
-        unsafe_to_llvm(B, Val(world)),
         new_from_original(gutils, ops[1]),
         invert_pointer(gutils, ops[1], B),
         new_from_original(gutils, ops[2]),
