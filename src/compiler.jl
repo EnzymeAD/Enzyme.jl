@@ -9049,15 +9049,8 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    res = quote
-        ccall(
-            "extern deferred_codegen",
-            llvmcall,
-            Ptr{Cvoid},
-            (Ptr{Cvoid},),
-            $(reinterpret(Ptr{Cvoid}, id)),
-        )
-    end
+    res = Expr(:foreigncall, QuoteNode(:deferred_codegen), Ptr{Cvoid}, svec(Ptr{Cvoid}),
+            0, QuoteNode(:ccall), reinterpret(Ptr{Cvoid}, id)
 
     # prepare the slots
     new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
@@ -9065,6 +9058,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
 
     # return the codegen world age
     push!(new_ci.code, res)
+    push!(new_ci.code, Core.Compiler.ReturnNode(res))
     push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
     @static if isdefined(Core, :DebugInfo)
     else
