@@ -9049,7 +9049,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    res = Expr(:foreigncall, QuoteNode(:deferred_codegen), Ptr{Cvoid}, svec(Ptr{Cvoid}),
+    res = Expr(:foreigncall, QuoteNode(:deferred_codegen), Ptr{Cvoid}, Base.svec(Ptr{Cvoid}),
             0, QuoteNode(:ccall), reinterpret(Ptr{Cvoid}, id))
 
     # prepare the slots
