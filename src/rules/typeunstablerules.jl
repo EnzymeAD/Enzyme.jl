@@ -1414,7 +1414,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
