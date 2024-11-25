@@ -79,7 +79,7 @@ end
         gc_invariant_verifier!(pm, cond)
     end
 else
-    function gc_invariant_verifier_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, cond::bool)
+    function gc_invariant_verifier_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, cond::Bool)
         function gc_invariant_verifier(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
