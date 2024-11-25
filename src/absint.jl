@@ -389,7 +389,7 @@ function abs_typeof(
 
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = Type[]
+                found = Union{Type, TypeVar}[]
                 unionalls = TypeVar[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
