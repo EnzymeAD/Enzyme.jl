@@ -9050,7 +9050,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
     deferred_codegen_jobs[id] = job
 
     res = Expr(:foreigncall, QuoteNode(:deferred_codegen), Ptr{Cvoid}, svec(Ptr{Cvoid}),
-            0, QuoteNode(:ccall), reinterpret(Ptr{Cvoid}, id)
+            0, QuoteNode(:ccall), reinterpret(Ptr{Cvoid}, id))
 
     # prepare the slots
     new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
