@@ -9049,9 +9049,6 @@ function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecializ
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    res = Expr(:foreigncall, QuoteNode(:deferred_codegen), Ptr{Cvoid}, Core.svec(Ptr{Cvoid}),
-            0, QuoteNode(:ccall), reinterpret(Ptr{Cvoid}, id))
-
     # prepare the slots
     new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
     new_ci.slotflags = UInt8[0x00 for i = 1:length(new_ci.slotnames)]
@@ -9099,7 +9096,7 @@ end
     RuntimeActivity,
 }
     $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, deferred_generator))
+    $(Expr(:meta, :generated, deferred_id_generator))
 end
 
 @inline function deferred_codegen(
