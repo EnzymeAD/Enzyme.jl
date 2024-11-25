@@ -328,7 +328,7 @@ function get_pgcstack(func::LLVM.Function)
     return nothing
 end
 
-function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.Instruction}) = nothing)
+function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
     for (i, v) in enumerate(parameters(func))
         if any(
             map(
