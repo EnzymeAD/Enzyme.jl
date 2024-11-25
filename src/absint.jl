@@ -506,6 +506,8 @@ function abs_typeof(
         dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
         
         shouldLoad = true
+            
+        ccall(:jl_, Any, (Any,), ("load arg=", string(arg), "larg=", string(larg), "offset=", offset, "legal=", legal, "typ=", typ, "byref=", byref))
 
         if legal && typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
             ET = eltype(typ)
@@ -526,6 +528,8 @@ function abs_typeof(
                 offset %= sz
             end
         end
+        
+        ccall(:jl_, Any, (Any,), ("load2 arg=", string(arg), "larg=", string(larg), "offset=", offset, "legal=", legal, "typ=", typ, "byref=", byref, "shouldLoad=", shouldLoad))
 
         if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
             if shouldLoad
@@ -603,6 +607,7 @@ function abs_typeof(
                 legal = false
                 break
             end
+            ccall(:jl_, Any, (Any,), ("load3 arg=", string(arg), "larg=", string(larg), "typ2=", typ2, "offset=", offset, "legal=", legal, "typ=", typ, "byref=", byref, "shouldLoad=", shouldLoad))
             if legal
                 return (true, typ2, byref)
             end
@@ -615,6 +620,7 @@ function abs_typeof(
         numind = LLVM.API.LLVMGetNumIndices(arg)
         offset = Cuint[unsafe_load(indptrs, i) for i = 1:numind]
         found, typ, byref = abs_typeof(larg, partial, seenphis)
+        ccall(:jl_, Any, (Any,), ("extract arg=", string(arg), "larg=", string(larg), "found=", found, "typ=", typ, "byref=", byref, "offset=", offset))
         if !found
             return (false, nothing, nothing)
         end
@@ -634,6 +640,7 @@ function abs_typeof(
                     cnt += 1
                 end
             end
+            ccall(:jl_, Any, (Any,), ("extract2 arg=", string(arg), "larg=", string(larg), "typ=", typ, "inline=", Base.allocatedinline(typ)))
             if Base.allocatedinline(typ)
                 return (true, typ, GPUCompiler.BITS_VALUE)
             else
