@@ -108,7 +108,7 @@ function body_construct_rev(
     batchshadowargs,
     tuple,
 )
-    outs = []
+    outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
             tsym = Symbol("tval_$w")
@@ -131,15 +131,16 @@ function body_construct_rev(
                     end
                 end
             )
-            push!(outs, out)
+            @inbounds outs[(i-1)*Width+w] = out
         end
     end
 
-    tapes = Expr[:(tval_1 = tape[])]
+    tapes = Vector{Expr}(undef, Width)
+    @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
         df = Symbol("df_$w")
-        push!(tapes, :($sym = $df[]))
+        @inbounds tapes[w] = :($sym = $df[])
     end
 
     quote

@@ -75,9 +75,9 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
                 index += 1
-                found = []
+                found = Any[]
                 legal, Ty = absint(operands(arg)[index], partial)
-                unionalls = []
+                unionalls = TypeVar[]
                 for sarg in operands(arg)[index+1:end-1]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
@@ -102,7 +102,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
+                found = Any[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv = absint(sarg, partial)
@@ -389,8 +389,8 @@ function abs_typeof(
 
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
-                unionalls = []
+                found = Type[]
+                unionalls = TypeVar[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
@@ -416,8 +416,6 @@ function abs_typeof(
             
             if nm == "jl_f__apply_iterate" || nm == "ijl_f__apply_iterate"
                 index += 1
-                found = []
-                unionalls = []
                 legal, iterfn = absint(operands(arg)[index])
                 index += 1
                 if legal && iterfn == Base.iterate
@@ -426,7 +424,7 @@ function abs_typeof(
                     if legal0 && combfn == Core.apply_type && partial
                         return (true, Type, GPUCompiler.BITS_REF)
                     end
-                    resvals = []
+                    resvals = Type[]
                     while index != length(operands(arg))
                         legal, pval, _ = abs_typeof(operands(arg)[index], partial, seenphis)
                         if !legal

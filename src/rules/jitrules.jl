@@ -568,7 +568,7 @@ function nonzero_active_data(x::T) where {T}
 end
 
 function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
-    outs = []
+    outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
             expr = if Width == 1
@@ -596,16 +596,16 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                     )
                 end
             end
-            push!(outs, out)
+            @inbounds outs[(i-1)*Width+w] = out
         end
     end
     shadow_ret = nothing
     if Width == 1
         shadowret = :(tape.shadow_return[])
     else
-        shadowret = []
+        shadowret = Vector{Expr}(undef, Width)
         for w = 1:Width
-            push!(shadowret, :(tape.shadow_return[$w][]))
+            @inbounds shadowret[w] = :(tape.shadow_return[$w][])
         end
         shadowret = :(($(shadowret...),))
     end

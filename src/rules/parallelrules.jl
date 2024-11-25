@@ -412,7 +412,7 @@ end
     al = addrspacecast!(B, al, LLVM.PointerType(ll_th, Derived))
     push!(vals, al)
 
-    copies = []
+    copies = Tuple{LLVM.Value, LLVM.Value, LLVM.LLVMType}[]
     if !isghostty(dfuncT)
 
         llty = convert(LLVMType, dfuncT)
@@ -442,7 +442,7 @@ end
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
             val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived))
             store!(B, v, val)
-            if pv !== nothing
+            if !(pv isa Nothing)
                 push!(copies, (pv, val, pllty))
             end
 

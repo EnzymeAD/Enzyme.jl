@@ -106,13 +106,13 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
-@inline function find_math_method(@nospecialize(func), sparam_vals)
+@inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
         Tys = (Float32, Float64)
 
         if length(sparam_vals) == arity
-            T = first(sparam_vals)
+            T = first(sparam_vals)::Type
             legal = T ∈ Tys
 
             if legal
@@ -1406,7 +1406,7 @@ end
 
 parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth = 0) = val
-parent_scope(val::LLVM.Value, depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
+parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
 parent_scope(val::LLVM.Argument, depth = 0) =
     parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth + 1)
 
@@ -1668,7 +1668,7 @@ function julia_error(
 
         illegalVal = nothing
 
-        function make_replacement(cur::LLVM.Value, prevbb)::LLVM.Value
+        function make_replacement(@nospecialize(cur::LLVM.Value), prevbb::LLVM.IRBuilder)::LLVM.Value
             ncur = new_from_original(gutils, cur)
             if cur in keys(seen)
                 return seen[cur]
@@ -2204,7 +2204,7 @@ current_task_offset() =
 current_ptls_offset() =
     unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
 
-function store_nonjl_types!(B, startval, p)
+function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Value), @nospecialize(p::LLVM.Value))
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     vals = LLVM.Value[]
@@ -2657,7 +2657,7 @@ function zero_allocation(
     ).ref
 end
 
-function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValue})
+function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
 
@@ -2782,7 +2782,7 @@ function julia_deallocator(B::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRe
     julia_deallocator(B, Obj)
 end
 
-function julia_deallocator(B::LLVM.IRBuilder, Obj::LLVM.Value)
+function julia_deallocator(B::LLVM.IRBuilder, @nospecialize(Obj::LLVM.Value))
     mod = LLVM.parent(LLVM.parent(position(B)))
 
     T_void = LLVM.VoidType()
@@ -6672,7 +6672,7 @@ end
         name = meth.name
         jlmod = meth.module
 
-        function handleCustom(llvmfn, name, attrs = [], setlink = true, noinl = true)
+        function handleCustom(llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
             attributes = function_attributes(llvmfn)
             custom[k_name] = linkage(llvmfn)
             if setlink
@@ -6694,7 +6694,7 @@ end
             handleCustom(
                 llvmfn,
                 "enzyme_custom",
-                [StringAttribute("enzyme_preserve_primal", "*")],
+                LLVM.Attribute[StringAttribute("enzyme_preserve_primal", "*")],
             )
             continue
         end
@@ -6708,7 +6708,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_inactive_inout",
-                    [
+                    LLVM.Attribute[
                         StringAttribute("enzyme_inactive"),
                         EnumAttribute("readnone"),
                         EnumAttribute("speculatable"),
@@ -6719,7 +6719,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_inactive_inout",
-                    [
+                    LLVM.Attribute[
                         StringAttribute("enzyme_inactive"),
                         EnumAttribute("memory", NoEffects.data),
                         EnumAttribute("speculatable"),
@@ -6734,7 +6734,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_to_tuple_type",
-                    [
+                    LLVM.Attribute[
                         EnumAttribute("readonly"),
                         EnumAttribute("inaccessiblememonly", 0),
                         EnumAttribute("speculatable", 0),
@@ -6746,7 +6746,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_to_tuple_type",
-                    [
+                    LLVM.Attribute[
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -6769,7 +6769,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_mightalias",
-                    [
+                    LLVM.Attribute[
                         EnumAttribute("readonly"),
                         StringAttribute("enzyme_shouldrecompute"),
                         StringAttribute("enzyme_inactive"),
@@ -6784,7 +6784,7 @@ end
                 handleCustom(
                     llvmfn,
                     "jl_mightalias",
-                    [
+                    LLVM.Attribute[
                         EnumAttribute("memory", ReadOnlyEffects.data),
                         StringAttribute("enzyme_shouldrecompute"),
                         StringAttribute("enzyme_inactive"),
@@ -6804,7 +6804,7 @@ end
                 handleCustom(
                     llvmfn,
                     name,
-                    [
+                    LLVM.Attribute[
                         EnumAttribute("readonly"),
                         EnumAttribute("inaccessiblememonly"),
                         EnumAttribute("speculatable"),
@@ -6817,7 +6817,7 @@ end
                 handleCustom(
                     llvmfn,
                     name,
-                    [
+                    LLVM.Attribute[
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -6845,7 +6845,7 @@ end
                 handleCustom(
                     llvmfn,
                     "enz_noop",
-                    [
+                    LLVM.Attribute[
                         StringAttribute("enzyme_inactive"),
                         EnumAttribute("readonly"),
                         StringAttribute("enzyme_ta_norecur"),
@@ -6855,7 +6855,7 @@ end
                 handleCustom(
                     llvmfn,
                     "enz_noop",
-                    [
+                    LLVM.Attribute[
                         StringAttribute("enzyme_inactive"),
                         EnumAttribute("memory", ReadOnlyEffects.data),
                         StringAttribute("enzyme_ta_norecur"),
@@ -6873,7 +6873,7 @@ end
             handleCustom(
                 llvmfn,
                 "enz_noop",
-                [
+                LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
                     EnumAttribute("nofree"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -6891,7 +6891,7 @@ end
             handleCustom(
                 llvmfn,
                 "enz_noop",
-                [
+                LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
                     EnumAttribute("nofree"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -6936,7 +6936,7 @@ end
             handleCustom(
                 llvmfn,
                 "base_match",
-                [
+                LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
                     EnumAttribute("nofree"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -6979,12 +6979,12 @@ end
         if func == typeof(Base.enq_work) &&
            length(sparam_vals) == 1 &&
            first(sparam_vals) <: Task
-            handleCustom(llvmfn, "jl_enq_work", [StringAttribute("enzyme_ta_norecur")])
+            handleCustom(llvmfn, "jl_enq_work", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
             continue
         end
         if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
-                handleCustom(llvmfn, "jl_wait", [StringAttribute("enzyme_ta_norecur")])
+                handleCustom(llvmfn, "jl_wait", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
             end
             continue
         end
@@ -7028,9 +7028,9 @@ end
         name = T == Float32 ? name * "f" : name
 
         attrs = if LLVM.version().major <= 15
-            [LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
+            LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
         else
-            [EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
+            LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
         end
         handleCustom(llvmfn, name, attrs)
     end
@@ -7465,7 +7465,7 @@ end
             loweredArgs,
             boxedArgs,
         )
-        toremove = []
+        toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
             for b in blocks(f)
@@ -8137,7 +8137,7 @@ end
             error("Return type `$rrt` not marked Const, but is ghost or const type.")
         end
 
-        sret_types = []  # Julia types of all returned variables
+        sret_types = DataType[]  # Julia types of all returned variables
         # By ref values we create and need to preserve
         ccexprs = Union{Expr,Symbol}[] # The expressions passed to the `llvmcall`
 
