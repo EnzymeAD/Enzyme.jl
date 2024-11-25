@@ -341,7 +341,7 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 
     pgs = get_pgcstack(func)
-    if pgs === nothing
+    if pgs isa Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
@@ -355,7 +355,7 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
         if fst != pgs
-            API.moveBefore(pgs, fst, PB === nothing ? C_NULL : PB.ref)
+            API.moveBefore(pgs, fst, PB isa Nothing ? C_NULL : PB.ref)
         end
         pgs
     end
