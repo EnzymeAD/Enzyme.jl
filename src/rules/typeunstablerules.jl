@@ -1511,7 +1511,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 
     sym = new_from_original(gutils, ops[3])
     sym = lookup_value(gutils, sym, B)
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
