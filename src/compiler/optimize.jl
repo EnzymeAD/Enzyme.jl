@@ -779,7 +779,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
 
                         v0 = v
-                        @inline function getparent(@nospecialize(v::LLVM.Value), offset::Int, hasload::Bool)
+                        @inline function getparent(@nospecialize(v::LLVM.Value), @nospecialize(offset::LLVM.Value), hasload::Bool)
                             if addr == 11 && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
