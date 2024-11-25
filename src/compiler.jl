@@ -9175,7 +9175,7 @@ include("compiler/reflection.jl")
             emit_box_int32!(builder, len)
         end
 
-        tag = emit_apply_type!(builder, NTuple, (boxed_count, unsafe_to_llvm(builder, T)))
+        tag = emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
 
         fullsize = nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
         obj = emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
