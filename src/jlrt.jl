@@ -390,7 +390,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, Ty, args)::LLVM.Value
     mod = LLVM.parent(fn)
 
     legal = true
-    found = Type[]
+    found = Any[]
     for arg in args
         slegal, foundv = absint(arg)
         if slegal

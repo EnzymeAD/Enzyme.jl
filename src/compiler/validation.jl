@@ -887,7 +887,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
 
             if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray)) &&
                eltype(value_type(fname)) == LLVM.IntType(8)
-                fname = String(map((x) -> convert(UInt8, x), collect(fname)[1:(end-1)]))
+               fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
 
             if !isa(fname, String) || !isa(flib, String)
