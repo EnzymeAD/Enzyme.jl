@@ -373,7 +373,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
-function check_ir!(@nospecialze(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
+function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
