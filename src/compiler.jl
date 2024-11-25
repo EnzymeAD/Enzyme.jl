@@ -2700,7 +2700,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
                 Count = trunc!(B, Count, T_size_t)
                 boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, (boxed_count, unsafe_to_llvm(B, TT)))
+            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT)])
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
