@@ -1849,7 +1849,7 @@ function generic_setup(
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
     etup0 = emit_tuple!(B, ActivityList)
-    etup = emit_apply_type!(B, Base.Val, [etup0])
+    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0])
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1
     end
