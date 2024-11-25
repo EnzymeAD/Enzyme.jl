@@ -5528,7 +5528,7 @@ function lower_convention(
     entry_f::LLVM.Function,
     @nospecialize(actualRetType::Type),
     @nospecialize(RetActivity::Type),
-    @nospecialize(TT::Type),
+    @nospecialize(TT::Union{Type, Nothing}),
     run_enzyme::Bool,
 )
     entry_ft = LLVM.function_type(entry_f)
