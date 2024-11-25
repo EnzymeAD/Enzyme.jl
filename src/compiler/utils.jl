@@ -277,7 +277,7 @@ function get_function!(
     mod::LLVM.Module,
     name::String,
     FT::LLVM.FunctionType,
-    attrs::LLVM.Attribute = LLVM.Attribute[],
+    attrs::Vector{LLVM.Attribute} = LLVM.Attribute[],
 )
     if haskey(functions(mod), name)
         F = functions(mod)[name]
@@ -362,6 +362,13 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
 end
 
 function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
+function eraseInst(bb::LLVM.Module, inst::LLVM.Function)
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
     else
