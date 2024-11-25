@@ -352,7 +352,7 @@ end
         combine_mul_add!(pm)
     end
 else
-    function combine_mul_add_tm!(pm::LLVM.ModulePassManager, tm::LLM.TargetMachine)
+    function combine_mul_add_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
 @static if VERSION < v"1.12.0-DEV.1390"
         function combine_mul_add(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
