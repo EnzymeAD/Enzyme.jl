@@ -2454,7 +2454,7 @@ function julia_allocator(
     return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
-function fixup_return(B::LLVM.IRBuilder, @nospecialize(retval::LLVM.Value))
+function fixup_return(B::LLVM.API.LLVMBuilderRef, retval::LLVM.API.LLVMValueRef)
     B = LLVM.IRBuilder(B)
 
     func = LLVM.parent(position(B))
