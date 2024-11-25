@@ -3964,20 +3964,20 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
-    job,
-    mod,
-    primalf,
-    TT,
-    mode,
-    width,
-    parallel,
-    actualRetType,
-    wrap,
-    modifiedBetween,
-    returnPrimal,
-    expectedTapeType,
-    loweredArgs,
-    boxedArgs,
+    job::CompilerJob,
+    mod::LLVM.Module,
+    primalf::LLVM.Function,
+    @nospecialize(TT::Type),
+    mode::API.CDerivativeMode,
+    width::Int,
+    parallel::Bool,
+    @nospecialize(actualRetType::Type),
+    wrap::Bool,
+    @nospecialize(modifiedBetween::NTuple{N, Bool} where N),
+    returnPrimal::Bool,
+    @nospecialize(expectedTapeType::Type),
+    loweredArgs::Set{Int},
+    boxedArgs::Set{Int},
 )
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
@@ -5526,10 +5526,10 @@ end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
-    functy::Type,
+    @nospecialize(functy::Type),
     mod::LLVM.Module,
     entry_f::LLVM.Function,
-    actualRetType::Type,
+    @nospecialize(actualRetType::Type),
     @nospecialize(RetActivity::Type),
     @nospecialize(TT::Type),
     run_enzyme::Bool,

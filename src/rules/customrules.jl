@@ -1,10 +1,10 @@
 
 function enzyme_custom_setup_args(
-    B,
+    B::LLVM.IRBuilder,
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    mi,
-    @nospecialize(RT),
+    mi::Core.MethodInstance,
+    @nospecialize(RT::Type),
     reverse::Bool,
     isKWCall::Bool,
 )
@@ -356,9 +356,9 @@ end
 function enzyme_custom_setup_ret(
     gutils::GradientUtils,
     orig::LLVM.CallInst,
-    mi,
-    @nospecialize(RealRt),
-    B,
+    mi::Core.MethodInstance,
+    @nospecialize(RealRt::Type),
+    B::LLVM.IRBuilder,
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -448,11 +448,11 @@ function enzyme_custom_setup_ret(
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
-function custom_rule_method_error(world, fn, args...)
+function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(args::Vararg))
     throw(MethodError(fn, (args...,), world))
 end
 
-@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -768,8 +768,8 @@ end
 @inline function aug_fwd_mi(
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    forward = false,
-    B = nothing,
+    forward::Bool = false,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
 )
     width = get_width(gutils)
 
@@ -874,18 +874,18 @@ end
     )
 end
 
-@inline function has_aug_fwd_rule(orig, gutils)
+@inline function has_aug_fwd_rule(orig::LLVM.CallInst, gutils::GradientUtils)
     return aug_fwd_mi(orig, gutils)[1] !== nothing
 end
 
-@register_rev function enzyme_custom_common_rev(
+function enzyme_custom_common_rev(
     forward::Bool,
-    B,
+    B::LLVM.IRBuilder,
     orig::LLVM.CallInst,
-    gutils,
-    normalR,
-    shadowR,
-    tape,
+    gutils::GradientUtils,
+    normalR::Ptr{LLVM.API.LLVMValueRef},
+    shadowR::Ptr{LLVM.API.LLVMValueRef},
+    tape::Union{Nothing, LLVM.Value},
 )::LLVM.API.LLVMValueRef
 
     ctx = LLVM.context(orig)
@@ -1121,7 +1121,7 @@ end
     if !forward
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
         if needsTape
-            @assert tape != C_NULL
+            @assert tape isa LLVM.Value
             tape_idx =
                 1 +
                 (kwtup !== nothing && !isghostty(kwtup)) +
@@ -1574,7 +1574,7 @@ end
 end
 
 
-@register_aug function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
@@ -1587,17 +1587,17 @@ end
     return false
 end
 
-@register_rev function enzyme_custom_rev(B, orig, gutils, tape)
+@register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
         return
     end
-    enzyme_custom_common_rev(false, B, orig, gutils, C_NULL, C_NULL, tape) #=tape=#
+    enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reintrepret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
     return nothing
 end
 
-@register_diffuse function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+@register_diffuse function enzyme_custom_diffuse(orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(val::LLVM.Value), isshadow::Bool, mode::API.CDerivativeMode)
     # use default
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
