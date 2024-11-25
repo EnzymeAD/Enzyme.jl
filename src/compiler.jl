@@ -8961,7 +8961,7 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
     @nospecialize
     
     parmnames = (:fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity)
@@ -9057,8 +9057,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
     new_ci.slotflags = UInt8[0x00 for i = 1:length(new_ci.slotnames)]
 
     # return the codegen world age
-    push!(new_ci.code, res)
-    push!(new_ci.code, Core.Compiler.ReturnNode(res))
+    push!(new_ci.code, Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id)))
     push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
     @static if isdefined(Core, :DebugInfo)
     else
@@ -9074,7 +9073,7 @@ function deferred_generator(world::UInt, source::LineNumberNode, @nospecialize(F
     return new_ci
 end
 
-@eval @inline function deferred_codegen(
+@eval @inline function deferred_id_codegen(
     fa::Type{FA},
     a::Type{A},
     tt::Type{TT},
@@ -9101,6 +9100,23 @@ end
 }
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, deferred_generator))
+end
+
+@inline function deferred_codegen(
+    @nospecialize(fa::Type),
+    @nospecialize(a::Type),
+    @nospecialize(tt::Type),
+    @nospecialize(mode::Val),
+    @nospecialize(width::Val),
+    @nospecialize(modifiedbetween::Val),
+    @nospecialize(returnprimal::Val),
+    @nospecialize(shadowinit::Val),
+    @nospecialize(expectedtapetype::Type),
+    @nospecialize(erriffuncwritten::Val),
+    @nospecialize(runtimeactivity::Val)
+)
+    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity)
+    ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), id)
 end
 
 include("compiler/reflection.jl")
