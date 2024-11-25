@@ -8637,7 +8637,6 @@ end
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
 @inline function thunkbase(
-    ctx,
     mi::Core.MethodInstance,
     World::Union{UInt, Nothing},
     @nospecialize(FA::Type{<:Annotation}),
@@ -8815,7 +8814,6 @@ end
     activate(ctx)
     try
         return thunkbase(
-            ctx,
             mi,
             nothing,
             FA,
@@ -8885,7 +8883,6 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     activate(ctx)
     res = try
         thunkbase(
-            ctx,
             mi,
             world,
             FA,
