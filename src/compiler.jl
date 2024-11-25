@@ -2657,7 +2657,7 @@ function zero_allocation(
     ).ref
 end
 
-function julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
+function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValue})
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
 
