@@ -358,7 +358,7 @@ function enzyme_custom_setup_ret(
     orig::LLVM.CallInst,
     mi::Core.MethodInstance,
     @nospecialize(RealRt::Type),
-    B::LLVM.IRBuilder,
+    @nospecialize(B::Union{LLVM.IRBuilder,Nothing})
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
