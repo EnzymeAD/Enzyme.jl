@@ -725,7 +725,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(Base.Fix2(isa, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(x -> x isa, LLVM.ConstantInt && convert(UInt, x) == 0, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break
