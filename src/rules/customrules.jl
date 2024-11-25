@@ -1593,7 +1593,7 @@ end
        !has_aug_fwd_rule(orig, gutils)
         return
     end
-    enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reintrepret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
+    enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
     return nothing
 end
 
