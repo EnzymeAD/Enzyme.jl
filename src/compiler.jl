@@ -2480,7 +2480,7 @@ function fixup_return(B::LLVM.API.LLVMBuilderRef, retval::LLVM.API.LLVMValueRef)
     return retval.ref
 end
 
-function zero_allocation(B, LLVMType, obj, isTape::UInt8)
+function zero_allocation(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMTypeRef, obj::LLVM.API.LLVMValueRef, isTape::UInt8)
     B = LLVM.IRBuilder(B)
     LLVMType = LLVM.LLVMType(LLVMType)
     obj = LLVM.Value(obj)
@@ -2493,7 +2493,7 @@ function zero_allocation(B, LLVMType, obj, isTape::UInt8)
     return nothing
 end
 
-function zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
+function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::DataType), @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(nobj::LLVM.Value), zeroAll::Bool, @nospecialize(idx::LLVM.Value))
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -2570,11 +2570,11 @@ end
 
 function zero_allocation(
     B::LLVM.IRBuilder,
-    jlType,
-    LLVMType,
-    obj,
-    AlignedSize,
-    Size,
+    @nospecialize(jlType::DataType),
+    @nospecialize(LLVMType::LLVM.LLVMType),
+    @nospecialize(obj::LLVM.Value),
+    @nospecialize(AlignedSize::LLVM.Value),
+    @nospecialize(Size::LLVM.Value),
     zeroAll::Bool,
 )::LLVM.API.LLVMValueRef
     func = LLVM.parent(position(B))
