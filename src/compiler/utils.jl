@@ -375,6 +375,13 @@ function eraseInst(bb::LLVM.Module, inst::LLVM.Function)
         unsafe_delete!(bb, inst)
     end
 end
+function eraseInst(bb::LLVM.Module, inst::LLVM.GlobalVariable)
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
 
 function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(blocks(func))
