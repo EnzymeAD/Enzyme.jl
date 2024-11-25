@@ -1431,10 +1431,6 @@ function julia_sanitize(
         stringv = "Enzyme: Found nan while computing derivative of " * string(orig)
         if orig !== nothing && isa(orig, LLVM.Instruction)
             bt = GPUCompiler.backtrace(orig)
-            function printBT(io)
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
-            end
             stringv *= sprint(Base.Fix2(Base.show_backtrace, bt))
         end
 
@@ -1649,7 +1645,7 @@ function julia_error(
         created = LLVM.Instruction[]
         world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
         width = get_width(gutils)
-        function make_batched(cur, B)
+        function make_batched(@nospecialize(cur::LLVM.Value), B::LLVM.IRBuilder)::LLVM.Value
             if width == 1
                 return cur
             else
@@ -2168,7 +2164,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     error("Can't construct tape type for $Type $(string(Type)) $tkind")
 end
 
-function tape_type(LLVMType::LLVM.LLVMType)
+function tape_type(@nospecialize(LLVMType::LLVM.LLVMType))
     TT, isAny = to_tape_type(LLVMType.ref)
     if isAny
         return AnonymousStruct(Tuple{Any})
@@ -2801,7 +2797,7 @@ function julia_deallocator(B::LLVM.IRBuilder, @nospecialize(Obj::LLVM.Value))
     return LLVM.API.LLVMValueRef(callf.ref)
 end
 
-function emit_inacterror(B, V, orig)
+function emit_inacterror(B::LLVM.API.LLVMBuilderRef, V::LLVM.API.LLVMValueRef, orig::LLVM.API.LLVMValueRef)
     B = LLVM.IRBuilder(B)
     curent_bb = position(B)
     orig = LLVM.Value(orig)
@@ -2960,7 +2956,8 @@ function __init__()
 end
 
 # Define EnzymeTarget
-Base.@kwdef struct EnzymeTarget <: AbstractCompilerTarget end
+# Base.@kwdef 
+struct EnzymeTarget <: AbstractCompilerTarget end
 
 GPUCompiler.llvm_triple(::EnzymeTarget) = LLVM.triple(JIT.get_jit())
 GPUCompiler.llvm_datalayout(::EnzymeTarget) = LLVM.datalayout(JIT.get_jit())
@@ -3082,8 +3079,8 @@ import .Interpreter: isKWCallSignature
 Create the methodinstance pair, and lookup the primal return type.
 """
 @inline function fspec(
-    @nospecialize(F),
-    @nospecialize(TT),
+    @nospecialize(F::Type),
+    @nospecialize(TT::Type),
     world::Union{UInt,Nothing} = nothing,
 )
     # primal function. Inferred here to get return type
@@ -3890,7 +3887,7 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
     throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Instruction, error = true)
+function enzyme_custom_extract_mi(orig::LLVM.Instruction, error::Bool = true)
     operand = LLVM.called_operand(orig)
     if isa(operand, LLVM.Function)
         return enzyme_custom_extract_mi(operand::LLVM.Function, error)
@@ -3900,7 +3897,7 @@ function enzyme_custom_extract_mi(orig::LLVM.Instruction, error = true)
     return nothing, nothing
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Function, error = true)
+function enzyme_custom_extract_mi(orig::LLVM.Function, error::Bool = true)
     mi = nothing
     RT = nothing
     for fattr in collect(function_attributes(orig))
@@ -3921,7 +3918,7 @@ function enzyme_custom_extract_mi(orig::LLVM.Function, error = true)
     return mi, RT
 end
 
-function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error = true)
+function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error::Bool = true)
     ty = nothing
     byref = nothing
     for fattr in collect(parameter_attributes(fn, idx))
@@ -4896,7 +4893,7 @@ function create_abi_wrapper(
         metadata(val)[LLVM.MD_dbg] = DILocation(0, 0, get_subprogram(llvm_f))
     end
 
-    @inline function fixup_abi(index, @nospecialize(value::LLVM.Value))
+    @inline function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
         valty = sret_types[index]
         # Union becoming part of a tuple needs to be adjusted
         # See https://github.com/JuliaLang/julia/blob/81afdbc36b365fcbf3ae25b7451c6cb5798c0c3d/src/cgutils.cpp#L3795C1-L3801C121
@@ -5401,7 +5398,7 @@ end
 
 # https://github.com/JuliaLang/julia/blob/64378db18b512677fc6d3b012e6d1f02077af191/src/cgutils.cpp#L823
 # returns if all unboxed
-function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), counter = Ref(0))
+function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), counter::Base.RefValue{Int} = Ref(0))
     if counter[] > 127
         return false
     end
@@ -5901,7 +5898,7 @@ function lower_convention(
                 T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
                 T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-                function inner(jlrettype)
+                function inner(@nospecialize(jlrettype::Type))
                     BB = BasicBlock(wrapper_f, "box_union")
                     position!(builder, BB)
 
