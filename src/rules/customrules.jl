@@ -1,6 +1,6 @@
 
 function enzyme_custom_setup_args(
-    B::LLVM.IRBuilder,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
     gutils::GradientUtils,
     mi::Core.MethodInstance,
