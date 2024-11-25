@@ -1309,7 +1309,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 end
 
 
-function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int, world::UInt, width::Int)
+function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int)
     todo = Tuple{LLVM.Value,Tuple}[]
     for b in blocks(enzymefn)
         term = terminator(b)
