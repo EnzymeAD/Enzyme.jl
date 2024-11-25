@@ -413,7 +413,7 @@ else
 end
 
 @static if VERSION < v"1.11-"
-    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMchine)
+    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
         @static if isdefined(LLVM.Interop, :cpu_features!)
             LLVM.Interop.cpu_features!(pm)
         else
