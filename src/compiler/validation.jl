@@ -177,7 +177,7 @@ function restore_lookups(mod::LLVM.Module)
     end
 end
 
-function check_ir(job, mod::LLVM.Module)
+function check_ir(@nospecialize(job::CompilerJob), mod::LLVM.Module)
     errors = check_ir!(job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
@@ -373,7 +373,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
-function check_ir!(job, errors, mod::LLVM.Module)
+function check_ir!(@nospecialze(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -417,8 +417,8 @@ function check_ir!(job, errors, mod::LLVM.Module)
     return errors
 end
 
-function check_ir!(job, errors, imported, f::LLVM.Function, deletedfns)
-    calls = []
+function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function})
+    calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
     for bb in blocks(f), inst in collect(instructions(bb))
@@ -654,19 +654,19 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     "ijl_apply_generic" => (1, 2),
 ))
 
-@inline function has_method(sig, world::UInt, mt::Union{Nothing,Core.MethodTable})
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing,Core.MethodTable})
     return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
 end
 
-@inline function has_method(sig, world::UInt, mt::Core.Compiler.InternalMethodTable)
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.InternalMethodTable)
     return has_method(sig, mt.world, nothing)
 end
 
-@inline function has_method(sig, world::UInt, mt::Core.Compiler.OverlayMethodTable)
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.OverlayMethodTable)
     return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
 end
 
-@inline function is_inactive(tys, world::UInt, mt)
+@inline function is_inactive(@nospecialize(tys::Union{Vector{Type}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
     specTypes = Interpreter.simplify_kw(Tuple{tys...})
     if has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
         return true
@@ -680,7 +680,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
+function check_ir!(@nospecialie(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst})
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
@@ -1309,7 +1309,7 @@ function check_ir!(job, errors, imported, inst::LLVM.CallInst, calls)
 end
 
 
-function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off, world, width)
+function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int, world::UInt, width::Int)
     todo = Tuple{LLVM.Value,Tuple}[]
     for b in blocks(enzymefn)
         term = terminator(b)
