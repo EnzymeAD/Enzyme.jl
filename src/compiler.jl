@@ -8134,7 +8134,7 @@ end
             error("Return type `$rrt` not marked Const, but is ghost or const type.")
         end
 
-        sret_types = DataType[]  # Julia types of all returned variables
+        sret_types = Type[]  # Julia types of all returned variables
         # By ref values we create and need to preserve
         ccexprs = Union{Expr,Symbol}[] # The expressions passed to the `llvmcall`
 
