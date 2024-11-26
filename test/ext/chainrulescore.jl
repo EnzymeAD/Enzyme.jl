@@ -21,7 +21,7 @@ end
 
 function ChainRulesCore.rrule(::typeof(MockModule.mock_function), x)
     y = MockModule.mock_function(x)
-    return y, ȳ -> (NoTangent(), 2 * ȳ)
+    return y, ȳ -> (NoTangent(), MockType(2 * ȳ))
 end
 
 fdiff(f, x::Number) = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(x, one(x)))[1]

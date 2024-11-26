@@ -5,10 +5,7 @@ version = "0.13.16"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
-ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
-ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
-EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
