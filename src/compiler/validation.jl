@@ -1065,7 +1065,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff+1])
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
-                            tys = [funclib, Vararg{Any}]
+                            tys = Type[funclib, Vararg{Any}]
                             if funclib == typeof(Core.apply_type) ||
                                is_inactive(tys, world, method_table)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
