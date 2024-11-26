@@ -2813,7 +2813,7 @@ function emit_inacterror(B::LLVM.API.LLVMBuilderRef, V::LLVM.API.LLVMValueRef, o
         LLVMType[LLVM.PointerType(LLVM.Int8Type())],
         vararg = true,
     )
-    func, _ = get_function!(mod, "jl_errorf", funcT, [EnumAttribute("noreturn")])
+    func, _ = get_function!(mod, "jl_errorf", funcT, LLVM.Attribute[EnumAttribute("noreturn")])
 
     call!(B, funcT, func, LLVM.Value[fmt, LLVM.Value(V)])
     return nothing
