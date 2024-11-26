@@ -1429,7 +1429,7 @@ end
     Nargs,
 }
 
-    nontupexprs = Vector{Expr}(undef, Nargs)
+    nontupexprs = Vector{Union{Symbol,Expr}}(undef, Nargs)
     for i = 1:Nargs
         @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated 
             if width == 1
