@@ -1241,7 +1241,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
             legal, flibty, byref = abs_typeof(operands(inst)[offset])
             if legal
-                tys = Type[flibty]
+                tys = Union{Type, Core.TypeofVararg}[flibty]
                 for op in collect(operands(inst))[start:end-1]
                     legal, typ, byref2 = abs_typeof(op, true)
                     if !legal
