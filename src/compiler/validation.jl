@@ -666,7 +666,7 @@ end
     return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
 end
 
-@inline function is_inactive(@nospecialize(tys::Union{Vector{Type}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
+@inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type,Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
     specTypes = Interpreter.simplify_kw(Tuple{tys...})
     if has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
         return true
@@ -1065,7 +1065,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff+1])
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
-                            tys = Type[funclib, Vararg{Any}]
+                            tys = Union{Type, Core.TypeofVararg}[funclib, Vararg{Any}]
                             if funclib == typeof(Core.apply_type) ||
                                is_inactive(tys, world, method_table)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
