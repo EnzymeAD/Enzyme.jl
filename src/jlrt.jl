@@ -337,7 +337,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
                 return val
             end
         end
-        return emit_apply_generic!(B, [unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
     end
     act = active_reg_inner(TT, (), world)
     if act == ActiveState || act == MixedState
