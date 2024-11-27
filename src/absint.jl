@@ -75,9 +75,9 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
                 index += 1
-                found = []
+                found = Any[]
                 legal, Ty = absint(operands(arg)[index], partial)
-                unionalls = []
+                unionalls = TypeVar[]
                 for sarg in operands(arg)[index+1:end-1]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
@@ -102,7 +102,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
+                found = Any[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv = absint(sarg, partial)
@@ -250,7 +250,7 @@ function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=fals
             continue
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
-           all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+            all(Base.Fix2(isa, LLVM.ConstantInt), operands(larg)[2:end])
             b = LLVM.IRBuilder()
             position!(b, larg)
             offty = LLVM.IntType(8 * sizeof(Int))
@@ -389,8 +389,8 @@ function abs_typeof(
 
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
-                unionalls = []
+                found = Union{Type, TypeVar}[]
+                unionalls = TypeVar[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
@@ -416,8 +416,6 @@ function abs_typeof(
             
             if nm == "jl_f__apply_iterate" || nm == "ijl_f__apply_iterate"
                 index += 1
-                found = []
-                unionalls = []
                 legal, iterfn = absint(operands(arg)[index])
                 index += 1
                 if legal && iterfn == Base.iterate
@@ -426,7 +424,7 @@ function abs_typeof(
                     if legal0 && combfn == Core.apply_type && partial
                         return (true, Type, GPUCompiler.BITS_REF)
                     end
-                    resvals = []
+                    resvals = Type[]
                     while index != length(operands(arg))
                         legal, pval, _ = abs_typeof(operands(arg)[index], partial, seenphis)
                         if !legal
@@ -727,7 +725,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(x -> x isa LLVM.ConstantInt && convert(UInt, x) == 0, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break
@@ -739,7 +737,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	    if isa(ce, LLVM.GlobalVariable)
 	        ce = LLVM.initializer(ce)
 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
+                return (true, String(map(Base.Fix1(convert, UInt8), collect(ce)[1:(end-1)])))
 		    end
 
 	    end

@@ -275,9 +275,9 @@ end
 
 function get_function!(
     mod::LLVM.Module,
-    name::AbstractString,
+    name::String,
     FT::LLVM.FunctionType,
-    attrs = [],
+    attrs::Vector{LLVM.Attribute} = LLVM.Attribute[],
 )
     if haskey(functions(mod), name)
         F = functions(mod)[name]
@@ -294,13 +294,13 @@ function get_function!(
     return F, FT
 end
 
-function get_function!(builderF, mod::LLVM.Module, name)
+function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String)
     get_function!(mod, name, builderF())
 end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
-function declare_pgcstack!(mod)
+function declare_pgcstack!(mod::LLVM.Module)
     get_function!(
         mod,
         "julia.get_pgcstack",
@@ -308,7 +308,7 @@ function declare_pgcstack!(mod)
     )
 end
 
-function emit_pgcstack(B)
+function emit_pgcstack(B::LLVM.IRBuilder)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -316,7 +316,7 @@ function emit_pgcstack(B)
     return call!(B, fty, func)
 end
 
-function get_pgcstack(func)
+function get_pgcstack(func::LLVM.Function)
     entry_bb = first(blocks(func))
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
 
@@ -328,7 +328,7 @@ function get_pgcstack(func)
     return nothing
 end
 
-function reinsert_gcmarker!(func, PB = nothing)
+function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
     for (i, v) in enumerate(parameters(func))
         if any(
             map(
@@ -341,7 +341,7 @@ function reinsert_gcmarker!(func, PB = nothing)
     end
 
     pgs = get_pgcstack(func)
-    if pgs === nothing
+    if pgs isa Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
@@ -355,13 +355,27 @@ function reinsert_gcmarker!(func, PB = nothing)
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
         if fst != pgs
-            API.moveBefore(pgs, fst, PB === nothing ? C_NULL : PB.ref)
+            API.moveBefore(pgs, fst, PB isa Nothing ? C_NULL : PB.ref)
         end
         pgs
     end
 end
 
-function eraseInst(bb, inst)
+function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
+function eraseInst(bb::LLVM.Module, inst::LLVM.Function)
+    @static if isdefined(LLVM, Symbol("erase!"))
+        LLVM.erase!(inst)
+    else
+        unsafe_delete!(bb, inst)
+    end
+end
+function eraseInst(bb::LLVM.Module, inst::LLVM.GlobalVariable)
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
     else
@@ -369,7 +383,7 @@ function eraseInst(bb, inst)
     end
 end
 
-function unique_gcmarker!(func)
+function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(blocks(func))
     pgcstack_func = declare_pgcstack!(LLVM.parent(func))
 
@@ -393,7 +407,7 @@ end
     NamedTuple{ntuple(i -> Symbol(i), Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
-function recursive_eltype(val::LLVM.Value, idxs::Vector{Cuint})
+function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})
     ty = LLVM.value_type(val)
     for i in idxs
         if isa(ty, LLVM.ArrayType)
@@ -409,10 +423,10 @@ end
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
 function calling_conv_fixup(
-    builder,
-    val::LLVM.Value,
-    tape::LLVM.LLVMType,
-    prev::LLVM.Value = LLVM.UndefValue(tape),
+    builder::LLVM.IRBuilder,
+    @nospecialize(val::LLVM.Value),
+    @nospecialize(tape::LLVM.LLVMType),
+    @nospecialize(prev::LLVM.Value) = LLVM.UndefValue(tape),
     lidxs::Vector{Cuint} = Cuint[],
     ridxs::Vector{Cuint} = Cuint[],
     emesg = nothing,

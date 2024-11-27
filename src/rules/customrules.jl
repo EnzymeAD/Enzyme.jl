@@ -1,10 +1,10 @@
 
 function enzyme_custom_setup_args(
-    B,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    mi,
-    @nospecialize(RT),
+    mi::Core.MethodInstance,
+    @nospecialize(RT::Type),
     reverse::Bool,
     isKWCall::Bool,
 )
@@ -356,9 +356,9 @@ end
 function enzyme_custom_setup_ret(
     gutils::GradientUtils,
     orig::LLVM.CallInst,
-    mi,
-    @nospecialize(RealRt),
-    B,
+    mi::Core.MethodInstance,
+    @nospecialize(RealRt::Type),
+    @nospecialize(B::Union{LLVM.IRBuilder,Nothing})
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -448,11 +448,11 @@ function enzyme_custom_setup_ret(
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
-function custom_rule_method_error(world, fn, args...)
+function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(args::Vararg))
     throw(MethodError(fn, (args...,), world))
 end
 
-@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -527,7 +527,7 @@ end
         if EnzymeRules.isapplicable(kwfunc, TT; world)
             @safe_debug "Applying custom forward rule (kwcall)" TT
             llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
-            fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
+            fwd_RT = Compiler.primal_return_type_world(Forward, world, Core.Typeof(kwfunc), TT)
         else
             TT = Tuple{typeof(world),typeof(kwfunc),TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
@@ -538,7 +538,7 @@ end
         if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
             @safe_debug "Applying custom forward rule" TT
             llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
-            fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
+            fwd_RT = Compiler.primal_return_type_world(Forward, world, typeof(EnzymeRules.forward), TT)
         else
             TT = Tuple{typeof(world),typeof(EnzymeRules.forward),TT.parameters...}
             llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
@@ -768,8 +768,8 @@ end
 @inline function aug_fwd_mi(
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    forward = false,
-    B = nothing,
+    forward::Bool = false,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
 )
     width = get_width(gutils)
 
@@ -874,18 +874,18 @@ end
     )
 end
 
-@inline function has_aug_fwd_rule(orig, gutils)
+@inline function has_aug_fwd_rule(orig::LLVM.CallInst, gutils::GradientUtils)
     return aug_fwd_mi(orig, gutils)[1] !== nothing
 end
 
-@register_rev function enzyme_custom_common_rev(
+function enzyme_custom_common_rev(
     forward::Bool,
-    B,
+    B::LLVM.IRBuilder,
     orig::LLVM.CallInst,
-    gutils,
-    normalR,
-    shadowR,
-    tape,
+    gutils::GradientUtils,
+    normalR::Ptr{LLVM.API.LLVMValueRef},
+    shadowR::Ptr{LLVM.API.LLVMValueRef},
+    tape::Union{Nothing, LLVM.Value},
 )::LLVM.API.LLVMValueRef
 
     ctx = LLVM.context(orig)
@@ -1030,7 +1030,7 @@ end
                 @safe_debug "Applying custom reverse rule (kwcall)" TT = rev_TT
                 try
                     llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
+                    rev_RT = Compiler.primal_return_type_world(Reverse, world, Core.Typeof(rkwfunc), rev_TT)
                 catch e
                     rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
                     llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
@@ -1050,7 +1050,7 @@ end
                 @safe_debug "Applying custom reverse rule" TT = rev_TT
                 try
                     llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
+                    rev_RT = Compiler.primal_return_type_world(Reverse, world, typeof(EnzymeRules.reverse), rev_TT)
                 catch e
                     rev_TT =
                         Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}
@@ -1121,7 +1121,7 @@ end
     if !forward
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
         if needsTape
-            @assert tape != C_NULL
+            @assert tape isa LLVM.Value
             tape_idx =
                 1 +
                 (kwtup !== nothing && !isghostty(kwtup)) +
@@ -1574,7 +1574,7 @@ end
 end
 
 
-@register_aug function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
@@ -1587,17 +1587,17 @@ end
     return false
 end
 
-@register_rev function enzyme_custom_rev(B, orig, gutils, tape)
+@register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
         return
     end
-    enzyme_custom_common_rev(false, B, orig, gutils, C_NULL, C_NULL, tape) #=tape=#
+    enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
     return nothing
 end
 
-@register_diffuse function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+@register_diffuse function enzyme_custom_diffuse(orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(val::LLVM.Value), isshadow::Bool, mode::API.CDerivativeMode)
     # use default
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&

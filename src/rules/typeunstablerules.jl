@@ -108,7 +108,7 @@ function body_construct_rev(
     batchshadowargs,
     tuple,
 )
-    outs = []
+    outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
             tsym = Symbol("tval_$w")
@@ -131,15 +131,16 @@ function body_construct_rev(
                     end
                 end
             )
-            push!(outs, out)
+            @inbounds outs[(i-1)*Width+w] = out
         end
     end
 
-    tapes = Expr[:(tval_1 = tape[])]
+    tapes = Vector{Expr}(undef, Width)
+    @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
         df = Symbol("df_$w")
-        push!(tapes, :($sym = $df[]))
+        @inbounds tapes[w] = :($sym = $df[])
     end
 
     quote
@@ -1413,7 +1414,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
@@ -1510,7 +1511,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 
     sym = new_from_original(gutils, ops[3])
     sym = lookup_value(gutils, sym, B)
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
@@ -1606,7 +1607,7 @@ end
 
     sym = new_from_original(gutils, ops[2])
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[1]))))
@@ -1705,7 +1706,7 @@ end
     sym = new_from_original(gutils, ops[2])
     sym = lookup_value(gutils, sym, B)
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, [sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[1]))))

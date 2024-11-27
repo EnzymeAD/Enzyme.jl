@@ -1,23 +1,21 @@
 
 function runtime_newtask_fwd(
-    world::Val{World},
     fn::FT1,
     dfn::FT2,
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
     ::Val{width},
-) where {FT1,FT2,World,width,RuntimeActivity}
+) where {FT1,FT2,width,RuntimeActivity}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    opt_mi = world
     forward = thunk(
-        opt_mi,
+        Val(0),
         (ghos ? Const : Duplicated){FT},
         Const,
         Tuple{},
         Val(API.DEM_ForwardMode),
-        Val(width),
+        Val(Int(width)),
         Val((false,)),
         Val(true),
         Val(false),
@@ -35,7 +33,6 @@ function runtime_newtask_fwd(
 end
 
 function runtime_newtask_augfwd(
-    world::Val{World},
     fn::FT1,
     dfn::FT2,
     post::Any,
@@ -43,18 +40,17 @@ function runtime_newtask_augfwd(
     runtimeActivity::Val{RuntimeActivity},
     ::Val{width},
     ::Val{ModifiedBetween},
-) where {FT1,FT2,World,width,ModifiedBetween,RuntimeActivity}
+) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    opt_mi = world
     forward, adjoint = thunk(
-        opt_mi,
+        Val(0),
         (ghos ? Const : Duplicated){FT},
         Const,
         Tuple{},
         Val(API.DEM_ReverseModePrimal),
-        Val(width),
+        Val(Int(width)),
         Val(ModifiedBetween),
         Val(true),
         Val(false),
@@ -416,7 +412,7 @@ end
     al = addrspacecast!(B, al, LLVM.PointerType(ll_th, Derived))
     push!(vals, al)
 
-    copies = []
+    copies = Tuple{LLVM.Value, LLVM.Value, LLVM.LLVMType}[]
     if !isghostty(dfuncT)
 
         llty = convert(LLVMType, dfuncT)
@@ -446,7 +442,7 @@ end
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
             val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived))
             store!(B, v, val)
-            if pv !== nothing
+            if !(pv isa Nothing)
                 push!(copies, (pv, val, pllty))
             end
 
@@ -671,7 +667,6 @@ end
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
-        unsafe_to_llvm(B, Val(world)),
         new_from_original(gutils, ops[1]),
         invert_pointer(gutils, ops[1], B),
         new_from_original(gutils, ops[2]),
@@ -727,7 +722,6 @@ end
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),
-        unsafe_to_llvm(B, Val(world)),
         new_from_original(gutils, ops[1]),
         invert_pointer(gutils, ops[1], B),
         new_from_original(gutils, ops[2]),
