@@ -7170,10 +7170,30 @@ end
     ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
+        
+        if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
+
+            calluse = nothing
+            for u in LLVM.uses(inst)
+                u = LLVM.user(u)
+                if isa(u, LLVM.CallInst)
+                    calluse = u
+                end
+            end
+            if calluse isa LLVM.CallInst
+                _, RT = enzyme_custom_extract_mi(calluse, false)
+                if RT !== nothing
+                    llrt, sret, returnRoots = get_return_info(RT)
+                    if !(sret isa Nothing) && !is_sret_union(RT)
+                        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                    end
+                end
+            end
+        end
 
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal

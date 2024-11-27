@@ -305,6 +305,16 @@ function abs_typeof(
         end
     end
 
+    if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
+        if haskey(metadata(arg), "enzymejl_allocart")
+            mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+            mds = Base.convert(String, mds)
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
+            RT = Base.unsafe_pointer_to_objref(ptr)
+            return (true, RT, GPUCompiler.MUT_REF)
+        end
+    end
+
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
         nm = ""
