@@ -577,7 +577,8 @@ end
             elseif activitystate == DupState
                 EnzymeCore.make_zero!(xi, seen)
             else
-                throw(ArgumentError("$xi of type $SBT cannot be zeroed in-place"))
+                msg = "cannot set $xi to zero in-place, as it contains differentiable values in immutable positions"
+                throw(ArgumentError(msg))
             end
         end
     end
