@@ -562,7 +562,8 @@ function abs_typeof(
                         break
                     end
                     
-                    if fo != 0 && fo != typed_fieldoffset(typ, i-1)
+                    if (i != typed_fieldcount(typ) && fo != typed_fieldoffset(typ, i+1)) || 
+                       (i == typed_fieldcount(typ) && fo != actual_size(typ))
                         lasti = i
                     end
                 end
