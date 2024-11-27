@@ -1982,7 +1982,7 @@ function propagate_returned!(mod::LLVM.Module)
     end
 end
 
-function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int}, keepret::Bool)
+function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int64}, keepret::Bool)
     args = collect(parameters(fn))
     for tr in toremove
         tr = tr + 1
