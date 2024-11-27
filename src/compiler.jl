@@ -7176,8 +7176,26 @@ end
             calluse = nothing
             for u in LLVM.uses(inst)
                 u = LLVM.user(u)
-                if isa(u, LLVM.CallInst)
-                    calluse = u
+                if isa(u, LLVM.CallInst) && operands(u)[1] == inst
+
+                    sretkind = kind(if LLVM.version().major >= 12
+                        TypeAttribute("sret", LLVM.Int32Type())
+                    else
+                        EnumAttribute("sret")
+                    end)
+                    hassret = false
+                    llvmfn = LLVM.called_operand(u)
+                    if llvmfn isa LLVM.Function
+                        for attr in collect(parameter_attributes(llvmfn, 1))
+                            if kind(attr) == sretkind
+                                hassret = true
+                                break
+                            end
+                        end
+                    end
+                    if hassret
+                        calluse = u
+                    end
                 end
             end
             if calluse isa LLVM.CallInst
