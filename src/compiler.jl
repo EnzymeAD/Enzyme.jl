@@ -3262,7 +3262,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     return new_ci
 end
 
-@eval @inline function primal_return_type(mode::Mode, ft::Type, tt::Type)
+@eval Base.@assume_effects :removable :foldable :nothrow @inline function primal_return_type(mode::Mode, ft::Type, tt::Type)
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, primal_return_type_generator))
 end

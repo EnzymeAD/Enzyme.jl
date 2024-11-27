@@ -690,13 +690,13 @@ code, as well as high-order differentiation.
         rt = Compiler.primal_return_type(mode, FTy, tt)
         A2 = A{rt}
         if rt == Union{}
-            throw(ErrorException("Return type inferred to be Union{}. Giving up."))
+            rt = Nothing 
         end
     else
         @assert A isa DataType
         rt = A
         if rt == Union{}
-	          throw(ErrorException("Return type inferred to be Union{}. Giving up."))
+	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
         end
     end
 
@@ -841,7 +841,10 @@ code, as well as high-order differentiation.
 
     if RT isa UnionAll
         rt = Compiler.primal_return_type(mode, FT, tt)
-        rt = RT{rt}
+	if rt == Union{}
+	   rt = Nothing
+	end
+	rt = RT{rt}
     else
         @assert RT isa DataType
         rt = RT
