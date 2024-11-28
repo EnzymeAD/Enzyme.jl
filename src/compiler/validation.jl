@@ -459,11 +459,11 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 opv = operands(loadfn)[1]
                 if !isa(opv, LLVM.GlobalVariable)
                     for iv in instructions(last(blocks(initfn)))
-                        if !(isa, LLVM.StoreInst)
+                        if !(iv isa LLVM.StoreInst)
                             continue
                         end
                         gv = operands(iv)[2]
-                        if !(isa, LLVM.GlobalVariable)
+                        if !(gv isa LLVM.GlobalVariable)
                             continue
                         end
                         opv = gv
