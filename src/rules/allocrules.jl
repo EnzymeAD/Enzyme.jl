@@ -1,4 +1,4 @@
-LLT_ALIGN(x, sz) = (((x) + (sz) - 1) & ~((sz) - 1))
+@inline LLT_ALIGN(x::Int, sz::Int) = (((x) + (sz) - 1) & ~((sz) - 1))
 function array_shadow_handler(
     B::LLVM.API.LLVMBuilderRef,
     OrigCI::LLVM.API.LLVMValueRef,
