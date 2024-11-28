@@ -361,7 +361,7 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 end
 
-function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
+Base.@nospecializeinfer function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
     else
@@ -407,7 +407,7 @@ end
     NamedTuple{ntuple(i -> Symbol(i), Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
-function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})
+Base.@nospecializeinfer function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})
     ty = LLVM.value_type(val)
     for i in idxs
         if isa(ty, LLVM.ArrayType)
@@ -422,7 +422,7 @@ end
 
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
-function calling_conv_fixup(
+Base.@nospecializeinfer function calling_conv_fixup(
     builder::LLVM.IRBuilder,
     @nospecialize(val::LLVM.Value),
     @nospecialize(tape::LLVM.LLVMType),

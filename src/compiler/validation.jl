@@ -20,7 +20,7 @@ function get_blas_symbols()
     return symbols
 end
 
-function lookup_blas_symbol(name)
+function lookup_blas_symbol(name::String)
     Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
 end
 end
@@ -127,7 +127,7 @@ function __init__()
     end
 end
 
-function memoize!(ptr, fn)
+function memoize!(ptr::Ptr{Cvoid}, fn::String)::String
     fn = get(ptr_map, ptr, fn)
     if !haskey(ptr_map, ptr)
         ptr_map[ptr] = fn
@@ -140,7 +140,7 @@ end
 
 import GPUCompiler: IRError, InvalidIRError
 
-function restore_lookups(mod::LLVM.Module)
+function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)

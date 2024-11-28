@@ -96,34 +96,34 @@ EnzymeInterpreter(
     handler = nothing
 ) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
 
-Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
-Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
-get_inference_world(@nospecialize(interp::EnzymeInterpreter)) = interp.world
-Core.Compiler.get_inference_cache(@nospecialize(interp::EnzymeInterpreter)) = interp.local_cache
+Base.@nospecializeinfer Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
+Base.@nospecializeinfer Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
+Base.@nospecializeinfer get_inference_world(@nospecialize(interp::EnzymeInterpreter)) = interp.world
+Base.@nospecializeinfer Core.Compiler.get_inference_cache(@nospecialize(interp::EnzymeInterpreter)) = interp.local_cache
 @static if HAS_INTEGRATED_CACHE
-    Core.Compiler.cache_owner(@nospecialize(interp::EnzymeInterpreter)) = interp.token
+    Base.@nospecializeinfer Core.Compiler.cache_owner(@nospecialize(interp::EnzymeInterpreter)) = interp.token
 else
-    Core.Compiler.code_cache(@nospecialize(interp::EnzymeInterpreter)) =
+    Base.@nospecializeinfer Core.Compiler.code_cache(@nospecialize(interp::EnzymeInterpreter)) =
         WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
-Core.Compiler.lock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
-Core.Compiler.unlock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
+Base.@nospecializeinfer Core.Compiler.lock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
+Base.@nospecializeinfer Core.Compiler.unlock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
 
-Core.Compiler.may_optimize(@nospecialize(::EnzymeInterpreter)) = true
-Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
+Base.@nospecializeinfer Core.Compiler.may_optimize(@nospecialize(::EnzymeInterpreter)) = true
+Base.@nospecializeinfer Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 # From @aviatesk:
 #     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
-Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
-Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
+Base.@nospecializeinfer Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
+Base.@nospecializeinfer Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
 
-Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
+Base.@nospecializeinfer Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
-function is_alwaysinline_func(@nospecialize(TT))
+Base.@nospecializeinfer function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
     if TT.parameters[1] == typeof(Core.memoryref)
@@ -133,7 +133,7 @@ function is_alwaysinline_func(@nospecialize(TT))
     return false
 end
 
-function is_primitive_func(@nospecialize(TT))
+Base.@nospecializeinfer function is_primitive_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
     if ft == typeof(Enzyme.pmap)
@@ -156,11 +156,11 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
-function isKWCallSignature(@nospecialize(TT))
+Base.@nospecializeinfer function isKWCallSignature(@nospecialize(TT))::Bool
     return TT <: Tuple{typeof(Core.kwcall),Any,Any,Vararg}
 end
 
-function simplify_kw(@nospecialize specTypes)
+function simplify_kw(@nospecialize(specTypes))
     if isKWCallSignature(specTypes)
         return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
     else
@@ -193,7 +193,7 @@ Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
 
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
-function Core.Compiler.abstract_call_gf_by_type(
+Base.@nospecializeinfer function Core.Compiler.abstract_call_gf_by_type(
     @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,
@@ -279,7 +279,7 @@ let # overload `inlining_policy`
         )
     end
     @static if isdefined(Core.Compiler, :inlining_policy)
-    @eval function Core.Compiler.inlining_policy($(sigs_ex.args...))
+    @eval Base.@nospecializeinfer function Core.Compiler.inlining_policy($(sigs_ex.args...))
         if info isa NoInlineCallInfo
             if info.kind === :primitive
                 @safe_debug "Blocking inlining for primitive func" info.tt
@@ -299,7 +299,7 @@ let # overload `inlining_policy`
         return @invoke Core.Compiler.inlining_policy($(args_ex.args...))
     end
     else
-    @eval function Core.Compiler.src_inlining_policy($(sigs_ex.args...))
+    @eval Base.@nospecializeinfer function Core.Compiler.src_inlining_policy($(sigs_ex.args...))
         if info isa NoInlineCallInfo
             if info.kind === :primitive
                 @safe_debug "Blocking inlining for primitive func" info.tt
@@ -742,15 +742,15 @@ end
     end
 end
 
-@inline function array_or_number(@nospecialize(Ty))
+@inline function array_or_number(@nospecialize(Ty))::Bool
     return Ty <: AbstractArray || Ty <: Number
 end
 
-@inline function isa_array_or_number(@nospecialize(x))
+@inline function isa_array_or_number(@nospecialize(x))::Bool
     return x isa AbstractArray || x isa Number
 end
 
-@inline function num_or_eltype(@nospecialize(Ty))
+@inline function num_or_eltype(@nospecialize(Ty))::Type
     if Ty <: AbstractArray
         eltype(Ty)
     else
@@ -758,7 +758,7 @@ end
     end
 end
 
-function abstract_call_known(
+Base.@nospecializeinfer function abstract_call_known(
     @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,

@@ -106,7 +106,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
-@inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
+@inline Base.@nospecializeinfer function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
         Tys = (Float32, Float64)
@@ -1207,7 +1207,7 @@ end
 
 include("make_zero.jl")
 
-function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
+Base.@nospecializeinfer function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
@@ -1411,7 +1411,7 @@ end
 
 parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth = 0) = val
-parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
+Base.@nospecializeinfer parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
 parent_scope(val::LLVM.Argument, depth = 0) =
     parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth + 1)
 
@@ -2209,7 +2209,7 @@ current_task_offset() =
 current_ptls_offset() =
     unsafe_load(cglobal(:jl_task_ptls_offset, Cint)) ÷ sizeof(Ptr{Cvoid})
 
-function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Value), @nospecialize(p::LLVM.Value))
+Base.@nospecializeinfer function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Value), @nospecialize(p::LLVM.Value))
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     vals = LLVM.Value[]
@@ -2253,7 +2253,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
     return
 end
 
-function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing, LLVM.Value}), @nospecialize(startvals::Vararg{LLVM.Value}); added = LLVM.API.LLVMValueRef[])
+Base.@nospecializeinfer function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing, LLVM.Value}), @nospecialize(startvals::Vararg{LLVM.Value}); added = LLVM.API.LLVMValueRef[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     vals = LLVM.Value[]
@@ -2498,7 +2498,7 @@ function zero_allocation(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     return nothing
 end
 
-function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::DataType), @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(nobj::LLVM.Value), zeroAll::Bool, @nospecialize(idx::LLVM.Value))
+Base.@nospecializeinfer function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::DataType), @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(nobj::LLVM.Value), zeroAll::Bool, @nospecialize(idx::LLVM.Value))
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -2573,7 +2573,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
 end
 
 
-function zero_allocation(
+Base.@nospecializeinfer function zero_allocation(
     B::LLVM.IRBuilder,
     @nospecialize(jlType::DataType),
     @nospecialize(LLVMType::LLVM.LLVMType),
@@ -2662,7 +2662,7 @@ function zero_allocation(
     ).ref
 end
 
-function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
+Base.@nospecializeinfer function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
 
@@ -2787,7 +2787,7 @@ function julia_deallocator(B::LLVM.API.LLVMBuilderRef, Obj::LLVM.API.LLVMValueRe
     julia_deallocator(B, Obj)
 end
 
-function julia_deallocator(B::LLVM.IRBuilder, @nospecialize(Obj::LLVM.Value))
+Base.@nospecializeinfer function julia_deallocator(B::LLVM.IRBuilder, @nospecialize(Obj::LLVM.Value))
     mod = LLVM.parent(LLVM.parent(position(B)))
 
     T_void = LLVM.VoidType()
@@ -3087,7 +3087,7 @@ import .Interpreter: isKWCallSignature
 """
 Create the methodinstance pair, and lookup the primal return type.
 """
-@inline function fspec(
+@inline Base.@nospecializeinfer function fspec(
     @nospecialize(F::Type),
     @nospecialize(TT::Type),
     world::Union{UInt,Nothing} = nothing,
@@ -3179,7 +3179,7 @@ primal_return_type_world(
     @nospecialize(TT::Type),
    ) = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
 
-function primal_return_type_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
+Base.@nospecializeinfer function primal_return_type_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     @assert mode <: Mode
@@ -3280,7 +3280,7 @@ end
 # Enzyme compiler step
 ##
 
-function annotate!(mod, mode)
+function annotate!(mod::LLVM.Module)
     inactive = LLVM.StringAttribute("enzyme_inactive", "")
     active = LLVM.StringAttribute("enzyme_active", "")
     no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
@@ -3896,7 +3896,7 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
     throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Instruction, error::Bool = true)
+function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     operand = LLVM.called_operand(orig)
     if isa(operand, LLVM.Function)
         return enzyme_custom_extract_mi(operand::LLVM.Function, error)
@@ -3968,7 +3968,7 @@ include("rules/activityrules.jl")
 const DumpPreEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
-function enzyme!(
+Base.@nospecializeinfer function enzyme!(
     job::CompilerJob,
     mod::LLVM.Module,
     primalf::LLVM.Function,
@@ -4315,7 +4315,7 @@ function set_subprogram!(f::LLVM.Function, sp)
     end
 end
 
-function create_abi_wrapper(
+Base.@nospecializeinfer function create_abi_wrapper(
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -4802,7 +4802,7 @@ function create_abi_wrapper(
         metadata(val)[LLVM.MD_dbg] = DILocation(0, 0, get_subprogram(llvm_f))
     end
 
-    @inline function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
+    @inline Base.@nospecializeinfer function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
         valty = sret_types[index]
         # Union becoming part of a tuple needs to be adjusted
         # See https://github.com/JuliaLang/julia/blob/81afdbc36b365fcbf3ae25b7451c6cb5798c0c3d/src/cgutils.cpp#L3795C1-L3801C121
@@ -5142,7 +5142,7 @@ end
 struct RemovedParam end
 
 # Modified from GPUCompiler classify_arguments
-function classify_arguments(
+Base.@nospecializeinfer function classify_arguments(
     @nospecialize(source_sig::Type),
     codegen_ft::LLVM.FunctionType,
     has_sret::Bool,
@@ -5245,7 +5245,7 @@ function classify_arguments(
     return args
 end
 
-function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
+Base.@nospecializeinfer function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
     if !isa(Ty, LLVM.PointerType)
         return false
     end
@@ -5259,7 +5259,7 @@ mutable struct CountTrackedPointers
     derived::Bool
 end
 
-function CountTrackedPointers(@nospecialize(T::LLVM.LLVMType))
+Base.@nospecializeinfer function CountTrackedPointers(@nospecialize(T::LLVM.LLVMType))
     res = CountTrackedPointers(0, true, false)
 
     if isa(T, LLVM.PointerType)
@@ -5296,7 +5296,7 @@ function CountTrackedPointers(@nospecialize(T::LLVM.LLVMType))
 end
 
 # must deserve sret
-function deserves_rooting(@nospecialize(T::LLVM.LLVMType))
+Base.@nospecializeinfer function deserves_rooting(@nospecialize(T::LLVM.LLVMType))
     tracked = CountTrackedPointers(T)
     @assert !tracked.derived
     if tracked.count != 0 && !tracked.all
@@ -5307,7 +5307,7 @@ end
 
 # https://github.com/JuliaLang/julia/blob/64378db18b512677fc6d3b012e6d1f02077af191/src/cgutils.cpp#L823
 # returns if all unboxed
-function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), counter::Base.RefValue{Int} = Ref(0))
+Base.@nospecializeinfer function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), counter::Base.RefValue{Int} = Ref(0))
     if counter[] > 127
         return false
     end
@@ -5326,7 +5326,7 @@ function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), cou
 end
 
 # From https://github.com/JuliaLang/julia/blob/038d31463f0ef744c8308bdbe87339b9c3f0b890/src/cgutils.cpp#L3108
-function union_alloca_type(@nospecialize(UT::Type))
+Base.@nospecializeinfer function union_alloca_type(@nospecialize(UT::Type))
     nbytes = 0
     function inner(@nospecialize(jlrettype::Type))
         if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
@@ -5338,7 +5338,7 @@ function union_alloca_type(@nospecialize(UT::Type))
 end
 
 # From https://github.com/JuliaLang/julia/blob/e6bf81f39a202eedc7bd4f310c1ab60b5b86c251/src/codegen.cpp#L6447
-function is_sret(@nospecialize(jlrettype::Type))
+Base.@nospecializeinfer function is_sret(@nospecialize(jlrettype::Type))
     if jlrettype === Union{}
         # jlrettype == (jl_value_t*)jl_bottom_type
         return false
@@ -5361,7 +5361,7 @@ function is_sret(@nospecialize(jlrettype::Type))
     end
     return false
 end
-function is_sret_union(@nospecialize(jlrettype::Type))
+Base.@nospecializeinfer function is_sret_union(@nospecialize(jlrettype::Type))
     if jlrettype === Union{}
         # jlrettype == (jl_value_t*)jl_bottom_type
         return false
@@ -5380,7 +5380,7 @@ function is_sret_union(@nospecialize(jlrettype::Type))
 end
 
 # https://github.com/JuliaLang/julia/blob/0a696a3842750fcedca8832bc0aabe9096c7658f/src/codegen.cpp#L6812
-function get_return_info(
+Base.@nospecializeinfer function get_return_info(
     @nospecialize(jlrettype::Type),
 )::Tuple{Union{Nothing,Type},Union{Nothing,Type},Union{Nothing,Type}}
     sret = nothing
@@ -5431,7 +5431,7 @@ function get_return_info(
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(
+Base.@nospecializeinfer function lower_convention(
     @nospecialize(functy::Type),
     mod::LLVM.Module,
     entry_f::LLVM.Function,
@@ -6149,7 +6149,7 @@ end
 
 using Random
 # returns arg, return
-function no_type_setting(@nospecialize(specTypes); world = nothing)
+Base.@nospecializeinfer function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothing)
     # Even though the julia type here is ptr{int8}, the actual data can be something else
     if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
         return (true, false)
@@ -7042,7 +7042,7 @@ end
     end
 
     # annotate
-    annotate!(mod, mode)
+    annotate!(mod)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
             exc = functions(mod)[name]
@@ -8484,7 +8484,7 @@ end
 # JIT
 ##
 
-function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType))
+Base.@nospecializeinfer function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType))
     if job.config.params.ABI <: InlineABI
         return CompileResult(
             Val((Symbol(mod), Symbol(adjoint_name))),
@@ -8588,7 +8588,7 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
-@inline function thunkbase(
+Base.@nospecializeinfer @inline function thunkbase(
     mi::Core.MethodInstance,
     World::Union{UInt, Nothing},
     @nospecialize(FA::Type{<:Annotation}),
