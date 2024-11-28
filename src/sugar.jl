@@ -14,7 +14,7 @@ end
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
         mi = my_methodinstance(fn, Tuple{T, Int})
-        job = CompilerConfig.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel = false))
+        job = Compiler.CompilerConfig.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel = false))
         mod, meta = GPUCompiler.codegen(
             :llvm,
             job;
