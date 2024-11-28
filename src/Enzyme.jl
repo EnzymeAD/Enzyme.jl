@@ -1264,7 +1264,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
         false, #=errifwritte=#
         RuntimeActivity,
     )
-    job = Compiler.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel = false))
+    job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
 
     key = hash(parent_job, hash(job))

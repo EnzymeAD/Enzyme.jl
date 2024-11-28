@@ -14,7 +14,7 @@ end
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
         mi = my_methodinstance(fn, Tuple{T, Int})
-        job = Enzyme.Compiler.CompilerConfig.CompilerJob(mi, Enzyme.Compiler.CompilerConfig(target, params; kernel = false))
+        job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
         mod, meta = GPUCompiler.codegen(
             :llvm,
             job;
