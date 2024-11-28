@@ -120,7 +120,7 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 include("logic.jl")
-include("typeanalysis.jl")
+include("analyses/type.jl")
 include("typetree.jl")
 include("gradientutils.jl")
 include("utils.jl")
