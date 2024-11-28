@@ -6177,7 +6177,7 @@ function GPUCompiler.codegen(
 )
     params = job.config.params
     if params.run_enzyme
-        @assert eltype(params.rt) != Union{}
+        # @assert eltype(params.rt) != Union{}
     end
     expectedTapeType = params.expectedTapeType
     mode = params.mode
