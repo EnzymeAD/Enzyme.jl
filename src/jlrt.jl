@@ -1,6 +1,6 @@
 # For julia runtime function emission
     
-Base.@nospecializeinfer function emit_allocobj!(
+function emit_allocobj!(
     B::LLVM.IRBuilder,
     @nospecialize(tag::LLVM.Value),
     @nospecialize(Size::LLVM.Value),
@@ -58,7 +58,7 @@ Base.@nospecializeinfer function emit_allocobj!(
 
     return call!(B, alty, alloc_obj, LLVM.Value[ct, Size, tag], name)
 end
-Base.@nospecializeinfer function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::String = "")
+function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::String = "")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -83,7 +83,7 @@ declare_pointerfromobjref!(mod::LLVM.Module) =
         LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
     end
 
-Base.@nospecializeinfer function emit_pointerfromobjref!(B::LLVM.IRBuilder, @nospecialize(T::LLVM.Value))
+function emit_pointerfromobjref!(B::LLVM.IRBuilder, @nospecialize(T::LLVM.Value))
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -113,7 +113,7 @@ declare_juliacall!(mod::LLVM.Module) =
         LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg = true)
     end
 
-Base.@nospecializeinfer function emit_jl!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function emit_jl!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -124,7 +124,7 @@ Base.@nospecializeinfer function emit_jl!(B::LLVM.IRBuilder, @nospecialize(val::
     call!(B, FT, fn, LLVM.Value[val])
 end
 
-Base.@nospecializeinfer function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::LLVM.Value))::LLVM.Value
+function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -136,11 +136,11 @@ Base.@nospecializeinfer function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(v
     call!(B, FT, fn, LLVM.Value[val, ty])
 end
 
-Base.@nospecializeinfer function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::Type))::LLVM.Value
+function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::Type))::LLVM.Value
     emit_jl_isa!(B, val, unsafe_to_llvm(B, ty))
 end
 
-Base.@nospecializeinfer function emit_getfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
+function emit_getfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -170,7 +170,7 @@ Base.@nospecializeinfer function emit_getfield!(B::LLVM.IRBuilder, @nospecialize
 end
 
 
-Base.@nospecializeinfer function emit_nthfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
+function emit_nthfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -186,11 +186,11 @@ Base.@nospecializeinfer function emit_nthfield!(B::LLVM.IRBuilder, @nospecialize
     call!(B, gen_FT, inv, args)
 end
 
-Base.@nospecializeinfer function emit_nthfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), fld::Int)::LLVM.Value
+function emit_nthfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), fld::Int)::LLVM.Value
 	emit_nthfield!(B, val, LLVM.ConstantInt(fld))
 end
 
-Base.@nospecializeinfer function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -202,7 +202,7 @@ Base.@nospecializeinfer function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize
     call!(B, FT, fn, LLVM.Value[val])
 end
 
-Base.@nospecializeinfer function emit_box_int32!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function emit_box_int32!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -216,7 +216,7 @@ Base.@nospecializeinfer function emit_box_int32!(B::LLVM.IRBuilder, @nospecializ
     call!(B, FT, box_int32, LLVM.Value[val])
 end
 
-Base.@nospecializeinfer function emit_box_int64!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function emit_box_int64!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -326,7 +326,7 @@ function load_if_mixed(oval::OT, val::VT) where {OT, VT}
     end
 end
 
-Base.@nospecializeinfer function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))::LLVM.Value
+function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))::LLVM.Value
     world = enzyme_extract_world(LLVM.parent(position(B)))
     legal, TT, _ = abs_typeof(oval)
     if !legal
@@ -374,7 +374,7 @@ function ref_if_mixed(val::VT) where {VT}
     end
 end
 
-Base.@nospecializeinfer function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
     world = enzyme_extract_world(LLVM.parent(position(B)))
     legal, TT, _ = abs_typeof(val)
     if !legal
@@ -401,7 +401,7 @@ Base.@nospecializeinfer function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nos
     end
 end
 
-Base.@nospecializeinfer function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
+function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -510,7 +510,7 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     return tag
 end
 
-Base.@nospecializeinfer function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM.Value
+function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -527,7 +527,7 @@ Base.@nospecializeinfer function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize
     call!(B, FT, fn, [arg])
 end
 
-Base.@nospecializeinfer function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vector{LLVM.Value})::LLVM.Value
+function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vector{LLVM.Value})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -714,7 +714,7 @@ function get_memory_struct()
 	return LLVM.StructType([sizeT, ptrty]; packed = true)
 end
 
-Base.@nospecializeinfer function get_memory_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     mty = get_memory_struct()
     array = LLVM.pointercast!(
         B,
@@ -795,7 +795,7 @@ function get_datatype_struct()
 	return LLVM.StructType([jlvaluet, jlvaluet, jlvaluet, jlvaluet, jlvaluet, jlvaluet, i32, i16]; packed = true)
 end
 
-Base.@nospecializeinfer function get_array_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_array_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     i8 = LLVM.IntType(8)
     ptrty = LLVM.PointerType(i8, 13)
     array = LLVM.pointercast!(
@@ -806,7 +806,7 @@ Base.@nospecializeinfer function get_array_data(B::LLVM.IRBuilder, @nospecialize
     return LLVM.load!(B, ptrty, array)
 end
 
-Base.@nospecializeinfer function get_array_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_array_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ST = get_array_struct()
     elsz = LLVM.IntType(16)
     array = LLVM.pointercast!(
@@ -823,7 +823,7 @@ Base.@nospecializeinfer function get_array_elsz(B::LLVM.IRBuilder, @nospecialize
     return LLVM.load!(B, elsz, v)
 end
 
-Base.@nospecializeinfer function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
+function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	legal, JTy = absint(ty)
 	ls = get_layout_struct()
 	lptr = LLVM.PointerType(ls, 10)
@@ -843,7 +843,7 @@ Base.@nospecializeinfer function emit_layout_of_type!(B::LLVM.IRBuilder, @nospec
 	return layout
 end
 
-Base.@nospecializeinfer function emit_memorytype_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
+function emit_memorytype_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	legal, JTy = absint(ty)
 	if legal
 		res = unsafe_load(reinterpret(Ptr{UInt32}, JTy.layout))
@@ -857,12 +857,12 @@ Base.@nospecializeinfer function emit_memorytype_elsz!(B::LLVM.IRBuilder, @nospe
 	return load!(B, i32, lty)
 end
 
-Base.@nospecializeinfer function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ty = emit_jltypeof!(B, array)
 	return emit_memorytype_elsz!(B, ty)
 end
 
-Base.@nospecializeinfer function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -903,7 +903,7 @@ Base.@nospecializeinfer function get_array_len(B::LLVM.IRBuilder, @nospecialize(
     return LLVM.load!(B, sizeT, v)
 end
 
-Base.@nospecializeinfer function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -940,7 +940,7 @@ Base.@nospecializeinfer function get_memory_len(B::LLVM.IRBuilder, @nospecialize
     return LLVM.load!(B, sizeT, v)
 end
 
-Base.@nospecializeinfer function get_array_nrows(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_array_nrows(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ST = get_array_struct()
     array = LLVM.pointercast!(
         B,
@@ -971,7 +971,7 @@ function emit_gc_preserve_begin(B::LLVM.IRBuilder, args::Vector{LLVM.Value} = LL
     return token
 end
 
-Base.@nospecializeinfer function emit_gc_preserve_end(B::LLVM.IRBuilder, @nospecialize(token::LLVM.Value))
+function emit_gc_preserve_end(B::LLVM.IRBuilder, @nospecialize(token::LLVM.Value))
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -986,20 +986,20 @@ Base.@nospecializeinfer function emit_gc_preserve_end(B::LLVM.IRBuilder, @nospec
     return
 end
 
-Base.@nospecializeinfer function allocate_sret!(B::LLVM.IRBuilder, @nospecialize(N::LLVM.LLVMType))
+function allocate_sret!(B::LLVM.IRBuilder, @nospecialize(N::LLVM.LLVMType))
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     al = LLVM.alloca!(B, LLVM.ArrayType(T_prjlvalue, N))
     return al
 end
 
-Base.@nospecializeinfer function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, @nospecialize(N::LLVM.LLVMType))
+function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, @nospecialize(N::LLVM.LLVMType))
     B = LLVM.IRBuilder()
     position!(B, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     allocate_sret!(B, N)
 end
 
-Base.@nospecializeinfer function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::String, @nospecialize(errty::Type) = EnzymeRuntimeException)
+function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::String, @nospecialize(errty::Type) = EnzymeRuntimeException)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)

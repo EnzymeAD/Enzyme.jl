@@ -5,7 +5,7 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline Base.@nospecializeinfer unsafe_to_pointer(@nospecialize(val::Type)) = @static if sizeof(Int) == sizeof(Int64)
+@inline unsafe_to_pointer(@nospecialize(val::Type)) = @static if sizeof(Int) == sizeof(Int64)
     Base.llvmcall((
 """
 declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
@@ -65,7 +65,7 @@ function unsafe_nothing_to_llvm(mod::LLVM.Module)
     return gv
 end
 
-Base.@nospecializeinfer function unsafe_to_ptr(@nospecialize(val))
+function unsafe_to_ptr(@nospecialize(val))
     if !Base.ismutable(val)
         val = Core.Box(val) # FIXME many objects could be leaked here
         @assert Base.ismutable(val)
@@ -81,7 +81,7 @@ end
 export unsafe_to_ptr
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-Base.@nospecializeinfer function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -141,7 +141,7 @@ Base.@nospecializeinfer function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
-Base.@nospecializeinfer function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
+function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
     if !Core.Compiler.isconstType(T)
         throw(AssertionError("Tried to make instance of non constant type $T"))
     end
@@ -151,7 +151,7 @@ end
 
 export makeInstanceOf
 
-Base.@nospecializeinfer function hasfieldcount(@nospecialize(dt))::Bool
+function hasfieldcount(@nospecialize(dt))::Bool
     try
         fieldcount(dt)
     catch

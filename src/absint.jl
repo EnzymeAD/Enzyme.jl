@@ -1,7 +1,7 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-Base.@nospecializeinfer function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bool,Any}
+function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bool,Any}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
@@ -165,7 +165,7 @@ Base.@nospecializeinfer function absint(@nospecialize(arg::LLVM.Value), partial:
     return (false, nothing)
 end
 
-Base.@nospecializeinfer function actual_size(@nospecialize(typ2))::Int
+function actual_size(@nospecialize(typ2))::Int
     @static if VERSION < v"1.11-"
         if typ2 <: Array
             return sizeof(Ptr{Cvoid}) + 2 + 2 + 4 + 2 * sizeof(Csize_t) + sizeof(Csize_t)
@@ -184,7 +184,7 @@ Base.@nospecializeinfer function actual_size(@nospecialize(typ2))::Int
     end
 end
 
-Base.@nospecializeinfer @inline function first_non_ghost(@nospecialize(typ2))::Tuple{Int, Int}
+@inline function first_non_ghost(@nospecialize(typ2))::Tuple{Int, Int}
     @static if VERSION < v"1.11-"
         if typ2 <: Array
             return (1, 0)
@@ -204,7 +204,7 @@ Base.@nospecializeinfer @inline function first_non_ghost(@nospecialize(typ2))::T
     return (-1, 0)
 end
 
-Base.@nospecializeinfer function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType), byref::GPUCompiler.ArgumentCC, dl::LLVM.DataLayout)::Bool
+function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType), byref::GPUCompiler.ArgumentCC, dl::LLVM.DataLayout)::Bool
     sz = sizeof(dl, arg_t)
     if byref != GPUCompiler.BITS_VALUE
         if sz != sizeof(Int)
@@ -228,7 +228,7 @@ Base.@nospecializeinfer function should_recurse(@nospecialize(typ2), @nospeciali
     end
 end
 
-Base.@nospecializeinfer function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool=true, inttoptr::Bool=false)::Tuple{LLVM.Value, Int}
+function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool=true, inttoptr::Bool=false)::Tuple{LLVM.Value, Int}
     offset = 0
     while true
         if isa(larg, LLVM.ConstantExpr)
@@ -276,7 +276,7 @@ Base.@nospecializeinfer function get_base_and_offset(@nospecialize(larg::LLVM.Va
     return larg, offset
 end
 
-Base.@nospecializeinfer function abs_typeof(
+function abs_typeof(
     @nospecialize(arg::LLVM.Value),
     partial::Bool = false, seenphis=Set{LLVM.PHIInst}()
 )::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
@@ -729,7 +729,7 @@ Base.@nospecializeinfer function abs_typeof(
     return (false, nothing, nothing)
 end
 
-Base.@nospecializeinfer function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
+function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
     if isa(arg, ConstantExpr)
         ce = arg
 	    while isa(ce, ConstantExpr)
