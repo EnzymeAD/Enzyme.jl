@@ -1125,7 +1125,11 @@ struct Return2
 end
 
 function force_recompute!(mod::LLVM.Module)
-    for f in functions(mod), bb in blocks(f), inst in collect(instructions(bb))
+    for f in functions(mod), bb in blocks(f)
+    iter = LLVM.API.LLVMGetFirstInstruction(bb)
+    while iter != C_NULL
+        inst = LLVM.Instruction(iter)
+        iter = LLVM.API.LLVMGetNextInstruction(iter)
         if isa(inst, LLVM.LoadInst)
             has_loaded = false
             for u in LLVM.uses(inst)
@@ -1169,6 +1173,7 @@ function force_recompute!(mod::LLVM.Module)
                 end
             end
         end
+    end
     end
 end
 
@@ -9076,7 +9081,10 @@ include("compiler/reflection.jl")
         )
         copysetfn = meta.entry
         blk = first(blocks(copysetfn))
-        for inst in collect(instructions(blk))
+        iter = LLVM.API.LLVMGetFirstInstruction(blk)
+        while iter != C_NULL
+            inst = LLVM.Instruction(iter)
+            iter = LLVM.API.LLVMGetNextInstruction(iter)
             if isa(inst, LLVM.FenceInst)
                 eraseInst(blk, inst)
             end
