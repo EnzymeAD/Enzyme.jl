@@ -1727,6 +1727,7 @@ end
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
+                @assert !illegal
                 illegalVal = cur
                 illegal = true
                 return make_batched(ncur, prevbb)
@@ -1770,6 +1771,7 @@ end
                 end
 
                 cur2 = if changed
+                    @assert !illegal
                     illegalVal = cur
                     illegal = true
                     # TODO replace with correct insertions/splats
@@ -1942,8 +1944,10 @@ end
                 return make_batched(ncur, prevbb)
             end
 
-            illegal = true
-            illegalVal = cur
+            if !illegal
+                illegal = true
+                illegalVal = cur
+            end
             return ncur
         end
 
@@ -7070,10 +7074,48 @@ end
     ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
+        
+        if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
+
+            calluse = nothing
+            for u in LLVM.uses(inst)
+                u = LLVM.user(u)
+                if isa(u, LLVM.CallInst) && operands(u)[1] == inst
+
+                    sretkind = kind(if LLVM.version().major >= 12
+                        TypeAttribute("sret", LLVM.Int32Type())
+                    else
+                        EnumAttribute("sret")
+                    end)
+                    hassret = false
+                    llvmfn = LLVM.called_operand(u)
+                    if llvmfn isa LLVM.Function
+                        for attr in collect(parameter_attributes(llvmfn, 1))
+                            if kind(attr) == sretkind
+                                hassret = true
+                                break
+                            end
+                        end
+                    end
+                    if hassret
+                        calluse = u
+                    end
+                end
+            end
+            if calluse isa LLVM.CallInst
+                _, RT = enzyme_custom_extract_mi(calluse, false)
+                if RT !== nothing
+                    llrt, sret, returnRoots = get_return_info(RT)
+                    if !(sret isa Nothing) && !is_sret_union(RT)
+                        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                    end
+                end
+            end
+        end
 
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst))
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
