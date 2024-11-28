@@ -14,7 +14,7 @@ end
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
         mi = my_methodinstance(fn, Tuple{T, Int})
-        job = CompilerJob(mi, CompilerConfig(target, params; kernel = false))
+        job = CompilerConfig.CompilerJob(mi, Compiler.CompilerConfig(target, params; kernel = false))
         mod, meta = GPUCompiler.codegen(
             :llvm,
             job;
@@ -23,7 +23,7 @@ end
             validate = false,
         )
         copysetfn = meta.entry
-        blk = first(blocks(copysetfn))
+        blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)
         while iter != C_NULL
             inst = LLVM.Instruction(iter)
@@ -42,20 +42,20 @@ end
         end
         hasNoRet = any(
             map(
-                k -> kind(k) == kind(EnumAttribute("noreturn")),
-                collect(function_attributes(copysetfn)),
+                k -> kind(k) == kind(LLVM.EnumAttribute("noreturn")),
+                collect(LLVM.function_attributes(copysetfn)),
             ),
         )
         @assert !hasNoRet
         if !hasNoRet
-            push!(function_attributes(copysetfn), EnumAttribute("alwaysinline", 0))
+            push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))
         end
-        ity = convert(LLVMType, Int)
-        jlvaluet = convert(LLVMType, T; allow_boxed=true)
+        ity = convert(LLVM.LLVMType, Int)
+        jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
 
-        FT = LLVM.FunctionType(jlvaluet,  LLVMType[jlvaluet, ity, ity])
+        FT = LLVM.FunctionType(jlvaluet,  LLVM.LLVMType[jlvaluet, ity, ity])
         llvm_f = LLVM.Function(mod, "f", FT)
-        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+        push!(LLVM.function_attributes(llvm_f), LLVM.EnumAttribute("alwaysinline", 0))
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
@@ -63,9 +63,9 @@ end
         needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
 
         builder = LLVM.IRBuilder()
-        entry = BasicBlock(llvm_f, "entry")
-        position!(builder, entry)
-        inp, lstart, len = collect(LLVM.Value, parameters(llvm_f))
+        entry = LLVM.BasicBlock(llvm_f, "entry")
+        LLVM.position!(builder, entry)
+        inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
 
         boxed_count = if sizeof(Int) == sizeof(Int64)
             emit_box_int64!(builder, len)
@@ -75,43 +75,43 @@ end
 
         tag = emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
 
-        fullsize = nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
+        fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
         obj = emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
 
         T_int8 = LLVM.Int8Type()
         LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
 
-        alloc = pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
-        alloc = pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
+        alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+        alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
 
-        loop = BasicBlock(llvm_f, "loop")
-        exit = BasicBlock(llvm_f, "exit")
+        loop = LLVM.BasicBlock(llvm_f, "loop")
+        exit = LLVM.BasicBlock(llvm_f, "exit")
 
         br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
-        position!(builder, loop)
-        idx = phi!(builder, ity)
+        LLVM.position!(builder, loop)
+        idx = LLVM.phi!(builder, ity)
 
         push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
         inc = add!(builder, idx, LLVM.ConstantInt(1))
         push!(LLVM.incoming(idx), (inc, loop))
-        rval = add!(builder, inc, lstart)
-        res = call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
+        rval = LLVM.add!(builder, inc, lstart)
+        res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
         if !hasNoRet
-            gidx = gep!(builder, jlvaluet, alloc, [idx])
-            store!(builder, res, gidx)
-            emit_writebarrier!(builder, get_julia_inner_types(builder, obj, res))
+            gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
+            LLVM.store!(builder, res, gidx)
+            emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
         end
 
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+        LLVM.br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
 
 
         T_int32 = LLVM.Int32Type()
 
-        reinsert_gcmarker!(llvm_f)
+        Compiler.reinsert_gcmarker!(llvm_f)
 
-        position!(builder, exit)
-        ret!(builder, obj)
+        LLVM.position!(builder, exit)
+        LLVM.ret!(builder, obj)
 
         string(mod)
     end
