@@ -29,13 +29,13 @@ end
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
             if isa(inst, LLVM.FenceInst)
-                eraseInst(blk, inst)
+                Compiler.eraseInst(blk, inst)
             end
             if isa(inst, LLVM.CallInst)
                 fn = LLVM.called_operand(inst)
                 if isa(fn, LLVM.Function)
                     if LLVM.name(fn) == "julia.safepoint"
-                        eraseInst(blk, inst)
+                        Compiler.eraseInst(blk, inst)
                     end
                 end     
             end
