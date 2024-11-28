@@ -5,12 +5,40 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where {T} = ccall(
-    Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)),
+@inline unsafe_to_pointer(val::Type{T}) where {T} = @static if sizeof(Int) == sizeof(Int64)
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i64 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i64
+  ret i64 %e
+}
+""", "f"),
     Ptr{Cvoid},
-    (Any,),
+    Tuple{Any},
     val,
 )
+else
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i32 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i32
+  ret i32 %e
+}
+""", "f"),
+    Ptr{Cvoid},
+    Tuple{Any},
+    val,
+)
+end
+
 export unsafe_to_pointer
 
 @inline is_concrete_tuple(x::Type{T2}) where {T2} =
