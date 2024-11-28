@@ -1727,6 +1727,7 @@ end
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
+                @assert !illegal
                 illegalVal = cur
                 illegal = true
                 return make_batched(ncur, prevbb)
@@ -1770,6 +1771,7 @@ end
                 end
 
                 cur2 = if changed
+                    @assert !illegal
                     illegalVal = cur
                     illegal = true
                     # TODO replace with correct insertions/splats
@@ -1942,8 +1944,10 @@ end
                 return make_batched(ncur, prevbb)
             end
 
-            illegal = true
-            illegalVal = cur
+            if !illegal
+                illegal = true
+                illegalVal = cur
+            end
             return ncur
         end
 
