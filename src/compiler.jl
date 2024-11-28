@@ -8012,9 +8012,6 @@ end
     ::Type{TapeType},
     args::Vararg{Any,N},
 ) where {RawCall,PT,FA,T,RT,TapeType,N,CC,width,returnPrimal}
-
-    JuliaContext() do ctx
-        Base.@_inline_meta
         F = eltype(FA)
         is_forward =
             CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
@@ -8263,6 +8260,10 @@ end
             i += 1
         end
 
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    (ir, fn, combinedReturn) = try
 
         if is_adjoint
             NT = Tuple{ActiveRetTypes...}
@@ -8441,31 +8442,35 @@ end
 
         ir = string(mod)
         fn = LLVM.name(llvm_f)
+        (ir, fn, combinedReturn)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
 
-        @assert length(types) == length(ccexprs)
+    @assert length(types) == length(ccexprs)
 
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            return quote
-                Base.@_inline_meta
-                Base.llvmcall(
-                    ($ir, $fn),
-                    $combinedReturn,
-                    Tuple{$PT,$(types...)},
-                    fptr,
-                    $(ccexprs...),
-                )
-            end
-        else
-            return quote
-                Base.@_inline_meta
-                Base.llvmcall(
-                    ($ir, $fn),
-                    $combinedReturn,
-                    Tuple{$(types...)},
-                    $(ccexprs...),
-                )
-            end
+    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(
+                ($ir, $fn),
+                $combinedReturn,
+                Tuple{$PT,$(types...)},
+                fptr,
+                $(ccexprs...),
+            )
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(
+                ($ir, $fn),
+                $combinedReturn,
+                Tuple{$(types...)},
+                $(ccexprs...),
+            )
         end
     end
 end
