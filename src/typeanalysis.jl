@@ -9,15 +9,19 @@ LLVM.dispose(ta::TypeAnalysis) = API.FreeTypeAnalysis(ta)
 
 function TypeAnalysis(
     logic,
-    typerules::Dict{String,CustomRuleType} = Dict{String,CustomRuleType}(),
+    typerules::Union{Dict{String,CustomRuleType}, Nothing} = nothing,
 )
-    rulenames = String[]
-    rules = CustomRuleType[]
-    for (rulename, rule) in typerules
-        push!(rulenames, rulename)
-        push!(rules, rule)
+    if typerules isa Nothing
+        ref = API.CreateTypeAnalysis(logic, (), ())
+    else
+        rulenames = String[]
+        rules = CustomRuleType[]
+        for (rulename, rule) in typerules
+            push!(rulenames, rulename)
+            push!(rules, rule)
+        end
+        ref = API.CreateTypeAnalysis(logic, rulenames, rules)
     end
-    ref = API.CreateTypeAnalysis(logic, rulenames, rules)
     TypeAnalysis(ref)
 end
 

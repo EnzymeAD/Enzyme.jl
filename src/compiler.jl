@@ -3940,7 +3940,6 @@ function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error::Bool = tru
     return ty, byref
 end
 
-include("rules/typerules.jl")
 include("rules/activityrules.jl")
 
 @inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:Const} = API.DFT_CONSTANT
@@ -4073,107 +4072,8 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    rules = Dict{String,API.CustomRuleType}(
-        "jl_array_copy" => @cfunction(
-            inout_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "ijl_array_copy" => @cfunction(
-            inout_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "jl_genericmemory_copy_slice" => @cfunction(
-            inoutcopyslice_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "ijl_genericmemory_copy_slice" => @cfunction(
-            inoutcopyslice_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "jl_inactive_inout" => @cfunction(
-            inout_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "jl_excstack_state" => @cfunction(
-            int_return_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "ijl_excstack_state" => @cfunction(
-            int_return_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-        "julia.except_enter" => @cfunction(
-            int_return_rule,
-            UInt8,
-            (
-                Cint,
-                API.CTypeTreeRef,
-                Ptr{API.CTypeTreeRef},
-                Ptr{API.IntList},
-                Csize_t,
-                LLVM.API.LLVMValueRef,
-            )
-        ),
-    )
-
     logic = Logic()
-    TA = TypeAnalysis(logic, rules)
+    TA = TypeAnalysis(logic)
 
     retTT = if !isa(actualRetType, Union) &&
             actualRetType <: Tuple &&
