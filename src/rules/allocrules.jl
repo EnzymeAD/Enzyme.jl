@@ -1,7 +1,4 @@
-
-function array_inner(::Type{<:Array{T}}) where {T}
-    return T
-end
+@inline LLT_ALIGN(x::Int, sz::Int) = (((x) + (sz) - 1) & ~((sz) - 1))
 function array_shadow_handler(
     B::LLVM.API.LLVMBuilderRef,
     OrigCI::LLVM.API.LLVMValueRef,
@@ -51,8 +48,6 @@ function array_shadow_handler(
     isunboxed, elsz, al = Base.uniontype_layout(typ)
 
     isunion = typ isa Union
-
-    LLT_ALIGN(x, sz) = (((x) + (sz) - 1) & ~((sz) - 1))
 
     if !isunboxed
         elsz = sizeof(Ptr{Cvoid})

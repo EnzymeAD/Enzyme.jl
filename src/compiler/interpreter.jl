@@ -123,7 +123,7 @@ Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
-function is_alwaysinline_func(@nospecialize(TT))
+function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
     if TT.parameters[1] == typeof(Core.memoryref)
@@ -133,7 +133,7 @@ function is_alwaysinline_func(@nospecialize(TT))
     return false
 end
 
-function is_primitive_func(@nospecialize(TT))
+function is_primitive_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
     if ft == typeof(Enzyme.pmap)
@@ -156,11 +156,11 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
-function isKWCallSignature(@nospecialize(TT))
+function isKWCallSignature(@nospecialize(TT))::Bool
     return TT <: Tuple{typeof(Core.kwcall),Any,Any,Vararg}
 end
 
-function simplify_kw(@nospecialize specTypes)
+function simplify_kw(@nospecialize(specTypes))
     if isKWCallSignature(specTypes)
         return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
     else
@@ -742,15 +742,15 @@ end
     end
 end
 
-@inline function array_or_number(@nospecialize(Ty))
+@inline function array_or_number(@nospecialize(Ty))::Bool
     return Ty <: AbstractArray || Ty <: Number
 end
 
-@inline function isa_array_or_number(@nospecialize(x))
+@inline function isa_array_or_number(@nospecialize(x))::Bool
     return x isa AbstractArray || x isa Number
 end
 
-@inline function num_or_eltype(@nospecialize(Ty))
+@inline function num_or_eltype(@nospecialize(Ty))::Type
     if Ty <: AbstractArray
         eltype(Ty)
     else

@@ -5,12 +5,40 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where {T} = ccall(
-    Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)),
+@inline unsafe_to_pointer(@nospecialize(val::Type)) = @static if sizeof(Int) == sizeof(Int64)
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i64 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i64
+  ret i64 %e
+}
+""", "f"),
     Ptr{Cvoid},
-    (Any,),
+    Tuple{Any},
     val,
 )
+else
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i32 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i32
+  ret i32 %e
+}
+""", "f"),
+    Ptr{Cvoid},
+    Tuple{Any},
+    val,
+)
+end
+
 export unsafe_to_pointer
 
 @inline is_concrete_tuple(x::Type{T2}) where {T2} =
@@ -53,7 +81,7 @@ end
 export unsafe_to_ptr
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -113,7 +141,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
-function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T))
+function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
     if !Core.Compiler.isconstType(T)
         throw(AssertionError("Tried to make instance of non constant type $T"))
     end
@@ -123,7 +151,7 @@ end
 
 export makeInstanceOf
 
-function hasfieldcount(@nospecialize(dt))
+function hasfieldcount(@nospecialize(dt))::Bool
     try
         fieldcount(dt)
     catch
@@ -240,7 +268,7 @@ export my_methodinstance
 #
 #     // followed by alignment padding and inline data, or owner pointer
 # } jl_array_t;
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: Array
         eT = eltype(T)
         PT = Ptr{eT}
@@ -250,7 +278,7 @@ export my_methodinstance
     end
 end
 
-@inline function typed_fieldcount(@nospecialize(T::Type))
+@inline function typed_fieldcount(@nospecialize(T::Type))::Int
     if T <: Array
         return 7
     else
@@ -258,7 +286,7 @@ end
     end
 end
 
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
     if T <: Array
         tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
         sum = 0
@@ -275,7 +303,7 @@ end
 
 else
 
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
         eT = eltype(T)
         Ptr{eT}
@@ -284,11 +312,11 @@ else
     end
 end
 
-@inline function typed_fieldcount(@nospecialize(T::Type))
+@inline function typed_fieldcount(@nospecialize(T::Type))::Int
     fieldcount(T)
 end
 
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
     fieldoffset(T, i)
 end
 
@@ -299,7 +327,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int)
+function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
 end
 

@@ -20,7 +20,7 @@ function get_blas_symbols()
     return symbols
 end
 
-function lookup_blas_symbol(name)
+function lookup_blas_symbol(name::String)
     Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
 end
 end
@@ -127,7 +127,7 @@ function __init__()
     end
 end
 
-function memoize!(ptr, fn)
+function memoize!(ptr::Ptr{Cvoid}, fn::String)::String
     fn = get(ptr_map, ptr, fn)
     if !haskey(ptr_map, ptr)
         ptr_map[ptr] = fn
@@ -140,7 +140,7 @@ end
 
 import GPUCompiler: IRError, InvalidIRError
 
-function restore_lookups(mod::LLVM.Module)
+function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
@@ -421,7 +421,11 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
-    for bb in blocks(f), inst in collect(instructions(bb))
+    for bb in blocks(f)
+    iter = LLVM.API.LLVMGetFirstInstruction(bb)
+    while iter != C_NULL
+        inst = LLVM.Instruction(iter)
+        iter = LLVM.API.LLVMGetNextInstruction(iter)
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
@@ -489,7 +493,11 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     newf, _ = get_function!(mod, fname, FT)
                 else
                     found = nothing
-                    for lbb in blocks(initfn), linst in collect(instructions(lbb))
+                    for lbb in blocks(initfn)
+                    liter = LLVM.API.LLVMGetFirstInstruction(lbb)
+                    while liter != C_NULL
+                        linst = LLVM.Instruction(liter)
+                        liter = LLVM.API.LLVMGetNextInstruction(liter)
                         if !isa(linst, LLVM.CallInst)
                             continue
                         end
@@ -501,6 +509,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                             found = linst
                             break
                         end
+                    end
                     end
                     if found == nothing
                         msg = sprint() do io::IO
@@ -629,6 +638,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 end
             end
         end
+    end
     end
 
     while length(calls) > 0

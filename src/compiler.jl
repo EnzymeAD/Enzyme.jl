@@ -1125,7 +1125,11 @@ struct Return2
 end
 
 function force_recompute!(mod::LLVM.Module)
-    for f in functions(mod), bb in blocks(f), inst in collect(instructions(bb))
+    for f in functions(mod), bb in blocks(f)
+    iter = LLVM.API.LLVMGetFirstInstruction(bb)
+    while iter != C_NULL
+        inst = LLVM.Instruction(iter)
+        iter = LLVM.API.LLVMGetNextInstruction(iter)
         if isa(inst, LLVM.LoadInst)
             has_loaded = false
             for u in LLVM.uses(inst)
@@ -1169,6 +1173,7 @@ function force_recompute!(mod::LLVM.Module)
                 end
             end
         end
+    end
     end
 end
 
@@ -3275,7 +3280,7 @@ end
 # Enzyme compiler step
 ##
 
-function annotate!(mod, mode)
+function annotate!(mod::LLVM.Module)
     inactive = LLVM.StringAttribute("enzyme_inactive", "")
     active = LLVM.StringAttribute("enzyme_active", "")
     no_escaping_alloc = LLVM.StringAttribute("enzyme_no_escaping_allocation")
@@ -3891,7 +3896,7 @@ function enzyme_extract_world(fn::LLVM.Function)::UInt
     throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
 end
 
-function enzyme_custom_extract_mi(orig::LLVM.Instruction, error::Bool = true)
+function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     operand = LLVM.called_operand(orig)
     if isa(operand, LLVM.Function)
         return enzyme_custom_extract_mi(operand::LLVM.Function, error)
@@ -6144,7 +6149,7 @@ end
 
 using Random
 # returns arg, return
-function no_type_setting(@nospecialize(specTypes); world = nothing)
+function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothing)
     # Even though the julia type here is ptr{int8}, the actual data can be something else
     if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
         return (true, false)
@@ -7037,7 +7042,7 @@ end
     end
 
     # annotate
-    annotate!(mod, mode)
+    annotate!(mod)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
             exc = functions(mod)[name]
@@ -8012,9 +8017,6 @@ end
     ::Type{TapeType},
     args::Vararg{Any,N},
 ) where {RawCall,PT,FA,T,RT,TapeType,N,CC,width,returnPrimal}
-
-    JuliaContext() do ctx
-        Base.@_inline_meta
         F = eltype(FA)
         is_forward =
             CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
@@ -8263,6 +8265,10 @@ end
             i += 1
         end
 
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    (ir, fn, combinedReturn) = try
 
         if is_adjoint
             NT = Tuple{ActiveRetTypes...}
@@ -8441,31 +8447,35 @@ end
 
         ir = string(mod)
         fn = LLVM.name(llvm_f)
+        (ir, fn, combinedReturn)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
 
-        @assert length(types) == length(ccexprs)
+    @assert length(types) == length(ccexprs)
 
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            return quote
-                Base.@_inline_meta
-                Base.llvmcall(
-                    ($ir, $fn),
-                    $combinedReturn,
-                    Tuple{$PT,$(types...)},
-                    fptr,
-                    $(ccexprs...),
-                )
-            end
-        else
-            return quote
-                Base.@_inline_meta
-                Base.llvmcall(
-                    ($ir, $fn),
-                    $combinedReturn,
-                    Tuple{$(types...)},
-                    $(ccexprs...),
-                )
-            end
+    if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(
+                ($ir, $fn),
+                $combinedReturn,
+                Tuple{$PT,$(types...)},
+                fptr,
+                $(ccexprs...),
+            )
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            Base.llvmcall(
+                ($ir, $fn),
+                $combinedReturn,
+                Tuple{$(types...)},
+                $(ccexprs...),
+            )
         end
     end
 end
@@ -9071,7 +9081,10 @@ include("compiler/reflection.jl")
         )
         copysetfn = meta.entry
         blk = first(blocks(copysetfn))
-        for inst in collect(instructions(blk))
+        iter = LLVM.API.LLVMGetFirstInstruction(blk)
+        while iter != C_NULL
+            inst = LLVM.Instruction(iter)
+            iter = LLVM.API.LLVMGetNextInstruction(iter)
             if isa(inst, LLVM.FenceInst)
                 eraseInst(blk, inst)
             end
