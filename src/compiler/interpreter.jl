@@ -759,13 +759,13 @@ end
 end
 
 function abstract_call_known(
-    @nospecialize(interp::EnzymeInterpreter),
+    interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
     sv::AbsIntState,
     max_methods::Int = get_max_methods(interp, f, sv),
-)
+) where Handler
 
     (; fargs, argtypes) = arginfo
 
@@ -889,7 +889,7 @@ function abstract_call_known(
     end
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
-        f,
+        f::Any,
         arginfo::ArgInfo,
         si::StmtInfo,
         sv::AbsIntState,
