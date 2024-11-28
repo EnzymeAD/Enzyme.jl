@@ -441,9 +441,9 @@ function CreateTypeAnalysis(logic, rulenames, rules)
         EnzymeTypeAnalysisRef,
         (EnzymeLogicRef, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t),
         logic,
-        rulenames,
-        rules,
-        length(rules),
+        rulenames isa Tuple{} ? C_NULL : rulenames,
+        rules isa Tuple{} ? C_NULL : rules,
+        rulenames isa Tuple{} ? 0 : length(rules),
     )
 end
 
