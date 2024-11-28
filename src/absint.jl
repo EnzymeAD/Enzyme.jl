@@ -576,12 +576,20 @@ function abs_typeof(
                     end
                 end
                 if !seen && typed_fieldcount(typ) > 0
-                    offset = offset - typed_fieldoffset(typ, lasti)
-                    typ = typed_fieldtype(typ, lasti)
-                    @assert Base.isconcretetype(typ)
-                    if !Base.allocatedinline(typ)
-                        legal = false
-                    end
+                    offset = offset - typed_fieldoffset(typ, lasti) 
+		    typ = typed_fieldtype(typ, lasti)
+		    if offset == 0
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
+                            end
+                            byref = GPUCompiler.MUT_REF
+                        end
+		    else
+			    if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+				legal = false
+			    end
+		    end
                     seen = true
                 end
                 if !seen
