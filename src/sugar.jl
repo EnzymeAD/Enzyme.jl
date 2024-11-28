@@ -8,7 +8,7 @@ function zerosetfn(x, i::Int)
 end
 
 @generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
-    ir = JuliaContext() do ctx
+    ir = GPUCompiler.JuliaContext() do ctx
         Base.@_inline_meta
 
         target = Compiler.DefaultCompilerTarget()
