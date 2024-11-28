@@ -231,8 +231,7 @@ end
         return y
     end
     if nf == 0
-        # nothing to do, assume inactive
-        return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
+        return prev
     end
     flds = Vector{Any}(undef, nf)
     for i = 1:nf
