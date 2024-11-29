@@ -286,6 +286,7 @@ function julia_error(
         end
 
         illegalVal = nothing
+        mode = get_mode(gutils)
 
         function make_replacement(@nospecialize(cur::LLVM.Value), prevbb::LLVM.IRBuilder)::LLVM.Value
             ncur = new_from_original(gutils, cur)
@@ -308,15 +309,27 @@ function julia_error(
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
                     if width == 1
-                        res = emit_allocobj!(prevbb, Base.RefValue{TT})
-                        push!(created, res)
-                        return res
+                        if mode == API.DEM_ForwardMode
+                            instance = make_zero(obj)
+                            return unsafe_to_llvm(prevbb, instance)
+                        else
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            push!(created, res)
+                            return res
+                        end
                     else
                         shadowres = UndefValue(
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
                         )
                         for idx = 1:width
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            res = if mode == API.DEM_ForwardMode
+                                instance = make_zero(obj)
+                                unsafe_to_llvm(prevbb, instance)
+                            else
+                                sres = emit_allocobj!(prevbb, Base.RefValue{TT})
+                                push!(created, sres)
+                                sres
+                            end
                             shadowres = insert_value!(prevbb, shadowres, res, idx - 1)
                             push!(created, shadowres)
                         end
