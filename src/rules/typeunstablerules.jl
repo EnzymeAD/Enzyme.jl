@@ -1067,6 +1067,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             shadowres = UndefValue(
                 LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
             )
+            position!(B, LLVM.API.LLVMGetNextInstruction(normal))
             for idx = 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
             end
@@ -1565,6 +1566,7 @@ end
             shadowres = UndefValue(
                 LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
             )
+            position!(B, LLVM.API.LLVMGetNextInstruction(normal))
             for idx = 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
             end
