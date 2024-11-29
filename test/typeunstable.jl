@@ -111,8 +111,7 @@ struct InsFwdNormal2{T<:Real}
 	σ::T
 end
 
-insfwdlogpdf(d) = d.σ
-
+insfwdlogpdf(d, x) = d.σ
 
 function insfwdfunc(x)
     dists = [InsFwdNormal1{Float64}(1.0), InsFwdNormal2{Float64}(1.0)]
