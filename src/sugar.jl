@@ -87,7 +87,7 @@ end
         loop = LLVM.BasicBlock(llvm_f, "loop")
         exit = LLVM.BasicBlock(llvm_f, "exit")
 
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
+        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
         LLVM.position!(builder, loop)
         idx = LLVM.phi!(builder, ity)
