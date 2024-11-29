@@ -119,6 +119,6 @@ function insfwdfunc(x)
 end
 
 @testset "Forward Batch Constant insertion" begin
-    res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])
+    res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])[1]
     @test res ≈ [0.0, 0.0]
 end
