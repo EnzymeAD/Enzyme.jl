@@ -93,7 +93,7 @@ end
         idx = LLVM.phi!(builder, ity)
 
         push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
-        inc = add!(builder, idx, LLVM.ConstantInt(1))
+        inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
         push!(LLVM.incoming(idx), (inc, loop))
         rval = LLVM.add!(builder, inc, lstart)
         res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
@@ -103,7 +103,7 @@ end
             Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
         end
 
-        LLVM.br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
 
 
         T_int32 = LLVM.Int32Type()
