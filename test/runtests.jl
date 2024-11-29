@@ -1272,31 +1272,31 @@ end
     @test dweights[2] ≈ 20.
 end
 
+
+abstract type AbsFwdType end
+
+# Two copies of the same type.
+struct FwdNormal1{T<:Real} <: AbsFwdType
+σ::T
+end
+
+struct FwdNormal2{T<:Real} <: AbsFwdType
+σ::T
+end
+
+fwdlogpdf(d) = d.σ
+
+function absactfunc(x)
+	dists = AbsFwdType[FwdNormal1{Float64}(1.0), FwdNormal2{Float64}(x)]
+	res = Vector{Float64}(undef, 2)
+	for i in 1:length(dists)
+	    @inbounds res[i] = fwdlogpdf(dists[i])
+	end
+	return @inbounds res[1] + @inbounds res[2]
+end
+
 @testset "Forward Mode active runtime activity" begin
-
-    abstract type A end
-
-    # Two copies of the same type.
-    struct Normal1{T<:Real} <: A
-        σ::T
-    end
-
-    struct Normal2{T<:Real} <: A
-        σ::T
-    end
-
-    fwdlogpdf(d) = d.σ
-
-    function func(x)
-        dists = A[Normal1{Float64}(1.0), Normal2{Float64}(x)]
-        res = Vector{Float64}(undef, 2)
-        for i in 1:length(dists)
-            @inbounds res[i] = fwdlogpdf(dists[i])
-        end
-        return @inbounds res[1] + @inbounds res[2]
-    end
-
-    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(func), Duplicated(2.7, 3.1))
+    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
     @test res[1] ≈ 3.1
 end
 
