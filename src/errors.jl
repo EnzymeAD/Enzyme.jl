@@ -94,6 +94,17 @@ function julia_error(
     B::LLVM.API.LLVMBuilderRef,
 )::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
+    julia_error(msg, val, errtype, data, data2, B)
+end
+
+function julia_error(
+    msg::String,
+    val::LLVM.API.LLVMValueRef,
+    errtype::API.ErrorType,
+    data::Ptr{Cvoid},
+    data2::LLVM.API.LLVMValueRef,
+    B::LLVM.API.LLVMBuilderRef,
+)::LLVM.API.LLVMValueRef
     bt = nothing
     ir = nothing
     if val != C_NULL
