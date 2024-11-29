@@ -116,10 +116,10 @@ insfwdlogpdf(d) = d.σ
 
 function insfwdfunc(x)
     dists = [InsFwdNormal1{Float64}(1.0), InsFwdNormal2{Float64}(1.0)]
-    return sum(Base.Fix2(logpdf, x), dists)
+    return sum(Base.Fix2(insfwdlogpdf, x), dists)
 end
 
 @testset "Forward Batch Constant insertion" begin
-	res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])
+    res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])
     @test res ≈ [0.0, 0.0]
 end
