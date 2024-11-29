@@ -68,15 +68,15 @@ end
         inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
 
         boxed_count = if sizeof(Int) == sizeof(Int64)
-            emit_box_int64!(builder, len)
+            Compiler.emit_box_int64!(builder, len)
         else
-            emit_box_int32!(builder, len)
+            Compiler.emit_box_int32!(builder, len)
         end
 
-        tag = emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
+        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
 
         fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
-        obj = emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
+        obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
 
         T_int8 = LLVM.Int8Type()
         LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
@@ -100,7 +100,7 @@ end
         if !hasNoRet
             gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
             LLVM.store!(builder, res, gidx)
-            emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
+            Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
         end
 
         LLVM.br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
