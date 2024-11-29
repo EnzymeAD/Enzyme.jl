@@ -331,7 +331,9 @@ function julia_error(
                                 sres
                             end
                             shadowres = insert_value!(prevbb, shadowres, res, idx - 1)
-                            push!(created, shadowres)
+                            if shadowres isa LLVM.Instruction
+				push!(created, shadowres)
+			    end
                         end
                         return shadowres
                     end
