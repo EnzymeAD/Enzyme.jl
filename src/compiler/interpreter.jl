@@ -114,7 +114,7 @@ EnzymeInterpreter(
     deferred_lower::Bool = true,
     broadcast_rewrite::Bool = true,
     handler = nothing,
-    local_cache = get_or_create_inference_cache(world, forward_rules, reverse_rules, deferred_lower, broadcast_rewrite, handler)
+    local_cache = get_or_create_inference_cache(world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
 ) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler, local_cache)
 
 Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
@@ -223,7 +223,7 @@ function Core.Compiler.abstract_call_gf_by_type(
     sv::AbsIntState,
     max_methods::Int,
 )
-    ret = Core.invoke(Core.Compiler.abstract_gf_by_type, Tuple{AbstractInterpreter, Any, ArgInfo, StmtInfo, Any, AbsIntState, Int}, interp, f, arginfo, si, atype, sv, max_methods)
+    ret = Core.invoke(Core.Compiler.abstract_call_gf_by_type, Tuple{AbstractInterpreter, Any, ArgInfo, StmtInfo, Any, AbsIntState, Int}, interp, f, arginfo, si, atype, sv, max_methods)
     callinfo = ret.info
     method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
