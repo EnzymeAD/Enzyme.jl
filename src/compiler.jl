@@ -1702,13 +1702,8 @@ function create_abi_wrapper(
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
 
-    push!(function_attributes(enzymefn), EnumAttribute("alwaysinline", 0))
-    hasNoInline = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noinline")),
-            collect(function_attributes(enzymefn)),
-        ),
-    )
+    push!(function_attributes(enzymefn), EnumAttribute("alwaysinline"))
+    hasNoInline = has_fn_attr(enzymefn, EnumAttribute("noinline"))
     if hasNoInline
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             enzymefn,
@@ -2620,18 +2615,8 @@ function lower_convention(
         set_subprogram!(wrapper_f, sfn)
     end
 
-    hasReturnsTwice = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("returns_twice")),
-            collect(function_attributes(entry_f)),
-        ),
-    )
-    hasNoInline = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noinline")),
-            collect(function_attributes(entry_f)),
-        ),
-    )
+    hasReturnsTwice = has_fn_attr(entry_f, EnumAttribute("returns_twice"))
+    hasNoInline = has_fn_attr(entry_f, EnumAttriute("noinline"))
     if hasNoInline
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             entry_f,
@@ -3359,20 +3344,10 @@ function GPUCompiler.codegen(
         end
         toremove = String[]
         for f in functions(mod)
-            if !any(
-                map(
-                    k -> kind(k) == kind(EnumAttribute("alwaysinline")),
-                    collect(function_attributes(f)),
-                ),
-            )
+            if !has_fn_attribute(f, EnumAttribute("alwaysinline"))
                 continue
             end
-            if !any(
-                map(
-                    k -> kind(k) == kind(EnumAttribute("returns_twice")),
-                    collect(function_attributes(f)),
-                ),
-            )
+            if !has_fn_attribute(f, EnumAttribute("returnstwice"))
                 push!(function_attributes(f), EnumAttribute("returns_twice"))
                 push!(toremove, name(f))
             end
@@ -4504,20 +4479,10 @@ end
                     end
                 end
             end
-            if !any(
-                map(
-                    k -> kind(k) == kind(EnumAttribute("alwaysinline")),
-                    collect(function_attributes(f)),
-                ),
-            )
+            if !has_fn_attr(f, EnumAttribute("alwaysinline"))
                 continue
             end
-            if !any(
-                map(
-                    k -> kind(k) == kind(EnumAttribute("returns_twice")),
-                    collect(function_attributes(f)),
-                ),
-            )
+            if !has_fn_attr(f, EnumAttribute("returns_twice"))
                 push!(function_attributes(f), EnumAttribute("returns_twice"))
                 push!(toremove, name(f))
             end

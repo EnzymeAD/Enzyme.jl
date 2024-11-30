@@ -377,6 +377,17 @@ function has_swiftself(fn::LLVM.Function)::Bool
     end
     return false
 end
+function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
+    ekind = LLVM.kind(attr)
+    for attr in collect(function_attributes(fn))
+        if attr isa LLVM.EnumAttribute
+            if kind(attr) == ekind
+                return true
+            end
+        end
+    end
+    return false
+end
 
 function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
