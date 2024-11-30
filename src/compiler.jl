@@ -2585,8 +2585,8 @@ function fixup_metadata!(f::LLVM.Function)
     end
 end
 
-include("src/typeutils/jltypes.jl")
-include("src/typeutils/lltypes.jl")
+include("typeutils/jltypes.jl")
+include("typeutils/lltypes.jl")
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
