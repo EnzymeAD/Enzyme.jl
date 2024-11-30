@@ -404,7 +404,7 @@ function unique_gcmarker!(func::LLVM.Function)
 end
 
 @inline AnonymousStruct(::Type{U}) where {U<:Tuple} =
-    NamedTuple{ntuple(i -> Symbol(i), Val(length(U.parameters))),U}
+    NamedTuple{ntuple(Symbol, Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
 function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})

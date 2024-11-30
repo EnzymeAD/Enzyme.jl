@@ -210,6 +210,9 @@ using .JIT
 include("jlrt.jl")
 include("errors.jl")
 
+include("typeutils/jltypes.jl")
+include("typeutils/lltypes.jl")
+
 AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
 const JuliaEnzymeNameMap = Dict{String,Any}(
@@ -298,83 +301,8 @@ const JuliaGlobalNameMap = Dict{String,Any}(
 )
 
 include("absint.jl")
-
-function force_recompute!(mod::LLVM.Module)
-    for f in functions(mod), bb in blocks(f)
-    iter = LLVM.API.LLVMGetFirstInstruction(bb)
-    while iter != C_NULL
-        inst = LLVM.Instruction(iter)
-        iter = LLVM.API.LLVMGetNextInstruction(iter)
-        if isa(inst, LLVM.LoadInst)
-            has_loaded = false
-            for u in LLVM.uses(inst)
-                v = LLVM.user(u)
-                if isa(v, LLVM.CallInst)
-                    cf = LLVM.called_operand(v)
-                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
-                        has_loaded = true
-                        break
-                    end
-                end
-                if isa(v, LLVM.BitCastInst)
-                    for u2 in LLVM.uses(v)
-                        v2 = LLVM.user(u2)
-                        if isa(v2, LLVM.CallInst)
-                            cf = LLVM.called_operand(v2)
-                            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
-                                has_loaded = true
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            if has_loaded
-                metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
-            end
-        end
-        if isa(inst, LLVM.CallInst)
-            cf = LLVM.called_operand(inst)
-            if isa(cf, LLVM.Function)
-                if LLVM.name(cf) == "llvm.julia.gc_preserve_begin"
-                    has_use = false
-                    for u2 in LLVM.uses(inst)
-                        has_use = true
-                        break
-                    end
-                    if !has_use
-                        eraseInst(bb, inst)
-                    end
-                end
-            end
-        end
-    end
-    end
-end
-
-function permit_inlining!(f::LLVM.Function)
-    for bb in blocks(f), inst in instructions(bb)
-        # remove illegal invariant.load and jtbaa_const invariants
-        if isa(inst, LLVM.LoadInst)
-            md = metadata(inst)
-            if haskey(md, LLVM.MD_tbaa)
-                modified = LLVM.Metadata(
-                    ccall(
-                        (:EnzymeMakeNonConstTBAA, API.libEnzyme),
-                        LLVM.API.LLVMMetadataRef,
-                        (LLVM.API.LLVMMetadataRef,),
-                        md[LLVM.MD_tbaa],
-                    ),
-                )
-                setindex!(md, modified, LLVM.MD_tbaa)
-            end
-            if haskey(md, LLVM.MD_invariant_load)
-                delete!(md, LLVM.MD_invariant_load)
-            end
-        end
-    end
-end
-
+include("llvm/transforms.jl")
+include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
@@ -723,7 +651,7 @@ function zero_allocation(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     B = LLVM.IRBuilder(B)
     LLVMType = LLVM.LLVMType(LLVMType)
     obj = LLVM.Value(obj)
-    jlType = tape_type(LLVMType)
+    jlType = Compiler.tape_type(LLVMType)
     zeroAll = isTape == 0
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -912,7 +840,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
 
         esizeof(X) = X == Any ? sizeof(Int) : sizeof(X)
 
-        TT = tape_type(LLVMType)
+        TT = Compiler.tape_type(LLVMType)
         if esizeof(TT) != convert(Int, AlignedSize)
             GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
                 convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
@@ -1311,7 +1239,6 @@ else
         )
 end
 
-include("compiler/passes.jl")
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/validation.jl")
@@ -1580,10 +1507,10 @@ function enzyme!(
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{tape_type(LLVMType(utape))}
+            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
             tape = utape
         elseif tape != C_NULL
-            TapeType = tape_type(LLVMType(tape))
+            TapeType = Compiler.tape_type(LLVMType(tape))
         else
             TapeType = Cvoid
         end
@@ -1925,9 +1852,9 @@ function create_abi_wrapper(
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{tape_type(LLVMType(utape))}
+            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
         elseif tape != C_NULL
-            TapeType = tape_type(LLVMType(tape))
+            TapeType = Compiler.tape_type(LLVMType(tape))
         else
             TapeType = Cvoid
         end
@@ -2039,7 +1966,7 @@ function create_abi_wrapper(
         end
         if tape != C_NULL
             tape = LLVM.LLVMType(tape)
-            jltape = convert(LLVM.LLVMType, tape_type(tape); allow_boxed = true)
+            jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
             push!(T_wrapperargs, jltape)
         else
             needs_tape = false
@@ -2584,9 +2511,6 @@ function fixup_metadata!(f::LLVM.Function)
         end
     end
 end
-
-include("typeutils/jltypes.jl")
-include("typeutils/lltypes.jl")
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
@@ -5275,7 +5199,7 @@ end
         if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
-                llty = from_tape_type(eltype(TapeType))
+                llty = Compiler.from_tape_type(eltype(TapeType))
                 tape = bitcast!(
                     builder,
                     tape,
@@ -5285,7 +5209,7 @@ end
                 API.SetMustCache!(tape)
                 callparams[end] = tape
             else
-                llty = from_tape_type(TapeType)
+                llty = Compiler.from_tape_type(TapeType)
                 @assert value_type(tape) == llty
             end
         end
