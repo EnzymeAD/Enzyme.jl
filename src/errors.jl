@@ -79,6 +79,85 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
     end
 end
 
+struct EnzymeRuntimeException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    print(io, "Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeMutabilityException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeMutabilityException)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeRuntimeActivityError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
+    println(io, "Constant memory is stored (or returned) to a differentiable variable.")
+    println(
+        io,
+        "As a result, Enzyme cannot provably ensure correctness and throws this error.",
+    )
+    println(
+        io,
+        "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Runtime-Activity).",
+    )
+    println(
+        io,
+        "If Enzyme should be able to prove this use non-differentable, open an issue!",
+    )
+    println(io, "To work around this issue, either:")
+    println(
+        io,
+        " a) rewrite this variable to not be conditionally active (fastest, but requires a code change), or",
+    )
+    println(
+        io,
+        " b) set the Enzyme mode to turn on runtime activity (e.g. autodiff(set_runtime_activity(Reverse), ...) ). This will maintain correctness, but may slightly reduce performance.",
+    )
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeNoTypeError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoTypeError)
+    print(io, "Enzyme cannot deduce type\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeNoShadowError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoShadowError)
+    print(io, "Enzyme could not find shadow for value\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeNoDerivativeError <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
 parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? LLVM.parent(val) : val
 parent_scope(val::LLVM.Module, depth = 0) = val
 parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
