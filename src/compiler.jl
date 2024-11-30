@@ -1802,7 +1802,7 @@ function primal_return_type_world(
 )
     interp = primal_interp_world(mode, world)
     something(
-        Core.Compiler.typeinf_type(interp, mi.def, mi.specTypes, mi.sparam_vals),
+        Core.Compiler.typeinf_type(interp, mi),
         Any,
     )
 end

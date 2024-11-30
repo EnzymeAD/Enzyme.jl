@@ -947,9 +947,7 @@ function enzyme_custom_common_rev(
             GPUCompiler.get_interpreter(
                 CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
             ),
-            ami.def,
-            ami.specTypes,
-            ami.sparam_vals,
+            ami,
         ),
         Any,
     )
