@@ -1067,6 +1067,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             shadowres = UndefValue(
                 LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
             )
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             for idx = 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
             end
@@ -1534,8 +1535,13 @@ end
     end
     origops = collect(operands(orig))
     width = get_width(gutils)
-    if !is_constant_value(gutils, origops[1])
-        shadowin = invert_pointer(gutils, origops[1], B)
+    if !is_constant_value(gutils, origops[1]) || !get_runtime_activity(gutils)
+        shadowin = if !is_constant_value(gutils, origops[1])
+            invert_pointer(gutils, origops[1], B)
+        else
+            estr = "Mismatched activity for: " * string(orig) * " const input " *string(origops[1]) * ", differentiable return"
+            LLVM.Value(julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, origops[1].ref, B.ref))
+        end
         if width == 1
             args = LLVM.Value[
                 shadowin
@@ -1565,6 +1571,7 @@ end
             shadowres = UndefValue(
                 LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
             )
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
             for idx = 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
             end
