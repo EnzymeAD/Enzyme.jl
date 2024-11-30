@@ -1,14 +1,14 @@
 function return_type(interp::Core.Compiler.AbstractInterpreter, mi::Core.MethodInstance)::Type
     @static if VERSION < v"1.11.0"
         code = Core.Compiler.get(Core.Compiler.code_cache(interp), mi, nothing)
-        if code isa CodeInstance
+        if code isa Core.Compiler.CodeInstance
             return code.rettype
         end
         result = Core.Compiler.InferenceResult(mi, Core.Compiler.typeinf_lattice(interp))
         Core.Compiler.typeinf(interp, result, :global)
         ccall(:jl_typeinf_timing_end, Cvoid, (UInt64,), start_time)
         Core.Compiler.is_inferred(result) || return Any
-        return Core.Compiler.widenconst(Core.Compiler.ignorelimited(result.result))
+        Core.Compiler.widenconst(Core.Compiler.ignorelimited(result.result))
     else
         something(Core.Compiler.typeinf_type(interp, mi), Any)
     end
