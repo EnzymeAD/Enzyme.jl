@@ -208,6 +208,7 @@ end
 using .JIT
 
 include("jlrt.jl")
+include("errors.jl")
 
 AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
@@ -496,8 +497,6 @@ function removed_ret_parms(F::LLVM.Function)
     end
     return retRemove, parmsRemoved
 end
-
-include("errors.jl")
 
 const CheckNan = Ref(false)
 function julia_sanitize(

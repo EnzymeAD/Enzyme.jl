@@ -1,4 +1,4 @@
-function return_type(interp::AbstractInterpreter, mi::MethodInstance)::Type
+function return_type(interp::Core.Compiler.AbstractInterpreter, mi::Core.MethodInstance)::Type
     @static if VERSION < v"1.11.0"
         code = Core.Compiler.get(Core.Compiler.code_cache(interp), mi, nothing)
         if code isa CodeInstance
