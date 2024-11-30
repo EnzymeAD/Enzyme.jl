@@ -439,7 +439,7 @@ Try to guess the most appropriate [`Annotation`](@ref) for arguments of type `T`
     guess_activity(T, convert(API.CDerivativeMode, mode))
 
 @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
-    ActReg = active_reg_inner(T, (), nothing)
+    ActReg = active_reg_nothrow(T, Val(nothing))
     if ActReg == AnyState
         return Const{T}
     end
