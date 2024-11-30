@@ -210,6 +210,7 @@ using .JIT
 include("jlrt.jl")
 include("errors.jl")
 
+include("typeutils/conversion.jl")
 include("typeutils/jltypes.jl")
 include("typeutils/lltypes.jl")
 
@@ -1380,14 +1381,7 @@ function enzyme!(
 
     @assert length(modifiedBetween) == length(TT.parameters)
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(primalf, i)),
-            ),
-        ) for i = 1:length(collect(parameters(primalf)))
-    )
+    swiftself = has_swiftself(primalf)
     if swiftself
         push!(args_activity, API.DFT_CONSTANT)
         push!(args_typeInfo, TypeTree())
@@ -2544,14 +2538,7 @@ function lower_convention(
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(entry_f, i)),
-            ),
-        ) for i = 1:length(collect(parameters(entry_f)))
-    )
+    swiftself = has_swiftself(entry_f)
     @assert !swiftself "Swiftself attribute coming from differentiable context is not supported"
     prargs =
         classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved)
@@ -3463,14 +3450,7 @@ function GPUCompiler.codegen(
         end
         expectLen -= length(parmsRemoved)
 
-        swiftself = any(
-            any(
-                map(
-                    k -> kind(k) == kind(EnumAttribute("swiftself")),
-                    collect(parameter_attributes(f, i)),
-                ),
-            ) for i = 1:length(collect(parameters(f)))
-        )
+        swiftself = has_swiftself(f)
 
         if swiftself
             expectLen += 1
@@ -4333,14 +4313,7 @@ end
         Ty = eltype(FT)
         reg = active_reg_inner(Ty, (), world)
         if reg == DupState || reg == MixedState
-            swiftself = any(
-                any(
-                    map(
-                        k -> kind(k) == kind(EnumAttribute("swiftself")),
-                        collect(parameter_attributes(primalf, i)),
-                    ),
-                ) for i = 1:length(collect(parameters(primalf)))
-            )
+            swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
             done = Set{LLVM.Value}()
             doneInst = Set{LLVM.Instruction}()

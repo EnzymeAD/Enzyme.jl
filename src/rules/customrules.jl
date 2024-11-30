@@ -33,14 +33,7 @@ function enzyme_custom_setup_args(
     returnRoots = returnRoots !== nothing
 
     cv = LLVM.called_operand(orig)
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(cv, i)),
-            ),
-        ) for i = 1:length(collect(parameters(cv)))
-    )
+    swiftself = has_swiftself(cv)
     jlargs = classify_arguments(
         mi.specTypes,
         called_type(orig),

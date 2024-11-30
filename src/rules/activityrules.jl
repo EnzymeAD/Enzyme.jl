@@ -19,14 +19,7 @@ function julia_activity_rule(f::LLVM.Function)
     end
     expectLen -= length(parmsRemoved)
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(f, i)),
-            ),
-        ) for i = 1:length(collect(parameters(f)))
-    )
+    swiftself = has_swiftself(f)
 
     if swiftself
         expectLen += 1
