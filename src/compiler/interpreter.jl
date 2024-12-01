@@ -797,8 +797,6 @@ function abstract_call_known(
         if f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
             if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters) && any(Base.Fix2(Base.:<:, AbstractArray), bcty.parameters[4].parameters)
-                fnty = bcty.parameters[3]
-                eltys = map(num_or_eltype, bcty.parameters[4].parameters)
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
                         [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
