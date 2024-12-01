@@ -171,7 +171,7 @@ end
 function has_frule_from_sig(@nospecialize(TT);
                             world::UInt=Base.get_world_counter(),
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(forward, TT; world, method_table, caller)
@@ -180,7 +180,7 @@ end
 function has_rrule_from_sig(@nospecialize(TT);
                             world::UInt=Base.get_world_counter(),
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
@@ -192,7 +192,7 @@ end
 function isapplicable(@nospecialize(f), @nospecialize(TT);
                       world::UInt=Base.get_world_counter(),
                       method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                      caller::Union{Nothing,Core.MethodInstance}=nothing)
+                      caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
@@ -215,11 +215,13 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     if Core.Compiler.isempty(matches)
         return false
-    elseif caller isa Core.MethodInstance
-        for i = 1:Core.Compiler.length(matches)
-            match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
-            edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
-            add_backedge!(caller, edge, sig)
+    else
+        if caller isa Core.MethodInstance
+            for i = 1:Core.Compiler.length(matches)
+                match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
+                edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
+                add_backedge!(caller, edge, sig)
+            end
         end
         return true
     end
