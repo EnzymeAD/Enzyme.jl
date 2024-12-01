@@ -192,6 +192,7 @@ Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
 Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
 
+import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 function Core.Compiler.abstract_call_gf_by_type(
     @nospecialize(interp::EnzymeInterpreter),
@@ -212,25 +213,54 @@ function Core.Compiler.abstract_call_gf_by_type(
         max_methods::Int,
     )
     callinfo = ret.info
-    method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
 
     if is_primitive_func(specTypes)
         callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    elseif EnzymeRules.is_inactive_from_sig(specTypes; world=interp.world, method_table, caller=sv.linfo) 
-            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
     else
-        if interp.forward_rules
-            if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table, caller=sv.linfo)
-            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+        (;fargs, argtypes) = arginfo
+        # 1. Check if function is inactive
+        inactive_arginfo = ArgInfo(nothing, pushfirst!(copy(argtypes), Core.Const(EnzymeRules.inactive)))
+        inactive_atype = Tuple{typeof(EnzymeRules.inactive), atype.parameters...} 
+        inactive_meta  = @invoke Core.Compiler.abstract_call_gf_by_type(
+            interp::AbstractInterpreter,
+            EnzymeRules.inactive::Any,
+            inactive_arginfo::ArgInfo,
+            si::StmtInfo,
+            inactive_atype::Any,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+        if Core.Compiler.nmatches(inactive_meta.info) != 0
+            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
+        else
+            # 2. Check if rule is defined
+            if interp.forward_rules
+                rulef = EnzymeRules.forward
+                ft, tt = EnzymeRules._annotate_tt(atype)
+                rule_atype = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+                rule_argtypes = Any[Core.Const(EnzymeRules.forward), FwdConfig, Annotation{ft}, Type{<:Annotation}, tt...]
+            else
+                rulef = EnzymeRules.reverse
+                ft, tt = EnzymeRules._annotate_tt(atype)
+                rule_atype = Tuple{typeof(EnzymeRules.reverse), <:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+                rule_argtypes = Any[Core.Const(EnzymeRules.reverse), RevConfig, Annotation{ft}, Type{<:Annotation}, tt...]
             end
-        end
 
-        if interp.reverse_rules
-            if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table, caller=sv.linfo)
-                callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+            rule_arginfo = ArgInfo(nothing, rule_argtypes)
+            rule_meta  = @invoke Core.Compiler.abstract_call_gf_by_type(
+                interp::AbstractInterpreter,
+                rulef::Any,
+                rule_arginfo::ArgInfo,
+                si::StmtInfo,
+                rule_atype::Any,
+                sv::AbsIntState,
+                max_methods::Int,
+            )
+            if Core.Compiler.nmatches(rule_meta.info) != 0
+                callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
             end
         end
     end
