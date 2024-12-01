@@ -107,10 +107,6 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
-@inline function datatype_fieldcount(t::Type{T})::Int where {T}
-    return Base.datatype_fieldcount(t)
-end
-
 Base.@assume_effects :removable :foldable :nothrow @inline function staticInTup(::Val{T}, tup::NTuple{N,Val})::Bool where {T,N}
     any(ntuple(Val(N)) do i
         Base.@_inline_meta
@@ -285,7 +281,7 @@ Base.@assume_effects :removable :foldable @inline function active_reg_inner(
                 return DupState
             end
         end
-        if datatype_fieldcount(aT) === nothing
+        if Base.datatype_fieldcount(aT) === nothing
             if AbstractIsMixed
                 return MixedState
             else
