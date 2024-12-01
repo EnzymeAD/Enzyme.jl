@@ -112,29 +112,32 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         Tys = (Float32, Float64)
 
         if length(sparam_vals) == arity
-            T = first(sparam_vals)::Type
-            legal = T ∈ Tys
-
-            if legal
-                if name == :ldexp
-                    if !(sparam_vals[2] <: Integer)
-                        legal = false
-                    end
-                elseif name == :pow
-                    if sparam_vals[2] <: Integer
-                        name = :powi
-                    elseif sparam_vals[2] != T
-                        legal = false
-                    end
-                elseif name == :jl_rem2pi
-                else
-                    if !all(==(T), sparam_vals)
-                        legal = false
+            T = first(sparam_vals)
+            if (T isa Type)
+                T = T::Type
+                legal = T ∈ Tys
+    
+                if legal
+                    if name == :ldexp
+                        if !(sparam_vals[2] <: Integer)
+                            legal = false
+                        end
+                    elseif name == :pow
+                        if sparam_vals[2] <: Integer
+                            name = :powi
+                        elseif sparam_vals[2] != T
+                            legal = false
+                        end
+                    elseif name == :jl_rem2pi
+                    else
+                        if !all(==(T), sparam_vals)
+                            legal = false
+                        end
                     end
                 end
-            end
-            if legal
-                return name, toinject, T
+                if legal
+                    return name, toinject, T
+                end
             end
         end
     end
@@ -144,15 +147,18 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         Tys = (Complex{Float32}, Complex{Float64})
         if length(sparam_vals) == arity
             T = first(sparam_vals)
-            legal = T ∈ Tys
-
-            if legal
-                if !all(==(T), sparam_vals)
-                    legal = false
+            if (T isa Type)
+                T = T::Type
+                legal = T ∈ Tys
+    
+                if legal
+                    if !all(==(T), sparam_vals)
+                        legal = false
+                    end
                 end
-            end
-            if legal
-                return name, toinject, T
+                if legal
+                    return name, toinject, T
+                end
             end
         end
     end
