@@ -15,7 +15,7 @@ end
 
 @inline element(::Val{T}) where {T} = T
 
-Base.@assume_effects :removable :foldable @inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(
+@inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(
     f::Int,
 ) where {seen,worldT,justActive,UnionSret,AbstractIsMixed}
     T = element(first(seen))
@@ -62,7 +62,7 @@ end
 
 @inline forcefold(::Val{RT}) where {RT} = RT
 
-Base.@assume_effects :removable :foldable @inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N})::ActivityState where {ty,sty,N}
+@inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N})::ActivityState where {ty,sty,N}
     if sty == AnyState || sty == ty
         return forcefold(Val(ty), C...)
     end
@@ -114,7 +114,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function staticInTup(
     end)
 end
 
-Base.@assume_effects :removable :foldable @inline function active_reg_recur(
+@inline function active_reg_recur(
     ::Type{ST},
     seen::Seen,
     world,
@@ -159,7 +159,7 @@ end
 @inline is_vararg_tup(x) = false
 @inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 
-Base.@assume_effects :removable :foldable @inline function active_reg_inner(
+@inline function active_reg_inner(
     ::Type{T},
     seen::ST,
     world::Union{Nothing,UInt},
