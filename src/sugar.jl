@@ -40,7 +40,7 @@ end
                 end     
             end
         end
-        hasNoRet = has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
+        hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
         @assert !hasNoRet
         if !hasNoRet
             push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))
