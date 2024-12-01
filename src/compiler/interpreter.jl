@@ -214,28 +214,23 @@ function Core.Compiler.abstract_call_gf_by_type(
     callinfo = ret.info
     method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
-    caller = if callinfo isa Core.Compiler.MethodMatchInfo && callinfo.results isa Core.Compiler.MethodLookupResult
-        callinfo.results
-    else
-        nothing
-    end
 
     if is_primitive_func(specTypes)
         callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    elseif EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table, caller)
-        callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
+    elseif EnzymeRules.is_inactive_from_sig(specTypes; world=interp.world, method_table, caller=sv.linfo) 
+            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
     else
         if interp.forward_rules
-          if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table, caller)
+            if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table, caller=sv.linfo)
             callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-          end
+            end
         end
-    
+
         if interp.reverse_rules
-            if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table, caller)
-              callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+            if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table, caller=sv.linfo)
+                callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
             end
         end
     end

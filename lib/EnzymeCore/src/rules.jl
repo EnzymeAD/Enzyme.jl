@@ -192,7 +192,7 @@ end
 function isapplicable(@nospecialize(f), @nospecialize(TT);
                       world::UInt=Base.get_world_counter(),
                       method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                      caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+                      caller::Union{Nothing,Core.MethodInstance}=nothing)
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
@@ -209,35 +209,15 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
     if !fullmatch
-        if caller isa Core.MethodInstance
-            add_mt_backedge!(caller, mt, sig)
-        elseif caller isa Core.Compiler.MethodLookupResult
-            for j = 1:Core.Compiler.length(caller)
-                cmatch = Core.Compiler.getindex(caller, j)::Core.MethodMatch
-                cspec = Core.Compiler.specialize_method(cmatch)::Core.MethodInstance
-                add_mt_backedge!(cspec, mt, sig)
-            end
-        end
+        add_mt_backedge!(caller, mt, sig)
     end
     if Core.Compiler.isempty(matches)
         return false
     else
-        if caller isa Core.MethodInstance
-            for i = 1:Core.Compiler.length(matches)
-                match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
-                edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
-                add_backedge!(caller, edge, sig)
-            end
-        elseif caller isa Core.Compiler.MethodLookupResult
-            for j = 1:Core.Compiler.length(caller)
-                cmatch = Core.Compiler.getindex(caller, j)::Core.MethodMatch
-                cspec = Core.Compiler.specialize_method(cmatch)::Core.MethodInstance
-                for i = 1:Core.Compiler.length(matches)
-                    match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
-                    edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
-                    add_backedge!(cspec, edge, sig)
-                end
-            end
+        for i = 1:Core.Compiler.length(matches)
+            match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
+            edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
+            add_backedge!(caller, edge, sig)
         end
         return true
     end
