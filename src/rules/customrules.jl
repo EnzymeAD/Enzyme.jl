@@ -923,15 +923,10 @@ function enzyme_custom_common_rev(
     @assert ami !== nothing
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    aug_RT = something(
-        Core.Compiler.typeinf_type(
-            GPUCompiler.get_interpreter(
-                CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
-            ),
-            ami,
-        ),
-        Any,
+    interp = GPUCompiler.get_interpreter(
+        CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
     )
+    aug_RT = return_type(interp, ami)
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
         emit_error(
