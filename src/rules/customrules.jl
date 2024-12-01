@@ -523,16 +523,16 @@ end
         typeof(EnzymeRules.forward)
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
-    fmi = try
+    fmi, fwd_RT = try
         fmi = my_methodinstance(functy, TT, world)
         fwd_RT = primal_return_type_world(Forward, world, fmi)
-        fmi
+        fmi, fwd_RT
     catch e
         TT = Tuple{typeof(world),functy,TT.parameters...}
         fmi = my_methodinstance(typeof(custom_rule_method_error), TT, world)
         pushfirst!(args, LLVM.ConstantInt(world))
         fwd_RT = Union{}
-        fmi
+        fmi, fwd_RT
     end
     llvmf = nested_codegen!(mode, mod, fmi, world)
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -811,6 +811,7 @@ end
         if forward
             pushfirst!(args, LLVM.ConstantInt(world))
         end
+        ami
     end
     @safe_debug "Applying custom augmented_primal rule" TT = augprimal_TT, functy=functy
     return ami,
@@ -912,7 +913,6 @@ function enzyme_custom_common_rev(
     end
 
     rev_TT = nothing
-    rev_RT = nothing
 
     TapeT = Nothing
 
@@ -954,6 +954,7 @@ function enzyme_custom_common_rev(
     if forward
         llvmf = nested_codegen!(mode, mod, ami, world)
         @assert llvmf !== nothing
+        rev_RT = nothing
     else
         tt = copy(activity)
         if isKWCall
@@ -979,15 +980,17 @@ function enzyme_custom_common_rev(
         end
 
         @safe_debug "Applying custom reverse rule" TT = rev_TT, functy=functy
-        try
+        rmi, rev_RT = try
             rmi = my_methodinstance(functy, rev_TT, world)
             rev_RT = return_type(interp, rmi)
+            rmi, rev_RT
         catch e
             rev_TT = Tuple{typeof(world),functy,rev_TT.parameters...}
             rmi = my_methodinstance(typeof(custom_rule_method_error), rev_TT, world)
             pushfirst!(args, LLVM.ConstantInt(world))
             rev_RT = Union{}
             applicablefn = false
+            rmi, rev_RT
         end
         llvmf = nested_codegen!(mode, mod, rmi, world)
     end
