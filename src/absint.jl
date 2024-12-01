@@ -636,8 +636,11 @@ function abs_typeof(
             return (false, nothing, nothing)
         end
         if byref == GPUCompiler.BITS_VALUE
+            ltyp = typ
             for ind in offset
-                @assert Base.isconcretetype(typ)
+                if !Base.isconcretetype(typ)
+                    throw(AssertionError("Illegal absint of $(string(arg)) ltyp=$ltyp, typ=$typ, offset=$offset, ind=$ind"))
+                end
                 cnt = 0
                 for i = 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
