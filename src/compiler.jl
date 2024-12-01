@@ -2616,7 +2616,7 @@ function lower_convention(
     end
 
     hasReturnsTwice = has_fn_attr(entry_f, EnumAttribute("returns_twice"))
-    hasNoInline = has_fn_attr(entry_f, EnumAttriute("noinline"))
+    hasNoInline = has_fn_attr(entry_f, EnumAttribute("noinline"))
     if hasNoInline
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             entry_f,
