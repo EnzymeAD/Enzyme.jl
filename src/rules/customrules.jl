@@ -542,14 +542,7 @@ end
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(llvmf, i)),
-            ),
-        ) for i = 1:length(collect(parameters(llvmf)))
-    )
+    swiftself = has_swiftself(llvmf)
     if swiftself
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
@@ -596,12 +589,7 @@ end
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
 
-    hasNoRet = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noreturn")),
-            collect(function_attributes(llvmf)),
-        ),
-    )
+    hasNoRet = has_fn_attribute(llvmf, EnumAttribute("noreturn"))
 
     if hasNoRet
         return false
@@ -1083,14 +1071,7 @@ function enzyme_custom_common_rev(
     #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...}, world)
     # end
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(llvmf, i)),
-            ),
-        ) for i = 1:length(collect(parameters(llvmf)))
-    )
+    swiftself = has_swiftself(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots = get_return_info(miRT)
@@ -1302,12 +1283,7 @@ function enzyme_custom_common_rev(
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
 
-    hasNoRet = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noreturn")),
-            collect(function_attributes(llvmf)),
-        ),
-    )
+    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
     if hasNoRet
         return tapeV
@@ -1599,10 +1575,7 @@ end
     fop = called_operand(orig)::LLVM.Function
     for (i, v) in enumerate(operands(orig)[1:end-1])
         if v == val
-            if !any(
-                a -> kind(a) == kind(StringAttribute("enzymejl_returnRoots")),
-                collect(parameter_attributes(fop, i)),
-            )
+            if !has_fn_attr(fop, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true
                 break
             end

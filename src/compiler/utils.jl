@@ -329,14 +329,13 @@ function get_pgcstack(func::LLVM.Function)
 end
 
 function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
-    for (i, v) in enumerate(parameters(func))
-        if any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(func, i)),
-            ),
-        )
-            return v
+    for i in 1:length(LLVM.parameters(fn))
+        for attr in collect(LLVM.parameter_attributes(fn, i))
+            if attr isa LLVM.EnumAttribute
+                if kind(attr) == swiftself_kind
+                    return parameters(fn)[i]
+                end
+            end
         end
     end
 
@@ -366,7 +365,7 @@ end
 const swiftself_kind = enum_attr_kind("swiftself")
 
 function has_swiftself(fn::LLVM.Function)::Bool
-    for i in 1:size(LLVM.parameters(fn))
+    for i in 1:length(LLVM.parameters(fn))
         for attr in collect(LLVM.parameter_attributes(fn, i))
             if attr isa LLVM.EnumAttribute
                 if kind(attr) == swiftself_kind
@@ -381,6 +380,17 @@ function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))
         if attr isa LLVM.EnumAttribute
+            if kind(attr) == ekind
+                return true
+            end
+        end
+    end
+    return false
+end
+function has_fn_attr(fn::LLVM.Function, attr::LLVM.StringAttribute)::Bool
+    ekind = LLVM.kind(attr)
+    for attr in collect(function_attributes(fn))
+        if attr isa LLVM.StringAttribute
             if kind(attr) == ekind
                 return true
             end

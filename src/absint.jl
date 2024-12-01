@@ -737,6 +737,13 @@ function abs_typeof(
     return (false, nothing, nothing)
 end
 
+@inline function is_zero(@nospecialize(x::LLVM.Value))::Bool
+    if x isa LLVM.ConstantInt
+        return convert(UInt, x) == 0
+    end
+    return false
+end
+
 function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
     if isa(arg, ConstantExpr)
         ce = arg
@@ -744,7 +751,7 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> x isa LLVM.ConstantInt && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(is_zero, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break

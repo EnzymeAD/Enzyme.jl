@@ -40,12 +40,7 @@ end
                 end     
             end
         end
-        hasNoRet = any(
-            map(
-                k -> kind(k) == kind(LLVM.EnumAttribute("noreturn")),
-                collect(LLVM.function_attributes(copysetfn)),
-            ),
-        )
+        hasNoRet = has_fn_attr(Compiler.copysetfn, LLVM.EnumAttribute("noreturn"))
         @assert !hasNoRet
         if !hasNoRet
             push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))
