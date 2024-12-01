@@ -6,7 +6,6 @@ function return_type(interp::Core.Compiler.AbstractInterpreter, mi::Core.MethodI
         end
         result = Core.Compiler.InferenceResult(mi, Core.Compiler.typeinf_lattice(interp))
         Core.Compiler.typeinf(interp, result, :global)
-        ccall(:jl_typeinf_timing_end, Cvoid, (UInt64,), start_time)
         Core.Compiler.is_inferred(result) || return Any
         Core.Compiler.widenconst(Core.Compiler.ignorelimited(result.result))
     else
