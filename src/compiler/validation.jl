@@ -15,7 +15,7 @@ end
 function get_blas_symbols()
     symbols = BLAS.get_config().exported_symbols
     if BLAS.USE_BLAS64
-        return map(n -> n * "64_", symbols)
+        return map(Base.Fix2(*, "64_"), symbols)
     end
     return symbols
 end

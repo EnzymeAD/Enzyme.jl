@@ -175,7 +175,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
 const prevmethodinstance = GPUCompiler.generic_methodinstance
 
-function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
+function methodinstance_generator(world::UInt, source, self, @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     ft = ft.parameters[1]
@@ -225,19 +225,19 @@ function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
     return new_ci
 end
 
-@eval function prevmethodinstance(ft, tt)
+@eval function prevmethodinstance(ft, tt)::Core.MethodInstance
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, methodinstance_generator))
 end
 
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
-                                world::Integer=tls_world_age())
+                                world::Integer=tls_world_age())::Core.MethodInstance
     sig = GPUCompiler.signature_type_by_tt(ft, tt)
     if Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
-        return GPUCompiler.methodinstance(ft, tt, world)
+        return GPUCompiler.methodinstance(ft, tt, world)::Core.MethodInstance
     else
-        return prevmethodinstance(ft, tt, world)
+        return prevmethodinstance(ft, tt, world)::Core.MethodInstance
     end
 end
 else

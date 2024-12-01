@@ -15,13 +15,10 @@ end
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
         mi = my_methodinstance(fn, Tuple{T, Int})
         job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
-        mod, meta = GPUCompiler.codegen(
-            :llvm,
-            job;
-            optimize = false,
-            cleanup = false,
-            validate = false,
-        )
+
+        GPUCompiler.prepare_job!(job)
+        mod, meta = GPUCompiler.emit_llvm(job; libraries=true, toplevel=true, optimize=false, cleanup=false, only_entry=false, validate=false)
+        
         copysetfn = meta.entry
         blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)
@@ -40,12 +37,7 @@ end
                 end     
             end
         end
-        hasNoRet = any(
-            map(
-                k -> kind(k) == kind(LLVM.EnumAttribute("noreturn")),
-                collect(LLVM.function_attributes(copysetfn)),
-            ),
-        )
+        hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
         @assert !hasNoRet
         if !hasNoRet
             push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))

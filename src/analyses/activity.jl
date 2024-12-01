@@ -62,7 +62,7 @@ end
 
 @inline forcefold(::Val{RT}) where {RT} = RT
 
-@inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N}) where {ty,sty,N}
+@inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N})::ActivityState where {ty,sty,N}
     if sty == AnyState || sty == ty
         return forcefold(Val(ty), C...)
     end
@@ -107,11 +107,7 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
-@inline function datatype_fieldcount(t::Type{T}) where {T}
-    return Base.datatype_fieldcount(t)
-end
-
-@inline function staticInTup(::Val{T}, tup::NTuple{N,Val}) where {T,N}
+Base.@assume_effects :removable :foldable :nothrow @inline function staticInTup(::Val{T}, tup::NTuple{N,Val})::Bool where {T,N}
     any(ntuple(Val(N)) do i
         Base.@_inline_meta
         Val(T) == tup[i]
@@ -125,7 +121,7 @@ end
     ::Val{justActive},
     ::Val{UnionSret},
     ::Val{AbstractIsMixed},
-) where {ST,Seen,justActive,UnionSret,AbstractIsMixed}
+)::ActivityState where {ST,Seen,justActive,UnionSret,AbstractIsMixed}
     if ST isa Union
         return forcefold(
             Val(
@@ -285,7 +281,7 @@ end
                 return DupState
             end
         end
-        if datatype_fieldcount(aT) === nothing
+        if Base.datatype_fieldcount(aT) === nothing
             if AbstractIsMixed
                 return MixedState
             else
@@ -383,11 +379,11 @@ end
     return ty
 end
 
-@inline @generated function active_reg_nothrow(::Type{T}, ::Val{world}) where {T,world}
+Base.@assume_effects :removable :foldable @inline @generated function active_reg_nothrow(::Type{T}, ::Val{world})::ActivityState where {T,world}
     return active_reg_inner(T, (), world)
 end
 
-Base.@pure @inline function active_reg(
+Base.@assume_effects :removable :foldable @inline function active_reg(
     ::Type{T},
     world::Union{Nothing,UInt} = nothing,
 )::Bool where {T}
@@ -411,13 +407,13 @@ Base.@pure @inline function active_reg(
     end
 end
 
-@inline function guaranteed_const(::Type{T}) where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(::Type{T})::Bool where {T}
     rt = active_reg_nothrow(T, Val(nothing))
     res = rt == AnyState
     return res
 end
 
-@inline function guaranteed_const_nongen(::Type{T}, world) where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world)::Bool where {T}
     rt = active_reg_inner(T, (), world)
     res = rt == AnyState
     return res
@@ -425,7 +421,7 @@ end
 
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
-@inline function guaranteed_nonactive(::Type{T}) where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive(::Type{T})::Bool where {T}
     rt = Enzyme.Compiler.active_reg_nothrow(T, Val(nothing))
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
@@ -435,10 +431,10 @@ end
 
 Try to guess the most appropriate [`Annotation`](@ref) for arguments of type `T` passed to [`autodiff`](@ref) with a given `mode`.
 """
-@inline Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} =
+Base.@assume_effects :removable :foldable :nothrow @inline Enzyme.guess_activity(::Type{T}, mode::Enzyme.Mode) where {T} =
     guess_activity(T, convert(API.CDerivativeMode, mode))
 
-@inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
     ActReg = active_reg_nothrow(T, Val(nothing))
     if ActReg == AnyState
         return Const{T}
