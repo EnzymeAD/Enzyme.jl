@@ -109,7 +109,7 @@ function set_writing(mri::ModRefInfo)
     return mri | MRI_Mod
 end
 
-function set_readonly(effect::MemoryEffect)
+function set_readonly(effect::MemoryEffect)::MemoryEffect
     data = UInt32(0)
     for loc in (ArgMem, InaccessibleMem, Other)
         data = UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
@@ -117,15 +117,15 @@ function set_readonly(effect::MemoryEffect)
     return MemoryEffect(data)
 end
 
-function is_readonly(mri::ModRefInfo)
+function is_readonly(mri::ModRefInfo)::Bool
     return mri == MRI_NoModRef || mri == MRI_Ref
 end
 
-function is_readnone(mri::ModRefInfo)
+function is_readnone(mri::ModRefInfo)::Bool
     return mri == MRI_NoModRef
 end
 
-function is_writeonly(mri::ModRefInfo)
+function is_writeonly(mri::ModRefInfo)::Bool
     return mri == MRI_NoModRef || mri == MRI_Mod
 end
 
@@ -137,7 +137,7 @@ for n in (:is_readonly, :is_readnone, :is_writeonly)
     end
 end
 
-function is_noreturn(f::LLVM.Function)
+Base.@assume_effects :removable :foldable :nothrow function is_noreturn(f::LLVM.Function)::Bool
     for attr in collect(function_attributes(f))
         if kind(attr) == kind(EnumAttribute("noreturn"))
             return true
@@ -146,7 +146,7 @@ function is_noreturn(f::LLVM.Function)
     return false
 end
 
-function is_readonly(f::LLVM.Function)
+Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
         return true
@@ -179,7 +179,7 @@ function is_readonly(f::LLVM.Function)
     return false
 end
 
-function is_readnone(f::LLVM.Function)
+Base.@assume_effects :removable :foldable :nothrow function is_readnone(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
         return true
@@ -209,7 +209,7 @@ function is_readnone(f::LLVM.Function)
     return false
 end
 
-function is_writeonly(f::LLVM.Function)
+Base.@assume_effects :removable :foldable :nothrow function is_writeonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
         return true
@@ -364,7 +364,7 @@ end
 
 const swiftself_kind = enum_attr_kind("swiftself")
 
-function has_swiftself(fn::LLVM.Function)::Bool
+Base.@assume_effects :removable :foldable :nothrow function has_swiftself(fn::LLVM.Function)::Bool
     for i in 1:length(LLVM.parameters(fn))
         for attr in collect(LLVM.parameter_attributes(fn, i))
             if attr isa LLVM.EnumAttribute
@@ -376,7 +376,7 @@ function has_swiftself(fn::LLVM.Function)::Bool
     end
     return false
 end
-function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
+Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))
         if attr isa LLVM.EnumAttribute
@@ -387,7 +387,8 @@ function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     end
     return false
 end
-function has_fn_attr(fn::LLVM.Function, attr::LLVM.StringAttribute)::Bool
+
+Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.StringAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))
         if attr isa LLVM.StringAttribute
@@ -445,14 +446,14 @@ end
     NamedTuple{ntuple(Symbol, Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
-function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})
-    ty = LLVM.value_type(val)
+Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})::LLVM.LLVMType
+    ty = LLVM.value_type(val)::LLVM.LLVMType
     for i in idxs
         if isa(ty, LLVM.ArrayType)
-            ty = eltype(ty)
+            ty = eltype(ty)::LLVM.LLVMType
         else
             @assert isa(ty, LLVM.StructType)
-            ty = elements(ty)[i+1]
+            ty = elements(ty)[i+1]::LLVM.LLVMType
         end
     end
     return ty

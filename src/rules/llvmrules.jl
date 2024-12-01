@@ -229,7 +229,7 @@ end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
             return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if has_fn_attribute(F, StringAttribute("enzyme_inactive"))
+        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return true
         end
     end
@@ -307,7 +307,7 @@ end
             common_finalizer_rev(2, B, orig, gutils, tape)
             return nothing
         end
-        if has_fn_attribute(F, StringAttribute("enzyme_inactive"))
+        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return nothing
         end
     end
@@ -328,7 +328,7 @@ end
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_fwd(2, B, orig, gutils, normalR, shadowR)
         end
-        if has_fn_attribute(F, StringAttribute("enzyme_inactive"))
+        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return true
         end
     end
@@ -345,7 +345,7 @@ end
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if has_fn_attribute(F, StringAttribute("enzyme_inactive"))
+        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return true
         end
     end
@@ -363,7 +363,7 @@ end
             common_invoke_rev(2, B, orig, gutils, tape)
             return nothing
         end
-        if has_fn_attribute(F, StringAttribute("enzyme_inactive"))
+        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return nothing
         end
     end

@@ -60,7 +60,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function (c::Merger{s
     end
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline forcefold(::Val{RT})::ActivityState where {RT} = RT
+@inline forcefold(::Val{RT}) where {RT} = RT
 
 Base.@assume_effects :removable :foldable :nothrow @inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N})::ActivityState where {ty,sty,N}
     if sty == AnyState || sty == ty

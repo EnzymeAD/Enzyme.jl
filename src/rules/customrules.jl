@@ -589,7 +589,7 @@ end
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
 
-    hasNoRet = has_fn_attribute(llvmf, EnumAttribute("noreturn"))
+    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
     if hasNoRet
         return false
