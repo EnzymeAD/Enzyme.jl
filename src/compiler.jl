@@ -112,7 +112,11 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         Tys = (Float32, Float64)
 
         if length(sparam_vals) == arity
-            T = first(sparam_vals)::Type
+            T = first(sparam_vals)
+            if !(T isa Type)
+                continue
+            end
+            T = T::Type
             legal = T ∈ Tys
 
             if legal
@@ -144,6 +148,10 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         Tys = (Complex{Float32}, Complex{Float64})
         if length(sparam_vals) == arity
             T = first(sparam_vals)
+            if !(T isa Type)
+                continue
+            end
+            T = T::Type
             legal = T ∈ Tys
 
             if legal
