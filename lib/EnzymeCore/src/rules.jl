@@ -209,11 +209,13 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
     if !fullmatch
-        add_mt_backedge!(caller, mt, sig)
+        if caller isa Core.MethodInstance
+            add_mt_backedge!(caller, mt, sig)
+        end
     end
     if Core.Compiler.isempty(matches)
         return false
-    else
+    elseif caller isa Core.MethodInstance
         for i = 1:Core.Compiler.length(matches)
             match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
             edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
