@@ -799,8 +799,6 @@ function abstract_call_known(
             if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters) && any(Base.Fix2(Base.:<:, AbstractArray), bcty.parameters[4].parameters)
                 fnty = bcty.parameters[3]
                 eltys = map(num_or_eltype, bcty.parameters[4].parameters)
-                retty = Core.Compiler._return_type(interp, Tuple{fnty, eltys...})
-                if Base.isconcretetype(retty)
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
                         [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
@@ -814,7 +812,6 @@ function abstract_call_known(
                         sv::AbsIntState,
                         max_methods::Int,
                     )
-                end
             end
         end
 
