@@ -806,13 +806,13 @@ function abstract_call_known(
                         [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
                         [Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]...],
                     )
-                    return abstract_call_known(
-                        interp,
-                        Enzyme.Compiler.Interpreter.override_bc_materialize,
-                        arginfo2,
-                        si,
-                        sv,
-                        max_methods,
+                    return Base.@invoke abstract_call_known(
+                        interp::AbstractInterpreter,
+                        Enzyme.Compiler.Interpreter.override_bc_materialize::Any,
+                        arginfo2::ArgInfo,
+                        si::StmtInfo,
+                        sv::AbsIntState,
+                        max_methods::Int,
                     )
                 end
             end
@@ -830,13 +830,13 @@ function abstract_call_known(
                     [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
                 )
-                return abstract_call_known(
-                    interp,
-                    Enzyme.Compiler.Interpreter.override_bc_copyto!,
-                    arginfo2,
-                    si,
-                    sv,
-                    max_methods,
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
                 )
             end
         end
@@ -854,13 +854,13 @@ function abstract_call_known(
                 [:(Enzyme.Compiler.Interpreter.myunsafe_copyto!), fargs[2:end]...],
                 [Core.Const(Enzyme.Compiler.Interpreter.myunsafe_copyto!), argtypes[2:end]...],
             )
-            return abstract_call_known(
-                interp,
-                Enzyme.Compiler.Interpreter.myunsafe_copyto!,
-                arginfo2,
-                si,
-                sv,
-                max_methods,
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                Enzyme.Compiler.Interpreter.myunsafe_copyto!::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
             )
         end
     end
@@ -874,13 +874,13 @@ function abstract_call_known(
                 [:(Enzyme.autodiff_deferred), fargs[2:end]...],
                 [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...],
             )
-            return abstract_call_known(
-                interp,
-                Enzyme.autodiff_deferred,
-                arginfo2,
-                si,
-                sv,
-                max_methods,
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                Enzyme.autodiff_deferred::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
             )
         end
     end
