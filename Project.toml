@@ -4,7 +4,9 @@ authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu
 version = "0.13.17"
 
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
+DynamicExpressions = "a40a106e-89c9-4ca8-8020-a735e8728b6b"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
@@ -12,10 +14,12 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SymbolicRegression = "8254be44-1295-4e6a-a16d-46603ac705cb"
 
 [weakdeps]
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"

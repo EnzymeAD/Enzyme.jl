@@ -652,6 +652,13 @@ function abs_typeof(
                         break
                     end
                     cnt += 1
+                    if Enzyme.Compiler.is_sret_union(styp)
+                        if cnt == ind
+                            typ = UInt8
+                            break
+                        end
+                        cnt += 1
+                    end
                 end
             end
             if Base.allocatedinline(typ)
