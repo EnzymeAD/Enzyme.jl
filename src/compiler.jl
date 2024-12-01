@@ -368,17 +368,9 @@ function nested_codegen!(
     params = PrimalCompilerParams(mode)
     job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false), world)
 
-    # TODO
-    parent_job = nothing
-
-    otherMod, meta = GPUCompiler.codegen(
-        :llvm,
-        job;
-        optimize = false,
-        cleanup = false,
-        validate = false,
-        parent_job = parent_job,
-    )
+    GPUCompiler.prepare_job!(job)
+    otherMod, meta = GPUCompiler.emit_llvm(job; libraries=true, toplevel=true, optimize=false, cleanup=false, only_entry=false, validate=false)
+    
     prepare_llvm(otherMod, job, meta)
 
     entry = name(meta.entry)
@@ -3272,16 +3264,9 @@ function GPUCompiler.codegen(
         primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
     end
 
+    GPUCompiler.prepare_job!(primal_job)
+    mod, meta = GPUCompiler.emit_llvm(primal_job; libraries=true, toplevel=toplevel, optimize=false, cleanup=false, only_entry=false, validate=false)
 
-    mod, meta = GPUCompiler.codegen(
-        :llvm,
-        primal_job;
-        optimize = false,
-        toplevel = toplevel,
-        cleanup = false,
-        validate = false,
-        parent_job = parent_job,
-    )
     prepare_llvm(mod, primal_job, meta)
     for f in functions(mod)
         permit_inlining!(f)
@@ -3344,10 +3329,10 @@ function GPUCompiler.codegen(
         end
         toremove = String[]
         for f in functions(mod)
-            if !has_fn_attribute(f, EnumAttribute("alwaysinline"))
+            if !has_fn_attr(f, EnumAttribute("alwaysinline"))
                 continue
             end
-            if !has_fn_attribute(f, EnumAttribute("returnstwice"))
+            if !has_fn_attr(f, EnumAttribute("returnstwice"))
                 push!(function_attributes(f), EnumAttribute("returns_twice"))
                 push!(toremove, name(f))
             end
