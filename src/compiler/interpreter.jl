@@ -233,7 +233,7 @@ function Core.Compiler.abstract_call_gf_by_type(
             sv::AbsIntState,
             max_methods::Int,
         )
-        if Core.Compiler.nmatches(inactive_meta.info) != 0
+        if inactive_meta.info isa Core.Compiler.MethodMatchInfo && Core.Compiler.nmatches(inactive_meta.info) != 0
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
             # 2. Check if rule is defined
@@ -259,7 +259,7 @@ function Core.Compiler.abstract_call_gf_by_type(
                 sv::AbsIntState,
                 max_methods::Int,
             )
-            if Core.Compiler.nmatches(rule_meta.info) != 0
+            if rule_meta.info isa Core.Compiler.MethodMatchInfo && Core.Compiler.nmatches(rule_meta.info) != 0
                 callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
             end
         end
