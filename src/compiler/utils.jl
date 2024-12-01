@@ -329,11 +329,11 @@ function get_pgcstack(func::LLVM.Function)
 end
 
 function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
-    for i in 1:length(LLVM.parameters(fn))
-        for attr in collect(LLVM.parameter_attributes(fn, i))
+    for i in 1:length(LLVM.parameters(func))
+        for attr in collect(LLVM.parameter_attributes(func, i))
             if attr isa LLVM.EnumAttribute
                 if kind(attr) == swiftself_kind
-                    return parameters(fn)[i]
+                    return parameters(func)[i]
                 end
             end
         end
