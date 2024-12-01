@@ -534,6 +534,9 @@ end
         fwd_RT = Union{}
         fmi, fwd_RT
     end
+    fmi = fmi::Core.MethodInstance
+    fwd_RT = fwd_RT::Type
+
     llvmf = nested_codegen!(mode, mod, fmi, world)
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
@@ -813,6 +816,7 @@ end
         end
         ami
     end
+    ami = ami::Core.MethodInstance
     @safe_debug "Applying custom augmented_primal rule" TT = augprimal_TT, functy=functy
     return ami,
     augprimal_TT,
@@ -992,6 +996,8 @@ function enzyme_custom_common_rev(
             applicablefn = false
             rmi, rev_RT
         end
+        rmi = rmi::Core.MethodInstance
+        rev_RT = rev_RT::Type
         llvmf = nested_codegen!(mode, mod, rmi, world)
     end
 
