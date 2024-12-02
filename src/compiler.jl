@@ -3552,14 +3552,16 @@ function GPUCompiler.codegen(
 
         caller = mi
         if mode == API.DEM_ForwardMode
-            has_custom_rule =
-                EnzymeRules.has_frule_from_sig(specTypes; world, method_table, caller)
+            # This passes nothing which doesn't add an invalidation, but this
+            # is already handled via absint to get here
+            has_custom_rule = EnzymeRules.has_frule_from_sig(interp, specTypes, nothing)
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
         else
-            has_custom_rule =
-                EnzymeRules.has_rrule_from_sig(specTypes; world, method_table, caller)
+            # This passes nothing which doesn't add an invalidation, but this
+            # is already handled via absint to get here
+            has_custom_rule = EnzymeRules.has_rrule_from_sig(interp, specTypes, nothing)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
             end
@@ -3574,7 +3576,8 @@ function GPUCompiler.codegen(
             actualRetType = k.ci.rettype
         end
 
-        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
+        # TODO this is not getting invalidated properly now
+        if EnzymeRules.noalias_from_sig(interp, specTypes, nothing)
             push!(return_attributes(llvmfn), EnumAttribute("noalias"))
             for u in LLVM.uses(llvmfn)
                 c = LLVM.user(u)
@@ -3798,7 +3801,9 @@ end
             end
             continue
         end
-        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) &&
+        # This passes nothing which doesn't add an invalidation, but this
+        # is already handled via absint to get here
+        if EnzymeRules.is_inactive_from_sig(interp, specTypes, nothing) &&
            has_method(
             Tuple{typeof(EnzymeRules.inactive),specTypes.parameters...},
             world,
@@ -3816,7 +3821,8 @@ end
             )
             continue
         end
-        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller) &&
+        # TODO this is not getting invalidated properly now
+        if EnzymeRules.is_inactive_noinl_from_sig(interp, specTypes, nothing) &&
            has_method(
             Tuple{typeof(EnzymeRules.inactive_noinl),specTypes.parameters...},
             world,
