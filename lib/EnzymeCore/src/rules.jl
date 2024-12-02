@@ -228,14 +228,14 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
 end
 
 function has_frule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                            @nospecialize(TT), sv::AbsIntState)::Bool
+                            @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(interp, forward, TT, sv)
 end
 
 function has_rrule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                            @nospecialize(TT), sv::AbsIntState)::Bool
+                            @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(interp, augmented_primal, TT, sv)
@@ -245,7 +245,7 @@ end
 # but here we want the broader query using `Core.Compiler.findall`.
 # Also add appropriate backedges to the caller `MethodInstance` if given.
 function isapplicable(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                      @nospecialize(f), @nospecialize(TT), sv::AbsIntState)::Bool
+                      @nospecialize(f), @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
@@ -300,8 +300,8 @@ function is_inactive_from_sig(@nospecialize(TT);
 end
 
 
-function is_inactive_from_sig(nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                              @nospecialize(TT), sv::AbsIntState)
+function is_inactive_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
+                              @nospecialize(TT), sv::Core.Compiler.AbsIntState)
     return isapplicable(inactive, TT; world, method_table, caller)
 end
 """
