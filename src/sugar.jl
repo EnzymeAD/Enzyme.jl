@@ -254,6 +254,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 ```
 
 """
+# TODO eventually add an invalidation edge here from inactive_type
 @generated function gradient(
     rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten},
     f::F,
@@ -288,7 +289,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             push!(states, Compiler.AnyState)
         else
             state = Compiler.active_reg_inner(genty, (), nothing)
-            push!(states, Compiler.AnyState)
+            push!(states, state)
         end
     end
 
