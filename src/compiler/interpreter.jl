@@ -220,47 +220,15 @@ function Core.Compiler.abstract_call_gf_by_type(
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
-        (;fargs, argtypes) = arginfo
         # 1. Check if function is inactive
-        inactive_arginfo = ArgInfo(nothing, pushfirst!(copy(argtypes), Core.Const(EnzymeRules.inactive)))
-        inactive_atype = Tuple{typeof(EnzymeRules.inactive), atype.parameters...} 
-        inactive_meta  = @invoke Core.Compiler.abstract_call_gf_by_type(
-            interp::AbstractInterpreter,
-            EnzymeRules.inactive::Any,
-            inactive_arginfo::ArgInfo,
-            si::StmtInfo,
-            inactive_atype::Any,
-            sv::AbsIntState,
-            max_methods::Int,
-        )
-        if inactive_meta.info isa Core.Compiler.MethodMatchInfo && Core.Compiler.nmatches(inactive_meta.info) != 0
+        if is_inactive_from_sig(interp, specTypes, sv)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
             # 2. Check if rule is defined
-            if interp.forward_rules
-                rulef = EnzymeRules.forward
-                ft, tt = EnzymeRules._annotate_tt(atype)
-                rule_atype = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
-                rule_argtypes = Any[Core.Const(EnzymeRules.forward), FwdConfig, Annotation{ft}, Type{<:Annotation}, tt...]
-            else
-                rulef = EnzymeRules.reverse
-                ft, tt = EnzymeRules._annotate_tt(atype)
-                rule_atype = Tuple{typeof(EnzymeRules.reverse), <:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
-                rule_argtypes = Any[Core.Const(EnzymeRules.reverse), RevConfig, Annotation{ft}, Type{<:Annotation}, tt...]
-            end
-
-            rule_arginfo = ArgInfo(nothing, rule_argtypes)
-            rule_meta  = @invoke Core.Compiler.abstract_call_gf_by_type(
-                interp::AbstractInterpreter,
-                rulef::Any,
-                rule_arginfo::ArgInfo,
-                si::StmtInfo,
-                rule_atype::Any,
-                sv::AbsIntState,
-                max_methods::Int,
-            )
-            if rule_meta.info isa Core.Compiler.MethodMatchInfo && Core.Compiler.nmatches(rule_meta.info) != 0
-                callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
+            if interp.forward_rules && EnzymeRules.has_frule_from_sig(interp, specTypes, sv)
+                callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+            elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(interp, specTypes, sv)
+                callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
             end
         end
     end
