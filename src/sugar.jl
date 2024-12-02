@@ -294,7 +294,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
     idx = 0
     enz_args = Union{Expr,Symbol}[]
-    resargs = Union{Expr,Symbol[]
+    resargs = Union{Expr,Symbol}[]
     for (i, (arg, act, state, genty)) in enumerate(zip(rargs, acts, states, gentys))
         shad = Symbol("shad_$i")
         if genty <: Enzyme.Const
