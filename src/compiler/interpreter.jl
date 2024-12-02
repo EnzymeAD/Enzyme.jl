@@ -192,6 +192,21 @@ Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
 Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
 
+function annotate(@nospecialize(T))
+    T = widenconst(T)
+    if Core.Compiler.isvarargtype(T)
+        VA = T
+        T = annotate(Core.Compiler.unwrapva(VA))
+        if isdefined(VA, :N)
+            return Vararg{T, VA.N}
+        else
+            return Vararg{T}
+        end
+    else
+        return Annotation{T}
+    end
+end
+
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 function Core.Compiler.abstract_call_gf_by_type(
@@ -222,25 +237,27 @@ function Core.Compiler.abstract_call_gf_by_type(
     else
         (;fargs, argtypes) = arginfo
         # 1. Check if function is inactive
-        inactive_argtypes = pushfirst!(copy(argtypes), Core.Const(EnzymeRules.inactive))
-        inactive_meta = abstract_applicable(interp, inactive_argtypes, sv, max_methods) # Does backedge handling internally
+        inactive_argtypes = Any[Core.Const(Core.applicable), Core.Const(EnzymeRules.inactive)]
+        append!(inactive_argtypes, argtypes)
 
-        if inactive_meta.rt !== Core.Const(false) # Ugh it may be Const(true), Const(false), Bool
+        inactive_meta = Core.Compiler.abstract_applicable(interp, inactive_argtypes, sv,  #=max_methods=# -1) # Does backedge handling internally
+        if inactive_meta.rt != Core.Const(false) # It may be Const(true), Const(false), Bool
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
             # 2. Check if rule is defined
+            tt = Core.Compiler.anymap(annotate, argtypes)
             if interp.forward_rules
                 rulef = EnzymeRules.forward
-                ft, tt = EnzymeRules._annotate_tt(atype)
-                rule_argtypes = Any[Core.Const(EnzymeRules.forward), FwdConfig, Annotation{ft}, Type{<:Annotation}, tt...]
+                rule_argtypes = Any[Core.Const(Core.applicable), Core.Const(EnzymeRules.forward), FwdConfig, tt[1], Type{<:Annotation}, tt[2:end]...]
             else
                 rulef = EnzymeRules.reverse
-                ft, tt = EnzymeRules._annotate_tt(atype)
-                rule_argtypes = Any[Core.Const(EnzymeRules.reverse), RevConfig, Annotation{ft}, Type{<:Annotation}, tt...]
+                rule_argtypes = Any[Core.Const(Core.applicable), Core.Const(EnzymeRules.reverse), RevConfig, tt[1], Type{<:Annotation}, tt[2:end]...]
             end
-
-            rule_meta = abstract_applicable(interp, rule_argtypes, sv, max_methods) # Does backedge handling internally
-            if rule_meta.rt !== Core.Const(false) # Ugh it may be Const(true), Const(false), Bool
+            Base.@show rule_argtypes
+            Base.@show Core.Compiler.argtypes_to_type(rule_argtypes)
+            rule_meta = Core.Compiler.abstract_applicable(interp, rule_argtypes, sv, #=max_methods=# -1) # Does backedge handling internally
+            @show rule_meta.rt
+            if rule_meta.rt != Core.Const(false) # It may be Const(true), Const(false), Bool
                 callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
             end
         end
