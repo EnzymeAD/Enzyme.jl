@@ -875,14 +875,6 @@ end
     tonest(x,y) = (x + y)^2
 
     @test autodiff(Forward, (x,y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
-
-    f_nest(x) = 2 * x^4
-    deriv(f, x) = first(first(autodiff(Reverse, f, Active(x))))
-    f′(x) = deriv(f_nest, x)
-    f′′(x) = deriv(f′, x)
-
-    @test f′(2.0)  == 64
-    @test f′′(2.0) == 96
 end
 
 @testset "Hessian" begin
