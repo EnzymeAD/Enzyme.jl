@@ -221,7 +221,7 @@ function Core.Compiler.abstract_call_gf_by_type(
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
         # 1. Check if function is inactive
-        if is_inactive_from_sig(interp, specTypes, sv)
+        if EnzymeRules.is_inactive_from_sig(interp, specTypes, sv)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
             # 2. Check if rule is defined
