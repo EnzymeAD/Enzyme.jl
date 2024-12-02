@@ -228,14 +228,14 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
 end
 
 function has_frule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                            @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
+                            @nospecialize(TT), sv::Union{Core.Compiler.AbsIntState,Nothing})::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(interp, forward, TT, sv)
 end
 
 function has_rrule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                            @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
+                            @nospecialize(TT), sv::Union{Core.Compiler.AbsIntState, Nothing})::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(interp, augmented_primal, TT, sv)
@@ -245,7 +245,7 @@ end
 # but here we want the broader query using `Core.Compiler.findall`.
 # Also add appropriate backedges to the caller `MethodInstance` if given.
 function isapplicable(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                      @nospecialize(f), @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
+                      @nospecialize(f), @nospecialize(TT), sv::Union{Nothing, Core.Compiler.AbsIntState})::Bool
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
@@ -261,15 +261,19 @@ function isapplicable(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     # added that did not intersect with any existing method
     fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
     if !fullmatch
-        Core.Compiler.add_mt_backedge!(sv, mt, sig)
+        if sv isa Core.Compiler.AbsIntState
+            Core.Compiler.add_mt_backedge!(sv, mt, sig)
+        end
     end
     if Core.Compiler.isempty(matches)
         return false
     else
-        for i = 1:Core.Compiler.length(matches)
-            match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
-            edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
-            Core.Compiler.add_backedge!(sv, edge)
+        if sv isa Core.Compiler.AbsIntState
+            for i = 1:Core.Compiler.length(matches)
+                match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
+                edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
+                Core.Compiler.add_backedge!(sv, edge)
+            end
         end
         return true
     end
@@ -301,8 +305,8 @@ end
 
 
 function is_inactive_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
-                              @nospecialize(TT), sv::Core.Compiler.AbsIntState)
-    return isapplicable(inactive, TT; world, method_table, caller)
+                              @nospecialize(TT), sv::Union{Core.Compiler.AbsIntState, Nothing})
+    return isapplicable(interp, inactive, TT, sv)
 end
 """
     inactive_noinl(func::typeof(f), args...)
@@ -319,6 +323,11 @@ function is_inactive_noinl_from_sig(@nospecialize(TT);
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
 end
 
+function is_inactive_noinl_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
+                                    @nospecialize(TT), sv::Union{Core.Compiler.AbsIntState, Nothing})
+    return isapplicable(interp, inactive_noinl, TT, sv)
+end
+
 """
     noalias(func::typeof(f), args...)
 
@@ -332,6 +341,11 @@ function noalias_from_sig(@nospecialize(TT);
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(noalias, TT; world, method_table, caller)
+end
+
+function noalias_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
+                          @nospecialize(TT), sv::Union{Core.Compiler.AbsIntState, Nothing})
+    return isapplicable(interp, noalias, TT, sv)
 end
 
 """
