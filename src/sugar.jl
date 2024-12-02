@@ -306,7 +306,7 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             end)
             push!(enz_args, quote
                 MixedDuplicated($arg, $shad)
-            )
+            end)
             push!(resargs, quote
                 $shad[]
             end)
@@ -316,14 +316,14 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             end)
             push!(enz_args, quote
                 Duplicated($arg, $shad)
-            )
+            end)
             push!(resargs, quote
                 $shad
             end)
         elseif state == Compiler.ActiveState
             push!(enz_args, quote
                 Active($arg)
-            )
+            end)
             push!(resargs, quote
                 res[1][$i]
             end)
