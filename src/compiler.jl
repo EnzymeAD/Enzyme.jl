@@ -5266,7 +5266,7 @@ end
 const DumpPostOpt = Ref(false)
 
 # actual compilation
-function _thunk(job, postopt::Bool = true)
+function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, String, Union{String, Nothing}, Type, String}
     mod, meta = codegen(:llvm, job; optimize = false)
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
@@ -5320,15 +5320,16 @@ const cache_lock = ReentrantLock()
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
+            @show obj
             if obj.adjoint isa Ptr{Nothing}
                 autodiff_cache[obj.adjoint] = (asm[2], asm[5])
             end
-            if obj.primal isa Ptr{Nothing}
+            if obj.primal isa Ptr{Nothing} && asm[3] isa String
                 autodiff_cache[obj.primal] = (asm[3], asm[5])
             end
             cache[key] = obj
         end
-        nothing
+        obj
     finally
         unlock(cache_lock)
     end
