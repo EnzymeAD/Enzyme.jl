@@ -463,19 +463,19 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         if tm.ref != C_NULL
-            add_transform_info!(pm, tm)
+            #add_transform_info!(pm, tm)
         end
-        propagate_julia_addrsp_tm!(pm, tm)
+        #propagate_julia_addrsp_tm!(pm, tm)
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
         cfgsimplification!(pm)
         dce!(pm)
-        cpu_features_tm!(pm, tm)
+        #cpu_features_tm!(pm, tm)
         scalar_repl_aggregates_ssa!(pm) # SSA variant?
         mem_cpy_opt!(pm)
         always_inliner!(pm)
-        alloc_opt_tm!(pm, tm)
+        #alloc_opt_tm!(pm, tm)
         LLVM.run!(pm, mod)
     end
 
