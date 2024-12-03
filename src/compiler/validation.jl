@@ -2,9 +2,6 @@ using LLVM
 using ObjectFile
 using Libdl
 
-module FFI
-using LLVM
-
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)::Nothing
