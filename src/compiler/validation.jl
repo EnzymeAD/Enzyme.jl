@@ -914,7 +914,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                             LLVM.API.LLVMGetCalledFunctionType(inst),
                         )
                         # Remember pointer for subsequent restoration
-                        push!(function_attributes(lfn), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
+                        push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
                     else
                         lfn = LLVM.API.LLVMConstBitCast(
                             lfn,
