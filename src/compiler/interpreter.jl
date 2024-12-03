@@ -44,7 +44,6 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
 
     forward_rules::Bool
     reverse_rules::Bool
-    deferred_lower::Bool
     broadcast_rewrite::Bool
     handler::T
 end
@@ -55,7 +54,6 @@ function EnzymeInterpreter(
     world::UInt,
     forward_rules::Bool,
     reverse_rules::Bool,
-    deferred_lower::Bool = true,
     broadcast_rewrite::Bool = true,
     handler = nothing
 )
@@ -83,7 +81,6 @@ function EnzymeInterpreter(
         IdDict{Any, Bool}(),
         forward_rules,
         reverse_rules,
-        deferred_lower,
         broadcast_rewrite,
         handler
     )
@@ -94,10 +91,9 @@ EnzymeInterpreter(
     mt::Union{Nothing,Core.MethodTable},
     world::UInt,
     mode::API.CDerivativeMode,
-    deferred_lower::Bool = true,
     broadcast_rewrite::Bool = true,
     handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, broadcast_rewrite, handler)
 
 Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
 Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
@@ -865,25 +861,6 @@ function abstract_call_known(
         end
     end
 
-    if interp.deferred_lower && f === Enzyme.autodiff && length(argtypes) >= 4
-        if widenconst(argtypes[2]) <: Enzyme.Mode &&
-           widenconst(argtypes[3]) <: Enzyme.Annotation &&
-           widenconst(argtypes[4]) <: Type{<:Enzyme.Annotation}
-            arginfo2 = ArgInfo(
-                fargs isa Nothing ? nothing :
-                [:(Enzyme.autodiff_deferred), fargs[2:end]...],
-                [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...],
-            )
-            return Base.@invoke abstract_call_known(
-                interp::AbstractInterpreter,
-                Enzyme.autodiff_deferred::Any,
-                arginfo2::ArgInfo,
-                si::StmtInfo,
-                sv::AbsIntState,
-                max_methods::Int,
-            )
-        end
-    end
     if interp.handler != nothing
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end

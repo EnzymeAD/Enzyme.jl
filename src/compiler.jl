@@ -5223,12 +5223,12 @@ end
 # JIT
 ##
 
-function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType))
+function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType), prepost::String)
     if job.config.params.ABI <: InlineABI
         return CompileResult(
             Val((Symbol(mod), Symbol(adjoint_name))),
             Val((Symbol(mod), Symbol(primal_name))),
-            TapeType,
+            TapeType
         )
     end
 
@@ -5284,7 +5284,12 @@ function _thunk(job, postopt::Bool = true)
     end
 
     # Run post optimization pipeline
-    if postopt
+    prepost = if postopt
+        mstr = if job.config.params.ABI <: InlineABI
+            ""
+        else
+            string(mod)
+        end
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
             if DumpPostOpt[]
@@ -5293,11 +5298,16 @@ function _thunk(job, postopt::Bool = true)
         else
             propagate_returned!(mod)
         end
+        mstr
+    else
+        ""
     end
-    return (mod, adjoint_name, primal_name, meta.TapeType)
+    return (mod, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
 const cache = Dict{UInt,CompileResult}()
+
+const autodiff_cache = Dict{Ptr{Cvoid},Tuple{String, String}}()
 
 const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
@@ -5310,9 +5320,15 @@ const cache_lock = ReentrantLock()
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
+            if obj.adjoint isa Ptr{Nothing}
+                autodiff_cache[obj.adjoint] = (asm[2], asm[1])
+            end
+            if obj.primal isa Ptr{Nothing}
+                autodiff_cache[obj.primal] = (asm[3], asm[1])
+            end
             cache[key] = obj
         end
-        obj
+        nothing
     finally
         unlock(cache_lock)
     end
