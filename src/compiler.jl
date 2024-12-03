@@ -4047,7 +4047,11 @@ end
         )
     end
 
-    target_machine = GPUCompiler.llvm_machine(primal_job.config.target)
+    if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
+        target_machine = JIT.get_tm()
+    else
+        target_machine = GPUCompiler.llvm_machine(primal_job.config.target)
+    end
 
     parallel = parent_job === nothing ? Threads.nthreads() > 1 : false
     process_module = false
