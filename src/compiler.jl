@@ -5321,10 +5321,10 @@ const cache_lock = ReentrantLock()
             asm = _thunk(job)
             obj = _link(job, asm...)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = (asm[2], asm[1])
+                autodiff_cache[obj.adjoint] = (asm[2], asm[5])
             end
             if obj.primal isa Ptr{Nothing}
-                autodiff_cache[obj.primal] = (asm[3], asm[1])
+                autodiff_cache[obj.primal] = (asm[3], asm[5])
             end
             cache[key] = obj
         end
