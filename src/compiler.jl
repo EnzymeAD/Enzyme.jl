@@ -5320,7 +5320,6 @@ const cache_lock = ReentrantLock()
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
-            @show obj
             if obj.adjoint isa Ptr{Nothing}
                 autodiff_cache[obj.adjoint] = (asm[2], asm[5])
             end

@@ -58,7 +58,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
         if in(f, del)
             continue
         end
-        check_ir!(job, errors, imported, f, del)
+        check_ir!(job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -69,7 +69,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
         if in(f, del)
             continue
         end
-        check_ir!(job, errors, imported, f, del)
+        check_ir!(job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -78,7 +78,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
     return errors
 end
 
-function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function})
+function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -304,7 +304,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(job, errors, imported, inst, calls)
+        check_ir!(job, errors, imported, inst, calls, mod)
     end
     return errors
 end
@@ -351,7 +351,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst})
+function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
     world = job.world
     interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
@@ -872,24 +872,27 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
 
-            @show ptr, autodiff_cache
             if haskey(autodiff_cache, ptr)
-                pmod, pname = autodiff_cache[ptr]
+                pname, pmod = autodiff_cache[ptr]
+
+                @assert !haskey(functions(mod), pname)
 
                 pmod = parse(LLVM.Module, pmod)
 
+                @assert haskey(functions(pmod), pname)
+
                 for fn in functions(pmod)
                     if !isempty(LLVM.blocks(fn))
-                        linkage!(functions(mod)[pmod], fn == pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
+                        linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
                     end
                 end
 
-                GPUCompiler.link_library!(mod, inmod)
+                GPUCompiler.link_library!(mod, pmod)
 
                 replaceWith = functions(mod)[pname]
                 push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
                 linkage!(functions(mod)[pname], LLVM.API.LLVMInternalLinkage)
-                replace_uses!(ptr_arg, LLVM.const_pointercast(b, replaceWith, value_type(ptr_arg)))
+                replace_uses!(ptr_arg, LLVM.const_pointercast(replaceWith, value_type(ptr_arg)))
                 return errors
             end
 
@@ -912,7 +915,6 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                         )
                         # Remember pointer for subsequent restoration
                         push!(function_attributes(lfn), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
-                        @show string(inst), string(lfn), ptr
                     else
                         lfn = LLVM.API.LLVMConstBitCast(
                             lfn,
