@@ -96,6 +96,7 @@ function __init__()
     tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
+    @show tm, tempTM
 
     lljit = JuliaOJIT()
 

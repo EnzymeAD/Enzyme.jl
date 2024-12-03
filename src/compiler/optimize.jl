@@ -54,15 +54,17 @@ end
 function run_jl_pipeline(pm::ModulePassManager, tm::LLVM.TargetMachine; kwargs...)
     config = Ref(pipeline_options(; kwargs...))
     function jl_pipeline(m)
-        @dispose pb = NewPMPassBuilder() begin
-            add!(pb, NewPMModulePassManager()) do mpm
-                @ccall jl_build_newpm_pipeline(
-                    mpm.ref::Ptr{Cvoid},
-                    pb.ref::Ptr{Cvoid},
-                    config::Ptr{PipelineConfig},
-                )::Cvoid
+        if tm.ref != C_NULL
+            @dispose pb = NewPMPassBuilder() begin
+                add!(pb, NewPMModulePassManager()) do mpm
+                    @ccall jl_build_newpm_pipeline(
+                        mpm.ref::Ptr{Cvoid},
+                        pb.ref::Ptr{Cvoid},
+                        config::Ptr{PipelineConfig},
+                    )::Cvoid
+                end
+                LLVM.run!(mpm, m, tm)
             end
-            LLVM.run!(mpm, m, tm)
         end
         return true
     end
@@ -207,7 +209,9 @@ end
 
 function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
     @static if true || VERSION < v"1.11-"
-        lower_simdloop_tm!(pm, tm)
+        if tm.ref != C_NULL
+            lower_simdloop_tm!(pm, tm)
+        end
         licm!(pm)
         if LLVM.version() >= v"15"
             simple_loop_unswitch_legacy!(pm)
@@ -242,8 +246,10 @@ function more_loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.Target
         loop_idiom!(pm)
 
         # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-        lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
-        licm!(pm)
+        if tm.ref != C_NULL
+            lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+            licm!(pm)
+        end
         julia_licm_tm!(pm, tm)
         # Subsequent passes not stripping metadata from terminator
         instruction_combining!(pm) # TODO: createInstSimplifyLegacy
@@ -456,8 +462,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # then finish Julia GC
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
-
+        if tm.ref != C_NULL
+            add_transform_info!(pm, tm)
+        end
         propagate_julia_addrsp_tm!(pm, tm)
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
@@ -477,7 +484,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     ModulePassManager() do pm
 
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
+        if tm.ref != C_NULL
+            add_transform_info!(pm, tm)
+        end
 
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
@@ -491,8 +500,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
-
+        if tm.ref != C_NULL
+            add_transform_info!(pm, tm)
+        end
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
         basic_alias_analysis!(pm)
@@ -566,7 +576,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # known functions
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
+        if tm.ref != C_NULL
+            add_transform_info!(pm, tm)
+        end
 
         scoped_no_alias_aa!(pm)
         type_based_alias_analysis!(pm)
@@ -585,7 +597,9 @@ end
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L603
 function addTargetPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, trip::String)
     add_library_info!(pm, trip)
-    add_transform_info!(pm, tm)
+    if tm.ref != C_NULL
+        add_transform_info!(pm, tm)
+    end
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
