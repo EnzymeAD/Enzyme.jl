@@ -168,6 +168,8 @@ function simplify_kw(@nospecialize(specTypes))
     end
 end
 
+include("tfunc.jl")
+
 import Core.Compiler: CallInfo
 struct NoInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
