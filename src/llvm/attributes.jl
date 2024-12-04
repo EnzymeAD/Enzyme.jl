@@ -831,7 +831,7 @@ function annotate!(mod::LLVM.Module)
             for fn in funcs[fname]
                 push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
                 push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
-                if value_type(LLVM.parameters(fn, 4)) isa LLVM.PointerType
+                if value_type(LLVM.parameters(fn)[4]) isa LLVM.PointerType
                     push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
                     push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
                 end
