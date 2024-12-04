@@ -114,10 +114,12 @@ function setup_globals()
         @warn "OrcV2 initialization failed with" err
         jit[] = CompilerInstance(lljit, nothing, nothing)
     end
+
+    jd_main
 end
 
 function __init__()
-    setup_globals()
+    jd_main = setup_globals()
 
     if Sys.iswindows() && Int === Int64
         # TODO can we check isGNU?
