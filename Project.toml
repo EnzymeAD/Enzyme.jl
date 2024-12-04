@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.13.18"
+version = "0.13.19"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -37,7 +37,7 @@ BFloat16s = "0.2, 0.3, 0.4, 0.5"
 CEnum = "0.4, 0.5"
 ChainRulesCore = "1"
 EnzymeCore = "0.8.7"
-Enzyme_jll = "0.0.166"
+Enzyme_jll = "0.0.167"
 GPUCompiler = "0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 1"
 LLVM = "6.1, 7, 8, 9"
 LogExpFunctions = "0.3"
