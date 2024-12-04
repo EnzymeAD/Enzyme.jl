@@ -2,6 +2,140 @@ using LLVM
 using ObjectFile
 using Libdl
 
+module FFI
+using LLVM
+module BLASSupport
+# TODO: LAPACK handling
+using LinearAlgebra
+using ObjectFile
+using Libdl
+function __init__()
+    global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
+end
+function get_blas_symbols()
+    symbols = BLAS.get_config().exported_symbols
+    if BLAS.USE_BLAS64
+        return map(Base.Fix2(*, "64_"), symbols)
+    end
+    return symbols
+end
+
+function lookup_blas_symbol(name::String)
+    Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
+end
+end
+
+const ptr_map = Dict{Ptr{Cvoid},String}()
+
+function __init__()
+    known_names = (
+        "jl_alloc_array_1d",
+        "jl_alloc_array_2d",
+        "jl_alloc_array_3d",
+        "ijl_alloc_array_1d",
+        "ijl_alloc_array_2d",
+        "ijl_alloc_array_3d",
+        "jl_new_array",
+        "ijl_new_array",
+        "jl_array_copy",
+        "ijl_array_copy",
+        "jl_alloc_string",
+        "jl_in_threaded_region",
+        "jl_enter_threaded_region",
+        "jl_exit_threaded_region",
+        "jl_set_task_tid",
+        "jl_new_task",
+        "malloc",
+        "memmove",
+        "memcpy",
+        "memset",
+        "jl_array_grow_beg",
+        "ijl_array_grow_beg",
+        "jl_array_grow_end",
+        "ijl_array_grow_end",
+        "jl_array_grow_at",
+        "ijl_array_grow_at",
+        "jl_array_del_beg",
+        "ijl_array_del_beg",
+        "jl_array_del_end",
+        "ijl_array_del_end",
+        "jl_array_del_at",
+        "ijl_array_del_at",
+        "jl_array_ptr",
+        "ijl_array_ptr",
+        "jl_value_ptr",
+        "jl_get_ptls_states",
+        "jl_gc_add_finalizer_th",
+        "jl_symbol_n",
+        "jl_",
+        "jl_object_id",
+        "jl_reshape_array",
+        "ijl_reshape_array",
+        "jl_matching_methods",
+        "ijl_matching_methods",
+        "jl_array_sizehint",
+        "ijl_array_sizehint",
+        "jl_get_keyword_sorter",
+        "ijl_get_keyword_sorter",
+        "jl_ptr_to_array",
+        "jl_box_float32",
+        "ijl_box_float32",
+        "jl_box_float64",
+        "ijl_box_float64",
+        "jl_ptr_to_array_1d",
+        "jl_eqtable_get",
+        "ijl_eqtable_get",
+        "memcmp",
+        "memchr",
+        "jl_get_nth_field_checked",
+        "ijl_get_nth_field_checked",
+        "jl_stored_inline",
+        "ijl_stored_inline",
+        "jl_array_isassigned",
+        "ijl_array_isassigned",
+        "jl_array_ptr_copy",
+        "ijl_array_ptr_copy",
+        "jl_array_typetagdata",
+        "ijl_array_typetagdata",
+        "jl_idtable_rehash",
+    )
+    for name in known_names
+        sym = LLVM.find_symbol(name)
+        if sym == C_NULL
+            continue
+        end
+        if haskey(ptr_map, sym)
+            # On MacOS memcpy and memmove seem to collide?
+            if name == "memcpy"
+                continue
+            end
+        end
+        @assert !haskey(ptr_map, sym)
+        ptr_map[sym] = name
+    end
+    for sym in BLASSupport.get_blas_symbols()
+        ptr = BLASSupport.lookup_blas_symbol(sym)
+        if ptr !== nothing
+            if haskey(ptr_map, ptr)
+                if ptr_map[ptr] != sym
+                    @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
+                end
+                continue
+            end
+            ptr_map[ptr] = sym
+        end
+    end
+end
+
+function memoize!(ptr::Ptr{Cvoid}, fn::String)::String
+    fn = get(ptr_map, ptr, fn)
+    if haskey(ptr_map, ptr)
+        @assert ptr_map[ptr] == fn
+    end
+    return fn
+end
+end
+
 import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)::Nothing
@@ -902,7 +1036,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
             if length(frames) >= 1
                 fn, file, line, linfo, fromC, inlined = last(frames)
 
-                fn = string(fn)
+                fn = FFI.memoize!(ptr, string(fn))
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
