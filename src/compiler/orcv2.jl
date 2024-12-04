@@ -115,11 +115,11 @@ function setup_globals()
         jit[] = CompilerInstance(lljit, nothing, nothing)
     end
 
-    jd_main
+    jd_main, lljit
 end
 
 function __init__()
-    jd_main = setup_globals()
+    jd_main, lljit = setup_globals()
 
     if Sys.iswindows() && Int === Int64
         # TODO can we check isGNU?
