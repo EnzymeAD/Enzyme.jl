@@ -1,5 +1,5 @@
-import EnzymeCore: Annotation, FwdConfig,  RevConfig
-import EnzymeCore.EnzymeRules: forward, augmented_primal, inactive, _annotate_tt
+import EnzymeCore: Annotation
+import EnzymeCore.EnzymeRules: FwdConfig, RevConfig, forward, augmented_primal, inactive, _annotate_tt
 
 function has_frule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     @nospecialize(TT), sv::Core.Compiler.AbsIntState)::Bool
