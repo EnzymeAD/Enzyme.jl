@@ -384,7 +384,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(
             x -> logpdf(reshape(product_distribution([Normal(), Uniform()]), 1, 2), x),
             [2.1 0.7];
-            name="reshape", broken=Forward
+            name="reshape"
         ),
         # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1820
         TestCase(
