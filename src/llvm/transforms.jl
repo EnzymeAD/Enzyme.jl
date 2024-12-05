@@ -1618,6 +1618,12 @@ end
 
 function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int64}, keepret::Bool)
     args = collect(parameters(fn))
+    if !keepret
+        for u in LLVM.uses(fn)
+            u = LLVM.user(u)
+            replace_uses!(u, LLVM.UndefValue(value_type(u)))
+        end
+    end
     for tr in toremove
         tr = tr + 1
         todorep = Tuple{LLVM.Instruction, LLVM.Value}[]
