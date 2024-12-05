@@ -1539,6 +1539,13 @@ function propagate_returned!(mod::LLVM.Module)
                     end
                 else
                     for u in LLVM.uses(un)
+                        u = LLVM.user(u)
+                        if u isa LLVM.CallInst
+                            op = LLVM.called_operand(u)
+                            if op isa LLVM.Function && LLVM.name(op) == "llvm.enzymefakeread"
+                                continue
+                            end
+                        end
                         hasAnyUse = true
                         break
                     end
@@ -2038,6 +2045,25 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         if isempty(blocks(fn))
             continue
         end
+
+        rt = LLVM.return_type(LLVM.function_type(fn))
+        if rt isa LLVM.PointerType && addrspace(rt) == 10
+            for u in LLVM.uses(fn)
+                u = LLVM.user(u)
+                if isa(u, LLVM.CallInst)
+                    B = IRBuilder()
+                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                    position!(B, nextInst)
+                    cl = call!(B, funcT, rfunc, LLVM.Value[u])
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        cl,
+                        LLVM.API.LLVMAttributeIndex(1),
+                        EnumAttribute("nocapture"),
+                    )
+                end
+            end 
+        end
+
         # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
         # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
         # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
