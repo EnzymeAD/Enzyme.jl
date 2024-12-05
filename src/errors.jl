@@ -25,15 +25,21 @@ struct IllegalTypeAnalysisException <: CompilationException
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
 end
 
+const VERBOSE_ERRORS = Ref(false)
 function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, "Enzyme compilation failed due to illegal type analysis.\n")
-    if ece.ir !== nothing
-        print(io, "Current scope: \n")
-        print(io, ece.ir)
+    print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
+    print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+        if ece.ir !== nothing
+            print(io, "Current scope: \n")
+            print(io, ece.ir)
+        end
+        print(io, "\n Type analysis state: \n")
+        write(io, ece.sval)
+        print(io, '\n', ece.msg, '\n')
     end
-    print(io, "\n Type analysis state: \n")
-    write(io, ece.sval)
-    print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         print(io, "\nCaused by:")
         Base.show_backtrace(io, ece.bt)
