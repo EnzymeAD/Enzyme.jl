@@ -4148,7 +4148,7 @@ end
 
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst))
+             (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
             legal, source_typ, byref = abs_typeof(inst)
             codegen_typ = value_type(inst)
             if legal
