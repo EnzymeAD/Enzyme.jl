@@ -40,9 +40,12 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     inf_params::InferenceParams
     opt_params::OptimizationParams
 
+    rules_cache::IdDict{Any, Bool}
+
     forward_rules::Bool
     reverse_rules::Bool
     deferred_lower::Bool
+    broadcast_rewrite::Bool
     handler::T
 end
 
@@ -53,6 +56,7 @@ function EnzymeInterpreter(
     forward_rules::Bool,
     reverse_rules::Bool,
     deferred_lower::Bool = true,
+    broadcast_rewrite::Bool = true,
     handler = nothing
 )
     @assert world <= Base.get_world_counter()
@@ -76,9 +80,11 @@ function EnzymeInterpreter(
         # parameters for inference and optimization
         parms,
         OptimizationParams(),
+        IdDict{Any, Bool}(),
         forward_rules,
         reverse_rules,
         deferred_lower,
+        broadcast_rewrite,
         handler
     )
 end
@@ -89,37 +95,38 @@ EnzymeInterpreter(
     world::UInt,
     mode::API.CDerivativeMode,
     deferred_lower::Bool = true,
+    broadcast_rewrite::Bool = true,
     handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, handler)
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, deferred_lower, broadcast_rewrite, handler)
 
-Core.Compiler.InferenceParams(interp::EnzymeInterpreter) = interp.inf_params
-Core.Compiler.OptimizationParams(interp::EnzymeInterpreter) = interp.opt_params
-get_inference_world(interp::EnzymeInterpreter) = interp.world
-Core.Compiler.get_inference_cache(interp::EnzymeInterpreter) = interp.local_cache
+Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
+Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
+get_inference_world(@nospecialize(interp::EnzymeInterpreter)) = interp.world
+Core.Compiler.get_inference_cache(@nospecialize(interp::EnzymeInterpreter)) = interp.local_cache
 @static if HAS_INTEGRATED_CACHE
-    Core.Compiler.cache_owner(interp::EnzymeInterpreter) = interp.token
+    Core.Compiler.cache_owner(@nospecialize(interp::EnzymeInterpreter)) = interp.token
 else
-    Core.Compiler.code_cache(interp::EnzymeInterpreter) =
+    Core.Compiler.code_cache(@nospecialize(interp::EnzymeInterpreter)) =
         WorldView(interp.code_cache, interp.world)
 end
 
 # No need to do any locking since we're not putting our results into the runtime cache
-Core.Compiler.lock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
-Core.Compiler.unlock_mi_inference(::EnzymeInterpreter, ::MethodInstance) = nothing
+Core.Compiler.lock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
+Core.Compiler.unlock_mi_inference(@nospecialize(::EnzymeInterpreter), ::MethodInstance) = nothing
 
-Core.Compiler.may_optimize(::EnzymeInterpreter) = true
-Core.Compiler.may_compress(::EnzymeInterpreter) = true
+Core.Compiler.may_optimize(@nospecialize(::EnzymeInterpreter)) = true
+Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 # From @aviatesk:
 #     `may_discard_trees = true`` means a complicated (in terms of inlineability) source will be discarded,
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
-Core.Compiler.may_discard_trees(::EnzymeInterpreter) = false
-Core.Compiler.verbose_stmt_info(::EnzymeInterpreter) = false
+Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
+Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
 
-Core.Compiler.method_table(interp::EnzymeInterpreter, sv::InferenceState) =
+Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
     Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
 
-function is_alwaysinline_func(@nospecialize(TT))
+function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
     if TT.parameters[1] == typeof(Core.memoryref)
@@ -129,7 +136,7 @@ function is_alwaysinline_func(@nospecialize(TT))
     return false
 end
 
-function is_primitive_func(@nospecialize(TT))
+function is_primitive_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     ft = TT.parameters[1]
     if ft == typeof(Enzyme.pmap)
@@ -152,17 +159,19 @@ function is_primitive_func(@nospecialize(TT))
     return false
 end
 
-function isKWCallSignature(@nospecialize(TT))
+function isKWCallSignature(@nospecialize(TT))::Bool
     return TT <: Tuple{typeof(Core.kwcall),Any,Any,Vararg}
 end
 
-function simplify_kw(@nospecialize specTypes)
+function simplify_kw(@nospecialize(specTypes))
     if isKWCallSignature(specTypes)
         return Base.tuple_type_tail(Base.tuple_type_tail(specTypes))
     else
         return specTypes
     end
 end
+
+include("tfunc.jl")
 
 import Core.Compiler: CallInfo
 struct NoInlineCallInfo <: CallInfo
@@ -188,9 +197,10 @@ Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
 Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
 
+import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 function Core.Compiler.abstract_call_gf_by_type(
-    interp::EnzymeInterpreter,
+    @nospecialize(interp::EnzymeInterpreter),
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
@@ -208,25 +218,30 @@ function Core.Compiler.abstract_call_gf_by_type(
         max_methods::Int,
     )
     callinfo = ret.info
-    method_table = Core.Compiler.method_table(interp)
     specTypes = simplify_kw(atype)
+
     if is_primitive_func(specTypes)
         callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    elseif EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
-        callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
     else
-        if interp.forward_rules
-          if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-          end
-        end
-    
-        if interp.reverse_rules
-            if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-              callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+        # 1. Check if function is inactive
+        if is_inactive_from_sig(interp, specTypes, sv)
+            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
+        else
+            # 2. Check if rule is defined
+            has_rule = get!(interp.rules_cache, specTypes) do
+                if interp.forward_rules && has_frule_from_sig(interp, specTypes, sv)
+                    return true
+                elseif interp.reverse_rules && has_rrule_from_sig(interp, specTypes, sv)
+                    return true
+                else
+                    return false
+                end
             end
+            if has_rule
+                callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
+            end            
         end
     end
     @static if VERSION ≥ v"1.11-"
@@ -239,7 +254,7 @@ end
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
         sigs_ex = :(
-            interp::EnzymeInterpreter,
+            @nospecialize(interp::EnzymeInterpreter),
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt32,
@@ -252,7 +267,7 @@ let # overload `inlining_policy`
         )
     else
         sigs_ex = :(
-            interp::EnzymeInterpreter,
+            @nospecialize(interp::EnzymeInterpreter),
             @nospecialize(src),
             @nospecialize(info::Core.Compiler.CallInfo),
             stmt_flag::UInt8,
@@ -350,14 +365,412 @@ else
 end
 
 
+# julia> @btime Base.copyto!(dst, src);
+#   668.438 ns (0 allocations: 0 bytes)
+
+# inp = rand(2,3,4,5);
+# src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
+# 
+# idx = Base.eachindex(src);
+# 
+# src2 = sin.(inp);
+# 
+# dst = zero(inp);
+# lindex_v1(idx, dst, src);
+# @assert dst == sin.(inp)
+# 
+# dst = zero(inp);
+# lindex_v1(idx, dst, src2);
+# @assert dst == sin.(inp)
+# 
+# @btime lindex_v1(idx, dst, src)
+# # 619.140 ns (0 allocations: 0 bytes)
+# 
+# @btime lindex_v1(idx, dst, src2)
+# # 153.258 ns (0 allocations: 0 bytes)
+
+@generated function lindex_v1(idx::BC2, dest, src) where BC2
+    if BC2 <: Base.CartesianIndices
+        nloops = BC2.parameters[1]
+        exprs = Expr[]
+        tot = :true
+        idxs = Symbol[]
+        lims = Symbol[]
+        for i in 1:nloops
+            sym = Symbol("lim_$i")
+            push!(lims, sym)
+            sidx = Symbol("idx_$i")
+            push!(idxs, sidx)
+            push!(exprs, quote
+                $sym = idx.indices[$i].stop
+            end)
+            if tot == :true
+                tot = quote $sym != 0 end
+            else
+                tot = quote $tot && ($sym != 0) end
+            end
+        end
+
+        loops = quote
+            @inbounds dest[$(idxs...)] = @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...)))
+        end
+
+        # for (sidx, lim) in zip(reverse(idxs), reverse(lims))
+        for (sidx, lim) in zip(idxs, lims)
+            loops = quote
+                let $sidx = 0
+                    @inbounds while true
+                        $sidx += 1
+                        $loops
+                        if $sidx == $lim
+                            break
+                        end
+                        $(Expr(:loopinfo, Symbol("julia.simdloop"), nothing))  # Mark loop as SIMD loop
+                    end
+                end
+            end
+        end
+
+        return quote
+            Base.@_inline_meta
+            $(exprs...)
+            if $tot
+                $loops
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            @inbounds @simd for I in idx
+                dest[I] = src[I]
+            end
+        end
+    end
+end
+
+# inp = rand(2,3,4,5);
+# # inp = [2.0 3.0; 4.0 5.0; 7.0 9.0]
+# src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
+# 
+# idx = Base.eachindex(src);
+# 
+# src2 = sin.(inp);
+# 
+# dst = zero(inp);
+# lindex_v2(idx, dst, src);
+# @assert dst == sin.(inp)
+# 
+# dst = zero(inp);
+# lindex_v2(idx, dst, src2);
+# @assert dst == sin.(inp)
+# 
+# @btime lindex_v2(idx, dst, src)
+# # 1.634 μs (0 allocations: 0 bytes)
+# 
+# @btime lindex_v2(idx, dst, src2)
+# # 1.617 μs (0 allocations: 0 bytes)
+@generated function lindex_v2(idx::BC2, dest, src, ::Val{Checked}=Val(true)) where {BC2, Checked}
+    if BC2 <: Base.CartesianIndices
+        nloops = BC2.parameters[1]
+        exprs = Union{Expr,Symbol}[]
+        tot = :true
+        idxs = Symbol[]
+        lims = Symbol[]
+
+        total = :1
+        for i in 1:nloops
+            sym = Symbol("lim_$i")
+            push!(lims, sym)
+            sidx = Symbol("idx_$i")
+            push!(idxs, sidx)
+            push!(exprs, quote
+                $sym = idx.indices[$i].stop
+            end)
+            if tot == :true
+                tot = quote $sym != 0 end
+                total = sym
+            else
+                tot = quote $tot && ($sym != 0) end
+                total = quote $total * $sym end
+            end
+        end
+
+        push!(exprs, quote total = $total end)
+
+        lexprs = Expr[]
+
+        if Checked
+            for (lidx, lim) in zip(idxs, lims)
+                push!(lexprs, quote
+                    $lidx = Base.urem_int(tmp, $lim) + 1
+                    tmp = Base.udiv_int(tmp, $lim)
+                end)
+            end
+        else
+            idxs = [quote I+1 end]
+        end
+
+        return quote
+            Base.@_inline_meta
+            $(exprs...)
+            if $tot
+                let I = 0
+                    @inbounds while true
+                        let tmp = I
+                            $(lexprs...)
+                            @inbounds dest[I+1] = @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...)))
+                        end
+                        I += 1
+                        if I == total
+                            break
+                        end
+                        $(Expr(:loopinfo, Symbol("julia.simdloop"), nothing))  # Mark loop as SIMD loop
+                    end
+                end
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            @inbounds @simd for I in idx
+                dest[I] = src[I]
+            end
+        end
+    end
+end
+
+
+# inp = rand(2,3,4,5);
+# src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
+# 
+# idx = Base.eachindex(src);
+# 
+# src2 = sin.(inp);
+# 
+# dst = zero(inp);
+# lindex_v3(idx, dst, src);
+# @assert dst == sin.(inp)
+# 
+# dst = zero(inp);
+# lindex_v3(idx, dst, src2);
+# @assert dst == sin.(inp)
+# 
+# @btime lindex_v3(idx, dst, src)
+# # 568.065 ns (0 allocations: 0 bytes)
+
+# @btime lindex_v3(idx, dst, src2)
+# # 23.906 ns (0 allocations: 0 bytes)
+@generated function lindex_v3(idx::BC2, dest, src) where BC2
+    if BC2 <: Base.CartesianIndices
+        nloops = BC2.parameters[1]
+        exprs = Union{Expr,Symbol}[]
+        tot = :true
+        idxs = Symbol[]
+        lims = Symbol[]
+
+        condition = :true
+        todo = Tuple{Type, Tuple}[(src, ())]
+
+        function index(x, ::Tuple{})
+            return x
+        end
+
+        function index(x, path)
+            if path[1] isa Symbol
+                return quote
+                    $(index(x, Base.tail(path))).$(path[1])
+                end
+            else
+                return quote getindex($(index(x, Base.tail(path))), $(path[1])) end
+            end
+        end
+
+        legal = true
+        while length(todo) != 0
+            cur, path = pop!(todo)
+            if cur <: AbstractArray
+                if condition == :true
+                    condition = quote idx.indices == axes($(index(:src, path))) end
+                else                
+                    condition = quote $condition && idx.indices == axes($(index(:src, path))) end
+                end
+                continue
+            end
+            if cur <: Base.Broadcast.Extruded
+                if condition == :true
+                    condition = quote all(($(index(:src, path))).keeps) end
+                else                
+                    condition = quote $condition && all(($(index(:src, path))).keeps) end
+                end
+                push!(todo, (cur.parameters[1], (:x, path...)))
+                continue
+            end
+            if cur == src && cur <: Base.Broadcast.Broadcasted
+                for (i, v) in enumerate(cur.parameters[4].parameters)
+                    push!(todo, (v, (i, :args, path...)))
+                end
+                continue
+            end
+            if cur <: AbstractFloat
+                continue
+            end
+            legal = false
+        end
+
+        if legal
+            return quote
+                Base.@_inline_meta
+                if $condition
+                    lindex_v2(idx, dest, src, Val(false))
+                else
+                    lindex_v1(idx, dest, src)
+                end
+            end
+        else
+            return quote
+                Base.@_inline_meta
+                lindex_v1(idx, dest, src)
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            @inbounds @simd for I in idx
+                dest[I] = src[I]
+            end
+        end
+    end
+end
+
+# Override Base.copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}) with
+#  a form which provides better analysis of loop indices
+@inline function override_bc_copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{Nothing})
+	axdest = Base.axes(dest)
+	axbc = Base.axes(bc)
+    axdest == axbc || Base.Broadcast.throwdm(axdest, axbc)
+
+    if bc.args isa Tuple{AbstractArray}
+        A = bc.args[1]
+        if axdest == Base.axes(A)
+            if bc.f === Base.identity
+                Base.copyto!(dest, A)
+                return dest
+            end
+        end
+    end
+
+    # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
+    src = Base.Broadcast.preprocess(dest, bc)
+    idx = Base.eachindex(src)
+    @inline Enzyme.Compiler.Interpreter.lindex_v3(idx, dest, src)
+    return dest
+end
+
+@generated function same_sized(x::Tuple)
+    result = :true
+    prev = nothing
+    for i in 1:length(x.parameters)
+        if x.parameters[i] <: Number
+            continue
+        end
+        if prev == nothing
+            prev = quote
+                sz = size(x[$i])
+            end
+            continue
+        end
+        if result == :true
+            result = quote
+                sz == size(x[$i])
+            end
+        else
+            result = quote
+                $result && sz == size(x[$i])
+            end
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        $prev
+        return $result
+    end
+end
+
+
+Base.@propagate_inbounds overload_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
+Base.@propagate_inbounds overload_broadcast_getindex(::Ref{Type{T}}, I) where {T} = T
+# Tuples are statically known to be singleton or vector-like
+Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
+Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
+Base.@propagate_inbounds overload_broadcast_getindex(A, I) = A[I]
+
+@inline function override_bc_materialize(bc)
+    if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
+        return copy(bc.args[1])
+    end
+    ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
+    dest = similar(bc, ElType)
+    if all(isa_array_or_number, bc.args) && same_sized(bc.args)
+        @inbounds @simd for I in 1:length(bc)
+            val = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+            dest[I] = val
+        end
+    else
+        Base.copyto!(dest, bc)
+    end
+    return dest 
+end
+
+struct MultiOp{Position, NumUsed, F1, F2}
+    f1::F1
+    f2::F2
+end
+
+@generated function (m::MultiOp{Position, NumUsed})(args::Vararg{Any, N}) where {N, Position, NumUsed}
+    f2args = Union{Symbol, Expr}[]
+    for i in Position:(Position+NumUsed)
+        push!(f2args, :(args[$i]))
+    end
+    f1args = Union{Symbol, Expr}[]
+    for i in 1:Position
+        push!(f1args, :(args[$i]))
+    end
+    push!(f1args, quote
+        f2($(f2args...))
+    end)
+    for i in (Position+NumUsed):N
+        push!(f1args, :(args[$i]))
+    end
+    return quote
+        Base.@_inline_meta
+        f1($(f1args...))
+    end
+end
+
+@inline function array_or_number(@nospecialize(Ty))::Bool
+    return Ty <: AbstractArray || Ty <: Number
+end
+
+@inline function isa_array_or_number(@nospecialize(x))::Bool
+    return x isa AbstractArray || x isa Number
+end
+
+@inline function num_or_eltype(@nospecialize(Ty))::Type
+    if Ty <: AbstractArray
+        eltype(Ty)
+    else
+        return Ty
+    end
+end
+
 function abstract_call_known(
-    interp::EnzymeInterpreter,
+    interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
     sv::AbsIntState,
     max_methods::Int = get_max_methods(interp, f, sv),
-)
+) where Handler
 
     (; fargs, argtypes) = arginfo
 
@@ -384,6 +797,50 @@ function abstract_call_known(
             )
         end
     end
+    
+    if interp.broadcast_rewrite
+        if f === Base.materialize && length(argtypes) == 2
+            bcty = widenconst(argtypes[2])
+            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters) && any(Base.Fix2(Base.:<:, AbstractArray), bcty.parameters[4].parameters)
+                    arginfo2 = ArgInfo(
+                        fargs isa Nothing ? nothing :
+                        [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
+                        [Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]...],
+                    )
+                    return Base.@invoke abstract_call_known(
+                        interp::AbstractInterpreter,
+                        Enzyme.Compiler.Interpreter.override_bc_materialize::Any,
+                        arginfo2::ArgInfo,
+                        si::StmtInfo,
+                        sv::AbsIntState,
+                        max_methods::Int,
+                    )
+            end
+        end
+
+        if f === Base.copyto! && length(argtypes) == 3
+            # Ideally we just override uses of the AbstractArray base class, but
+            # I don't know how to override the method in base, without accidentally overridding
+            # it for say CuArray or other users. For safety, we only override for Array
+            if widenconst(argtypes[2]) <: Array &&
+               widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
+            
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
+                )
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+    end
 
     @static if VERSION < v"1.11.0-"
     else
@@ -397,13 +854,13 @@ function abstract_call_known(
                 [:(Enzyme.Compiler.Interpreter.myunsafe_copyto!), fargs[2:end]...],
                 [Core.Const(Enzyme.Compiler.Interpreter.myunsafe_copyto!), argtypes[2:end]...],
             )
-            return abstract_call_known(
-                interp,
-                Enzyme.Compiler.Interpreter.myunsafe_copyto!,
-                arginfo2,
-                si,
-                sv,
-                max_methods,
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                Enzyme.Compiler.Interpreter.myunsafe_copyto!::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
             )
         end
     end
@@ -417,13 +874,13 @@ function abstract_call_known(
                 [:(Enzyme.autodiff_deferred), fargs[2:end]...],
                 [Core.Const(Enzyme.autodiff_deferred), argtypes[2:end]...],
             )
-            return abstract_call_known(
-                interp,
-                Enzyme.autodiff_deferred,
-                arginfo2,
-                si,
-                sv,
-                max_methods,
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                Enzyme.autodiff_deferred::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
             )
         end
     end
@@ -432,7 +889,7 @@ function abstract_call_known(
     end
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
-        f,
+        f::Any,
         arginfo::ArgInfo,
         si::StmtInfo,
         sv::AbsIntState,

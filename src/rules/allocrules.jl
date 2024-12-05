@@ -1,7 +1,4 @@
-
-function array_inner(::Type{<:Array{T}}) where {T}
-    return T
-end
+@inline LLT_ALIGN(x::Int, sz::Int) = (((x) + (sz) - 1) & ~((sz) - 1))
 function array_shadow_handler(
     B::LLVM.API.LLVMBuilderRef,
     OrigCI::LLVM.API.LLVMValueRef,
@@ -52,8 +49,6 @@ function array_shadow_handler(
 
     isunion = typ isa Union
 
-    LLT_ALIGN(x, sz) = (((x) + (sz) - 1) & ~((sz) - 1))
-
     if !isunboxed
         elsz = sizeof(Ptr{Cvoid})
         al = elsz
@@ -86,14 +81,6 @@ function array_shadow_handler(
     return ref
 end
 
-function null_free_handler(
-    B::LLVM.API.LLVMBuilderRef,
-    ToFree::LLVM.API.LLVMValueRef,
-    Fn::LLVM.API.LLVMValueRef,
-)::LLVM.API.LLVMValueRef
-    return C_NULL
-end
-
 function register_alloc_handler!(variants, alloc_handler, free_handler)
     for variant in variants
         API.EnzymeRegisterAllocationHandler(variant, alloc_handler, free_handler)
@@ -120,10 +107,6 @@ end
                 API.EnzymeGradientUtilsRef,
             )
         ),
-        @cfunction(
-            null_free_handler,
-            LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef)
-        )
+        C_NULL
     )
 end

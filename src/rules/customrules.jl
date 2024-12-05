@@ -1,10 +1,10 @@
 
 function enzyme_custom_setup_args(
-    B,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    mi,
-    @nospecialize(RT),
+    mi::Core.MethodInstance,
+    @nospecialize(RT::Type),
     reverse::Bool,
     isKWCall::Bool,
 )
@@ -33,14 +33,7 @@ function enzyme_custom_setup_args(
     returnRoots = returnRoots !== nothing
 
     cv = LLVM.called_operand(orig)
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(cv, i)),
-            ),
-        ) for i = 1:length(collect(parameters(cv)))
-    )
+    swiftself = has_swiftself(cv)
     jlargs = classify_arguments(
         mi.specTypes,
         called_type(orig),
@@ -356,9 +349,9 @@ end
 function enzyme_custom_setup_ret(
     gutils::GradientUtils,
     orig::LLVM.CallInst,
-    mi,
-    @nospecialize(RealRt),
-    B,
+    mi::Core.MethodInstance,
+    @nospecialize(RealRt::Type),
+    @nospecialize(B::Union{LLVM.IRBuilder,Nothing})
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -448,11 +441,11 @@ function enzyme_custom_setup_ret(
     return RT, needsPrimal, needsShadowP[] != 0, origNeedsPrimal
 end
 
-function custom_rule_method_error(world, fn, args...)
+function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(args::Vararg))
     throw(MethodError(fn, (args...,), world))
 end
 
-@register_fwd function enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -523,40 +516,31 @@ end
     world = enzyme_extract_world(fn)
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
     llvmf = nothing
-    if isKWCall
-        if EnzymeRules.isapplicable(kwfunc, TT; world)
-            @safe_debug "Applying custom forward rule (kwcall)" TT
-            llvmf = nested_codegen!(mode, mod, kwfunc, TT, world)
-            fwd_RT = Core.Compiler.return_type(kwfunc, TT, world)
-        else
-            TT = Tuple{typeof(world),typeof(kwfunc),TT.parameters...}
-            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
-            pushfirst!(args, LLVM.ConstantInt(world))
-            fwd_RT = Union{}
-        end
+        
+    functy = if isKWCall
+        rkwfunc = typeof(Core.kwfunc(EnzymeRules.forward))
     else
-        if EnzymeRules.isapplicable(EnzymeRules.forward, TT; world)
-            @safe_debug "Applying custom forward rule" TT
-            llvmf = nested_codegen!(mode, mod, EnzymeRules.forward, TT, world)
-            fwd_RT = Core.Compiler.return_type(EnzymeRules.forward, TT, world)
-        else
-            TT = Tuple{typeof(world),typeof(EnzymeRules.forward),TT.parameters...}
-            llvmf = nested_codegen!(mode, mod, custom_rule_method_error, TT, world)
-            pushfirst!(args, LLVM.ConstantInt(world))
-            fwd_RT = Union{}
-        end
+        typeof(EnzymeRules.forward)
     end
+    @safe_debug "Applying custom forward rule" TT = TT, functy = functy
+    fmi, fwd_RT = try
+        fmi = my_methodinstance(functy, TT, world)
+        fwd_RT = primal_return_type_world(Forward, world, fmi)
+        fmi, fwd_RT
+    catch e
+        TT = Tuple{typeof(world),functy,TT.parameters...}
+        fmi = my_methodinstance(typeof(custom_rule_method_error), TT, world)
+        pushfirst!(args, LLVM.ConstantInt(world))
+        fwd_RT = Union{}
+        fmi, fwd_RT
+    end
+    fmi = fmi::Core.MethodInstance
+    fwd_RT = fwd_RT::Type
 
+    llvmf = nested_codegen!(mode, mod, fmi, world)
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(llvmf, i)),
-            ),
-        ) for i = 1:length(collect(parameters(llvmf)))
-    )
+    swiftself = has_swiftself(llvmf)
     if swiftself
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
@@ -603,12 +587,7 @@ end
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
 
-    hasNoRet = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noreturn")),
-            collect(function_attributes(llvmf)),
-        ),
-    )
+    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
     if hasNoRet
         return false
@@ -768,8 +747,8 @@ end
 @inline function aug_fwd_mi(
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    forward = false,
-    B = nothing,
+    forward::Bool = false,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
 )
     width = get_width(gutils)
 
@@ -802,10 +781,9 @@ end
 
     mode = get_mode(gutils)
 
-    ami = nothing
 
     augprimal_tt = copy(activity)
-    if isKWCall
+    functy = if isKWCall
         popfirst!(augprimal_tt)
         @assert kwtup !== nothing
         insert!(augprimal_tt, 1, kwtup)
@@ -814,50 +792,32 @@ end
         insert!(augprimal_tt, 5, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        kwfunc = Core.kwfunc(EnzymeRules.augmented_primal)
-        try
-            ami = my_methodinstance(Core.Typeof(kwfunc), augprimal_TT, world)
-            @safe_debug "Applying custom augmented_primal rule (kwcall)" TT = augprimal_TT
-        catch e
-            augprimal_TT = Tuple{typeof(world),typeof(kwfunc),augprimal_TT.parameters...}
-            ami = my_methodinstance(
-                typeof(custom_rule_method_error),
-                augprimal_TT,
-                world,
-            )
-            if forward
-                pushfirst!(args, LLVM.ConstantInt(world))
-            end
-        end
+        Core.Typeof(Core.kwfunc(EnzymeRules.augmented_primal))
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        try
-            ami = my_methodinstance(
-                Core.Typeof(EnzymeRules.augmented_primal),
-                augprimal_TT,
-                world,
-            )
-            @safe_debug "Applying custom augmented_primal rule" TT = augprimal_TT
-        catch e
-            augprimal_TT = Tuple{
-                typeof(world),
-                typeof(EnzymeRules.augmented_primal),
-                augprimal_TT.parameters...,
-            }
-            ami = my_methodinstance(
-                typeof(custom_rule_method_error),
-                augprimal_TT,
-                world,
-            )
-            if forward
-                pushfirst!(args, LLVM.ConstantInt(world))
-            end
-        end
+        typeof(EnzymeRules.augmented_primal)
     end
+
+    ami = try
+        my_methodinstance(functy, augprimal_TT, world)
+    catch e
+        augprimal_TT = Tuple{typeof(world),functy,augprimal_TT.parameters...}
+        ami = my_methodinstance(
+            typeof(custom_rule_method_error),
+            augprimal_TT,
+            world,
+        )
+        if forward
+            pushfirst!(args, LLVM.ConstantInt(world))
+        end
+        ami
+    end
+    ami = ami::Core.MethodInstance
+    @safe_debug "Applying custom augmented_primal rule" TT = augprimal_TT, functy=functy
     return ami,
     augprimal_TT,
     (
@@ -874,18 +834,18 @@ end
     )
 end
 
-@inline function has_aug_fwd_rule(orig, gutils)
+@inline function has_aug_fwd_rule(orig::LLVM.CallInst, gutils::GradientUtils)
     return aug_fwd_mi(orig, gutils)[1] !== nothing
 end
 
-@register_rev function enzyme_custom_common_rev(
+function enzyme_custom_common_rev(
     forward::Bool,
-    B,
+    B::LLVM.IRBuilder,
     orig::LLVM.CallInst,
-    gutils,
-    normalR,
-    shadowR,
-    tape,
+    gutils::GradientUtils,
+    normalR::Ptr{LLVM.API.LLVMValueRef},
+    shadowR::Ptr{LLVM.API.LLVMValueRef},
+    tape::Union{Nothing, LLVM.Value},
 )::LLVM.API.LLVMValueRef
 
     ctx = LLVM.context(orig)
@@ -942,17 +902,10 @@ end
     @assert ami !== nothing
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    aug_RT = something(
-        Core.Compiler.typeinf_type(
-            GPUCompiler.get_interpreter(
-                CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
-            ),
-            ami.def,
-            ami.specTypes,
-            ami.sparam_vals,
-        ),
-        Any,
+    interp = GPUCompiler.get_interpreter(
+        CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
     )
+    aug_RT = return_type(interp, ami)
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " augprimal_TT
         emit_error(
@@ -964,7 +917,6 @@ end
     end
 
     rev_TT = nothing
-    rev_RT = nothing
 
     TapeT = Nothing
 
@@ -1006,6 +958,7 @@ end
     if forward
         llvmf = nested_codegen!(mode, mod, ami, world)
         @assert llvmf !== nothing
+        rev_RT = nothing
     else
         tt = copy(activity)
         if isKWCall
@@ -1024,50 +977,28 @@ end
         end
         rev_TT = Tuple{tt...}
 
-        if isKWCall
-            rkwfunc = Core.kwfunc(EnzymeRules.reverse)
-            if EnzymeRules.isapplicable(rkwfunc, rev_TT; world)
-                @safe_debug "Applying custom reverse rule (kwcall)" TT = rev_TT
-                try
-                    llvmf = nested_codegen!(mode, mod, rkwfunc, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(rkwfunc, rev_TT, world)
-                catch e
-                    rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
-                    llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
-                    pushfirst!(args, LLVM.ConstantInt(world))
-                    rev_RT = Union{}
-                    applicablefn = false
-                end
-            else
-                rev_TT = Tuple{typeof(world),typeof(rkwfunc),rev_TT.parameters...}
-                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
-                pushfirst!(args, LLVM.ConstantInt(world))
-                rev_RT = Union{}
-                applicablefn = false
-            end
+        functy = if isKWCall
+            rkwfunc = typeof(Core.kwfunc(EnzymeRules.reverse))
         else
-            if EnzymeRules.isapplicable(EnzymeRules.reverse, rev_TT; world)
-                @safe_debug "Applying custom reverse rule" TT = rev_TT
-                try
-                    llvmf = nested_codegen!(mode, mod, EnzymeRules.reverse, rev_TT, world)
-                    rev_RT = Core.Compiler.return_type(EnzymeRules.reverse, rev_TT, world)
-                catch e
-                    rev_TT =
-                        Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}
-                    llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
-                    pushfirst!(args, LLVM.ConstantInt(world))
-                    rev_RT = Union{}
-                    applicablefn = false
-                end
-            else
-                rev_TT =
-                    Tuple{typeof(world),typeof(EnzymeRules.reverse),rev_TT.parameters...}
-                llvmf = nested_codegen!(mode, mod, custom_rule_method_error, rev_TT, world)
-                pushfirst!(args, LLVM.ConstantInt(world))
-                rev_RT = Union{}
-                applicablefn = false
-            end
+            typeof(EnzymeRules.reverse)
         end
+
+        @safe_debug "Applying custom reverse rule" TT = rev_TT, functy=functy
+        rmi, rev_RT = try
+            rmi = my_methodinstance(functy, rev_TT, world)
+            rev_RT = return_type(interp, rmi)
+            rmi, rev_RT
+        catch e
+            rev_TT = Tuple{typeof(world),functy,rev_TT.parameters...}
+            rmi = my_methodinstance(typeof(custom_rule_method_error), rev_TT, world)
+            pushfirst!(args, LLVM.ConstantInt(world))
+            rev_RT = Union{}
+            applicablefn = false
+            rmi, rev_RT
+        end
+        rmi = rmi::Core.MethodInstance
+        rev_RT = rev_RT::Type
+        llvmf = nested_codegen!(mode, mod, rmi, world)
     end
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -1092,14 +1023,7 @@ end
     #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...}, world)
     # end
 
-    swiftself = any(
-        any(
-            map(
-                k -> kind(k) == kind(EnumAttribute("swiftself")),
-                collect(parameter_attributes(llvmf, i)),
-            ),
-        ) for i = 1:length(collect(parameters(llvmf)))
-    )
+    swiftself = has_swiftself(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots = get_return_info(miRT)
@@ -1121,7 +1045,7 @@ end
     if !forward
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
         if needsTape
-            @assert tape != C_NULL
+            @assert tape isa LLVM.Value
             tape_idx =
                 1 +
                 (kwtup !== nothing && !isghostty(kwtup)) +
@@ -1179,6 +1103,10 @@ end
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
+            if width != 1
+                emit_error(B, orig, "Not yet supported: Enzyme custom rule of batch size=$width, and active return $RT")
+                return tapeV
+            end
 
             llty = convert(LLVMType, RT)
 
@@ -1307,12 +1235,7 @@ end
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
 
-    hasNoRet = any(
-        map(
-            k -> kind(k) == kind(EnumAttribute("noreturn")),
-            collect(function_attributes(llvmf)),
-        ),
-    )
+    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
     if hasNoRet
         return tapeV
@@ -1570,7 +1493,7 @@ end
 end
 
 
-@register_aug function enzyme_custom_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+@register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
@@ -1583,17 +1506,17 @@ end
     return false
 end
 
-@register_rev function enzyme_custom_rev(B, orig, gutils, tape)
+@register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_aug_fwd_rule(orig, gutils)
         return
     end
-    enzyme_custom_common_rev(false, B, orig, gutils, C_NULL, C_NULL, tape) #=tape=#
+    enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
     return nothing
 end
 
-@register_diffuse function enzyme_custom_diffuse(orig, gutils, val, isshadow, mode)
+@register_diffuse function enzyme_custom_diffuse(orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(val::LLVM.Value), isshadow::Bool, mode::API.CDerivativeMode)
     # use default
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
@@ -1604,10 +1527,7 @@ end
     fop = called_operand(orig)::LLVM.Function
     for (i, v) in enumerate(operands(orig)[1:end-1])
         if v == val
-            if !any(
-                a -> kind(a) == kind(StringAttribute("enzymejl_returnRoots")),
-                collect(parameter_attributes(fop, i)),
-            )
+            if !has_fn_attr(fop, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true
                 break
             end

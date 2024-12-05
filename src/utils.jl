@@ -5,12 +5,40 @@
     Assumes that `val` is globally rooted and pointer to it can be leaked. Prefer `pointer_from_objref`.
     Only use inside Enzyme.jl should be for Types.
 """
-@inline unsafe_to_pointer(val::Type{T}) where {T} = ccall(
-    Base.@cfunction(Base.identity, Ptr{Cvoid}, (Ptr{Cvoid},)),
+@inline unsafe_to_pointer(@nospecialize(val::Type)) = @static if sizeof(Int) == sizeof(Int64)
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i64 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i64
+  ret i64 %e
+}
+""", "f"),
     Ptr{Cvoid},
-    (Any,),
+    Tuple{Any},
     val,
 )
+else
+    Base.llvmcall((
+"""
+declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+
+define i32 @f({} addrspace(10)* %obj) readnone alwaysinline {
+  %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
+  %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
+  %e = ptrtoint {}* %r to i32
+  ret i32 %e
+}
+""", "f"),
+    Ptr{Cvoid},
+    Tuple{Any},
+    val,
+)
+end
+
 export unsafe_to_pointer
 
 @inline is_concrete_tuple(x::Type{T2}) where {T2} =
@@ -53,7 +81,7 @@ end
 export unsafe_to_ptr
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -113,7 +141,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
-function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T))
+function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
     if !Core.Compiler.isconstType(T)
         throw(AssertionError("Tried to make instance of non constant type $T"))
     end
@@ -123,7 +151,7 @@ end
 
 export makeInstanceOf
 
-function hasfieldcount(@nospecialize(dt))
+function hasfieldcount(@nospecialize(dt))::Bool
     try
         fieldcount(dt)
     catch
@@ -134,10 +162,6 @@ end
 
 import Base: allocatedinline
 
-#Excerpt from https://github.com/JuliaGPU/GPUCompiler.jl/blob/v0.19.4/src/jlgen.jl
-# !!! warning "codegen_world_age below is fundamentally unsound."
-#     It was removed from GPUCompiler since it can produce incorrect results. 
-
 using Core: MethodInstance
 using GPUCompiler: tls_world_age, MethodError, methodinstance
 using Core.Compiler: retrieve_code_info, CodeInfo, SSAValue, ReturnNode
@@ -146,124 +170,12 @@ using Base: _methods_by_ftype
 # Julia compiler integration
 
 
-## world age lookups
-
-# `tls_world_age` should be used to look up the current world age. in most cases, this is
-# what you should use to invoke the compiler with.
-#
-# `codegen_world_age` is a special function that returns the world age in which the passed
-# method instance (identified by its function and argument types) is to be compiled. the
-# returned constant is automatically invalidated when the method is redefined, and as such
-# can be used to drive cached compilation. it is unlikely that you should use this function
-# directly, instead use `cached_compilation` which handles invalidation for you.
-
-
-# on 1.10 (JuliaLang/julia#48611) the generated function knows which world it was invoked in
-
-function _generated_ex(world, source, ex)
-    stub = Core.GeneratedFunctionStub(
-        identity,
-        Core.svec(:methodinstance, :ft, :tt),
-        Core.svec(),
-    )
-    stub(world, source, ex)
-end
-
-function codegen_world_age_generator(world::UInt, source, self, ft::Type, tt::Type)
-    @nospecialize
-    @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
-    ft = ft.parameters[1]
-    tt = tt.parameters[1]
-
-    # validation
-    ft <: Core.Builtin &&
-        error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
-
-    # look up the method
-    method_error = :(throw(MethodError(ft, tt, $world)))
-    sig = Tuple{ft,tt.parameters...}
-    min_world = Ref{UInt}(typemin(UInt))
-    max_world = Ref{UInt}(typemax(UInt))
-    has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    mthds = Base._methods_by_ftype(
-        sig,
-        nothing,
-        -1, #=lim=#
-        world,
-        false, #=ambig=#
-        min_world,
-        max_world,
-        has_ambig,
-    )
-    mthds === nothing && return _generated_ex(world, source, method_error)
-    length(mthds) == 1 || return _generated_ex(world, source, method_error)
-
-    # look up the method and code instance
-    mtypes, msp, m = mthds[1]
-    mi = ccall(
-        :jl_specializations_get_linfo,
-        Ref{MethodInstance},
-        (Any, Any, Any),
-        m,
-        mtypes,
-        msp,
-    )
-    ci = retrieve_code_info(mi, world)::CodeInfo
-
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
-    else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
-    end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
-    new_ci.edges = MethodInstance[mi]
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:3]
-
-    # return the codegen world age
-    push!(new_ci.code, ReturnNode(world))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-      push!(new_ci.codelocs, 1)   # see note below
-    end
-    new_ci.ssavaluetypes += 1
-
-    # NOTE: we keep the first entry of the original linetable, and use it for location info
-    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
-    #       corruption of the back trace), and reusing the target function's info
-    #       has as advantage that we see the name of the kernel in the backtraces.
-
-    return new_ci
-end
-
-@eval function codegen_world_age(ft, tt)
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, codegen_world_age_generator))
-end
-
-export codegen_world_age
-
-
 if VERSION >= v"1.11.0-DEV.1552"
 
 
 const prevmethodinstance = GPUCompiler.generic_methodinstance
 
-function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
+function methodinstance_generator(world::UInt, source, self, @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     ft = ft.parameters[1]
@@ -313,19 +225,19 @@ function methodinstance_generator(world::UInt, source, self, ft::Type, tt::Type)
     return new_ci
 end
 
-@eval function prevmethodinstance(ft, tt)
+@eval function prevmethodinstance(ft, tt)::Core.MethodInstance
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, methodinstance_generator))
 end
 
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
-                                world::Integer=tls_world_age())
+                                world::Integer=tls_world_age())::Core.MethodInstance
     sig = GPUCompiler.signature_type_by_tt(ft, tt)
     if Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
-        return GPUCompiler.methodinstance(ft, tt, world)
+        return GPUCompiler.methodinstance(ft, tt, world)::Core.MethodInstance
     else
-        return prevmethodinstance(ft, tt, world)
+        return prevmethodinstance(ft, tt, world)::Core.MethodInstance
     end
 end
 else
@@ -356,7 +268,7 @@ export my_methodinstance
 #
 #     // followed by alignment padding and inline data, or owner pointer
 # } jl_array_t;
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: Array
         eT = eltype(T)
         PT = Ptr{eT}
@@ -366,7 +278,7 @@ export my_methodinstance
     end
 end
 
-@inline function typed_fieldcount(@nospecialize(T::Type))
+@inline function typed_fieldcount(@nospecialize(T::Type))::Int
     if T <: Array
         return 7
     else
@@ -374,7 +286,7 @@ end
     end
 end
 
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
     if T <: Array
         tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
         sum = 0
@@ -391,7 +303,7 @@ end
 
 else
 
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
         eT = eltype(T)
         Ptr{eT}
@@ -400,11 +312,11 @@ else
     end
 end
 
-@inline function typed_fieldcount(@nospecialize(T::Type))
+@inline function typed_fieldcount(@nospecialize(T::Type))::Int
     fieldcount(T)
 end
 
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)
+@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
     fieldoffset(T, i)
 end
 
@@ -415,7 +327,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int)
+function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
 end
 

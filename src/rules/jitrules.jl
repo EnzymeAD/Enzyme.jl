@@ -267,7 +267,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
-        rt = Core.Compiler.return_type(f, Tuple{$(ElTypes...)})
+        FT = Core.Typeof(f)
+        rt = Compiler.primal_return_type(Forward, FT, tt)
         annotation = guess_activity(rt, API.DEM_ForwardMode)
 
         if annotation <: DuplicatedNoNeed
@@ -280,15 +281,12 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
         end
 
         dupClosure = ActivityTup[1]
-        FT = Core.Typeof(f)
         if dupClosure && guaranteed_const(FT)
             dupClosure = false
         end
 
-        world = codegen_world_age(FT, tt)
-        opt_mi = Val(world)
         forward = thunk(
-            opt_mi,
+            Val(0),
             dupClosure ? $dupty : Const{FT},
             annotation,
             tt′,
@@ -445,28 +443,27 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             false
         end
 
-        tt = Tuple{$(ElTypes...)}
-        rt = Core.Compiler.return_type(f, tt)
-        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-        annotationA = if $Width != 1 && annotation0 <: Duplicated
-            BatchDuplicated{rt,$Width}
-        elseif $Width != 1 && annotation0 <: MixedDuplicated
-            BatchMixedDuplicated{rt,$Width}
-        else
-            annotation0
-        end
 
         internal_tape, origRet, initShadow, annotation = if f isa typeof(Core.getglobal)
             gv = Core.getglobal(args[1].val, args[2].val)
             @assert sizeof(gv) == 0
             (nothing, gv, nothing, Const)
         else
-            world = codegen_world_age(FT, tt)
+        
+            tt = Tuple{$(ElTypes...)}
 
-            opt_mi = Val(world)
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+            annotationA = if $Width != 1 && annotation0 <: Duplicated
+                BatchDuplicated{rt,$Width}
+            elseif $Width != 1 && annotation0 <: MixedDuplicated
+                BatchMixedDuplicated{rt,$Width}
+            else
+                annotation0
+            end
             forward, adjoint = thunk(
-                opt_mi,
+                Val(0),
                 dupClosure0 ? $dupty : Const{FT},
                 annotationA,
                 Tuple{$(Types...)},
@@ -492,7 +489,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             )
             return ReturnType(($(nres...), tape))
         elseif annotation <: Active
-            shadow_return = $shadowretinit
+            shadow_return = if Base.isconcretetype(rt)
+                $shadowretinit
+            else
+                initShadow
+            end
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
                 shadow_return,
@@ -567,7 +568,7 @@ function nonzero_active_data(x::T) where {T}
 end
 
 function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
-    outs = []
+    outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
             expr = if Width == 1
@@ -595,16 +596,16 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                     )
                 end
             end
-            push!(outs, out)
+            @inbounds outs[(i-1)*Width+w] = out
         end
     end
     shadow_ret = nothing
     if Width == 1
         shadowret = :(tape.shadow_return[])
     else
-        shadowret = []
+        shadowret = Vector{Expr}(undef, Width)
         for w = 1:Width
-            push!(shadowret, :(tape.shadow_return[$w][]))
+            @inbounds shadowret[w] = :(tape.shadow_return[$w][])
         end
         shadowret = :(($(shadowret...),))
     end
@@ -634,34 +635,30 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 
     quote
-        $(active_refs...)
-        args = ($(wrapped...),)
-        $(MakeTypes...)
-
-        FT = Core.Typeof(f)
-        dupClosure0 = if ActivityTup[1]
-            !guaranteed_const(FT)
-        else
-            false
-        end
-
-        tt = Tuple{$(ElTypes...)}
-        rt = Core.Compiler.return_type(f, tt)
-        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-        annotation = if $Width != 1 && annotation0 <: Duplicated
-            BatchDuplicated{rt,$Width}
-        else
-            annotation0
-        end
-
         if f isa typeof(Core.getglobal)
         else
-            world = codegen_world_age(FT, tt)
+            $(active_refs...)
+            args = ($(wrapped...),)
+            $(MakeTypes...)
 
-            opt_mi = Val(world)
+            FT = Core.Typeof(f)
+            dupClosure0 = if ActivityTup[1]
+                !guaranteed_const(FT)
+            else
+                false
+            end
+            tt = Tuple{$(ElTypes...)}
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
+            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+            annotation = if $Width != 1 && annotation0 <: Duplicated
+                BatchDuplicated{rt,$Width}
+            else
+                annotation0
+            end
+
             _, adjoint = thunk(
-                opt_mi,
+                Val(0),
                 dupClosure0 ? $dupty : Const{FT},
                 annotation,
                 Tuple{$(Types...)},
@@ -984,7 +981,7 @@ function fwddiff_with_return(
 
     tt = Enzyme.vaEltypes(tt′)
 
-    rt = Core.Compiler.return_type(f, tt)
+    rt = Compiler.primal_return_type(Forward, FT, tt)
     annotation0 = guess_activity(rt, API.DEM_ForwardMode)
 
     annotation = if width != 1
@@ -1001,7 +998,6 @@ function fwddiff_with_return(
         end
     end
 
-    world = codegen_world_age(FT, tt)
     fa = if dupClosure
         if width == 1
             Duplicated(f, df)
@@ -1011,9 +1007,8 @@ function fwddiff_with_return(
     else
         Const(f)
     end
-    opt_mi = Val(world)
     res = thunk(
-        opt_mi,
+        Val(0),
         FA,
         annotation,
         tt′,
@@ -1117,15 +1112,13 @@ end
 ) where {Ann,Nargs}
     expr = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
-        @inbounds expr[i] = quote
-            @assert !(args[$i] isa Active)
-            if args[$i] isa Const
-                args[$i].val
-            elseif args[$i] isa MixedDuplicated
-                args[$i].dval[]
-            else
-                args[$i].dval
-            end
+        @assert !(args[i] <: Active)
+        @inbounds expr[i] = if args[i] <: Const
+            :(args[$i].val)
+        elseif args[i] <: MixedDuplicated
+            :(args[$i].dval[])
+        else
+            :(args[$i].dval)
         end
     end
     rval = :(($(expr...),))
@@ -1147,19 +1140,17 @@ end
     for w = 1:width
         expr = Vector{Expr}(undef, Nargs)
         for i = 1:Nargs
-            @inbounds expr[i] = quote
-                @assert !(args[$i] isa Active)
-                if args[$i] isa Const
-                    args[$i].val
-                elseif args[$i] isa BatchMixedDuplicated
-                    args[$i].dval[$w][]
-                else
-                    args[$i].dval[$w]
-                end
+            @assert !(args[i] <: Active)
+            @inbounds expr[i] = if args[i] <: Const
+                :(args[$i].val)
+            elseif args[i] <: BatchMixedDuplicated
+                :(args[$i].dval[$w][])
+            else
+                :(args[$i].dval[$w])
             end
         end
         rval = :(($(expr...),))
-        if Ann <: BatchMixedDuplicated
+        if Ann <: BatchMixedDuplicated || Ann <: MixedDuplicated
             rval = :(Ref($rval))
         end
         @inbounds wexpr[w] = rval
@@ -1198,32 +1189,33 @@ function augfwd_with_return(
     ModifiedBetween = Val(ModifiedBetween0)
 
     tt = Enzyme.vaEltypes(tt′)
-    rt = Core.Compiler.return_type(f, tt)
-    annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
-    annotation = if width != 1
-        if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-            BatchDuplicated{rt,width}
-        elseif annotation0 <: MixedDuplicated
-            BatchMixedDuplicated{rt,width}
-        elseif annotation0 <: Active
-            Active{rt}
-        else
-            Const{rt}
-        end
-    else
-        if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
-            Duplicated{rt}
-        elseif annotation0 <: MixedDuplicated
-            MixedDuplicated{rt}
-        elseif annotation0 <: Active
-            Active{rt}
-        else
-            Const{rt}
-        end
-    end
 
     internal_tape, origRet, initShadow = if f != Base.tuple
+        rt = Compiler.primal_return_type(Reverse, FT, tt)
+        annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+
+        annotation = if width != 1
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                BatchDuplicated{rt,width}
+            elseif annotation0 <: MixedDuplicated
+                BatchMixedDuplicated{rt,width}
+            elseif annotation0 <: Active
+                Active{rt}
+            else
+                Const{rt}
+            end
+        else
+            if annotation0 <: DuplicatedNoNeed || annotation0 <: Duplicated
+                Duplicated{rt}
+            elseif annotation0 <: MixedDuplicated
+                MixedDuplicated{rt}
+            elseif annotation0 <: Active
+                Active{rt}
+            else
+                Const{rt}
+            end
+        end
+
         dupClosure = dupClosure0 && !guaranteed_const(FT)
         FA = dupClosure ? Duplicated{FT} : Const{FT}
 
@@ -1236,10 +1228,8 @@ function augfwd_with_return(
         else
             Const(f)
         end
-        world = codegen_world_age(FT, tt)
-        opt_mi = Val(world)
         forward, adjoint = thunk(
-            opt_mi,
+            Val(0),
             FA,
             annotation,
             tt′,
@@ -1254,21 +1244,22 @@ function augfwd_with_return(
         ) #=erriffuncwritten=#
         forward(fa, args...)
     else
+        annotation0 = guess_activity(tt, API.DEM_ReverseModePrimal)
         nothing,
         primal_tuple(args...),
-        annotation <: Active ? nothing : shadow_tuple(annotation, Val(width), args...)
+        annotation0 <: Active ? nothing : shadow_tuple(annotation0, Val(width), args...)
     end
 
     resT = typeof(origRet)
 
-    if annotation <: Const
+    if annotation0 <: Const
         shadow_return = nothing
         tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
             internal_tape,
             shadow_return,
         )
         return ReturnType((allSame(Val(width + 1), origRet)..., tape))
-    elseif annotation <: Active
+    elseif annotation0 <: Active
         shadow_return = if width == 1
             Ref(make_zero(origRet))
         else
@@ -1286,7 +1277,7 @@ function augfwd_with_return(
     end
 
     if width == 1
-        if annotation <: MixedDuplicated
+        if annotation0 <: MixedDuplicated
             shadow_return = initShadow
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
@@ -1302,7 +1293,7 @@ function augfwd_with_return(
             return ReturnType((origRet, initShadow, tape))
         end
     else
-        if annotation <: BatchMixedDuplicated
+        if annotation0 <: MixedDuplicated
             shadow_return = initShadow
             tape = Tape{typeof(internal_tape),typeof(shadow_return),resT}(
                 internal_tape,
@@ -1438,61 +1429,56 @@ end
     Nargs,
 }
 
-    nontupexprs = Vector{Expr}(undef, Nargs)
+    nontupexprs = Vector{Union{Symbol,Expr}}(undef, Nargs)
     for i = 1:Nargs
-        mid = if width == 1
-            :(tape.shadow_return[][$i])
-        else
-            mexprs = Vector{Expr}(undef, width)
-            for w = 1:width
-                @inbounds mexprs[w] = :(tape.shadow_return[$w][][$i])
-            end
-            quote
-                ($(mexprs...),)
-            end
-        end
-
-        @inbounds nontupexprs[i] = quote
-            if args[$i] isa Active ||
-               args[$i] isa MixedDuplicated ||
-               args[$i] isa BatchMixedDuplicated
-                $mid
+        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated 
+            if width == 1
+                :(tape.shadow_return[][$i])
             else
-                nothing
+                mexprs = Vector{Expr}(undef, width)
+                for w = 1:width
+                    @inbounds mexprs[w] = :(tape.shadow_return[$w][][$i])
+                end
+                quote
+                    ($(mexprs...),)
+                end
             end
+        else
+            :nothing
         end
     end
 
     endexprs = Matrix{Expr}(undef, Nargs, width)
     for i = 1:Nargs
         for w = 1:width
-            @inbounds endexprs[i, w] = quote
-                if args[$i] isa Active ||
-                   args[$i] isa MixedDuplicated ||
-                   args[$i] isa BatchMixedDuplicated
-                    expr = if args[$i] isa Active || f == Base.tuple
-                        if $width == 1
-                            tup[$i]
-                        else
-                            tup[$i][$w]
-                        end
-                    elseif args[$i] isa MixedDuplicated
-                        args[$i].dval[]
+            @inbounds endexprs[i, w] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
+                expr = if args[i] <: Active || f <: typeof(Base.tuple)
+                    if width == 1
+                        :(tup[$i])
                     else
-                        # if args[$i] isa BatchMixedDuplicated
-                        args[$i].dval[$w][]
+                        :(tup[$i][$w])
                     end
+                elseif args[i] <: MixedDuplicated
+                    :(args[$i].dval[])
+                else
+                    :(args[$i].dval[$w][])
+                end
 
+                quote
                     idx_of_vec, idx_in_vec = $(lengths[i])
                     vec = @inbounds shadowargs[idx_of_vec][$w]
                     if vec isa Base.RefValue
                         vecld = vec[]
                         T = Core.Typeof(vecld)
-                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), expr)
+                        @assert !(vecld isa Base.RefValue)
+                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), $expr)
                     else
                         val = @inbounds vec[idx_in_vec]
-                        add_into_vec!(Base.inferencebarrier(val), expr, vec, idx_in_vec)
+                        add_into_vec!(Base.inferencebarrier(val), $expr, vec, idx_in_vec)
                     end
+                end
+            else
+                quote
                 end
             end
         end
@@ -1548,20 +1534,17 @@ end
 
             tt = $tt
 
-            rt = Core.Compiler.return_type(f, tt)
+            rt = Compiler.primal_return_type(Reverse, FT, tt)
             annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
-
             annotation = $annotation
-            world = codegen_world_age(FT, tt)
 
             fa = if dupClosure
                 $(width == 1 ? :Duplicated : :BatchDuplicated)(f, df)
             else
                 Const(f)
             end
-            opt_mi = Val(world)
             forward, adjoint = thunk(
-                opt_mi,
+                Val(0),
                 FA,
                 annotation,
                 $ttp,
@@ -1866,7 +1849,7 @@ function generic_setup(
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
     etup0 = emit_tuple!(B, ActivityList)
-    etup = emit_apply_type!(B, Base.Val, [etup0])
+    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0])
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1
     end

@@ -2,6 +2,7 @@ module API
 
 import LLVM.API: LLVMValueRef, LLVMModuleRef, LLVMTypeRef, LLVMContextRef
 using Enzyme_jll
+using EnzymeCore
 using Libdl
 using LLVM
 using CEnum
@@ -207,6 +208,20 @@ end
     DFT_DUP_NONEED = 3 # duplicate this argument and store differential inside,
     # but don't need the forward
 )
+
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.Const} = API.DFT_CONSTANT
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.Active} =
+    API.DFT_OUT_DIFF
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.Duplicated} =
+    API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.BatchDuplicated} =
+    API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.BatchDuplicatedFunc} =
+    API.DFT_DUP_ARG
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.DuplicatedNoNeed} =
+    API.DFT_DUP_NONEED
+@inline Base.convert(::Type{API.CDIFFE_TYPE}, ::Type{A}) where {A<:EnzymeCore.BatchDuplicatedNoNeed} =
+    API.DFT_DUP_NONEED
 
 @cenum(
     CDerivativeMode,
@@ -441,9 +456,9 @@ function CreateTypeAnalysis(logic, rulenames, rules)
         EnzymeTypeAnalysisRef,
         (EnzymeLogicRef, Ptr{Cstring}, Ptr{CustomRuleType}, Csize_t),
         logic,
-        rulenames,
-        rules,
-        length(rules),
+        rulenames isa Tuple{} ? C_NULL : rulenames,
+        rules isa Tuple{} ? C_NULL : rules,
+        rulenames isa Tuple{} ? 0 : length(rules),
     )
 end
 

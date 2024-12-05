@@ -1,7 +1,7 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-function absint(arg::LLVM.Value, partial::Bool = false)
+function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bool,Any}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
@@ -75,9 +75,9 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
                 index += 1
-                found = []
+                found = Any[]
                 legal, Ty = absint(operands(arg)[index], partial)
-                unionalls = []
+                unionalls = TypeVar[]
                 for sarg in operands(arg)[index+1:end-1]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
@@ -102,7 +102,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
             end
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
+                found = Any[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv = absint(sarg, partial)
@@ -165,7 +165,7 @@ function absint(arg::LLVM.Value, partial::Bool = false)
     return (false, nothing)
 end
 
-function actual_size(@nospecialize(typ2))
+function actual_size(@nospecialize(typ2))::Int
     @static if VERSION < v"1.11-"
         if typ2 <: Array
             return sizeof(Ptr{Cvoid}) + 2 + 2 + 4 + 2 * sizeof(Csize_t) + sizeof(Csize_t)
@@ -184,10 +184,10 @@ function actual_size(@nospecialize(typ2))
     end
 end
 
-@inline function first_non_ghost(@nospecialize(typ2))
+@inline function first_non_ghost(@nospecialize(typ2))::Tuple{Int, Int}
     @static if VERSION < v"1.11-"
         if typ2 <: Array
-            return (1, typed_fieldtype(typ2, 1))
+            return (1, 0)
         end
     end
     fc = fieldcount(typ2)
@@ -204,10 +204,12 @@ end
     return (-1, 0)
 end
 
-function should_recurse(@nospecialize(typ2), arg_t, byref, dl)
+function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType), byref::GPUCompiler.ArgumentCC, dl::LLVM.DataLayout)::Bool
     sz = sizeof(dl, arg_t)
     if byref != GPUCompiler.BITS_VALUE
-        @assert sz == sizeof(Int)
+        if sz != sizeof(Int)
+            throw(AssertionError("non bits type $byref of $typ2 has size $sz != sizeof(Int) from arg type $arg_t"))
+        end
         return false
     else
         if actual_size(typ2) != sz
@@ -226,7 +228,7 @@ function should_recurse(@nospecialize(typ2), arg_t, byref, dl)
     end
 end
 
-function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=false)::Tuple{LLVM.Value, Int}
+function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool=true, inttoptr::Bool=false)::Tuple{LLVM.Value, Int}
     offset = 0
     while true
         if isa(larg, LLVM.ConstantExpr)
@@ -248,7 +250,7 @@ function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=fals
             continue
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
-           all(x -> isa(x, LLVM.ConstantInt), operands(larg)[2:end])
+            all(Base.Fix2(isa, LLVM.ConstantInt), operands(larg)[2:end])
             b = LLVM.IRBuilder()
             position!(b, larg)
             offty = LLVM.IntType(8 * sizeof(Int))
@@ -275,7 +277,7 @@ function get_base_and_offset(larg::LLVM.Value; offsetAllowed=true, inttoptr=fals
 end
 
 function abs_typeof(
-    arg::LLVM.Value,
+    @nospecialize(arg::LLVM.Value),
     partial::Bool = false, seenphis=Set{LLVM.PHIInst}()
 )::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
@@ -300,6 +302,16 @@ function abs_typeof(
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return abs_typeof(operands(arg)[1], partial, seenphis)
+        end
+    end
+
+    if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
+        if haskey(metadata(arg), "enzymejl_allocart")
+            mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+            mds = Base.convert(String, mds)
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
+            RT = Base.unsafe_pointer_to_objref(ptr)
+            return (true, RT, GPUCompiler.MUT_REF)
         end
     end
 
@@ -387,8 +399,8 @@ function abs_typeof(
 
             if nm == "jl_f_tuple" || nm == "ijl_f_tuple"
                 index += 1
-                found = []
-                unionalls = []
+                found = Union{Type, TypeVar}[]
+                unionalls = TypeVar[]
                 legal = true
                 for sarg in operands(arg)[index:end-1]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
@@ -414,8 +426,6 @@ function abs_typeof(
             
             if nm == "jl_f__apply_iterate" || nm == "ijl_f__apply_iterate"
                 index += 1
-                found = []
-                unionalls = []
                 legal, iterfn = absint(operands(arg)[index])
                 index += 1
                 if legal && iterfn == Base.iterate
@@ -424,7 +434,7 @@ function abs_typeof(
                     if legal0 && combfn == Core.apply_type && partial
                         return (true, Type, GPUCompiler.BITS_REF)
                     end
-                    resvals = []
+                    resvals = Type[]
                     while index != length(operands(arg))
                         legal, pval, _ = abs_typeof(operands(arg)[index], partial, seenphis)
                         if !legal
@@ -509,7 +519,14 @@ function abs_typeof(
             ET = eltype(typ)
             byref = GPUCompiler.MUT_REF
             typ = ET
-            if !Base.allocatedinline(typ)
+            # We currently make the assumption that Ptr{T} either represents a ptr which could be generated by
+            # julia code (for example pointer(x) ), or is a storage container for an array / memory
+            # in the latter case, it may need an extra level of indirection because of boxing. It is semantically
+            # consistent here to consider Ptr{T} to represent the ptr to the boxed value in that case [and we essentially
+            # add the extra poitner offset when loading here]. However for pointers constructed by ccall outside julia
+            # to a julia object, which are not inline by type but appear so, like SparseArrays, this is a problem
+            # and merits further investigation. x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2085
+            if !Base.allocatedinline(typ) && typ != SparseArrays.cholmod_dense_struct
                 shouldLoad = false
                 offset %= sizeof(Int)
             else
@@ -553,17 +570,26 @@ function abs_typeof(
                         break
                     end
                     
-                    if fo != 0 && fo != typed_fieldoffset(typ, i-1)
+                    if (i != typed_fieldcount(typ) && fo != typed_fieldoffset(typ, i+1)) || 
+                       (i == typed_fieldcount(typ) && fo != actual_size(typ))
                         lasti = i
                     end
                 end
                 if !seen && typed_fieldcount(typ) > 0
-                    offset = offset - typed_fieldoffset(typ, lasti)
-                    typ = typed_fieldtype(typ, lasti)
-                    @assert Base.isconcretetype(typ)
-                    if !Base.allocatedinline(typ)
-                        legal = false
-                    end
+                    offset = offset - typed_fieldoffset(typ, lasti) 
+		    typ = typed_fieldtype(typ, lasti)
+		    if offset == 0
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
+                            end
+                            byref = GPUCompiler.MUT_REF
+                        end
+		    else
+			    if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+				legal = false
+			    end
+		    end
                     seen = true
                 end
                 if !seen
@@ -610,8 +636,11 @@ function abs_typeof(
             return (false, nothing, nothing)
         end
         if byref == GPUCompiler.BITS_VALUE
+            ltyp = typ
             for ind in offset
-                @assert Base.isconcretetype(typ)
+                if !Base.isconcretetype(typ)
+                    throw(AssertionError("Illegal absint of $(string(arg)) ltyp=$ltyp, typ=$typ, offset=$offset, ind=$ind"))
+                end
                 cnt = 0
                 for i = 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
@@ -623,6 +652,13 @@ function abs_typeof(
                         break
                     end
                     cnt += 1
+                    if Enzyme.Compiler.is_sret_union(styp)
+                        if cnt == ind
+                            typ = UInt8
+                            break
+                        end
+                        cnt += 1
+                    end
                 end
             end
             if Base.allocatedinline(typ)
@@ -711,14 +747,21 @@ function abs_typeof(
     return (false, nothing, nothing)
 end
 
-function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
+@inline function is_zero(@nospecialize(x::LLVM.Value))::Bool
+    if x isa LLVM.ConstantInt
+        return convert(UInt, x) == 0
+    end
+    return false
+end
+
+function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
     if isa(arg, ConstantExpr)
         ce = arg
 	    while isa(ce, ConstantExpr)
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> isa(x, LLVM.ConstantInt) && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(is_zero, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break
@@ -730,7 +773,7 @@ function abs_cstring(arg::LLVM.Value)::Tuple{Bool,String}
 	    if isa(ce, LLVM.GlobalVariable)
 	        ce = LLVM.initializer(ce)
 	        if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-	        	return (true, String(map((x)->convert(UInt8, x), collect(ce)[1:(end-1)])))
+                return (true, String(map(Base.Fix1(convert, UInt8), collect(ce)[1:(end-1)])))
 		    end
 
 	    end

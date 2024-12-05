@@ -102,3 +102,23 @@ end
 	@test res[1][1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
 	@test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1	
 end
+
+struct InsFwdNormal1{T<:Real}
+	σ::T
+end
+
+struct InsFwdNormal2{T<:Real}
+	σ::T
+end
+
+insfwdlogpdf(d, x) = d.σ
+
+function insfwdfunc(x)
+    dists = [InsFwdNormal1{Float64}(1.0), InsFwdNormal2{Float64}(1.0)]
+    return sum(Base.Fix2(insfwdlogpdf, x), dists)
+end
+
+@testset "Forward Batch Constant insertion" begin
+    res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])[1]
+    @test res ≈ [0.0, 0.0]
+end

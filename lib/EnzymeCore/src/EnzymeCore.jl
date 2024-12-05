@@ -332,6 +332,7 @@ const ReverseHolomorphicWithPrimal = ReverseMode{true,false,DefaultABI, true, fa
 @inline set_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,true}()
 @inline clear_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,false}()
 
+@inline set_abi(::Type{ReverseMode{ReturnPrimal,RuntimeActivity,OldABI,Holomorphic,ErrIfFuncWritten}}, ::Type{NewABI}) where {ReturnPrimal,RuntimeActivity,OldABI,Holomorphic,ErrIfFuncWritten,NewABI<:ABI} = ReverseMode{ReturnPrimal,RuntimeActivity,NewABI,Holomorphic,ErrIfFuncWritten}
 @inline set_abi(::ReverseMode{ReturnPrimal,RuntimeActivity,OldABI,Holomorphic,ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal,RuntimeActivity,OldABI,Holomorphic,ErrIfFuncWritten,NewABI<:ABI} = ReverseMode{ReturnPrimal,RuntimeActivity,NewABI,Holomorphic,ErrIfFuncWritten}()
 
 @inline set_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,true,ABI,Holomorphic,ErrIfFuncWritten}()
@@ -394,7 +395,7 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
     - [`set_abi`](@ref)
     - [`ReverseSplitModified`](@ref), [`ReverseSplitWidth`](@ref)
 """
-struct ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,RuntimeActivity,ModifiedBetween,ABI,Holomorphic,ErrIfFuncWritten,ShadowInit} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
+struct ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI,Holomorphic,ErrIfFuncWritten,ShadowInit} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity} end
 
 """
     const ReverseSplitNoPrimal
@@ -430,6 +431,9 @@ Return a new instance of [`ReverseModeSplit`](@ref) mode where `Width` is set to
 @inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,true,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 @inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,rt,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 @inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,false,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+
+@inline set_abi(::Type{ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit}}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit,NewABI<:ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,NewABI,Holomorphic,ErrIfFuncWritten,ShadowInit}
+@inline set_abi(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit,NewABI<:ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,NewABI,Holomorphic,ErrIfFuncWritten,ShadowInit}()
 
 @inline WithPrimal(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{true,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 @inline NoPrimal(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{false,ReturnShadow,RuntimeActivity,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
@@ -483,6 +487,7 @@ const ForwardWithPrimal = ForwardMode{true, DefaultABI, false, false}()
 @inline set_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,true,RuntimeActivity}()
 @inline clear_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,false,RuntimeActivity}()
 
+@inline set_abi(::Type{ForwardMode{ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity}}, ::Type{NewABI}) where {ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,NewABI<:ABI} = ForwardMode{ReturnPrimal,NewABI,ErrIfFuncWritten,RuntimeActivity}
 @inline set_abi(::ForwardMode{ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity}, ::Type{NewABI}) where {ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,NewABI<:ABI} = ForwardMode{ReturnPrimal,NewABI,ErrIfFuncWritten,RuntimeActivity}()
 
 @inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,true}()
@@ -591,5 +596,155 @@ function clear_runtime_activity end
 Return a new mode with its [`ABI`](@ref) set to the chosen type.
 """
 function set_abi end
+
+"""
+    Split(
+        ::ReverseMode, [::Val{ReturnShadow}, ::Val{Width}, ::Val{ModifiedBetween}, ::Val{ShadowInit}]
+    )
+
+Turn a [`ReverseMode`](@ref) object into a [`ReverseModeSplit`](@ref) object while preserving as many of the settings as possible.
+The rest of the settings can be configured with optional positional arguments of `Val` type.
+
+This function acts as the identity on a [`ReverseModeSplit`](@ref).
+
+See also [`Combined`](@ref).
+"""
+function Split(
+    ::ReverseMode{
+        ReturnPrimal,
+        RuntimeActivity,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten
+    },
+    ::Val{ReturnShadow}=Val(true),
+    ::Val{Width}=Val(0),
+    ::Val{ModifiedBetween}=Val(true),
+    ::Val{ShadowInit}=Val(false),
+) where {
+    ReturnPrimal,
+    ReturnShadow,
+    RuntimeActivity,
+    Width,
+    ModifiedBetween,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten,
+    ShadowInit
+}
+    mode_split = ReverseModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        Width,
+        ModifiedBetween,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+        ShadowInit
+    }()
+    return mode_split
+end
+
+Split(mode::ReverseModeSplit, args...) = mode
+
+"""
+    Combined(::ReverseMode)
+
+Turn a [`ReverseModeSplit`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
+
+This function acts as the identity on a [`ReverseMode`](@ref).
+
+See also [`Split`](@ref).
+"""
+function Combined(
+    ::ReverseModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        Width,
+        ModifiedBetween,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+        ShadowInit
+    }
+) where {
+    ReturnPrimal,
+    ReturnShadow,
+    RuntimeActivity,
+    Width,
+    ModifiedBetween,
+    ABI,
+    Holomorphic,
+    ErrIfFuncWritten,
+    ShadowInit
+}
+    mode_unsplit = ReverseMode{
+        ReturnPrimal,
+        RuntimeActivity,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten
+    }()
+    return mode_unsplit
+end
+
+Combined(mode::ReverseMode) = mode
+
+"""
+    Primitive Type usable within Reactant. See Reactant.jl for more information.
+"""
+@static if isdefined(Core, :BFloat16)
+    const ReactantPrimitive = Union{
+        Bool,
+        Int8,
+        UInt8,
+        Int16,
+        UInt16,
+        Int32,
+        UInt32,
+        Int64,
+        UInt64,
+        Float16,
+        Core.BFloat16,
+        Float32,
+        Float64,
+        Complex{Float32},
+        Complex{Float64},
+    }
+else
+    const ReactantPrimitive = Union{
+        Bool,
+        Int8,
+        UInt8,
+        Int16,
+        UInt16,
+        Int32,
+        UInt32,
+        Int64,
+        UInt64,
+        Float16,
+        Float32,
+        Float64,
+        Complex{Float32},
+        Complex{Float64},
+    }
+end
+
+"""
+    Abstract Reactant Array type. See Reactant.jl for more information
+"""
+abstract type RArray{T<:ReactantPrimitive,N} <: AbstractArray{T,N} end
+@inline Base.eltype(::RArray{T}) where T = T
+@inline Base.eltype(::Type{<:RArray{T}}) where T = T
+
+"""
+    Abstract Reactant Number type. See Reactant.jl for more information
+"""
+abstract type RNumber{T<:ReactantPrimitive} <: Number end
+@inline Base.eltype(::RNumber{T}) where T = T
+@inline Base.eltype(::Type{<:RNumber{T}}) where T = T
+
 
 end # module EnzymeCore

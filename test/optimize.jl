@@ -1,6 +1,18 @@
 using Enzyme, LinearAlgebra, Test
 using Random, Statistics
 
+# check that our broadcast interpreter fix is correct for scalars
+function bcast_sum(A)
+    s = 0.0
+    for i in 1:3
+        s += abs2.(A[i])
+    end
+    return s
+end
+@testset "Broadcast interpreter" begin
+    @test autodiff(Forward, bcast_sum, Duplicated([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]))[1] ≈ 28.0
+end
+
 function gcloaded_fixup(dest, src)
     N = size(src)
     dat = src.data
@@ -129,4 +141,67 @@ end
 
 @testset "Memcopy of constant" begin
     @test Enzyme.autodiff(Enzyme.Forward, mc_f, Duplicated(2.7, 1.0))[1] ≈ 0.0
+end
+
+module RetTypeMod
+    using Enzyme
+    struct Stacked
+    end
+
+    @inline function myrand(td::Stacked, num_samples::Int)
+        return Base.inferencebarrier(ones(1))
+    end
+
+    struct TestProb1 end
+
+    logdensity(::TestProb1, θ) = sum(θ)
+
+    struct TestProb2 end
+
+    logdensity(::TestProb2, θ) = sum(θ)
+
+    struct MvLocationScale
+    end
+
+    # This specialization improves AD performance of the sampling path
+    @inline function myrand(
+        q::MvLocationScale, num_samples::Int
+    )
+        return ones(5, num_samples)
+    end
+
+    function mymean(problem, A::AbstractArray)
+        isempty(A) && return sum(Base.Fix1(logdensity, problem), A)
+        x1 = sum(@inbounds first(A))
+        return 1.0
+    end
+
+    function estimate_repgradelbo_ad_forward(problem, model)
+        zs = myrand(model, 10)
+        return mymean(problem, eachcol(zs))
+    end
+
+    function main()
+        d = 5
+        for prob in [TestProb1(), TestProb2()]
+            q = if prob isa TestProb1
+                MvLocationScale()
+            else
+                Stacked()
+            end
+
+            Enzyme.autodiff(
+                Enzyme.Reverse,
+                estimate_repgradelbo_ad_forward,
+                Enzyme.Active,
+                Enzyme.Const(prob),
+                Enzyme.Const(q),
+            )
+        end
+    end
+
+end
+
+@testset "Indirect function call return type analysis" begin
+    RetTypeMod.main()
 end

@@ -32,11 +32,50 @@ end
     end
 end
 
-@inline function Enzyme.EnzymeCore.make_zero(x::FT)::FT where {FT<:SArray}
-    return Base.zero(x)
+@inline function Enzyme.EnzymeCore.make_zero(
+    prev::FT
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:SArray{S,T}}
+    return Base.zero(prev)::FT
 end
-@inline function Enzyme.EnzymeCore.make_zero(x::FT)::FT where {FT<:MArray}
-    return Base.zero(x)
+@inline function Enzyme.EnzymeCore.make_zero(
+    prev::FT
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:MArray{S,T}}
+    return Base.zero(prev)::FT
+end
+
+@inline function Enzyme.EnzymeCore.make_zero(
+    ::Type{FT}, seen::IdDict, prev::FT, ::Val{copy_if_inactive} = Val(false)
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:SArray{S,T},copy_if_inactive}
+    return Base.zero(prev)::FT
+end
+@inline function Enzyme.EnzymeCore.make_zero(
+    ::Type{FT}, seen::IdDict, prev::FT, ::Val{copy_if_inactive} = Val(false)
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:MArray{S,T},copy_if_inactive}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    new = Base.zero(prev)::FT
+    seen[prev] = new
+    return new
+end
+
+@inline function Enzyme.EnzymeCore.make_zero!(
+    prev::FT, seen
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:MArray{S,T}}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
+    fill!(prev, zero(T))
+    return nothing
+end
+@inline function Enzyme.EnzymeCore.make_zero!(
+    prev::FT
+) where {S,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},FT<:MArray{S,T}}
+    Enzyme.EnzymeCore.make_zero!(prev, nothing)
+    return nothing
 end
 
 end
