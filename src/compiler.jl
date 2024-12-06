@@ -3338,7 +3338,7 @@ function GPUCompiler.codegen(
             if !has_fn_attr(f, EnumAttribute("alwaysinline"))
                 continue
             end
-            if !has_fn_attr(f, EnumAttribute("returnstwice"))
+            if !has_fn_attr(f, EnumAttribute("returns_twice"))
                 push!(function_attributes(f), EnumAttribute("returns_twice"))
                 push!(toremove, name(f))
             end
