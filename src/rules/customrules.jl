@@ -111,9 +111,9 @@ function enzyme_custom_setup_args(
         if cmode == API.DEM_ReverseModeGradient
           cmode = API.DEM_ReverseModePrimal
         end
+        uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(op))) - 1)
 	activep =
 		if mode == API.DEM_ForwardMode ||
-    		   uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(op))) - 1)
 		   API.EnzymeGradientUtilsGetUncacheableArgs(
 		    gutils,
 		    op,
