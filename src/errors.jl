@@ -54,10 +54,14 @@ struct IllegalFirstPointerException <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::IllegalFirstPointerException)
-    print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    print(io, "Enzyme compilation failed due to an internal error (first pointer exception).\n")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+      if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
+      end
     end
     print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
@@ -73,12 +77,22 @@ struct EnzymeInternalError <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
-    print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    print(io, "Enzyme compilation failed due to an internal error.\n")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+      if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
+      end
+      print(io, '\n', ece.msg, '\n')
+    else
+      for msg in ece.msg.split('\n')
+        if occursin("Illegal replace ficticious phi for", msg)
+          print('\n', msg, '\n')
+        end
+      end
     end
-    print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
         println(io)
