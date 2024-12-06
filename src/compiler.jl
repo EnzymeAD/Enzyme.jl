@@ -147,10 +147,10 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         Tys = (Complex{Float32}, Complex{Float64})
         if length(sparam_vals) == arity
             if name == :cmplx_jn || name == :cmplx_yn
-                if sparam_vals[2] ∈ Tys || eltype(sparam_vals[2]) == sparam_vals[1]
+                if (sparam_vals[2] ∈ Tys) && sparam_vals[2].parameters[1] == sparam_vals[1]
                     return name, toinject, sparam_vals[2]
-		end
-	    end
+                end
+            end
             T = first(sparam_vals)
             if (T isa Type)
                 T = T::Type
