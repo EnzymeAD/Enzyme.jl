@@ -182,7 +182,7 @@ if VERSION >= v"1.11.0-"
 function CC.ipo_dataflow_analysis!(interp::EnzymeInterpreter, ir::Core.Compiler.IRCode,
                                    caller::Core.Compiler.InferenceResult)
     mi = caller.linfo
-    specTypes = simplify_kw(mi.spectypes)
+    specTypes = simplify_kw(mi.specTypes)
     inactive = false
     has_rule = false
     if is_inactive_from_sig(interp, specTypes, mi)
@@ -205,7 +205,7 @@ else # v1.10
 function Core.Compiler.finish(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, ir::Core.Compiler.IRCode,
                    caller::Core.Compiler.InferenceResult)
     mi = caller.linfo
-    specTypes = simplify_kw(mi.spectypes)
+    specTypes = simplify_kw(mi.specTypes)
     inactive = false
     has_rule = false
     if is_inactive_from_sig(interp, specTypes, mi)
