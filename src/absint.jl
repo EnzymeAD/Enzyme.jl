@@ -205,7 +205,11 @@ end
 end
 
 function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType), byref::GPUCompiler.ArgumentCC, dl::LLVM.DataLayout)::Bool
-    sz = sizeof(dl, arg_t)
+    sz = if arg_t == LLVM.IntType(1)
+	1
+    else
+	sizeof(dl, arg_t)
+    end
     if byref != GPUCompiler.BITS_VALUE
         if sz != sizeof(Int)
             throw(AssertionError("non bits type $byref of $typ2 has size $sz != sizeof(Int) from arg type $arg_t"))
