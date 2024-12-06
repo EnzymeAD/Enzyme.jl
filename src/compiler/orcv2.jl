@@ -266,7 +266,11 @@ function add!(mod)
 end
 
 function lookup(name)
-    LLVM.lookup(jit[].jit, name)
+    @static if sizeof(Int) == sizeof(Int64)
+	LLVM.lookup(jit[].jit, name)
+    else
+	UInt(LLVM.lookup(jit[].jit, name))
+    end
 end
 
 end # module
