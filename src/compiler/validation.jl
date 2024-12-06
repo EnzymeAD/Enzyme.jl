@@ -753,7 +753,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                                 (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
                                 arg1,
                                 fname,
-                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd).ptr),
+                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd)),
                             )
                         else
                             res = ccall(
@@ -762,7 +762,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                                 (Ptr{Cvoid}, Cstring, Ptr{Cvoid}),
                                 arg1,
                                 fname,
-                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd).ptr),
+                                reinterpret(Ptr{Cvoid}, JIT.lookup(hnd)),
                             )
                         end
                         replaceWith = LLVM.ConstantInt(
