@@ -267,9 +267,9 @@ end
 
 function lookup(name)
     @static if sizeof(Int) == sizeof(Int64)
-	LLVM.lookup(jit[].jit, name)
+	LLVM.lookup(jit[].jit, name).ptr
     else
-	UInt(reinterpret(UInt64, LLVM.lookup(jit[].jit, name)))
+	UInt(LLVM.lookup(jit[].jit, name).ptr)
     end
 end
 
