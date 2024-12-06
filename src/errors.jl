@@ -1,4 +1,17 @@
+const VERBOSE_ERRORS = Ref(false)
+
 abstract type CompilationException <: Base.Exception end
+
+struct EnzymeRuntimeException <: Base.Exception
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    print(io, "Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
 struct NoDerivativeException <: CompilationException
     msg::String
     ir::Union{Nothing,String}
@@ -8,10 +21,22 @@ end
 function Base.showerror(io::IO, ece::NoDerivativeException)
     print(io, "Enzyme compilation failed.\n")
     if ece.ir !== nothing
-        print(io, "Current scope: \n")
-        print(io, ece.ir)
+    	if VERBOSE_ERRORS[]
+            print(io, "Current scope: \n")
+            print(io, ece.ir)
+    	else
+	    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+	end
     end
-    print(io, '\n', ece.msg, '\n')
+    if occursin("cannot handle unknown binary operator", ece.msg)
+      for msg in ece.msg.split('\n')
+        if occursin("cannot handle unknown binary operator", msg)
+          print('\n', msg, '\n')
+        end
+      end
+    else
+      print(io, '\n', ece.msg, '\n')
+    end
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
         println(io)
@@ -25,7 +50,6 @@ struct IllegalTypeAnalysisException <: CompilationException
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
 end
 
-const VERBOSE_ERRORS = Ref(false)
 function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, "Enzyme compilation failed due to illegal type analysis.\n")
     print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
@@ -54,10 +78,14 @@ struct IllegalFirstPointerException <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::IllegalFirstPointerException)
-    print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    print(io, "Enzyme compilation failed due to an internal error (first pointer exception).\n")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+      if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
+      end
     end
     print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
@@ -73,26 +101,26 @@ struct EnzymeInternalError <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
-    print(io, "Enzyme compilation failed.\n")
-    if ece.ir !== nothing
+    print(io, "Enzyme compilation failed due to an internal error.\n")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+      if ece.ir !== nothing
         print(io, "Current scope: \n")
         print(io, ece.ir)
+      end
+      print(io, '\n', ece.msg, '\n')
+    else
+      for msg in ece.msg.split('\n')
+        if occursin("Illegal replace ficticious phi for", msg)
+          print('\n', msg, '\n')
+        end
+      end
     end
-    print(io, '\n', ece.msg, '\n')
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
         println(io)
     end
-end
-
-struct EnzymeRuntimeException <: Base.Exception
-    msg::Cstring
-end
-
-function Base.showerror(io::IO, ece::EnzymeRuntimeException)
-    print(io, "Enzyme execution failed.\n")
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
 end
 
 struct EnzymeMutabilityException <: Base.Exception
