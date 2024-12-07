@@ -84,6 +84,9 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
 
         sig = Tuple{typeof(EnzymeRules.noalias), Vararg{<:Annotation}}
         push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+		
+        sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
     end
     @show edges
     new_ci.edges = edges
@@ -333,14 +336,14 @@ function Core.Compiler.abstract_call_gf_by_type(
 
         if interp.forward_rules
             Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, interp.world)::Core.MethodInstance)
-            Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
+            Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
         end
         if interp.reverse_rules
             Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, interp.world)::Core.MethodInstance)
-            Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
+            Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
         end
         Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, interp.world)::Core.MethodInstance)
-        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
+        Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
     end
 
     @static if VERSION ≥ v"1.11-"
