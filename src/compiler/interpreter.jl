@@ -78,7 +78,6 @@ function EnzymeInterpreter(
         # parameters for inference and optimization
         parms,
         OptimizationParams(),
-        IdDict{Any, Bool}(),
         forward_rules,
         reverse_rules,
         deferred_lower,
@@ -224,7 +223,7 @@ function Core.Compiler.abstract_call_gf_by_type(
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
-
+        method_table = Core.Compiler.method_table(interp)
         if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
