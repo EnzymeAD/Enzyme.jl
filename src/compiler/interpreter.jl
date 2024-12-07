@@ -8,6 +8,7 @@ using Core.Compiler:
     OptimizationParams,
     MethodInstance
 using GPUCompiler: @safe_debug
+using GPUCompiler
 if VERSION < v"1.11.0-DEV.1552"
     using GPUCompiler: CodeCache, WorldView, @safe_debug
 end
@@ -21,6 +22,96 @@ import ..EnzymeRules
     using Base: get_world_counter
 else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
+end
+
+function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
+    @nospecialize
+    sig = Tuple{typeof(Base.identity)}
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    has_ambig = Ptr{Int32}(C_NULL) 
+    mthds = Base._methods_by_ftype(
+        sig,
+        method_table,
+        -1, #=lim=#
+        world,
+        false, #=ambig=#
+        min_world,
+        max_world,
+        has_ambig,
+    )
+    mtypes, msp, m = mthds[1]
+    mi = ccall(
+        :jl_specializations_get_linfo,
+        Ref{Core.MethodInstance},
+        (Any, Any, Any),
+        m,
+        mtypes,
+        msp,
+    )
+    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
+
+    # prepare a new code info
+    new_ci = copy(ci)
+    empty!(new_ci.code)
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
+    end
+    empty!(new_ci.ssaflags)
+    new_ci.ssavaluetypes = 0
+    new_ci.min_world = min_world[]
+    new_ci.max_world = max_world[]
+
+    ### TODO: backedge from inactive, augmented_primal, forward, reverse
+    @show ft
+    edges = Any[]
+
+    if ft == typeof(EnzymeRules.augmented_primal)
+        sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+    elseif ft == typeof(EnzymeRules.forward)
+        sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+    else
+        sig = Tuple{typeof(EnzymeRules.inactive), Vararg{<:Annotation}}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+
+        sig = Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{<:Annotation}}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+
+        sig = Tuple{typeof(EnzymeRules.noalias), Vararg{<:Annotation}}
+        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+    end
+    @show edges
+    new_ci.edges = edges
+
+    # XXX: setting this edge does not give us proper method invalidation, see
+    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
+    #      invoking `code_llvm` also does the necessary codegen, as does calling the
+    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+
+    # prepare the slots
+    new_ci.slotnames = Symbol[Symbol("#self#"), :ft]
+    new_ci.slotflags = UInt8[0x00 for i = 1:2]
+
+    # return the codegen world age
+    push!(new_ci.code, Core.Compiler.ReturnNode(0))
+    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
+    new_ci.ssavaluetypes += 1
+
+    return new_ci
+end
+
+@eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, rule_backedge_holder_generator))
 end
 
 struct EnzymeInterpreter{T} <: AbstractInterpreter
@@ -241,12 +332,15 @@ function Core.Compiler.abstract_call_gf_by_type(
         end
 
         if interp.forward_rules
-            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, interp.world)::Core.MethodInstance)
+            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, interp.world)::Core.MethodInstance)
+            Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
         end
         if interp.reverse_rules
-            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, interp.world)::Core.MethodInstance)
+            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, interp.world)::Core.MethodInstance)
+            Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
         end
-        Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{Val{0}}, interp.world)::Core.MethodInstance) 
+        Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, interp.world)::Core.MethodInstance)
+        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
     end
 
     @static if VERSION ≥ v"1.11-"

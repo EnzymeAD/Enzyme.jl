@@ -5557,16 +5557,19 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
 
     edges = Any[mi]
 
-    if Mode == API.DEM_Forward
-        sig = Tuple{typeof(Compiler.rule_backedge_holder), typeof(EnzymeRules.forward)}
+    if Mode == API.DEM_ForwardMode
+        sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), typeof(EnzymeRules.forward)}
         push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
     else
-        sig = Tuple{typeof(Compiler.rule_backedge_holder), typeof(EnzymeRules.augmented_primal)}
+        sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), typeof(EnzymeRules.augmented_primal)}
         push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
     end
 
-    sig = Tuple{typeof(Compiler.rule_backedge_holder), Val{0}}
+    sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), Val{0}}
     push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+    Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
 
     new_ci.edges = edges
 
