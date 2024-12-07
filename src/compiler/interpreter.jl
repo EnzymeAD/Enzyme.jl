@@ -70,23 +70,31 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     edges = Any[]
 
     if ft == typeof(EnzymeRules.augmented_primal)
-        sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	# this is illegal
+        # sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.augmented_primal), Tuple{<:RevConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}, interp.world))
     elseif ft == typeof(EnzymeRules.forward)
-        sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	# this is illegal
+        # sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.forward), Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{<:Annotation}}, interp.world))
     else
-        sig = Tuple{typeof(EnzymeRules.inactive), Vararg{<:Annotation}}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        # sig = Tuple{typeof(EnzymeRules.inactive), Vararg{<:Annotation}}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.inactive), Tuple{Vararg{<:Annotation}}, interp.world))
 
-        sig = Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{<:Annotation}}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        # sig = Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{<:Annotation}}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.inactive_noinl), Tuple{Vararg{<:Annotation}}, interp.world))
 
-        sig = Tuple{typeof(EnzymeRules.noalias), Vararg{<:Annotation}}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        # sig = Tuple{typeof(EnzymeRules.noalias), Vararg{Any}}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.noalias), Tuple{Vararg{Any}}, interp.world))
 		
-        sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        # sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
+        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+	push!(edges, my_methodinstance(typeof(EnzymeRules.inactive_type), Tuple{Type}, interp.world))
     end
     @show edges
     new_ci.edges = edges
