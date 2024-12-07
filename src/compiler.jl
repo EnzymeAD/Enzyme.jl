@@ -5558,13 +5558,13 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     edges = Core.MethodInstance[mi]
 
     if Mode == API.DEM_ForwardMode
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world)
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world))
         Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
     else
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_forward)}, world)
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_forward)}, world))
     end
 
-    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world)
+    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world))
     Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
 
     new_ci.edges = edges
