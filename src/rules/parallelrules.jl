@@ -275,7 +275,7 @@ end
                 world,
             )
 
-            cmod, fwdmodenm, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 
@@ -334,7 +334,7 @@ end
                 world,
             )
 
-            cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, false) #=postopt=#
+            cmod, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 
