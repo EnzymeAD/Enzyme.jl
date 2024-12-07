@@ -26,7 +26,7 @@ end
 
 function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     @nospecialize
-    sig = Tuple{typeof(Base.identity)}
+    sig = Tuple{typeof(Base.identity), Int}
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     has_ambig = Ptr{Int32}(C_NULL) 
