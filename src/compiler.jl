@@ -106,7 +106,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
-@inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
+@inline Base.@nospecializeinfer function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
         Tys = (Float32, Float64)
@@ -317,7 +317,8 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
+
+Base.@nospecializeinfer function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
@@ -1345,7 +1346,7 @@ include("rules/activityrules.jl")
 const DumpPreEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
-function enzyme!(
+Base.@nospecializeinfer function enzyme!(
     job::CompilerJob,
     mod::LLVM.Module,
     primalf::LLVM.Function,
@@ -1685,7 +1686,7 @@ function set_subprogram!(f::LLVM.Function, sp)
     end
 end
 
-function create_abi_wrapper(
+Base.@nospecializeinfer function create_abi_wrapper(
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -2167,7 +2168,7 @@ function create_abi_wrapper(
         metadata(val)[LLVM.MD_dbg] = DILocation(0, 0, get_subprogram(llvm_f))
     end
 
-    @inline function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
+    @inline Base.@nospecializeinfer function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
         valty = sret_types[index]
         # Union becoming part of a tuple needs to be adjusted
         # See https://github.com/JuliaLang/julia/blob/81afdbc36b365fcbf3ae25b7451c6cb5798c0c3d/src/cgutils.cpp#L3795C1-L3801C121
@@ -2505,7 +2506,7 @@ function fixup_metadata!(f::LLVM.Function)
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
-function lower_convention(
+Base.@nospecializeinfer function lower_convention(
     @nospecialize(functy::Type),
     mod::LLVM.Module,
     entry_f::LLVM.Function,
@@ -3206,7 +3207,7 @@ end
 
 using Random
 # returns arg, return
-function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothing)
+Base.@nospecializeinfer function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothing)
     # Even though the julia type here is ptr{int8}, the actual data can be something else
     if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_simd)
         return (true, false)
@@ -5226,7 +5227,7 @@ end
 # JIT
 ##
 
-function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType), prepost::String)
+Base.@nospecializeinfer function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType), prepost::String)
     if job.config.params.ABI <: InlineABI
         return CompileResult(
             Val((Symbol(mod), Symbol(adjoint_name))),
@@ -5337,7 +5338,7 @@ const cache_lock = ReentrantLock()
     end
 end
 
-@inline function thunkbase(
+Base.@nospecializeinfer @inline function thunkbase(
     mi::Core.MethodInstance,
     World::Union{UInt, Nothing},
     @nospecialize(FA::Type{<:Annotation}),

@@ -400,7 +400,7 @@ Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM
     return false
 end
 
-function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
+Base.@nospecializeinfer function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
     else
@@ -446,7 +446,7 @@ end
     NamedTuple{ntuple(Symbol, Val(length(U.parameters))),U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
-Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})::LLVM.LLVMType
+Base.@nospecializeinfer Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})::LLVM.LLVMType
     ty = LLVM.value_type(val)::LLVM.LLVMType
     for i in idxs
         if isa(ty, LLVM.ArrayType)
@@ -461,7 +461,7 @@ end
 
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
-function calling_conv_fixup(
+Base.@nospecializeinfer function calling_conv_fixup(
     builder::LLVM.IRBuilder,
     @nospecialize(val::LLVM.Value),
     @nospecialize(tape::LLVM.LLVMType),
