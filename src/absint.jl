@@ -566,10 +566,18 @@ function abs_typeof(
                     elseif fo > offset
                         offset = offset - typed_fieldoffset(typ, lasti)
                         typ = typed_fieldtype(typ, lasti)
-                        @assert Base.isconcretetype(typ)
-                        if !Base.allocatedinline(typ)
-                            legal = false
-                        end
+			 if offset == 0
+				if !Base.allocatedinline(typ)
+				    if byref != GPUCompiler.BITS_VALUE
+					legal = false
+				    end
+				    byref = GPUCompiler.MUT_REF
+				end
+			else
+				if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+				    legal = false
+				end
+			end
                         seen = true
                         break
                     end
@@ -603,7 +611,11 @@ function abs_typeof(
 
             typ2 = typ
             while legal && should_recurse(typ2, value_type(arg), byref, dl)
-                idx, _ = first_non_ghost(typ2)
+	        if !Base.isconcretetype(typ2)
+		   legal = false
+		   break
+		end
+		idx, _ = first_non_ghost(typ2)
                 if idx != -1
                     typ2 = typed_fieldtype(typ2, idx)
                     if Base.allocatedinline(typ2)
