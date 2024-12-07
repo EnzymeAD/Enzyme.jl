@@ -5555,20 +5555,16 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     new_ci.min_world = world
     new_ci.max_world = max_world[]
 
-    edges = Any[mi]
+    edges = Core.MethodInstance[mi]
 
     if Mode == API.DEM_ForwardMode
-        sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), typeof(EnzymeRules.forward)}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world)
         Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
     else
-        sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), typeof(EnzymeRules.augmented_primal)}
-        push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_forward)}, world)
     end
 
-    sig = Tuple{typeof(Compiler.Interpreter.rule_backedge_holder), Val{0}}
-    push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
+    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world)
     Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
 
     new_ci.edges = edges
