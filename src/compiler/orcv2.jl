@@ -83,7 +83,7 @@ function define_absolute_symbol(jd, name)
     return false
 end
 
-function __init__()
+function setup_globals()
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
         optlevel = LLVM.API.LLVMCodeGenLevelNone
@@ -105,11 +105,6 @@ function __init__()
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
     LLVM.add!(jd_main, dg)
 
-    if Sys.iswindows() && Int === Int64
-        # TODO can we check isGNU?
-        define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
-    end
-
     es = ExecutionSession(lljit)
     try
         lctm = LLVM.LocalLazyCallThroughManager(triple(lljit), es)
@@ -118,6 +113,17 @@ function __init__()
     catch err
         @warn "OrcV2 initialization failed with" err
         jit[] = CompilerInstance(lljit, nothing, nothing)
+    end
+
+    jd_main, lljit
+end
+
+function __init__()
+    jd_main, lljit = setup_globals()
+
+    if Sys.iswindows() && Int === Int64
+        # TODO can we check isGNU?
+        define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
     end
 
     hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))

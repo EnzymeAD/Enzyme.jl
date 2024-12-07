@@ -32,6 +32,11 @@ function runtime_newtask_fwd(
     return ccall(:jl_new_task, Ref{Task}, (Any, Any, Int), fclosure, post, ssize)
 end
 
+struct Return2
+    ret1::Any
+    ret2::Any
+end
+
 function runtime_newtask_augfwd(
     fn::FT1,
     dfn::FT2,
@@ -270,7 +275,7 @@ end
                 world,
             )
 
-            cmod, fwdmodenm, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 
@@ -329,7 +334,7 @@ end
                 world,
             )
 
-            cmod, adjointnm, augfwdnm, TapeType = _thunk(ejob, false) #=postopt=#
+            cmod, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 

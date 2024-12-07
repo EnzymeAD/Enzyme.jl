@@ -205,7 +205,11 @@ Base.@nospecializeinfer @inline function first_non_ghost(@nospecialize(typ2))::T
 end
 
 Base.@nospecializeinfer function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType), byref::GPUCompiler.ArgumentCC, dl::LLVM.DataLayout)::Bool
-    sz = sizeof(dl, arg_t)
+    sz = if arg_t == LLVM.IntType(1)
+	1
+    else
+	sizeof(dl, arg_t)
+    end
     if byref != GPUCompiler.BITS_VALUE
         if sz != sizeof(Int)
             throw(AssertionError("non bits type $byref of $typ2 has size $sz != sizeof(Int) from arg type $arg_t"))
@@ -576,12 +580,20 @@ Base.@nospecializeinfer function abs_typeof(
                     end
                 end
                 if !seen && typed_fieldcount(typ) > 0
-                    offset = offset - typed_fieldoffset(typ, lasti)
-                    typ = typed_fieldtype(typ, lasti)
-                    @assert Base.isconcretetype(typ)
-                    if !Base.allocatedinline(typ)
-                        legal = false
-                    end
+                    offset = offset - typed_fieldoffset(typ, lasti) 
+		    typ = typed_fieldtype(typ, lasti)
+		    if offset == 0
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
+                            end
+                            byref = GPUCompiler.MUT_REF
+                        end
+		    else
+			    if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+				legal = false
+			    end
+		    end
                     seen = true
                 end
                 if !seen
@@ -628,8 +640,11 @@ Base.@nospecializeinfer function abs_typeof(
             return (false, nothing, nothing)
         end
         if byref == GPUCompiler.BITS_VALUE
+            ltyp = typ
             for ind in offset
-                @assert Base.isconcretetype(typ)
+                if !Base.isconcretetype(typ)
+                    throw(AssertionError("Illegal absint of $(string(arg)) ltyp=$ltyp, typ=$typ, offset=$offset, ind=$ind"))
+                end
                 cnt = 0
                 for i = 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
@@ -641,6 +656,13 @@ Base.@nospecializeinfer function abs_typeof(
                         break
                     end
                     cnt += 1
+                    if Enzyme.Compiler.is_sret_union(styp)
+                        if cnt == ind
+                            typ = UInt8
+                            break
+                        end
+                        cnt += 1
+                    end
                 end
             end
             if Base.allocatedinline(typ)
@@ -729,6 +751,13 @@ Base.@nospecializeinfer function abs_typeof(
     return (false, nothing, nothing)
 end
 
+@inline function is_zero(@nospecialize(x::LLVM.Value))::Bool
+    if x isa LLVM.ConstantInt
+        return convert(UInt, x) == 0
+    end
+    return false
+end
+
 Base.@nospecializeinfer function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool,String}
     if isa(arg, ConstantExpr)
         ce = arg
@@ -736,7 +765,7 @@ Base.@nospecializeinfer function abs_cstring(@nospecialize(arg::LLVM.Value))::Tu
 	        if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
 	            ce = operands(ce)[1]
             elseif opcode(ce) == LLVM.API.LLVMGetElementPtr
-                if all(x -> x isa LLVM.ConstantInt && convert(UInt, x) == 0, operands(ce)[2:end])
+                if all(is_zero, operands(ce)[2:end])
                     ce = operands(ce)[1]
                 else
                     break
