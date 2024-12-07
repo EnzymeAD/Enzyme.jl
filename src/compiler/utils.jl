@@ -360,6 +360,46 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 end
 
+@inline enum_attr_kind(kind::String) = LLVM.API.LLVMGetEnumAttributeKindForName(kind, Csize_t(length(kind)))
+
+const swiftself_kind = enum_attr_kind("swiftself")
+
+Base.@assume_effects :removable :foldable :nothrow function has_swiftself(fn::LLVM.Function)::Bool
+    for i in 1:length(LLVM.parameters(fn))
+        for attr in collect(LLVM.parameter_attributes(fn, i))
+            if attr isa LLVM.EnumAttribute
+                if kind(attr) == swiftself_kind
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
+    ekind = LLVM.kind(attr)
+    for attr in collect(function_attributes(fn))
+        if attr isa LLVM.EnumAttribute
+            if kind(attr) == ekind
+                return true
+            end
+        end
+    end
+    return false
+end
+
+Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.StringAttribute)::Bool
+    ekind = LLVM.kind(attr)
+    for attr in collect(function_attributes(fn))
+        if attr isa LLVM.StringAttribute
+            if kind(attr) == ekind
+                return true
+            end
+        end
+    end
+    return false
+end
+
 Base.@nospecializeinfer function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
