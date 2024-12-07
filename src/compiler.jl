@@ -5573,7 +5573,22 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     # new_ci.min_world = min_world[]
     new_ci.min_world = world
     new_ci.max_world = max_world[]
-    new_ci.edges = Core.MethodInstance[mi]
+
+    edges = Core.MethodInstance[mi]
+
+    if Mode == API.DEM_ForwardMode
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world))
+        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
+    else
+        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, world))
+    end
+
+    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)}, world))
+    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world))
+    Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
+
+    new_ci.edges = edges
+
     # XXX: setting this edge does not give us proper method invalidation, see
     #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
     #      invoking `code_llvm` also does the necessary codegen, as does calling the

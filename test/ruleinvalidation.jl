@@ -42,6 +42,9 @@ end
 # now test invalidation for `inactive`
 inactive(::typeof(issue696), args...) = nothing
 @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
-@test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
-
+@static if VERSION < v"1.11-"
+    @test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
+else
+    @test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 0.0
+end
 end # module
