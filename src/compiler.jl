@@ -3961,7 +3961,7 @@ end
                 lowerConvention = false
             end
             k_name = LLVM.name(llvmfn)
-            if !has_fn_attribute(llvmfn, EnumAttribute("nofree"))
+            if !has_fn_attr(llvmfn, EnumAttribute("nofree"))
                 push!(LLVM.function_attributes(llvmfn), EnumAttribute("nofree"))
             end
         end
