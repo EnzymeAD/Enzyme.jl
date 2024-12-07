@@ -137,21 +137,21 @@ begin
     gen_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{Val{0}})
 
 
-    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:EnzymeCore.Annotation, Type{<:EnzymeCore.Annotation},Vararg{EnzymeCore.Annotation}}
+    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
     EnzymeRules.add_mt_backedge!(fwd_rule_be, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable, fwd_sig)
 
-    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:EnzymeCore.Annotation, Type{<:EnzymeCore.Annotation},Vararg{EnzymeCore.Annotation}}
+    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
     EnzymeRules.add_mt_backedge!(rev_rule_be, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable, rev_sig)
 
 
     for ina_sig in (
-        Tuple{typeof(EnzymeRules.inactive), Vararg{EnzymeCore.Annotation}},
+        Tuple{typeof(EnzymeRules.inactive), Vararg{Enzyme.EnzymeCore.Annotation}},
     )
         EnzymeRules.add_mt_backedge!(ina_rule_be, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable, ina_sig)
     end
 
     for gen_sig in (
-        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{EnzymeCore.Annotation}},
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Enzyme.EnzymeCore.Annotation}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )
