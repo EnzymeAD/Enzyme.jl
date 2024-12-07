@@ -66,7 +66,6 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     new_ci.max_world = max_world[]
 
     ### TODO: backedge from inactive, augmented_primal, forward, reverse
-    @show ft
     edges = Any[]
 
     @static if false
@@ -97,7 +96,6 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
         # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
 	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.inactive_type), Tuple{Type}, world))
     end
-    @show edges
     end
 
     new_ci.edges = edges
@@ -129,27 +127,31 @@ end
 end
 
 begin
+    # Forward-rule catch all
     fwd_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)})
+    # Reverse-rule catch all
     rev_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)})
+    # Inactive-rule catch all
     ina_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)})
+    # All other derivative-related catch all (just for autodiff, not inference), including inactive_noinl, noalias, and inactive_type
     gen_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{Val{0}})
 
 
-    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:EnzymeCore.Annotation, Type{<:EnzymeCore.Annotation},Vararg{EnzymeCore.Annotation}}
     EnzymeRules.add_mt_backedge!(fwd_rule_be, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable, fwd_sig)
 
-    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:EnzymeCore.Annotation, Type{<:EnzymeCore.Annotation},Vararg{EnzymeCore.Annotation}}
     EnzymeRules.add_mt_backedge!(rev_rule_be, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable, rev_sig)
 
 
     for ina_sig in (
-        Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}},
+        Tuple{typeof(EnzymeRules.inactive), Vararg{EnzymeCore.Annotation}},
     )
         EnzymeRules.add_mt_backedge!(ina_rule_be, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable, ina_sig)
     end
 
     for gen_sig in (
-        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Annotation}},
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{EnzymeCore.Annotation}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )
