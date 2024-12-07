@@ -1,4 +1,192 @@
 
+# Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
+function rewrite_ccalls!(mod::LLVM.Module)
+    for f in collect(functions(mod))
+        replaceAndErase = Tuple{Instruction,Instruction}[]
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.CallInst)
+                fn = called_operand(inst)
+                changed = false
+                B = IRBuilder()
+                position!(B, inst)
+                if isa(fn, LLVM.Function) && LLVM.name(fn) == "llvm.julia.gc_preserve_begin"
+                    uservals = LLVM.Value[]
+                    for lval in collect(arguments(inst))
+                        llty = value_type(lval)
+                        if isa(llty, LLVM.PointerType)
+                            push!(uservals, lval)
+                            continue
+                        end
+                        vals = get_julia_inner_types(B, nothing, lval)
+                        for v in vals
+                            if isa(v, LLVM.PointerNull)
+                                subchanged = true
+                                continue
+                            end
+                            push!(uservals, v)
+                        end
+                        if length(vals) == 1 && vals[1] == lval
+                            continue
+                        end
+                        changed = true
+                    end
+                    if changed
+                        prevname = LLVM.name(inst)
+                        LLVM.name!(inst, "")
+                        if !isdefined(LLVM, :OperandBundleDef)
+                            newinst = call!(
+                                B,
+                                called_type(inst),
+                                called_operand(inst),
+                                uservals,
+                                collect(operand_bundles(inst)),
+                                prevname,
+                            )
+                        else
+                            newinst = call!(
+                                B,
+                                called_type(inst),
+                                called_operand(inst),
+                                uservals,
+                                collect(map(LLVM.OperandBundleDef, operand_bundles(inst))),
+                                prevname,
+                            )
+                        end
+                        for idx in [
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                            LLVM.API.LLVMAttributeReturnIndex,
+                            [
+                                LLVM.API.LLVMAttributeIndex(i) for
+                                i = 1:(length(arguments(inst)))
+                            ]...,
+                        ]
+                            idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
+                            count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
+                            Attrs = Base.unsafe_convert(
+                                Ptr{LLVM.API.LLVMAttributeRef},
+                                Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
+                            )
+                            LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
+                            for j = 1:count
+                                LLVM.API.LLVMAddCallSiteAttribute(
+                                    newinst,
+                                    idx,
+                                    unsafe_load(Attrs, j),
+                                )
+                            end
+                            Libc.free(Attrs)
+                        end
+                        API.EnzymeCopyMetadata(newinst, inst)
+                        callconv!(newinst, callconv(inst))
+                        push!(replaceAndErase, (inst, newinst))
+                    end
+                    continue
+                end
+                if !isdefined(LLVM, :OperandBundleDef)
+                    newbundles = OperandBundle[]
+                else
+                    newbundles = OperandBundleDef[]
+                end
+                for bunduse in operand_bundles(inst)
+                    if isdefined(LLVM, :OperandBundleDef)
+                        bunduse = LLVM.OperandBundleDef(bunduse)
+                    end
+
+                    if !isdefined(LLVM, :OperandBundleDef)
+                        if LLVM.tag(bunduse) != "jl_roots"
+                            push!(newbundles, bunduse)
+                            continue
+                        end
+                    else
+                        if LLVM.tag_name(bunduse) != "jl_roots"
+                            push!(newbundles, bunduse)
+                            continue
+                        end
+                    end
+                    uservals = LLVM.Value[]
+                    subchanged = false
+                    for lval in LLVM.inputs(bunduse)
+                        llty = value_type(lval)
+                        if isa(llty, LLVM.PointerType)
+                            push!(uservals, lval)
+                            continue
+                        end
+                        vals = get_julia_inner_types(B, nothing, lval)
+                        for v in vals
+                            if isa(v, LLVM.PointerNull)
+                                subchanged = true
+                                continue
+                            end
+                            push!(uservals, v)
+                        end
+                        if length(vals) == 1 && vals[1] == lval
+                            continue
+                        end
+                        subchanged = true
+                    end
+                    if !subchanged
+                        push!(newbundles, bunduse)
+                        continue
+                    end
+                    changed = true
+                    if !isdefined(LLVM, :OperandBundleDef)
+                        push!(newbundles, OperandBundle(LLVM.tag(bunduse), uservals))
+                    else
+                        push!(
+                            newbundles,
+                            OperandBundleDef(LLVM.tag_name(bunduse), uservals),
+                        )
+                    end
+                end
+                changed = false
+                if changed
+                    prevname = LLVM.name(inst)
+                    LLVM.name!(inst, "")
+                    newinst = call!(
+                        B,
+                        called_type(inst),
+                        called_operand(inst),
+                        collect(arguments(inst)),
+                        newbundles,
+                        prevname,
+                    )
+                    for idx in [
+                        LLVM.API.LLVMAttributeFunctionIndex,
+                        LLVM.API.LLVMAttributeReturnIndex,
+                        [
+                            LLVM.API.LLVMAttributeIndex(i) for
+                            i = 1:(length(arguments(inst)))
+                        ]...,
+                    ]
+                        idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
+                        count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
+                        Attrs = Base.unsafe_convert(
+                            Ptr{LLVM.API.LLVMAttributeRef},
+                            Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
+                        )
+                        LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
+                        for j = 1:count
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                newinst,
+                                idx,
+                                unsafe_load(Attrs, j),
+                            )
+                        end
+                        Libc.free(Attrs)
+                    end
+                    API.EnzymeCopyMetadata(newinst, inst)
+                    callconv!(newinst, callconv(inst))
+                    push!(replaceAndErase, (inst, newinst))
+                end
+            end
+        end
+        for (inst, newinst) in replaceAndErase
+            replace_uses!(inst, newinst)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+end
+
 function force_recompute!(mod::LLVM.Module)
     for f in functions(mod), bb in blocks(f)
     iter = LLVM.API.LLVMGetFirstInstruction(bb)

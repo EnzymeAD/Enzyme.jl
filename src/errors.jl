@@ -29,7 +29,7 @@ function Base.showerror(io::IO, ece::NoDerivativeException)
 	end
     end
     if occursin("cannot handle unknown binary operator", ece.msg)
-      for msg in ece.msg.split('\n')
+      for msg in split(ece.msg, '\n')
         if occursin("cannot handle unknown binary operator", msg)
           print('\n', msg, '\n')
         end
@@ -111,7 +111,7 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
       end
       print(io, '\n', ece.msg, '\n')
     else
-      for msg in ece.msg.split('\n')
+      for msg in split(ece.msg, '\n')
         if occursin("Illegal replace ficticious phi for", msg)
           print('\n', msg, '\n')
         end

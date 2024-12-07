@@ -16,11 +16,9 @@ using SpecialFunctions
     # test_scalar(SpecialFunctions.airyaiprime, x)
     # test_scalar(SpecialFunctions.airybi, x)
     # test_scalar(SpecialFunctions.airybiprime, x)
-    if x isa Real
-        test_scalar(SpecialFunctions.besselj0, x)
-        test_scalar(SpecialFunctions.besselj1, x)
-        test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
-    end
+    test_scalar(SpecialFunctions.besselj0, x)
+    test_scalar(SpecialFunctions.besselj1, x)
+    test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
 
     # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
     # test_scalar(SpecialFunctions.dawson, x)
@@ -36,7 +34,7 @@ using SpecialFunctions
         # test_scalar(SpecialFunctions.erfcinv, x)
     end
 
-    if x isa Real && x > 0
+    if !(x isa Real) || x > 0
         test_scalar(SpecialFunctions.bessely0, x)
         test_scalar(SpecialFunctions.bessely1, x)
         test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
