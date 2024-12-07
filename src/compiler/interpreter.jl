@@ -32,7 +32,7 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     has_ambig = Ptr{Int32}(C_NULL) 
     mthds = Base._methods_by_ftype(
         sig,
-        method_table,
+        nothing,
         -1, #=lim=#
         world,
         false, #=ambig=#
