@@ -40,8 +40,6 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     inf_params::InferenceParams
     opt_params::OptimizationParams
 
-    rules_cache::IdDict{Any, Bool}
-
     forward_rules::Bool
     reverse_rules::Bool
     deferred_lower::Bool
@@ -103,6 +101,7 @@ Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp
 Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
 get_inference_world(@nospecialize(interp::EnzymeInterpreter)) = interp.world
 Core.Compiler.get_inference_cache(@nospecialize(interp::EnzymeInterpreter)) = interp.local_cache
+
 @static if HAS_INTEGRATED_CACHE
     Core.Compiler.cache_owner(@nospecialize(interp::EnzymeInterpreter)) = interp.token
 else
@@ -225,25 +224,32 @@ function Core.Compiler.abstract_call_gf_by_type(
     elseif is_alwaysinline_func(specTypes)
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
-        # 1. Check if function is inactive
-        if is_inactive_from_sig(interp, specTypes, sv)
+
+        if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
-            # 2. Check if rule is defined
-            has_rule = get!(interp.rules_cache, specTypes) do
-                if interp.forward_rules && has_frule_from_sig(interp, specTypes, sv)
-                    return true
-                elseif interp.reverse_rules && has_rrule_from_sig(interp, specTypes, sv)
-                    return true
-                else
-                    return false
+            if interp.forward_rules
+              if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+                callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+              end
+            end
+        
+            if interp.reverse_rules
+                if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+                  callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
                 end
             end
-            if has_rule
-                callinfo = NoInlineCallInfo(callinfo, atype, interp.forward_rules ? :frule : :rrule)
-            end            
         end
+
+        if interp.forward_rules
+            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, interp.world)::Core.MethodInstance)
+        end
+        if interp.reverse_rules
+            Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, interp.world)::Core.MethodInstance)
+        end
+        Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Compiler.rule_backedge_holder), Tuple{Val{0}}, interp.world)::Core.MethodInstance) 
     end
+
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
     else
