@@ -69,6 +69,7 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     @show ft
     edges = Any[]
 
+    @static if false
     if ft == typeof(EnzymeRules.augmented_primal)
 	# this is illegal
         # sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
@@ -97,6 +98,8 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
 	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.inactive_type), Tuple{Type}, world))
     end
     @show edges
+    end
+
     new_ci.edges = edges
 
     # XXX: setting this edge does not give us proper method invalidation, see
@@ -123,6 +126,29 @@ end
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, rule_backedge_holder_generator))
+end
+
+begin
+    fwd_rule_be = GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)})
+    rev_rule_be = GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_forward)})
+    gen_rule_be = GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_forward)})
+
+
+    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+    EnzymeRules.add_mt_backedge!(fwd_rule_be, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable, fwd_sig)
+
+    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+    EnzymeRules.add_mt_backedge!(rev_rule_be, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable, rev_sig)
+
+
+    for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}},
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Annotation}},
+        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_type), Type},
+    )
+        EnzymeRules.add_mt_backedge!(gen_rule_be, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable, gen_sig)
+    end
 end
 
 struct EnzymeInterpreter{T} <: AbstractInterpreter
