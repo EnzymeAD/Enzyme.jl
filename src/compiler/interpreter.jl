@@ -201,7 +201,7 @@ function EnzymeInterpreter(
 
     return EnzymeInterpreter(
         cache_or_token,
-   	Core.Compiler.OverlayMethodTable(world, mt),
+	mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
         # Initially empty cache
         Vector{InferenceResult}(),
