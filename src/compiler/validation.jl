@@ -483,7 +483,7 @@ end
 end
 
 @inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.OverlayMethodTable)
-    return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
+    return has_method(sig, mt.world, mt.mt) || has_method(sig, mt.world, nothing)
 end
 
 @inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type,Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))

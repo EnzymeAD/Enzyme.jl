@@ -165,7 +165,7 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     else
         code_cache::CodeCache
     end
-    method_table::Union{Nothing,Core.MethodTable}
+    method_table::Core.Compiler.MethodTableView
 
     # Cache of inference results for this particular interpreter
     local_cache::Vector{InferenceResult}
@@ -201,7 +201,7 @@ function EnzymeInterpreter(
 
     return EnzymeInterpreter(
         cache_or_token,
-        mt,
+	mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
         # Initially empty cache
         Vector{InferenceResult}(),
@@ -253,8 +253,7 @@ Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
 Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
 
-Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter), sv::InferenceState) =
-    Core.Compiler.OverlayMethodTable(interp.world, interp.method_table)
+Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
 function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
