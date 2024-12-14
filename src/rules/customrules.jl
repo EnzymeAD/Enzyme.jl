@@ -984,7 +984,7 @@ function enzyme_custom_common_rev(
         end
 
         @safe_debug "Applying custom reverse rule" TT = rev_TT, functy=functy
-        rmi = my_methodinstance(functy, rev_TT, world)
+        rmi = my_methodinstance(Reverse, functy, rev_TT, world)
 
         if rmi === nothing
             rev_TT = Tuple{typeof(world),functy,rev_TT.parameters...}

@@ -3802,7 +3802,7 @@ end
             continue
         end
         if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) &&
-           has_method(
+           Enzyme.has_method(
             Tuple{typeof(EnzymeRules.inactive),specTypes.parameters...},
             world,
             method_table,
