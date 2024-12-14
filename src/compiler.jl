@@ -3556,13 +3556,13 @@ function GPUCompiler.codegen(
         caller = mi
         if mode == API.DEM_ForwardMode
             has_custom_rule =
-                EnzymeRules.has_frule_from_sig(specTypes; world, method_table) # , caller)
+                EnzymeRules.has_frule_from_sig(specTypes; world, method_table, caller)
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
         else
             has_custom_rule =
-                EnzymeRules.has_rrule_from_sig(specTypes; world, method_table) # , caller)
+                EnzymeRules.has_rrule_from_sig(specTypes; world, method_table, caller)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
             end
@@ -3577,7 +3577,7 @@ function GPUCompiler.codegen(
             actualRetType = k.ci.rettype
         end
 
-        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table) #, caller)
+        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
             push!(return_attributes(llvmfn), EnumAttribute("noalias"))
             for u in LLVM.uses(llvmfn)
                 c = LLVM.user(u)
@@ -3801,7 +3801,7 @@ end
             end
             continue
         end
-        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table) && # , caller) &&
+        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) &&
            Enzyme.has_method(
             Tuple{typeof(EnzymeRules.inactive),specTypes.parameters...},
             world,
@@ -3819,7 +3819,7 @@ end
             )
             continue
         end
-        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table) && #, caller) &&
+        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller) &&
            has_method(
             Tuple{typeof(EnzymeRules.inactive_noinl),specTypes.parameters...},
             world,
@@ -5568,18 +5568,34 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     new_ci.min_world = world
     new_ci.max_world = max_world[]
 
-    edges = Core.MethodInstance[mi]
+    edges = Any[mi]
 
     if Mode == API.DEM_ForwardMode
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world))
-        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
+        fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable)
+        push!(edges, fwd_sig)
     else
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, world))
+        rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
+        
+        rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
     end
-
-    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)}, world))
-    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world))
-    Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
+    
+    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
+    push!(edges, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable)
+    push!(edges, ina_sig)
+    
+    for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_type), Type},
+    )
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
+        push!(edges, gen_sig)
+    end
 
     new_ci.edges = edges
 
