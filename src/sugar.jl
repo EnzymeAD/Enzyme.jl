@@ -13,7 +13,7 @@ end
 
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
-        mi = my_methodinstance(fn, Tuple{T, Int})
+        mi = my_methodinstance(nothing, fn, Tuple{T, Int})
         job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
         GPUCompiler.prepare_job!(job)

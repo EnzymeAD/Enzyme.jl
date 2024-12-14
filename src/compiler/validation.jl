@@ -474,24 +474,12 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     "ijl_apply_generic" => (1, 2),
 ))
 
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing,Core.MethodTable})
-    return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
-end
-
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.InternalMethodTable)
-    return has_method(sig, mt.world, nothing)
-end
-
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.OverlayMethodTable)
-    return has_method(sig, mt.world, mt.mt) || has_method(sig, mt.world, nothing)
-end
-
 @inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type,Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
     specTypes = Interpreter.simplify_kw(Tuple{tys...})
-    if has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
         return true
     end
-    if has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
         return true
     end
     return false

@@ -318,7 +318,7 @@ include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
-    funcspec = my_methodinstance(typeof(f), tt, world)
+    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
 
@@ -1124,10 +1124,6 @@ function __init__()
     )
     register_alloc_rules()
     register_llvm_rules()
-
-    # Force compilation of AD stack
-    # thunk = Enzyme.Compiler.thunk(Enzyme.Compiler.fspec(typeof(Base.identity), Tuple{Active{Float64}}), Const{typeof(Base.identity)}, Active, Tuple{Active{Float64}}, #=Split=# Val(Enzyme.API.DEM_ReverseModeCombined), #=width=#Val(1), #=ModifiedBetween=#Val((false,false)), Val(#=ReturnPrimal=#false), #=ShadowInit=#Val(false), NonGenABI)
-    # thunk(Const(Base.identity), Active(1.0), 1.0)
 end
 
 # Define EnzymeTarget
@@ -1258,6 +1254,8 @@ Create the methodinstance pair, and lookup the primal return type.
     @nospecialize(TT::Type),
     world::Union{UInt,Nothing} = nothing,
 )
+
+fdsafdsafsa
     # primal function. Inferred here to get return type
     _tt = (TT.parameters...,)
 
@@ -2123,7 +2121,7 @@ function create_abi_wrapper(
             push!(realparms, val)
         elseif T <: BatchDuplicatedFunc
             Func = get_func(T)
-            funcspec = my_methodinstance(Func, Tuple{}, world)
+            funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
@@ -4520,7 +4518,7 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance(fnty, Tuple{JT}, world)
+                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, world)
                 llvmf = nested_codegen!(mode, mod, funcspec, world)
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
@@ -5545,17 +5543,13 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
     method_error = :(throw(MethodError($ft, $primal_tt, $world)))
-    sig = Tuple{ft, primal_tt.parameters...}
+    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
-                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
-                  sig, #=mt=# nothing, world, min_world, max_world)
-    match === nothing && return stub(world, source, method_error)
-
-    # look up the method and code instance
-    mi = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+    
+    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    
+    mi === nothing && return stub(world, source, method_error)
  
     ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
@@ -5681,18 +5675,14 @@ function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecializ
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
     method_error = :(throw(MethodError($ft, $primal_tt, $world)))
-    sig = Tuple{ft, primal_tt.parameters...}
+    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
-                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
-                  sig, #=mt=# nothing, world, min_world, max_world)
-    match === nothing && return stub(world, source, method_error)
-
-    # look up the method and code instance
-    mi = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
  
+    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    
+    mi === nothing && return stub(world, source, method_error)
+    
     ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info

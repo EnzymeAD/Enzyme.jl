@@ -68,34 +68,31 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     ### TODO: backedge from inactive, augmented_primal, forward, reverse
     edges = Any[]
 
-    @static if false
     if ft == typeof(EnzymeRules.augmented_primal)
-	# this is illegal
-        # sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.augmented_primal), Tuple{<:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}, world))
+        rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
+        
+        rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
     elseif ft == typeof(EnzymeRules.forward)
-	# this is illegal
-        # sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.forward), Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}, world))
+        fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable)
+        push!(edges, fwd_sig)
+    elseif ft == typeof(EnzymeRules.inactive)
+        ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable)
+        push!(edges, ina_sig)
     else
-        # sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.inactive), Tuple{Vararg{Annotation}}, world))
-
-        # sig = Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Annotation}}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.inactive_noinl), Tuple{Vararg{Annotation}}, world))
-
-        # sig = Tuple{typeof(EnzymeRules.noalias), Vararg{Any}}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.noalias), Tuple{Vararg{Any}}, world))
-		
-        # sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
-        # push!(edges, (ccall(:jl_method_table_for, Any, (Any,), sig), sig))
-	push!(edges, GPUCompiler.generic_methodinstance(typeof(EnzymeRules.inactive_type), Tuple{Type}, world))
-    end
+        for gen_sig in (
+            Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+            Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+            Tuple{typeof(EnzymeRules.inactive_type), Type},
+        )
+            push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
+            push!(edges, gen_sig)
+        end
     end
 
     new_ci.edges = edges
@@ -124,39 +121,6 @@ end
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, rule_backedge_holder_generator))
-end
-
-begin
-    # Forward-rule catch all
-    fwd_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)})
-    # Reverse-rule catch all
-    rev_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)})
-    # Inactive-rule catch all
-    ina_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)})
-    # All other derivative-related catch all (just for autodiff, not inference), including inactive_noinl, noalias, and inactive_type
-    gen_rule_be = GPUCompiler.methodinstance(typeof(rule_backedge_holder), Tuple{Val{0}})
-
-
-    fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-    EnzymeRules.add_mt_backedge!(fwd_rule_be, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable, fwd_sig)
-
-    rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-    EnzymeRules.add_mt_backedge!(rev_rule_be, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable, rev_sig)
-
-
-    for ina_sig in (
-        Tuple{typeof(EnzymeRules.inactive), Vararg{Any}},
-    )
-        EnzymeRules.add_mt_backedge!(ina_rule_be, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable, ina_sig)
-    end
-
-    for gen_sig in (
-        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_type), Type},
-    )
-        EnzymeRules.add_mt_backedge!(gen_rule_be, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable, gen_sig)
-    end
 end
 
 struct EnzymeInterpreter{T} <: AbstractInterpreter
