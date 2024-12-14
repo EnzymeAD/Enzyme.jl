@@ -370,7 +370,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     FTy = Core.Typeof(f.val)
 
     rt = if A isa UnionAll
-        Compiler.primal_return_type(mode, FTy, tt)
+        Compiler.primal_return_type(Reverse, FTy, tt)
     else
         eltype(A)
     end

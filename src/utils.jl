@@ -320,7 +320,7 @@ end
 # XXX: version of Base.method_instance that uses a function type
 @inline function my_methodinstance(@nospecialize(mode::Union{Nothing, EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type))::Core.MethodInstance
     sig = GPUCompiler.signature_type_by_tt(ft, tt)
-    return prevmethodinstance(mode, ft, tt, world)::Core.MethodInstance
+    return prevmethodinstance(mode, ft, tt)::Core.MethodInstance
 end
 
 export my_methodinstance
