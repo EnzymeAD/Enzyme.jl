@@ -276,7 +276,7 @@ end
                 world,
             )
 
-            cmod, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 
