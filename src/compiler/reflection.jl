@@ -19,8 +19,6 @@ function get_job(
 
     tt = Tuple{map(eltype, types.parameters)...}
 
-
-    primal, rt = 
     if world isa Nothing
         world=Base.get_world_counter()
     end
