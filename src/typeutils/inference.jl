@@ -25,6 +25,7 @@ function primal_interp_world(
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
             EnzymeCompilerParams,
+            world,
             false,
             true
         )
@@ -47,6 +48,7 @@ function primal_interp_world(
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
             EnzymeCompilerParams,
+            world,
             true,
             false
         )

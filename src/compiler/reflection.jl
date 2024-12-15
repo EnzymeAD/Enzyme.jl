@@ -23,9 +23,10 @@ function get_job(
         world=Base.get_world_counter()
     end
 
-    primal = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, eltype(Core.Typeof(func)), Tuple{map(eltype, types.parameters)...}, world)
+    primal = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt, world)
     rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
 
+    @assert primal !== nothing
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing

@@ -1205,7 +1205,7 @@ if VERSION >= v"1.11.0-DEV.1552"
         last_ina_rule_world::Tuple
     end
 
-    @inline EnzymeCacheToken(target_type, always_inline, method_table, param_type, is_forward, is_reverse) =
+    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool) =
         EnzymeCacheToken(target_type, always_inline, method_table, param_type,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
@@ -1218,6 +1218,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.always_inline,
             GPUCompiler.method_table(job),
             typeof(job.config.params),
+            job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode
         )
