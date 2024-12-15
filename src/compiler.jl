@@ -2139,7 +2139,7 @@ function create_abi_wrapper(
             push!(realparms, val)
         elseif T <: BatchDuplicatedFunc
             Func = get_func(T)
-            funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Tuple{}, world)
+            funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
