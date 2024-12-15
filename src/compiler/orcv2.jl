@@ -208,7 +208,7 @@ function get_trampoline(job)
         # 2 Add a module defining "foo.rt.impl" to the JITDylib.
         # 2. Call MR.replace(symbolAliases({"my_deferred_decision_sym.1" -> "foo.rt.impl"})).
         GPUCompiler.JuliaContext() do ctx
-            mod, adjoint_name, primal_name = Compiler._thunk(job)
+            mod, edges, adjoint_name, primal_name = Compiler._thunk(job)
             func_name = use_primal ? primal_name : adjoint_name
             other_name = !use_primal ? primal_name : adjoint_name
 

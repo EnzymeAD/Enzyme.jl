@@ -13,7 +13,7 @@ end
 
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
-        mi = my_methodinstance(fn, Tuple{T, Int})
+        mi = my_methodinstance(nothing, fn, Tuple{T, Int})
         job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
         GPUCompiler.prepare_job!(job)
@@ -899,7 +899,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             Core.Typeof(f)
         end
 
-        rt = Compiler.primal_return_type(mode, FRT, tt)
+        rt = Compiler.primal_return_type(Reverse, FRT, tt)
 
         ModifiedBetweenT = (false, false)
         FA = Const{FRT}
