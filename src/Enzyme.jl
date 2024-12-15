@@ -1381,10 +1381,13 @@ result, ∂v, ∂A
 
     TT = Tuple{args...}
 
-    primal_tt = Tuple{map(eltype, args)...}
-    rt0 = Compiler.primal_return_type(mode, eltype(FA), primal_tt)
-
-    rt = Compiler.remove_innerty(A2){rt0}
+    rt = if A2 isa UnionAll
+        primal_tt = Tuple{map(eltype, args)...}
+	rt0 = Compiler.primal_return_type(mode, eltype(FA), primal_tt)
+	A2{rt0}
+    else
+	A2
+    end
 
     primal_ptr = Compiler.deferred_codegen(
         FA,
