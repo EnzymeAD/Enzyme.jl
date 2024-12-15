@@ -41,8 +41,9 @@ function isapplicable(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     end
     # also need an edge to the method table in case something gets
     # added that did not intersect with any existing method
-    fullmatch = Core.Compiler._any(match::Core.MethodMatch -> match.fully_covers, matches)
-    if !fullmatch
+    # fullmatch = Core.Compiler._any(match::Core.MethodMatch -> match.fully_covers, matches)
+    # if !fullmatch
+    if true
         if partialsig === nothing
             Core.Compiler.add_mt_backedge!(sv, mt, sig)
         else
@@ -53,11 +54,11 @@ function isapplicable(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     if Core.Compiler.isempty(matches)
         return false
     else
-        for i = 1:Core.Compiler.length(matches)
-            match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
-            edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
-            Core.Compiler.add_backedge!(sv, edge)
-        end
+        #for i = 1:Core.Compiler.length(matches)
+        #    match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
+        #    edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
+        #    Core.Compiler.add_backedge!(sv, edge)
+        #end
         return true
     end
 end

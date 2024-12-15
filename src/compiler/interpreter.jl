@@ -24,6 +24,92 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
+function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
+    @nospecialize
+    sig = Tuple{typeof(Base.identity), Int}
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    has_ambig = Ptr{Int32}(C_NULL)
+    mthds = Base._methods_by_ftype(
+        sig,
+        nothing,
+        -1, #=lim=#
+        world,
+        false, #=ambig=#
+        min_world,
+        max_world,
+        has_ambig,
+    )
+    mtypes, msp, m = mthds[1]
+    mi = ccall(
+        :jl_specializations_get_linfo,
+        Ref{Core.MethodInstance},
+        (Any, Any, Any),
+        m,
+        mtypes,
+        msp,
+    )
+    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
+
+    # prepare a new code info
+    new_ci = copy(ci)
+    empty!(new_ci.code)
+    @static if isdefined(Core, :DebugInfo)
+      new_ci.debuginfo = Core.DebugInfo(:none)
+    else
+      empty!(new_ci.codelocs)
+      resize!(new_ci.linetable, 1)                # see note below
+    end
+    empty!(new_ci.ssaflags)
+    new_ci.ssavaluetypes = 0
+    new_ci.min_world = min_world[]
+    new_ci.max_world = max_world[]
+
+    ### TODO: backedge from inactive, augmented_primal, forward, reverse
+    edges = Any[]
+
+    if ft == typeof(EnzymeRules.augmented_primal)
+        sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
+        push!(edges, sig)
+    elseif ft == typeof(EnzymeRules.forward)
+        sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
+        push!(edges, sig)
+    else
+        sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
+        push!(edges, sig)
+    end
+
+    new_ci.edges = edges
+
+    # XXX: setting this edge does not give us proper method invalidation, see
+    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
+    #      invoking `code_llvm` also does the necessary codegen, as does calling the
+    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+
+    # prepare the slots
+    new_ci.slotnames = Symbol[Symbol("#self#"), :ft]
+    new_ci.slotflags = UInt8[0x00 for i = 1:2]
+
+    # return the codegen world age
+    push!(new_ci.code, Core.Compiler.ReturnNode(world))
+    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+      push!(new_ci.codelocs, 1)   # see note below
+    end
+    new_ci.ssavaluetypes += 1
+
+    return new_ci
+end
+
+@eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, rule_backedge_holder_generator))
+end
+
 struct EnzymeInterpreter{T} <: AbstractInterpreter
     @static if HAS_INTEGRATED_CACHE
         token::Any
@@ -47,6 +133,33 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
+
+function get_rule_signatures(f, TT, world)
+    fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
+    sigs = Type[]
+    for rule in fwdrules_meths
+        push!(sigs, (rule::Core.MethodMatch).method.sig)
+    end
+    return Base.IdSet{Type}(sigs)
+end
+
+function rule_sigs_equal(a, b)
+    if length(a) != length(b)
+        return false
+    end
+    for v in a
+        if v in b
+            continue
+        end
+        return false
+    end
+    return true
+end
+
+const LastFwdWorld = Ref(Base.IdSet{Type}())
+const LastRevWorld = Ref(Base.IdSet{Type}())
+const LastInaWorld = Ref(Base.IdSet{Type}())
+
 function EnzymeInterpreter(
     cache_or_token,
     mt::Union{Nothing,Core.MethodTable},
@@ -62,6 +175,37 @@ function EnzymeInterpreter(
         InferenceParams()
     else
         InferenceParams(; unoptimize_throw_blocks=false)
+    end
+    
+    @static if HAS_INTEGRATED_CACHE
+
+    else
+        cache_or_token = cache_or_token::CodeCache
+        invalid = false
+        if forward_rules
+            fwdrules = get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+            if !rule_sigs_equal(fwdrules, LastFwdWorld[])
+                LastFwdWorld[] = fwdrules
+                invalid = true
+            end
+        end
+        if reverse_rules
+            revrules = get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+            if !rule_sigs_equal(revrules, LastRevWorld[])
+                LastRevWorld[] = revrules
+                invalid = true
+            end
+        end
+
+        inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
+        if !rule_sigs_equal(inarules, LastInaWorld[])
+            LastInaWorld[] = inarules
+            invalid = true
+        end
+        
+        if invalid
+            Base.empty!(cache_or_token)
+        end
     end
 
     return EnzymeInterpreter(
@@ -220,32 +364,21 @@ function Core.Compiler.abstract_call_gf_by_type(
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
         method_table = Core.Compiler.method_table(interp)
-        if is_inactive_from_sig(interp, specTypes, sv)
+        if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
         else
             if interp.forward_rules
-              if has_frule_from_sig(interp, specTypes, sv)
+              if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
                 callinfo = NoInlineCallInfo(callinfo, atype, :frule)
               end
             end
         
             if interp.reverse_rules
-                if has_rrule_from_sig(interp, specTypes, sv)
+                if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
                   callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
                 end
             end
         end
-
-        # if interp.forward_rules
-        #     Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, interp.world)::Core.MethodInstance)
-        #     Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
-        # end
-        # if interp.reverse_rules
-        #     Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, interp.world)::Core.MethodInstance)
-        #     Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.augmented_primal))
-        # end
-        # Core.Compiler.add_backedge!(sv, GPUCompiler.methodinstance(typeof(Enzyme.Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)}, interp.world)::Core.MethodInstance)
-        # Enzyme.Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(typeof(EnzymeRules.inactive)))
     end
 
     @static if VERSION ≥ v"1.11-"
