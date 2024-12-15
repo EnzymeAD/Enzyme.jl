@@ -538,10 +538,7 @@ end
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
 
-    @show fmi, fwd_RT, world
-    println(string(llvmf))
-
-    # push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     swiftself = has_swiftself(llvmf)
     if swiftself
