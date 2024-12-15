@@ -249,6 +249,7 @@ end
         EnzymeCore.EnzymeRules.inactive_type(T)
     else
         inmi = my_methodinstance(
+            nothing,
             typeof(EnzymeCore.EnzymeRules.inactive_type),
             Tuple{Type{T}},
             world,

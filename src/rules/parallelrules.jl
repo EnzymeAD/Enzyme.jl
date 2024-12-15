@@ -238,7 +238,8 @@ end
 
     pfuncT = funcT
 
-    mi2 = fspec(funcT, e_tt, world)
+    mi2 = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
+    @assert mi2 !== nothing
 
     refed = false
 
@@ -275,7 +276,7 @@ end
                 world,
             )
 
-            cmod, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 
@@ -306,7 +307,8 @@ end
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
-                mi2 = fspec(funcT, e_tt, world)
+                mi2 = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
+                @assert mi2 !== nothing
             end
         end
 
@@ -334,7 +336,7 @@ end
                 world,
             )
 
-            cmod, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
 

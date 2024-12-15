@@ -523,21 +523,21 @@ end
         typeof(EnzymeRules.forward)
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
-    fmi, fwd_RT = try
-        fmi = my_methodinstance(functy, TT, world)
-        fwd_RT = primal_return_type_world(Forward, world, fmi)
-        fmi, fwd_RT
-    catch e
+    fmi = my_methodinstance(Forward, functy, TT, world)
+    if fmi === nothing
         TT = Tuple{typeof(world),functy,TT.parameters...}
-        fmi = my_methodinstance(typeof(custom_rule_method_error), TT, world)
+        fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
         pushfirst!(args, LLVM.ConstantInt(world))
         fwd_RT = Union{}
-        fmi, fwd_RT
+    else
+        fwd_RT = primal_return_type_world(Forward, world, fmi)
     end
+    
     fmi = fmi::Core.MethodInstance
     fwd_RT = fwd_RT::Type
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
+
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     swiftself = has_swiftself(llvmf)
@@ -802,11 +802,11 @@ end
         typeof(EnzymeRules.augmented_primal)
     end
 
-    ami = try
-        my_methodinstance(functy, augprimal_TT, world)
-    catch e
+    ami = my_methodinstance(Reverse, functy, augprimal_TT, world)
+    if ami === nothing
         augprimal_TT = Tuple{typeof(world),functy,augprimal_TT.parameters...}
         ami = my_methodinstance(
+            Reverse,
             typeof(custom_rule_method_error),
             augprimal_TT,
             world,
@@ -816,6 +816,7 @@ end
         end
         ami
     end
+
     ami = ami::Core.MethodInstance
     @safe_debug "Applying custom augmented_primal rule" TT = augprimal_TT, functy=functy
     return ami,
@@ -984,18 +985,18 @@ function enzyme_custom_common_rev(
         end
 
         @safe_debug "Applying custom reverse rule" TT = rev_TT, functy=functy
-        rmi, rev_RT = try
-            rmi = my_methodinstance(functy, rev_TT, world)
-            rev_RT = return_type(interp, rmi)
-            rmi, rev_RT
-        catch e
+        rmi = my_methodinstance(Reverse, functy, rev_TT, world)
+
+        if rmi === nothing
             rev_TT = Tuple{typeof(world),functy,rev_TT.parameters...}
             rmi = my_methodinstance(typeof(custom_rule_method_error), rev_TT, world)
             pushfirst!(args, LLVM.ConstantInt(world))
             rev_RT = Union{}
             applicablefn = false
-            rmi, rev_RT
+        else
+            rev_RT = return_type(interp, rmi)
         end
+        
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         llvmf = nested_codegen!(mode, mod, rmi, world)

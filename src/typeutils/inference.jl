@@ -25,7 +25,9 @@ function primal_interp_world(
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
             EnzymeCompilerParams,
+            world,
             false,
+            true
         )
     else
         Enzyme.Compiler.GLOBAL_REV_CACHE
@@ -46,7 +48,9 @@ function primal_interp_world(
             false,
             GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
             EnzymeCompilerParams,
+            world,
             true,
+            false
         )
     else
         Enzyme.Compiler.GLOBAL_FWD_CACHE
@@ -97,41 +101,19 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
 
     # look up the method
     method_error = :(throw(MethodError(ft, tt, $world)))
-    sig = Tuple{ft,tt.parameters...}
+    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    has_ambig = Ptr{Int32}(C_NULL)  # don't care about ambiguous results
-    #interp = primal_interp_world(mode, world)
-    #method_table = Core.Compiler.method_table(interp)
-    method_table = nothing
-    mthds = Base._methods_by_ftype(
-        sig,
-        method_table,
-        -1, #=lim=#
-        world,
-        false, #=ambig=#
-        min_world,
-        max_world,
-        has_ambig,
-    )
+   
+    mi = my_methodinstance(mode, ft, tt, world, min_world, max_world)
+
     stub = Core.GeneratedFunctionStub(
         identity,
         Core.svec(:methodinstance, :mode, :ft, :tt),
         Core.svec(),
     )
-    mthds === nothing && return stub(world, source, method_error)
-    length(mthds) == 1 || return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, method_error)
 
-    # look up the method and code instance
-    mtypes, msp, m = mthds[1]
-    mi = ccall(
-        :jl_specializations_get_linfo,
-        Ref{Core.MethodInstance},
-        (Any, Any, Any),
-        m,
-        mtypes,
-        msp,
-    )
     ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info

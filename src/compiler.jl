@@ -318,7 +318,7 @@ include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
-    funcspec = my_methodinstance(typeof(f), tt, world)
+    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
     nested_codegen!(mode, mod, funcspec, world)
 end
 
@@ -361,6 +361,8 @@ function prepare_llvm(mod::LLVM.Module, job, meta)
     end
 end
 
+const mod_to_edges = Dict{LLVM.Module, Vector{Any}}()
+
 function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
@@ -389,6 +391,11 @@ function nested_codegen!(
     for f in functions(otherMod)
         permit_inlining!(f)
     end
+
+    edges = get(mod_to_edges, mod, nothing)
+    @assert edges !== nothing
+    edges = edges::Vector{Any}
+    push!(edges, funcspec)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -1124,10 +1131,6 @@ function __init__()
     )
     register_alloc_rules()
     register_llvm_rules()
-
-    # Force compilation of AD stack
-    # thunk = Enzyme.Compiler.thunk(Enzyme.Compiler.fspec(typeof(Base.identity), Tuple{Active{Float64}}), Const{typeof(Base.identity)}, Active, Tuple{Active{Float64}}, #=Split=# Val(Enzyme.API.DEM_ReverseModeCombined), #=width=#Val(1), #=ModifiedBetween=#Val((false,false)), Val(#=ReturnPrimal=#false), #=ShadowInit=#Val(false), NonGenABI)
-    # thunk(Const(Base.identity), Active(1.0), 1.0)
 end
 
 # Define EnzymeTarget
@@ -1197,8 +1200,17 @@ if VERSION >= v"1.11.0-DEV.1552"
         always_inline::Any
         method_table::Core.MethodTable
         param_type::Type
-        is_fwd::Bool
+        last_fwd_rule_world::Union{Nothing, Tuple}
+        last_rev_rule_world::Union{Nothing, Tuple}
+        last_ina_rule_world::Tuple
     end
+
+    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool) =
+        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,)
+        )
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
@@ -1206,7 +1218,9 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.always_inline,
             GPUCompiler.method_table(job),
             typeof(job.config.params),
+            job.world,
             job.config.params.mode == API.DEM_ForwardMode,
+            job.config.params.mode != API.DEM_ForwardMode
         )
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -1258,6 +1272,8 @@ Create the methodinstance pair, and lookup the primal return type.
     @nospecialize(TT::Type),
     world::Union{UInt,Nothing} = nothing,
 )
+
+fdsafdsafsa
     # primal function. Inferred here to get return type
     _tt = (TT.parameters...,)
 
@@ -2123,7 +2139,7 @@ function create_abi_wrapper(
             push!(realparms, val)
         elseif T <: BatchDuplicatedFunc
             Func = get_func(T)
-            funcspec = my_methodinstance(Func, Tuple{}, world)
+            funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
@@ -3236,6 +3252,7 @@ function GPUCompiler.codegen(
     if params.run_enzyme
         # @assert eltype(params.rt) != Union{}
     end
+
     expectedTapeType = params.expectedTapeType
     mode = params.mode
     TT = params.TT
@@ -3277,6 +3294,8 @@ function GPUCompiler.codegen(
 
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job; libraries=true, toplevel=toplevel, optimize=false, cleanup=false, only_entry=false, validate=false)
+    edges = Any[]
+    mod_to_edges[mod] = edges
 
     prepare_llvm(mod, primal_job, meta)
     for f in functions(mod)
@@ -3555,16 +3574,15 @@ function GPUCompiler.codegen(
 
         specTypes = Interpreter.simplify_kw(mi.specTypes)
 
-        caller = mi
         if mode == API.DEM_ForwardMode
             has_custom_rule =
-                EnzymeRules.has_frule_from_sig(specTypes; world, method_table, caller)
+                EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
             if has_custom_rule
                 @safe_debug "Found frule for" mi.specTypes
             end
         else
             has_custom_rule =
-                EnzymeRules.has_rrule_from_sig(specTypes; world, method_table, caller)
+                EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
             if has_custom_rule
                 @safe_debug "Found rrule for" mi.specTypes
             end
@@ -3579,7 +3597,8 @@ function GPUCompiler.codegen(
             actualRetType = k.ci.rettype
         end
 
-        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table, caller)
+        if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
+            push!(edges, mi)
             push!(return_attributes(llvmfn), EnumAttribute("noalias"))
             for u in LLVM.uses(llvmfn)
                 c = LLVM.user(u)
@@ -3803,12 +3822,8 @@ end
             end
             continue
         end
-        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table, caller) &&
-           has_method(
-            Tuple{typeof(EnzymeRules.inactive),specTypes.parameters...},
-            world,
-            method_table,
-        )
+        if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+            push!(edges, mi)
             handleCustom(
                 llvmfn,
                 "enz_noop",
@@ -3821,12 +3836,8 @@ end
             )
             continue
         end
-        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table, caller) &&
-           has_method(
-            Tuple{typeof(EnzymeRules.inactive_noinl),specTypes.parameters...},
-            world,
-            method_table,
-        )
+        if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
+            push!(edges, mi)
             handleCustom(
                 llvmfn,
                 "enz_noop",
@@ -4520,7 +4531,7 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance(fnty, Tuple{JT}, world)
+                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, world)
                 llvmf = nested_codegen!(mode, mod, funcspec, world)
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
@@ -4590,10 +4601,12 @@ end
         isempty(LLVM.blocks(fn)) && continue
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
+    
+    delete!(mod_to_edges, mod)
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType)
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
 end
 
 # Compiler result
@@ -4601,6 +4614,7 @@ struct CompileResult{AT,PT}
     adjoint::AT
     primal::PT
     TapeType::Type
+    edges::Vector{Any}
 end
 
 @inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
@@ -5226,12 +5240,13 @@ end
 # JIT
 ##
 
-function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType), prepost::String)
+function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module, edges::Vector{Any}, adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}), @nospecialize(TapeType), prepost::String)
     if job.config.params.ABI <: InlineABI
         return CompileResult(
             Val((Symbol(mod), Symbol(adjoint_name))),
             Val((Symbol(mod), Symbol(primal_name))),
-            TapeType
+            TapeType,
+            edges
         )
     end
 
@@ -5263,15 +5278,16 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
         end
     end
 
-    return CompileResult(adjoint_ptr, primal_ptr, TapeType)
+    return CompileResult(adjoint_ptr, primal_ptr, TapeType, edges)
 end
 
 const DumpPostOpt = Ref(false)
 
 # actual compilation
-function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, String, Union{String, Nothing}, Type, String}
+function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String}
     mod, meta = codegen(:llvm, job; optimize = false)
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
+
 
     adjoint_name = name(adjointf)
 
@@ -5305,7 +5321,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, String, Union{Str
     else
         ""
     end
-    return (mod, adjoint_name, primal_name, meta.TapeType, prepost)
+    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
 const cache = Dict{UInt,CompileResult}()
@@ -5324,10 +5340,10 @@ const cache_lock = ReentrantLock()
             asm = _thunk(job)
             obj = _link(job, asm...)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = (asm[2], asm[5])
+                autodiff_cache[obj.adjoint] = (asm[3], asm[6])
             end
-            if obj.primal isa Ptr{Nothing} && asm[3] isa String
-                autodiff_cache[obj.primal] = (asm[3], asm[5])
+            if obj.primal isa Ptr{Nothing} && asm[4] isa String
+                autodiff_cache[obj.primal] = (asm[4], asm[6])
             end
             cache[key] = obj
         end
@@ -5351,7 +5367,8 @@ end
     @nospecialize(ABI::Type),
     ErrIfFuncWritten::Bool,
     RuntimeActivity::Bool,
-) 
+    edges::Union{Nothing, Vector{Any}}
+)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA,TT.parameters...},
@@ -5432,6 +5449,11 @@ end
 
 
     compile_result = cached_compilation(job)
+    if edges !== nothing
+        for e in compile_result.edges
+            push!(edges, e)
+        end
+    end
     if !run_enzyme
         ErrT = PrimalErrorThunk{typeof(compile_result.adjoint),FA,rt2,TT,width,ReturnPrimal}
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
@@ -5528,6 +5550,7 @@ end
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
+            nothing
         )
     finally
         deactivate(ctx)
@@ -5545,17 +5568,13 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
     method_error = :(throw(MethodError($ft, $primal_tt, $world)))
-    sig = Tuple{ft, primal_tt.parameters...}
+    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
-                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
-                  sig, #=mt=# nothing, world, min_world, max_world)
-    match === nothing && return stub(world, source, method_error)
-
-    # look up the method and code instance
-    mi = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+    
+    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    
+    mi === nothing && return stub(world, source, method_error)
  
     ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
@@ -5574,18 +5593,34 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     new_ci.min_world = world
     new_ci.max_world = max_world[]
 
-    edges = Core.MethodInstance[mi]
+    edges = Any[mi]
 
     if Mode == API.DEM_ForwardMode
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.forward)}, world))
-        Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(EnzymeRules.forward))
+        fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable)
+        push!(edges, fwd_sig)
     else
-        push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.augmented_primal)}, world))
+        rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
+        
+        rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
+        push!(edges, rev_sig)
     end
-
-    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{typeof(EnzymeRules.inactive)}, world))
-    push!(edges, GPUCompiler.methodinstance(typeof(Compiler.Interpreter.rule_backedge_holder), Tuple{Val{0}}, world))
-    Compiler.Interpreter.rule_backedge_holder(Base.inferencebarrier(Val(0)))
+    
+    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
+    push!(edges, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable)
+    push!(edges, ina_sig)
+    
+    for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_type), Type},
+    )
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
+        push!(edges, gen_sig)
+    end
 
     new_ci.edges = edges
 
@@ -5612,6 +5647,7 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
+            edges
         )
     finally
         deactivate(ctx)
@@ -5681,18 +5717,14 @@ function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecializ
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
     method_error = :(throw(MethodError($ft, $primal_tt, $world)))
-    sig = Tuple{ft, primal_tt.parameters...}
+    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
-                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
-                  sig, #=mt=# nothing, world, min_world, max_world)
-    match === nothing && return stub(world, source, method_error)
-
-    # look up the method and code instance
-    mi = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
  
+    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    
+    mi === nothing && return stub(world, source, method_error)
+    
     ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info
