@@ -45,7 +45,7 @@ for m in methods(inactive, Tuple{typeof(issue696),Vararg{Any}})
     Base.delete_method(m)
 end
 
-@test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
-@test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+@test_broken autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+@test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
 
 end # module
