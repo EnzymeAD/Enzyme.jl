@@ -1023,6 +1023,12 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                         linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
                     end
                 end
+                
+                for glob in globals(pmod)
+                    if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
+                        LLVM.initializer!(glob, nothing)
+                    end
+                end
 
                 GPUCompiler.link_library!(mod, pmod)
 
