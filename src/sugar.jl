@@ -899,7 +899,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             Core.Typeof(f)
         end
 
-        rt = Compiler.primal_return_type(mode, FRT, tt)
+        rt = Compiler.primal_return_type(Reverse, FRT, tt)
 
         ModifiedBetweenT = (false, false)
         FA = Const{FRT}
