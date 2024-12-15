@@ -79,7 +79,7 @@ end
 
 function Base.showerror(io::IO, ece::IllegalFirstPointerException)
     print(io, "Enzyme compilation failed due to an internal error (first pointer exception).\n")
-    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
       if ece.ir !== nothing
@@ -102,7 +102,7 @@ end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
     print(io, "Enzyme compilation failed due to an internal error.\n")
-    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl")
+    print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
       if ece.ir !== nothing
