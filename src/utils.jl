@@ -219,7 +219,7 @@ end
     min_world::Ref{UInt},
     max_world::Ref{UInt},
 )
-    res = lookup_world(sig, mt.world, mt.table, min_world, max_world)
+    res = lookup_world(sig, world, mt.table, min_world, max_world)
     return res
 end
 
