@@ -264,6 +264,7 @@ jobs:
           - ubuntu-latest
         test:
           - DynamicExpressions
+          - Distributions
           - Bijectors
     steps:
       - uses: actions/checkout@v4
