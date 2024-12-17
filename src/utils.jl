@@ -215,6 +215,17 @@ end
 @inline function lookup_world(
     @nospecialize(sig::Type),
     world::UInt,
+    mt::Core.Compiler.CachedMethodTable,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = lookup_world(sig, world, mt.table, min_world, max_world)
+    return res
+end
+
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
     mt::Core.Compiler.OverlayMethodTable,
     min_world::Ref{UInt},
     max_world::Ref{UInt},
