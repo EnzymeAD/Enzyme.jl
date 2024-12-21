@@ -613,15 +613,15 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
             position!(B, V)
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
         end
-    
-        B = LLVM.IRBuilder(B)
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
-        LLVMType = convert(LLVM.LLVMType, Ty)
-        jlType = Compiler.tape_type(LLVMType)
-        zeroAll = false
-        T_int64 = LLVM.Int64Type()
-        zero_single_allocation(B, Ty, LLVMType, V, zeroAll, LLVM.ConstantInt(T_int64, 0))
     end
+
+    B = LLVM.IRBuilder(B)
+    position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
+    LLVMType = convert(LLVM.LLVMType, Ty)
+    jlType = Compiler.tape_type(LLVMType)
+    zeroAll = false
+    T_int64 = LLVM.Int64Type()
+    zero_single_allocation(B, Ty, LLVMType, V, zeroAll, LLVM.ConstantInt(T_int64, 0))
     nothing
 end
 
