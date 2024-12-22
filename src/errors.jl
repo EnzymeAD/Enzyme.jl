@@ -606,7 +606,7 @@ end
 
             if isa(cur, LLVM.InsertValueInst)
                 B2 = IRBuilder()
-                position!(B2, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(cur)))
+                position!(B2, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(ncur)))
 
                 lhs = make_replacement(operands(cur)[1], B2)
                 if illegal
