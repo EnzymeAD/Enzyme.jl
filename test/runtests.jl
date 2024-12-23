@@ -806,8 +806,13 @@ end
     @test autodiff(Forward, f28, Duplicated(2.0, 1.0))[1]   == 12
 
     f29(x) = sum(Set([1.0, x, 2x, x]))
-    @test autodiff(Reverse, f29, Active, Active(2.0))[1][1] == 3
-    @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1]   == 3
+    @static if VERSION ≥ v"1.11-"
+        @test autodiff(set_runtime_activity(Reverse), f29, Active, Active(2.0))[1][1] == 3
+        @test autodiff(set_runtime_activity(Forward), f29, Duplicated(2.0, 1.0))[1]   == 3
+    else
+        @test autodiff(Reverse, f29, Active, Active(2.0))[1][1] == 3
+        @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1]   == 3
+    end
 
     f30(x) = reverse([x 2.0 3x])[1]
     @test autodiff(Reverse, f30, Active, Active(2.0))[1][1] == 3
