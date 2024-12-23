@@ -3778,5 +3778,6 @@ include("ext/logexpfunctions.jl")
     include("ext/bfloat16s.jl")
 end
 
+include("ext/jlarrays.jl")
 include("ext/sparsearrays.jl")
 include("ext/staticarrays.jl")
