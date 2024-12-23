@@ -2399,3 +2399,21 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     eraseInst(mod, func)
 end
 
+function safe_atomic_to_regular_store!(f::LLVM.Function)
+    changed = false
+    for bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.StoreInst)
+            continue
+        end
+        if !haskey(metadata(inst), "enzymejl_atomicgc")
+            continue
+        end
+        Base.delete!(metadata(inst), "enzymejl_atomicgc")
+        syncscope!(inst, LLVM.SyncScope("system"))
+        ordering!(inst, LLVM.API.LLVMAtomicOrderingNotAtomic)
+        changed = true
+    end
+    return changed
+end
+
+
