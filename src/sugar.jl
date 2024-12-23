@@ -7,6 +7,11 @@ function zerosetfn(x, i::Int)
     return res
 end
 
+function zerosetfn!(x, i::Int, val)
+    @inbounds x[i] += val
+    nothing
+end
+
 @generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
     ir = GPUCompiler.JuliaContext() do ctx
         Base.@_inline_meta
@@ -927,7 +932,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                 dx = MD ? Ref(z) : z
                 res = primal(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx))
                 tape = res[1]
-                @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
+                zerosetfn!(res[3], i, Compiler.default_adjoint(eltype(typeof(res[3]))))
                 adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
                 return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
             end
@@ -994,8 +999,8 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                 j = 0
                 for shadow in res[3]
                     j += 1
-                    @inbounds shadow[(i-1)*chunksize+j] +=
-                        Compiler.default_adjoint(eltype(typeof(shadow)))
+                    zerosetfn!(shadow, (i-1)*chunksize+j,
+                               Compiler.default_adjoint(eltype(typeof(shadow))))
                 end
                 (i == num ? adjoint2 : adjoint)(
                     Const(f),
